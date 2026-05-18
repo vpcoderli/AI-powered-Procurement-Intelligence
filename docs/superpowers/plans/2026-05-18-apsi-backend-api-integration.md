@@ -10,6 +10,70 @@
 
 ---
 
+## Current Status And Next Session Handoff
+
+**Last updated:** 2026-05-18
+
+**Implementation status:** Complete for this plan.
+
+**Current branch:** `codex/apsi-docs-reorganization`
+
+**Completed commits:**
+- `3eb36db test: add Vitest harness`
+- `6680cf0 feat: add tested bid service`
+- `2a10077 feat: add bid API routes`
+- `9fb1326 feat: add bid API client`
+- `cd072d1 feat: connect saved bids context to API`
+- `3f70bc9 feat: load bid search results from API`
+- `caa877a feat: load detail and saved pages from API`
+
+**What is implemented:**
+- Vitest is configured and `npm test` runs the server/API/client tests.
+- Bid service and in-memory repository live under `frontend/src/server/bids`.
+- API routes are available at:
+  - `GET /api/bids`
+  - `GET /api/bids/[id]`
+  - `GET /api/saved-bids`
+  - `POST /api/saved-bids`
+  - `DELETE /api/saved-bids/[id]`
+- Typed client helpers live in `frontend/src/lib/api/bids.ts`.
+- `SavedBidsContext` hydrates and mutates saved bids through the API client.
+- Homepage search, bid detail page, and saved bids page are API-backed.
+- Frontend still uses `MOCK_BIDS` only as seed data inside the server in-memory repository.
+
+**Fresh verification already completed:**
+- `cd frontend && npm test`: 6 files / 36 tests passed.
+- `cd frontend && npm run lint`: passed.
+- `cd frontend && npm run build`: passed.
+- API spot checks passed:
+  - `/api/bids?q=cloud` returns `Enterprise Cloud Migration Services`.
+  - `/api/bids/1` returns `Department of Defense`.
+  - `/api/saved-bids` returns seeded saved bid data.
+- Browser acceptance passed:
+  - Default English flow.
+  - Search `cloud` shows only `Enterprise Cloud Migration Services`.
+  - Detail page shows metadata, contact, source link, and attachments.
+  - Save bid, view it on Saved Bids, then unsave it.
+  - Chinese switch translates navigation and workflow labels.
+  - 390px mobile viewport has no horizontal overflow.
+
+**Final code review:** Approved. No blocking issues found.
+
+**Remaining work not required by this plan:**
+- Replace the in-memory saved-bids repository with persistent storage and user isolation before real production use.
+- Add React integration tests for `SavedBidsContext` and the API-backed page flows.
+- Decide whether homepage search should remain input-driven or become explicit button-triggered search; the current `Search` button is not required for fetching because typing updates the query immediately.
+- Add runtime response validation, such as Zod, if API/client contract drift becomes a concern.
+- Choose branch integration path:
+  1. Merge back to `main` locally.
+  2. Push and create a Pull Request.
+  3. Keep the branch as-is.
+  4. Discard the branch.
+
+**Next-session shortcut:** Start from this section first. No code reread is needed unless you choose to implement one of the remaining follow-up items above.
+
+---
+
 ## File Structure
 
 - Create `frontend/vitest.config.ts`: Vitest configuration with TypeScript path aliases.
