@@ -1,0 +1,56 @@
+import type { Bid, DatePreset, IssuerType, SortOption } from "@/lib/mock-data";
+
+export type ApiIssuerType = "all" | IssuerType;
+export type DeadlinePreset = Extract<DatePreset, "any" | "next7" | "next30">;
+export type PublishedPreset = Extract<DatePreset, "any" | "last24" | "last7">;
+
+export interface BidQuery {
+  q?: string;
+  states?: string[];
+  issuerType?: ApiIssuerType;
+  deadline?: DeadlinePreset;
+  published?: PublishedPreset;
+  sort?: SortOption;
+}
+
+export interface BidQueryOptions {
+  referenceDate?: Date;
+}
+
+export interface NormalizedBidQuery {
+  q: string;
+  states: string[];
+  issuerType: ApiIssuerType;
+  deadline: DeadlinePreset;
+  published: PublishedPreset;
+  sort: SortOption;
+}
+
+export interface BidListResponse {
+  bids: Bid[];
+  total: number;
+  filters: NormalizedBidQuery;
+}
+
+export interface BidDetailResponse {
+  bid: Bid;
+}
+
+export interface SavedBidsResponse {
+  savedBidIds: string[];
+  bids: Bid[];
+}
+
+export interface ApiErrorResponse {
+  error: {
+    code: "BID_NOT_FOUND" | "INVALID_REQUEST" | "INTERNAL_ERROR";
+    message: string;
+  };
+}
+
+export class BidNotFoundError extends Error {
+  constructor(message = "Bid not found") {
+    super(message);
+    this.name = "BidNotFoundError";
+  }
+}
