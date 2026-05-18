@@ -1,21 +1,16 @@
 "use client";
 
-import { useMemo } from "react";
-import { MOCK_BIDS } from "@/lib/mock-data";
 import { BidCard } from "@/components/bids/BidCard";
 import { useSavedBids } from "@/context/SavedBidsContext";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { Bookmark, Search } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
 
 export default function SavedBidsPage() {
-  const { savedBidIds } = useSavedBids();
+  const { savedBids, isLoading, error } = useSavedBids();
   const { t } = useLanguage();
-
-  const savedBids = useMemo(() => {
-    return MOCK_BIDS.filter(bid => savedBidIds.includes(bid.id));
-  }, [savedBidIds]);
 
   const savedDescription = savedBids.length === 1
     ? t("saved.descriptionSingular").replace("{count}", String(savedBids.length))
@@ -35,11 +30,46 @@ export default function SavedBidsPage() {
         </div>
       </div>
 
-      {savedBids.length > 0 ? (
+      {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-8">
-          {savedBids.map(bid => (
-            <BidCard key={bid.id} bid={bid} />
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flex flex-col gap-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-3 flex-1">
+                    <Skeleton className="h-5 w-3/4" />
+                    <Skeleton className="h-4 w-1/2" />
+                  </div>
+                  <Skeleton className="h-8 w-8 rounded-full" />
+                </div>
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-5/6" />
+                <div className="flex gap-2 pt-4 border-t border-slate-100">
+                  <Skeleton className="h-5 w-28" />
+                  <Skeleton className="h-5 w-24" />
+                </div>
+              </div>
+            </div>
           ))}
+        </div>
+      ) : error && savedBids.length === 0 ? (
+        <div className="text-center py-16 border border-dashed border-slate-300 bg-white rounded-xl">
+          <p className="text-slate-900 font-semibold mb-2">{t("dashboard.errorTitle")}</p>
+          <p className="text-sm text-slate-500">{t("dashboard.errorDescription")}</p>
+        </div>
+      ) : savedBids.length > 0 ? (
+        <div className="flex flex-col gap-4 pb-8">
+          {error && (
+            <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
+              <span className="font-semibold text-slate-900">{t("dashboard.errorTitle")}</span>
+              <span className="ml-2">{t("dashboard.errorDescription")}</span>
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {savedBids.map(bid => (
+              <BidCard key={bid.id} bid={bid} />
+            ))}
+          </div>
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center py-24 px-4 text-center border border-dashed border-slate-300 rounded-xl bg-slate-50/50 mt-4">
