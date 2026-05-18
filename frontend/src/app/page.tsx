@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Search, Filter } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -8,53 +8,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { BidCard } from "@/components/bids/BidCard";
-import { MOCK_BIDS, STATE_FILTERS, type DatePreset, type IssuerType, type SortOption } from "@/lib/mock-data";
+import { fetchBids } from "@/lib/api/bids";
+import { STATE_FILTERS, type Bid, type IssuerType, type SortOption } from "@/lib/mock-data";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import type { DeadlinePreset, PublishedPreset } from "@/server/bids/types";
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-function startOfDay(date: Date) {
-  const copy = new Date(date);
-  copy.setHours(0, 0, 0, 0);
-  return copy;
-}
-
-function daysFromToday(dateString: string) {
-  const today = startOfDay(new Date());
-  const target = startOfDay(new Date(dateString));
-  return Math.round((target.getTime() - today.getTime()) / MS_PER_DAY);
-}
-
-function daysAgo(dateString: string) {
-  const today = startOfDay(new Date());
-  const target = startOfDay(new Date(dateString));
-  return Math.round((today.getTime() - target.getTime()) / MS_PER_DAY);
-}
-
-function matchesDeadlinePreset(dateString: string, preset: DatePreset) {
-  if (preset === "any") return true;
-  const days = daysFromToday(dateString);
-  if (preset === "next7") return days >= 0 && days <= 7;
-  if (preset === "next30") return days >= 0 && days <= 30;
-  return true;
-}
-
-function matchesPublishedPreset(dateString: string, preset: DatePreset) {
-  if (preset === "any") return true;
-  const days = daysAgo(dateString);
-  if (preset === "last24") return days >= 0 && days <= 1;
-  if (preset === "last7") return days >= 0 && days <= 7;
-  return true;
-}
-
-const DEADLINE_PRESETS: Array<{ value: DatePreset; labelKey: string }> = [
+const DEADLINE_PRESETS: Array<{ value: DeadlinePreset; labelKey: string }> = [
   { value: "any", labelKey: "dashboard.anyTime" },
   { value: "next7", labelKey: "dashboard.next7Days" },
   { value: "next30", labelKey: "dashboard.next30Days" },
 ];
 
-const PUBLISHED_PRESETS: Array<{ value: DatePreset; labelKey: string }> = [
+const PUBLISHED_PRESETS: Array<{ value: PublishedPreset; labelKey: string }> = [
   { value: "any", labelKey: "dashboard.anyTime" },
   { value: "last24", labelKey: "dashboard.last24Hours" },
   { value: "last7", labelKey: "dashboard.last7Days" },
@@ -65,9 +32,14 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStates, setSelectedStates] = useState<string[]>([]);
   const [issuerType, setIssuerType] = useState<"all" | IssuerType>("all");
-  const [deadlinePreset, setDeadlinePreset] = useState<DatePreset>("any");
-  const [publishedPreset, setPublishedPreset] = useState<DatePreset>("any");
+  const [deadlinePreset, setDeadlinePreset] = useState<DeadlinePreset>("any");
+  const [publishedPreset, setPublishedPreset] = useState<PublishedPreset>("any");
   const [sortBy, setSortBy] = useState<SortOption>("relevance");
+  const [bids, setBids] = useState<Bid[]>([]);
+  const [total, setTotal] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
+  const [retryTick, setRetryTick] = useState(0);
 
   const toggleStateFilter = (stateId: string) => {
     setSelectedStates((prev) =>
@@ -84,46 +56,49 @@ export default function Dashboard() {
     setSortBy("relevance");
   };
 
-  const filteredBids = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
-    const selectedFilters = STATE_FILTERS.filter((state) => selectedStates.includes(state.id));
+  const retryFetch = () => {
+    setRetryTick((tick) => tick + 1);
+  };
 
-    return MOCK_BIDS.filter((bid) => {
-      const searchableText = [
-        bid.title,
-        bid.description,
-        bid.issuerName,
-        bid.originalCategory,
-        ...bid.tags,
-      ]
-        .join(" ")
-        .toLowerCase();
+  useEffect(() => {
+    let cancelled = false;
 
-      const matchesSearch = normalizedQuery === "" || searchableText.includes(normalizedQuery);
-      const matchesState =
-        selectedFilters.length === 0 ||
-        selectedFilters.some(
-          (filter) =>
-            filter.stateCode === bid.stateCode ||
-            filter.label === bid.source ||
-            bid.source.includes(filter.stateCode) ||
-            bid.source.includes(filter.label.split(" ")[0])
-        );
-      const matchesIssuerType = issuerType === "all" || bid.issuerType === issuerType;
-      const matchesDeadline = matchesDeadlinePreset(bid.deadlineDate, deadlinePreset);
-      const matchesPublished = matchesPublishedPreset(bid.publishedDate, publishedPreset);
+    queueMicrotask(() => {
+      if (cancelled) return;
 
-      return matchesSearch && matchesState && matchesIssuerType && matchesDeadline && matchesPublished;
-    }).sort((a, b) => {
-      if (sortBy === "deadline") {
-        return new Date(a.deadlineDate).getTime() - new Date(b.deadlineDate).getTime();
-      }
-      if (sortBy === "newest") {
-        return new Date(b.publishedDate).getTime() - new Date(a.publishedDate).getTime();
-      }
-      return 0;
+      setIsLoading(true);
+      setHasError(false);
+
+      fetchBids({
+        q: searchQuery,
+        states: selectedStates,
+        issuerType,
+        deadline: deadlinePreset,
+        published: publishedPreset,
+        sort: sortBy,
+      })
+        .then((response) => {
+          if (cancelled) return;
+          setBids(response.bids);
+          setTotal(response.total);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setBids([]);
+          setTotal(0);
+          setHasError(true);
+        })
+        .finally(() => {
+          if (cancelled) return;
+          setIsLoading(false);
+        });
     });
-  }, [deadlinePreset, issuerType, publishedPreset, searchQuery, selectedStates, sortBy]);
+
+    return () => {
+      if (cancelled) return;
+      cancelled = true;
+    };
+  }, [deadlinePreset, issuerType, publishedPreset, retryTick, searchQuery, selectedStates, sortBy]);
 
   return (
     <div className="flex flex-col lg:flex-row h-full gap-6">
@@ -247,7 +222,7 @@ export default function Dashboard() {
 
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="text-sm text-slate-600 font-medium">
-            {t("dashboard.resultsCount").replace("{count}", String(filteredBids.length))}
+            {t("dashboard.resultsCount").replace("{count}", String(total))}
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm font-medium text-slate-500">{t("dashboard.sortBy")}</span>
@@ -265,11 +240,48 @@ export default function Dashboard() {
         </div>
 
         <div className="flex flex-col gap-4 pb-8">
-          {filteredBids.map((bid) => (
+          {isLoading &&
+            Array.from({ length: 3 }).map((_, index) => (
+              <div key={index} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-3 flex-1">
+                      <Skeleton className="h-5 w-3/4" />
+                      <Skeleton className="h-4 w-1/2" />
+                    </div>
+                    <Skeleton className="h-8 w-24 rounded-full" />
+                  </div>
+                  <Skeleton className="h-4 w-full" />
+                  <Skeleton className="h-4 w-5/6" />
+                  <div className="flex gap-2">
+                    <Skeleton className="h-7 w-20 rounded-full" />
+                    <Skeleton className="h-7 w-24 rounded-full" />
+                    <Skeleton className="h-7 w-16 rounded-full" />
+                  </div>
+                </div>
+              </div>
+            ))}
+
+          {!isLoading && hasError && (
+            <div className="text-center py-16 border border-dashed border-slate-300 bg-white rounded-xl">
+              <p className="text-slate-900 font-semibold mb-2">{t("dashboard.errorTitle")}</p>
+              <p className="text-sm text-slate-500 mb-4">{t("dashboard.errorDescription")}</p>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-2">
+                <Button onClick={retryFetch} className="bg-slate-900 hover:bg-slate-800 text-white font-semibold">
+                  {t("dashboard.retry")}
+                </Button>
+                <Button variant="link" onClick={clearFilters} className="text-slate-900 font-semibold hover:text-slate-700">
+                  {t("dashboard.clearFilters")}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {!isLoading && !hasError && bids.map((bid) => (
             <BidCard key={bid.id} bid={bid} />
           ))}
 
-          {filteredBids.length === 0 && (
+          {!isLoading && !hasError && bids.length === 0 && (
             <div className="text-center py-16 border border-dashed border-slate-300 bg-white rounded-xl">
               <p className="text-slate-900 font-semibold mb-2">{t("dashboard.noResultsTitle")}</p>
               <p className="text-sm text-slate-500 mb-4">{t("dashboard.noResultsDescription")}</p>
