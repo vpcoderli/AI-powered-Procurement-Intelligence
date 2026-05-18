@@ -4,16 +4,22 @@ import { useMemo } from "react";
 import { MOCK_BIDS } from "@/lib/mock-data";
 import { BidCard } from "@/components/bids/BidCard";
 import { useSavedBids } from "@/context/SavedBidsContext";
+import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { Bookmark, Search } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import Link from "next/link";
 
 export default function SavedBidsPage() {
   const { savedBidIds } = useSavedBids();
+  const { t } = useLanguage();
 
   const savedBids = useMemo(() => {
     return MOCK_BIDS.filter(bid => savedBidIds.includes(bid.id));
   }, [savedBidIds]);
+
+  const savedDescription = savedBids.length === 1
+    ? t("saved.descriptionSingular").replace("{count}", String(savedBids.length))
+    : t("saved.description").replace("{count}", String(savedBids.length));
 
   return (
     <div className="flex flex-col h-full gap-6 max-w-5xl mx-auto pb-12">
@@ -22,9 +28,9 @@ export default function SavedBidsPage() {
           <Bookmark size={22} strokeWidth={2.5} />
         </div>
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Saved Bids</h1>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{t("saved.title")}</h1>
           <p className="text-sm text-slate-500 font-medium mt-0.5">
-            You have {savedBids.length} saved {savedBids.length === 1 ? 'bid' : 'bids'}.
+            {savedDescription}
           </p>
         </div>
       </div>
@@ -40,15 +46,18 @@ export default function SavedBidsPage() {
           <div className="h-16 w-16 bg-white border border-slate-100 shadow-sm rounded-full flex items-center justify-center text-slate-400 mb-5">
             <Bookmark size={28} />
           </div>
-          <h2 className="text-xl font-semibold text-slate-900 mb-2">No saved bids yet</h2>
+          <h2 className="text-xl font-semibold text-slate-900 mb-2">{t("saved.emptyTitle")}</h2>
           <p className="text-slate-500 font-medium max-w-md mb-8">
-            Keep track of interesting opportunities by clicking the save icon on any bid card in the search dashboard.
+            {t("saved.emptyDescription")}
           </p>
-          <Button asChild className="bg-slate-900 hover:bg-slate-800 text-white font-medium shadow-sm rounded-lg px-6 h-11">
-            <Link href="/">
-              <Search className="mr-2 h-4 w-4" /> Browse Bids
-            </Link>
-          </Button>
+          <Link
+            href="/"
+            className={buttonVariants({
+              className: "bg-slate-900 hover:bg-slate-800 text-white font-medium shadow-sm rounded-lg px-6 h-11",
+            })}
+          >
+            <Search className="mr-2 h-4 w-4" /> {t("saved.browseBids")}
+          </Link>
         </div>
       )}
     </div>
