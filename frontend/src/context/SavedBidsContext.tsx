@@ -1,30 +1,117 @@
 "use client";
 
-import React, { createContext, useContext, useState, ReactNode } from "react";
-import { MOCK_BIDS } from "@/lib/mock-data";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  ReactNode,
+} from "react";
+import {
+  fetchSavedBids,
+  removeSavedBid,
+  saveBid as saveBidRequest,
+} from "@/lib/api/bids";
+import type { Bid } from "@/lib/mock-data";
 
 interface SavedBidsContextType {
   savedBidIds: string[];
-  toggleSaveBid: (id: string) => void;
+  savedBids: Bid[];
+  isLoading: boolean;
+  error: string | null;
+  toggleSaveBid: (id: string) => Promise<void>;
   isSaved: (id: string) => boolean;
 }
 
 const SavedBidsContext = createContext<SavedBidsContextType | undefined>(undefined);
-const defaultSavedBidIds = MOCK_BIDS.filter(bid => bid.saved).map(bid => bid.id);
 
 export function SavedBidsProvider({ children }: { children: ReactNode }) {
-  const [savedBidIds, setSavedBidIds] = useState<string[]>(() => defaultSavedBidIds);
+  const [savedBidIds, setSavedBidIds] = useState<string[]>([]);
+  const [savedBids, setSavedBids] = useState<Bid[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const isMountedRef = useRef(false);
+  const operationQueueRef = useRef(Promise.resolve());
+  const savedBidIdsRef = useRef<string[]>([]);
+  const pendingBidIdsRef = useRef<Set<string>>(new Set());
 
-  const toggleSaveBid = (id: string) => {
-    setSavedBidIds(prev =>
-      prev.includes(id) ? prev.filter(bidId => bidId !== id) : [...prev, id]
-    );
-  };
+  const applySavedBidsResponse = useCallback((response: { savedBidIds: string[]; bids: Bid[] }) => {
+    savedBidIdsRef.current = response.savedBidIds;
 
-  const isSaved = (id: string) => savedBidIds.includes(id);
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    setSavedBidIds(response.savedBidIds);
+    setSavedBids(response.bids);
+    setError(null);
+  }, []);
+
+  const enqueueOperation = useCallback((operation: () => Promise<void>) => {
+    const nextOperation = operationQueueRef.current.then(operation, operation);
+    operationQueueRef.current = nextOperation.catch(() => undefined);
+
+    return nextOperation;
+  }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+
+    enqueueOperation(async () => {
+      try {
+        const response = await fetchSavedBids();
+        applySavedBidsResponse(response);
+      } catch (err) {
+        if (isMountedRef.current) {
+          setError(err instanceof Error ? err.message : "Failed to load saved bids");
+        }
+      } finally {
+        if (isMountedRef.current) {
+          setIsLoading(false);
+        }
+      }
+    });
+
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [applySavedBidsResponse, enqueueOperation]);
+
+  const toggleSaveBid = useCallback(
+    async (id: string) => {
+      if (pendingBidIdsRef.current.has(id)) {
+        return;
+      }
+
+      pendingBidIdsRef.current.add(id);
+
+      await enqueueOperation(async () => {
+        try {
+          const response = savedBidIdsRef.current.includes(id)
+            ? await removeSavedBid(id)
+            : await saveBidRequest(id);
+
+          applySavedBidsResponse(response);
+        } catch (err) {
+          if (isMountedRef.current) {
+            setError(err instanceof Error ? err.message : "Failed to update saved bids");
+          }
+        } finally {
+          pendingBidIdsRef.current.delete(id);
+        }
+      }).catch(() => undefined);
+    },
+    [applySavedBidsResponse, enqueueOperation],
+  );
+
+  const isSaved = useCallback((id: string) => savedBidIds.includes(id), [savedBidIds]);
 
   return (
-    <SavedBidsContext.Provider value={{ savedBidIds, toggleSaveBid, isSaved }}>
+    <SavedBidsContext.Provider
+      value={{ savedBidIds, savedBids, isLoading, error, toggleSaveBid, isSaved }}
+    >
       {children}
     </SavedBidsContext.Provider>
   );
