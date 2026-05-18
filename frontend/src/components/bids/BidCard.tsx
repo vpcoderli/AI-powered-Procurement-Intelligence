@@ -24,7 +24,7 @@ export function BidCard({ bid }: BidCardProps) {
         <CardContent className="p-6 flex flex-col h-full">
           <div className="flex justify-between items-start mb-4">
             <div className="flex flex-col gap-2 pr-10">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="outline" className="rounded-md font-medium border-slate-200 text-slate-600 bg-slate-50 px-2 py-0.5">
                   {bid.source}
                 </Badge>
@@ -47,7 +47,7 @@ export function BidCard({ bid }: BidCardProps) {
           </p>
 
           <div className="flex flex-wrap items-center justify-between gap-4 mt-auto pt-5 border-t border-slate-100">
-            <div className="flex items-center gap-4 text-sm">
+            <div className="flex flex-wrap items-center gap-4 text-sm">
               <div className="flex items-center gap-1.5 text-slate-500">
                 <Clock size={14} className="text-slate-400" />
                 <span>{t("bid.deadline")}: {bid.deadlineDate}</span>

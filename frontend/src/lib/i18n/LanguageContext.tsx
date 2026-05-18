@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useSyncExternalStore } from 'react';
 import { en, Dictionary } from './dictionaries/en';
 import { zh } from './dictionaries/zh';
 
@@ -15,25 +15,48 @@ interface LanguageContextType {
 
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
-export const LanguageProvider = ({ children }: { children: React.ReactNode }) => {
-  const [language, setLanguage] = useState<Language>('en');
-  const [mounted, setMounted] = useState(false);
+type DictionaryValue = string | { [key: string]: DictionaryValue };
 
-  useEffect(() => {
-    setMounted(true);
-    const savedLang = localStorage.getItem('language') as Language;
-    if (savedLang && (savedLang === 'en' || savedLang === 'zh')) {
-      setLanguage(savedLang);
-    } else {
-      const browserLang = navigator.language.startsWith('zh') ? 'zh' : 'en';
-      setLanguage(browserLang);
+const languageSubscribers = new Set<() => void>();
+
+const getBrowserLanguage = (): Language => {
+  if (typeof window === 'undefined') {
+    return 'en';
+  }
+
+  const savedLang = localStorage.getItem('language');
+  if (savedLang === 'en' || savedLang === 'zh') {
+    return savedLang;
+  }
+
+  return 'en';
+};
+
+const subscribeToLanguage = (callback: () => void) => {
+  if (typeof window === 'undefined') {
+    return () => {};
+  }
+
+  languageSubscribers.add(callback);
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === 'language') {
+      callback();
     }
-  }, []);
+  };
+
+  window.addEventListener('storage', onStorage);
+  return () => {
+    languageSubscribers.delete(callback);
+    window.removeEventListener('storage', onStorage);
+  };
+};
+
+export const LanguageProvider = ({ children }: { children: React.ReactNode }) => {
+  const language = useSyncExternalStore<Language>(subscribeToLanguage, getBrowserLanguage, () => 'en');
 
   const handleSetLanguage = (lang: Language) => {
-    setLanguage(lang);
     localStorage.setItem('language', lang);
-    // Optionally refresh to let server components catch up if we use cookies later
+    languageSubscribers.forEach(callback => callback());
   };
 
   const dict = language === 'en' ? en : zh;
@@ -41,22 +64,13 @@ export const LanguageProvider = ({ children }: { children: React.ReactNode }) =>
   // Simple dot notation accessor (e.g., t('common.dashboard'))
   const t = (key: string): string => {
     const keys = key.split('.');
-    let value: any = dict;
+    let value: DictionaryValue | undefined = dict as DictionaryValue;
     for (const k of keys) {
-      if (value === undefined) return key;
+      if (value === undefined || typeof value === 'string') return key;
       value = value[k];
     }
     return typeof value === 'string' ? value : key;
   };
-
-  // Prevent hydration mismatch by rendering nothing until mounted (or render English default safely)
-  if (!mounted) {
-    return (
-      <LanguageContext.Provider value={{ language: 'en', setLanguage: handleSetLanguage, t, dict: en }}>
-        {children}
-      </LanguageContext.Provider>
-    );
-  }
 
   return (
     <LanguageContext.Provider value={{ language, setLanguage: handleSetLanguage, t, dict }}>

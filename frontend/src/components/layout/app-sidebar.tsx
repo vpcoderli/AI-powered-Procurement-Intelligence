@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link"
 import { Home, Bookmark, Settings, Search } from "lucide-react"
 import { useLanguage } from "@/lib/i18n/LanguageContext"
 import {
@@ -59,10 +60,10 @@ export function AppSidebar() {
               {items.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton render={
-                    <a href={item.url}>
+                    <Link href={item.url}>
                       <item.icon />
                       <span>{item.title}</span>
-                    </a>
+                    </Link>
                   } />
                 </SidebarMenuItem>
               ))}

@@ -126,8 +126,8 @@ export default function Dashboard() {
   }, [deadlinePreset, issuerType, publishedPreset, searchQuery, selectedStates, sortBy]);
 
   return (
-    <div className="flex h-full gap-6">
-      <aside className="w-64 shrink-0 flex flex-col gap-6 overflow-y-auto pr-2 pb-8">
+    <div className="flex flex-col lg:flex-row h-full gap-6">
+      <aside className="w-full lg:w-64 shrink-0 flex flex-col gap-6 overflow-visible lg:overflow-y-auto pr-0 lg:pr-2 pb-4 lg:pb-8">
         <div>
           <h3 className="font-semibold text-sm text-slate-900 flex items-center gap-2 mb-3">
             <Filter size={16} />
@@ -245,7 +245,7 @@ export default function Dashboard() {
           </Button>
         </div>
 
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="text-sm text-slate-600 font-medium">
             {t("dashboard.resultsCount").replace("{count}", String(filteredBids.length))}
           </div>

@@ -1,13 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Search, BellRing, Plus, MoreHorizontal, Trash2, Edit } from "lucide-react";
+import { Search, BellRing, Plus, Trash2, Edit } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 
 // Mock saved searches data

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import React, { createContext, useContext, useState, ReactNode } from "react";
 import { MOCK_BIDS } from "@/lib/mock-data";
 
 interface SavedBidsContextType {
@@ -10,19 +10,13 @@ interface SavedBidsContextType {
 }
 
 const SavedBidsContext = createContext<SavedBidsContextType | undefined>(undefined);
+const defaultSavedBidIds = MOCK_BIDS.filter(bid => bid.saved).map(bid => bid.id);
 
 export function SavedBidsProvider({ children }: { children: ReactNode }) {
-  // Initialize from MOCK_BIDS that are already saved
-  const [savedBidIds, setSavedBidIds] = useState<string[]>([]);
-
-  useEffect(() => {
-    // Only run on client side to avoid hydration mismatch if we were using localStorage
-    const initialSaved = MOCK_BIDS.filter(bid => bid.saved).map(bid => bid.id);
-    setSavedBidIds(initialSaved);
-  }, []);
+  const [savedBidIds, setSavedBidIds] = useState<string[]>(() => defaultSavedBidIds);
 
   const toggleSaveBid = (id: string) => {
-    setSavedBidIds(prev => 
+    setSavedBidIds(prev =>
       prev.includes(id) ? prev.filter(bidId => bidId !== id) : [...prev, id]
     );
   };
