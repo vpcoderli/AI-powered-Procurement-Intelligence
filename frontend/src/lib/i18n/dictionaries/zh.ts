@@ -81,6 +81,9 @@ export const zh: Dictionary = {
     soonestDeadline: "截止日期最近",
     noResultsTitle: "当前筛选条件下没有匹配招标。",
     noResultsDescription: "请调整关键词或清空筛选以扩大搜索范围。",
+    errorTitle: "无法加载招标结果。",
+    errorDescription: "请重试，或清空筛选条件后重新搜索。",
+    retry: "重试",
   },
   bid: {
     save: "收藏",

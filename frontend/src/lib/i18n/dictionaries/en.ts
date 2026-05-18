@@ -79,6 +79,9 @@ export const en = {
     soonestDeadline: "Deadline: Soonest",
     noResultsTitle: "No bids match your current filters.",
     noResultsDescription: "Adjust your keywords or clear filters to broaden the search.",
+    errorTitle: "Unable to load bid results.",
+    errorDescription: "Try again, or clear filters and search again.",
+    retry: "Retry",
   },
   bid: {
     save: "Save",
