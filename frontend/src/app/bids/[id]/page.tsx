@@ -1,13 +1,15 @@
 "use client";
 
-import { cloneElement, isValidElement, type ComponentProps, type ReactElement } from "react";
+import { cloneElement, isValidElement, useEffect, useState, type ComponentProps, type ReactElement } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { MOCK_BIDS } from "@/lib/mock-data";
 import { useSavedBids } from "@/context/SavedBidsContext";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { Button as BaseButton, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ApiError, fetchBid } from "@/lib/api/bids";
+import type { Bid } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 import { ArrowLeft, Star, ExternalLink, Building2, Calendar, Clock, FileText, Paperclip, Download } from "lucide-react";
 
@@ -37,15 +39,94 @@ export default function BidDetailsPage() {
   const router = useRouter();
   const { isSaved, toggleSaveBid } = useSavedBids();
   const { t } = useLanguage();
+  const [bid, setBid] = useState<Bid | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
   
   // Handling the id parameter unwrapping per Next.js 15+ patterns if needed,
   // but for simple client components useParams() is fine.
   const bidId = typeof params?.id === 'string' ? params.id : Array.isArray(params?.id) ? params.id[0] : '';
   
-  const bid = MOCK_BIDS.find(b => b.id === bidId);
   const saved = isSaved(bidId);
 
-  if (!bid) {
+  useEffect(() => {
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled) return;
+
+      setBid(null);
+      setError(null);
+      setIsLoading(true);
+
+      if (!bidId) {
+        setIsLoading(false);
+        return;
+      }
+
+      fetchBid(bidId)
+        .then((response) => {
+          if (cancelled) return;
+          setBid(response.bid);
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setError(err instanceof Error ? err : new Error("Failed to load bid"));
+        })
+        .finally(() => {
+          if (cancelled) return;
+          setIsLoading(false);
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bidId]);
+
+  if (isLoading) {
+    return (
+      <div className="max-w-4xl mx-auto flex flex-col gap-8 pb-16 pt-4">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-10 w-36" />
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-10 w-28" />
+            <Skeleton className="h-10 w-32" />
+          </div>
+        </div>
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center gap-3">
+            <Skeleton className="h-7 w-24" />
+            <Skeleton className="h-5 w-48" />
+          </div>
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-3/4" />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 p-6 bg-white border border-slate-200 rounded-xl shadow-sm">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="flex flex-col gap-3">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-7 w-28" />
+            </div>
+          ))}
+        </div>
+        {Array.from({ length: 3 }).map((_, index) => (
+          <Card key={index} className="shadow-sm border-slate-200 rounded-xl overflow-hidden">
+            <CardHeader className="bg-white border-b border-slate-100 pb-4 pt-6 px-6">
+              <Skeleton className="h-6 w-48" />
+            </CardHeader>
+            <CardContent className="p-6 bg-slate-50/50 space-y-3">
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-5/6" />
+              <Skeleton className="h-4 w-2/3" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    );
+  }
+
+  if (!bid && error instanceof ApiError && error.code === "BID_NOT_FOUND") {
     return (
       <div className="flex flex-col items-center justify-center h-[50vh] gap-4">
         <h2 className="text-xl font-semibold text-gray-700">{t("detail.notFoundTitle")}</h2>
@@ -53,6 +134,20 @@ export default function BidDetailsPage() {
         <Button onClick={() => router.back()} variant="outline">
           <ArrowLeft className="mr-2 h-4 w-4" /> {t("detail.backToResults")}
         </Button>
+      </div>
+    );
+  }
+
+  if (!bid) {
+    return (
+      <div className="max-w-4xl mx-auto pt-4">
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center">
+          <p className="text-slate-900 font-semibold mb-2">{t("dashboard.errorTitle")}</p>
+          <p className="text-sm text-slate-500 mb-4">{t("dashboard.errorDescription")}</p>
+          <Button onClick={() => router.back()} variant="outline">
+            <ArrowLeft className="mr-2 h-4 w-4" /> {t("detail.backToResults")}
+          </Button>
+        </div>
       </div>
     );
   }
