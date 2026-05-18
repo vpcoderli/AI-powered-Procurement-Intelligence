@@ -1,6 +1,6 @@
 "use client";
 
-import { Settings, User, Bell, Shield, PaintBucket, Mail, Key } from "lucide-react";
+import { Settings, User, Bell, Shield, PaintBucket, Key } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
