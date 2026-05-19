@@ -33,24 +33,15 @@ import {
   type AdminDataSourcesResponse,
 } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import { stateCrawlerSourceIdForAdminSource } from "@/lib/state-crawler-sources";
 
 type LoadState =
   | { status: "loading" }
   | { status: "error" }
   | { status: "ready"; data: AdminDataSourcesResponse; logs: AdminCrawlerLog[] };
 
-const STATE_CRAWLER_SOURCE_IDS_BY_STATE: Record<string, string> = {
-  CA: "ca_caleprocure",
-  TX: "tx_esbd",
-  NY: "ny_contract_reporter",
-  FL: "fl_mfmp",
-  IL: "il_bidbuy",
-};
-
 function stateCrawlerSourceIdFor(source: AdminDataSource) {
-  if (source.issuerType !== "state") return null;
-
-  return STATE_CRAWLER_SOURCE_IDS_BY_STATE[source.stateCode] ?? null;
+  return stateCrawlerSourceIdForAdminSource(source);
 }
 
 function formatDate(value: string | null) {
