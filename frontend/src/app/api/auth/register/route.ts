@@ -7,6 +7,8 @@ import {
   registerUser,
 } from "@/server/auth/service";
 import { createSessionCookie } from "@/server/auth/session";
+import { mergeSavedBidIds } from "@/server/bids/repository";
+import { clearAnonymousUserCookie, resolveAnonymousUser } from "@/server/bids/user";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -43,8 +45,18 @@ export async function POST(request: Request) {
       password: body.password,
       displayName: body.displayName,
     });
+    const anonymousUser = resolveAnonymousUser(request);
+
+    if (!anonymousUser.isNewUser) {
+      await mergeSavedBidIds(db, anonymousUser.userId, result.user.id);
+    }
+
     const response = NextResponse.json({ user: result.user }, { status: 201 });
-    response.headers.set("Set-Cookie", createSessionCookie(result.sessionToken));
+    response.headers.append("Set-Cookie", createSessionCookie(result.sessionToken));
+
+    if (!anonymousUser.isNewUser) {
+      response.headers.append("Set-Cookie", clearAnonymousUserCookie());
+    }
 
     return response;
   } catch (error) {

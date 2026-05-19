@@ -1,49 +1,47 @@
 import { NextResponse } from "next/server";
+import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
 import * as bidService from "@/server/bids/service";
-import {
-  createAnonymousUserCookie,
-  resolveAnonymousUser,
-} from "@/server/bids/user";
+import { db } from "@/server/db/client";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
-function jsonWithUserCookie(
+function jsonWithPrincipalCookie(
   body: unknown,
-  user: ReturnType<typeof resolveAnonymousUser>,
+  principal: RequestPrincipal,
   init?: ResponseInit,
 ) {
   const response = NextResponse.json(body, init);
 
-  if (user.isNewUser) {
-    response.headers.set("Set-Cookie", createAnonymousUserCookie(user.userId));
+  if (principal.kind === "anonymous" && principal.anonymousCookie) {
+    response.headers.set("Set-Cookie", principal.anonymousCookie);
   }
 
   return response;
 }
 
-function internalError(error: unknown, user: ReturnType<typeof resolveAnonymousUser>) {
-  return jsonWithUserCookie(
+function internalError(error: unknown, principal: RequestPrincipal) {
+  return jsonWithPrincipalCookie(
     {
       error: {
         code: "INTERNAL_ERROR",
         message: error instanceof Error ? error.message : "Internal server error",
       },
     },
-    user,
+    principal,
     { status: 500 },
   );
 }
 
 export async function DELETE(request: Request, context: RouteContext) {
-  const user = resolveAnonymousUser(request);
+  const principal = await resolvePrincipal(db, request);
 
   try {
     const { id } = await context.params;
 
-    return jsonWithUserCookie(await bidService.removeSavedBid(user.userId, id), user);
+    return jsonWithPrincipalCookie(await bidService.removeSavedBid(principal.userId, id), principal);
   } catch (error) {
-    return internalError(error, user);
+    return internalError(error, principal);
   }
 }

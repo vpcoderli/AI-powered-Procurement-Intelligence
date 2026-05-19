@@ -1,17 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as principal from "@/server/auth/principal";
 import * as bidService from "@/server/bids/service";
 import { ANONYMOUS_USER_COOKIE_NAME } from "@/server/bids/user";
 import { DELETE } from "./route";
 
+vi.mock("@/server/db/client", () => ({ db: {} }));
+vi.mock("@/server/auth/principal", () => ({
+  resolvePrincipal: vi.fn(),
+}));
 vi.mock("@/server/bids/service", () => ({
   removeSavedBid: vi.fn(),
 }));
 
+const resolvePrincipal = vi.mocked(principal.resolvePrincipal);
 const removeSavedBid = vi.mocked(bidService.removeSavedBid);
 
 describe("DELETE /api/saved-bids/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resolvePrincipal.mockResolvedValue({ kind: "anonymous", userId: "anon_existing" });
   });
 
   it("removes a saved bid", async () => {
@@ -36,6 +43,7 @@ describe("DELETE /api/saved-bids/[id]", () => {
   });
 
   it("removes a saved bid for the current anonymous user only", async () => {
+    resolvePrincipal.mockResolvedValueOnce({ kind: "anonymous", userId: "anon_a" });
     removeSavedBid.mockResolvedValueOnce({
       savedBidIds: [],
       bids: [],
@@ -53,6 +61,11 @@ describe("DELETE /api/saved-bids/[id]", () => {
   });
 
   it("returns INTERNAL_ERROR when removing a saved bid fails", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "anonymous",
+      userId: "anon_new",
+      anonymousCookie: `${ANONYMOUS_USER_COOKIE_NAME}=anon_new; Path=/`,
+    });
     removeSavedBid.mockRejectedValueOnce(new Error("remove failed"));
 
     const response = await DELETE(new Request("http://localhost/api/saved-bids/2"), {
