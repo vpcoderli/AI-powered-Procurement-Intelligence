@@ -117,7 +117,7 @@ def test_fetch_state_unsupported_source_writes_failure_log(tmp_path):
             "--database",
             str(database),
             "--source",
-            "tx_esbd",
+            "ny_contract_reporter",
         ]
     )
 
@@ -127,11 +127,11 @@ def test_fetch_state_unsupported_source_writes_failure_log(tmp_path):
         "SELECT source, status, failed_count, error_code, error_message FROM crawler_logs"
     ).fetchone()
     assert log == (
-        "tx_esbd",
+        "ny_contract_reporter",
         "failure",
         1,
         "UnsupportedLiveSourceError",
-        "Live fetch is not implemented for source: tx_esbd",
+        "Live fetch is not implemented for source: ny_contract_reporter",
     )
 
 
