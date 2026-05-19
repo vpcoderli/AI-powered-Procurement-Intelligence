@@ -101,8 +101,18 @@ export async function runSamGovCrawlerNow() {
   return parseResponse<unknown>(response);
 }
 
-export async function runStateCrawlersNow() {
-  const response = await fetch("/api/crawler/state/run", { method: "POST" });
+export async function runStateCrawlersNow(sourceIds?: string[]) {
+  const hasSelectedSources = sourceIds && sourceIds.length > 0;
+  const response = await fetch(
+    "/api/crawler/state/run",
+    hasSelectedSources
+      ? {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sources: sourceIds }),
+        }
+      : { method: "POST" },
+  );
 
   return parseResponse<unknown>(response);
 }
