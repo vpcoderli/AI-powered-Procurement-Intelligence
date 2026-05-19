@@ -62,7 +62,10 @@ async function parseOptions(request: Request): Promise<{
 }> {
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.includes("application/json")) {
-    return { sources: DEFAULT_STATE_SOURCE_IDS, runnerOptions: {} };
+    return {
+      sources: DEFAULT_STATE_SOURCE_IDS,
+      runnerOptions: { allowFixtureFallback: true },
+    };
   }
 
   const body = (await request.json().catch(() => ({}))) as {
@@ -82,6 +85,7 @@ async function parseOptions(request: Request): Promise<{
     runnerOptions: {
       ...(typeof body.query === "string" && body.query ? { query: body.query } : {}),
       ...(typeof body.limit === "number" ? { limit: body.limit } : {}),
+      allowFixtureFallback: true,
     },
   };
 }
