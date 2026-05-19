@@ -140,4 +140,12 @@ describe("bid service", () => {
     expect((await removeSavedBid("anon_a", "2")).savedBidIds).toEqual([]);
   });
 
+  it("removes a saved bid for one user without affecting another user", async () => {
+    await saveBid("anon_a", "2");
+    await saveBid("anon_b", "2");
+
+    expect((await removeSavedBid("anon_a", "2")).savedBidIds).toEqual([]);
+    expect((await getSavedBids("anon_b")).savedBidIds).toEqual(["2"]);
+  });
+
 });
