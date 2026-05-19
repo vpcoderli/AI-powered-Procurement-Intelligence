@@ -145,6 +145,7 @@ def fetch_fl_mfmp_opportunities(
                 response = client.post(
                     FL_MFMP_SEARCH_URL,
                     json=payload,
+                    headers={"Accept": "application/json"},
                     timeout=timeout,
                 )
             except requests.RequestException as error:
