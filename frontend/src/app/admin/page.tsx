@@ -26,7 +26,7 @@ import {
 import {
   listAdminCrawlerLogs,
   listAdminDataSources,
-  runSamGovCrawlerNow,
+  runStateCrawlersNow,
   updateAdminDataSource,
   type AdminCrawlerLog,
   type AdminDataSource,
@@ -106,7 +106,6 @@ export default function AdminPage() {
   const summary = state.status === "ready" ? state.data.summary : null;
   const sources = state.status === "ready" ? state.data.sources : [];
   const logs = state.status === "ready" ? state.logs : [];
-  const samSource = sources.find((source) => source.label === "SAM.gov" || source.id.includes("sam"));
 
   const toggleSource = (source: AdminDataSource) => {
     setPendingSourceId(source.id);
@@ -142,7 +141,7 @@ export default function AdminPage() {
   const runNow = () => {
     setIsRunning(true);
     setRunMessage(null);
-    runSamGovCrawlerNow()
+    runStateCrawlersNow()
       .then(() => {
         setRunMessage(t("admin.runQueued"));
         load();
@@ -174,11 +173,11 @@ export default function AdminPage() {
           </Button>
           <Button
             onClick={runNow}
-            disabled={isRunning || !samSource?.isEnabled}
+            disabled={isRunning}
             className="h-10 rounded-lg bg-slate-900 text-white hover:bg-slate-800"
           >
             <Play size={16} />
-            {isRunning ? t("admin.running") : t("admin.runSamGov")}
+            {isRunning ? t("admin.running") : t("admin.runStateCrawlers")}
           </Button>
         </div>
       </div>

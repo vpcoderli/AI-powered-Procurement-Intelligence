@@ -100,3 +100,9 @@ export async function runSamGovCrawlerNow() {
 
   return parseResponse<unknown>(response);
 }
+
+export async function runStateCrawlersNow() {
+  const response = await fetch("/api/crawler/state/run", { method: "POST" });
+
+  return parseResponse<unknown>(response);
+}

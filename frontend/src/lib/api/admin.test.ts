@@ -4,6 +4,7 @@ import {
   listAdminCrawlerLogs,
   listAdminDataSources,
   runSamGovCrawlerNow,
+  runStateCrawlersNow,
   updateAdminDataSource,
 } from "./admin";
 
@@ -64,6 +65,14 @@ describe("admin API client", () => {
 
     await expect(runSamGovCrawlerNow()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/crawler/sam-gov/run", { method: "POST" });
+  });
+
+  it("runs state crawlers now", async () => {
+    const body = { status: "completed", results: [] };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(runStateCrawlersNow()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/crawler/state/run", { method: "POST" });
   });
 
   it("throws sanitized API errors", async () => {
