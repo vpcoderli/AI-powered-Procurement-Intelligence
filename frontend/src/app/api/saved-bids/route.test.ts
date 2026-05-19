@@ -118,7 +118,7 @@ describe("GET /api/saved-bids", () => {
     expect(response.status).toBe(500);
     expect(body.error).toEqual({
       code: "INTERNAL_ERROR",
-      message: "saved bids failed",
+      message: "Internal server error",
     });
     expect(response.headers.get("set-cookie")).toContain(`${ANONYMOUS_USER_COOKIE_NAME}=anon_`);
   });
@@ -287,7 +287,7 @@ describe("POST /api/saved-bids", () => {
     expect(response.status).toBe(500);
     expect(body.error).toEqual({
       code: "INTERNAL_ERROR",
-      message: "save failed",
+      message: "Internal server error",
     });
     expect(response.headers.get("set-cookie")).toContain(`${ANONYMOUS_USER_COOKIE_NAME}=anon_`);
   });

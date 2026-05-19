@@ -25,12 +25,12 @@ function jsonWithPrincipalCookie(
   return response;
 }
 
-function internalError(error: unknown, principal: RequestPrincipal) {
+function internalError(principal: RequestPrincipal) {
   return jsonWithPrincipalCookie(
     {
       error: {
         code: "INTERNAL_ERROR",
-        message: error instanceof Error ? error.message : "Internal server error",
+        message: "Internal server error",
       },
     },
     principal,
@@ -43,8 +43,8 @@ export async function GET(request: Request) {
 
   try {
     return jsonWithPrincipalCookie(await bidService.getSavedBids(principal.userId), principal);
-  } catch (error) {
-    return internalError(error, principal);
+  } catch {
+    return internalError(principal);
   }
 }
 
@@ -80,6 +80,6 @@ export async function POST(request: Request) {
       );
     }
 
-    return internalError(error, principal);
+    return internalError(principal);
   }
 }

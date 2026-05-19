@@ -21,12 +21,12 @@ function jsonWithPrincipalCookie(
   return response;
 }
 
-function internalError(error: unknown, principal: RequestPrincipal) {
+function internalError(principal: RequestPrincipal) {
   return jsonWithPrincipalCookie(
     {
       error: {
         code: "INTERNAL_ERROR",
-        message: error instanceof Error ? error.message : "Internal server error",
+        message: "Internal server error",
       },
     },
     principal,
@@ -41,7 +41,7 @@ export async function DELETE(request: Request, context: RouteContext) {
     const { id } = await context.params;
 
     return jsonWithPrincipalCookie(await bidService.removeSavedBid(principal.userId, id), principal);
-  } catch (error) {
-    return internalError(error, principal);
+  } catch {
+    return internalError(principal);
   }
 }

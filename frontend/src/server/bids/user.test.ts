@@ -67,5 +67,14 @@ describe("anonymous saved-bids user", () => {
     expect(createAnonymousUserCookie("anon_abc")).toContain("SameSite=Lax");
     expect(createAnonymousUserCookie("anon_abc")).toContain("Path=/");
     expect(createAnonymousUserCookie("anon_abc")).toContain("Max-Age=");
+    expect(createAnonymousUserCookie("anon_abc", { secure: true })).toContain("Secure");
+  });
+
+  it("formats the anonymous user clearing cookie", async () => {
+    const { clearAnonymousUserCookie } = await import("./user");
+
+    expect(clearAnonymousUserCookie()).toContain(`${ANONYMOUS_USER_COOKIE_NAME}=`);
+    expect(clearAnonymousUserCookie()).toContain("Max-Age=0");
+    expect(clearAnonymousUserCookie({ secure: true })).toContain("Secure");
   });
 });
