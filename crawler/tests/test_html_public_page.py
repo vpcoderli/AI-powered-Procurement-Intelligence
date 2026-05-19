@@ -190,6 +190,74 @@ def test_extract_table_rows_fills_missing_cell_values_with_empty_string():
     ]
 
 
+def test_extract_table_rows_finds_headers_after_title_row():
+    html = """
+    <table>
+      <tr><th colspan="3">Open Bid Solicitations</th></tr>
+      <tr>
+        <th>Bid Solicitation #</th>
+        <th>Description</th>
+        <th>Organization Name</th>
+      </tr>
+      <tr>
+        <td><a href="/bso/detail.xhtml?bidId=IL-2026-003">IL-2026-003</a></td>
+        <td>Data platform services</td>
+        <td>Illinois Department of Central Management Services</td>
+      </tr>
+    </table>
+    """
+
+    rows = extract_table_rows(
+        html,
+        required_headers=("Bid Solicitation #", "Description", "Organization Name"),
+    )
+
+    assert rows == [
+        {
+            "Bid Solicitation #": "IL-2026-003",
+            "Description": "Data platform services",
+            "Organization Name": "Illinois Department of Central Management Services",
+            "_links": {"Bid Solicitation #": "/bso/detail.xhtml?bidId=IL-2026-003"},
+        }
+    ]
+
+
+def test_extract_table_rows_preserves_outer_table_when_cell_contains_nested_table():
+    html = """
+    <table>
+      <tr>
+        <th>Bid Solicitation #</th>
+        <th>Description</th>
+        <th>Organization Name</th>
+      </tr>
+      <tr>
+        <td><a href="/bso/detail.xhtml?bidId=IL-2026-004">IL-2026-004</a></td>
+        <td>
+          Firewall services
+          <table>
+            <tr><td>Status</td><td>Open</td></tr>
+          </table>
+        </td>
+        <td>Illinois State Police</td>
+      </tr>
+    </table>
+    """
+
+    rows = extract_table_rows(
+        html,
+        required_headers=("Bid Solicitation #", "Description", "Organization Name"),
+    )
+
+    assert rows == [
+        {
+            "Bid Solicitation #": "IL-2026-004",
+            "Description": "Firewall services",
+            "Organization Name": "Illinois State Police",
+            "_links": {"Bid Solicitation #": "/bso/detail.xhtml?bidId=IL-2026-004"},
+        }
+    ]
+
+
 def test_extract_table_rows_raises_when_required_headers_are_missing():
     html = """
     <table>

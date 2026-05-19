@@ -59,46 +59,55 @@ class _TableParser(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.tables = []
-        self._table = None
-        self._row = None
-        self._cell = None
-        self._in_table = False
+        self._table_stack = []
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         if tag == "table":
-            self._in_table = True
-            self._table = []
-        elif self._in_table and tag == "tr":
-            self._row = []
-        elif self._in_table and tag in ("th", "td"):
-            self._cell = {"text": [], "links": []}
-        elif self._cell is not None and tag == "a":
+            self._table_stack.append({"rows": [], "row": None, "cell": None})
+            return
+
+        if not self._table_stack:
+            return
+
+        current = self._table_stack[-1]
+        if tag == "tr":
+            current["row"] = []
+        elif tag in ("th", "td"):
+            current["cell"] = {"text": [], "links": []}
+        elif current["cell"] is not None and tag == "a":
             href = attrs.get("href")
             if href:
-                self._cell["links"].append(href)
+                current["cell"]["links"].append(href)
 
     def handle_data(self, data):
-        if self._cell is not None:
-            self._cell["text"].append(data)
+        if not self._table_stack:
+            return
+
+        current = self._table_stack[-1]
+        if current["cell"] is not None:
+            current["cell"]["text"].append(data)
 
     def handle_endtag(self, tag):
-        if self._in_table and tag in ("th", "td") and self._cell is not None:
-            self._row.append(
+        if not self._table_stack:
+            return
+
+        current = self._table_stack[-1]
+        if tag in ("th", "td") and current["cell"] is not None:
+            current["row"].append(
                 {
-                    "text": normalize_space("".join(self._cell["text"])),
-                    "links": list(self._cell["links"]),
+                    "text": normalize_space("".join(current["cell"]["text"])),
+                    "links": list(current["cell"]["links"]),
                 }
             )
-            self._cell = None
-        elif self._in_table and tag == "tr" and self._row is not None:
-            if self._row:
-                self._table.append(self._row)
-            self._row = None
-        elif tag == "table" and self._in_table:
-            self.tables.append(self._table or [])
-            self._table = None
-            self._in_table = False
+            current["cell"] = None
+        elif tag == "tr" and current["row"] is not None:
+            if current["row"]:
+                current["rows"].append(current["row"])
+            current["row"] = None
+        elif tag == "table":
+            finished = self._table_stack.pop()
+            self.tables.append(finished["rows"])
 
 
 def extract_table_rows(html, required_headers):
@@ -110,14 +119,23 @@ def extract_table_rows(html, required_headers):
     for table in parser.tables:
         if not table:
             continue
-        headers = [cell["text"] for cell in table[0]]
-        missing = [header for header in required if header not in headers]
-        if missing:
-            last_missing = missing
+        header_index = None
+        headers = []
+        for index, row in enumerate(table):
+            row_headers = [cell["text"] for cell in row]
+            missing = [header for header in required if header not in row_headers]
+            if missing:
+                if len(missing) < len(last_missing):
+                    last_missing = missing
+                continue
+            header_index = index
+            headers = row_headers
+            break
+        if header_index is None:
             continue
 
         rows = []
-        for row in table[1:]:
+        for row in table[header_index + 1:]:
             values = {}
             links = {}
             for index, header in enumerate(headers):
