@@ -36,11 +36,29 @@ describe("search alert matcher", () => {
     });
 
     const row = testDb.db.select().from(alerts).where(eq(alerts.id, "alert_cloud")).get();
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       evaluatedAlerts: 1,
       matchedAlerts: 1,
       updatedAlerts: 1,
+      matches: [
+        expect.objectContaining({
+          alertId: "alert_cloud",
+          userId: "anon_seed",
+          alertName: "Cloud alerts",
+          frequency: "daily",
+          notificationChannel: "email",
+          bidIds: expect.arrayContaining(["1"]),
+          query: expect.objectContaining({ q: "cloud", issuerType: "federal", sort: "relevance" }),
+        }),
+      ],
     });
+    expect(result.matches[0]?.bids[0]).toEqual(
+      expect.objectContaining({
+        id: "1",
+        title: expect.any(String),
+        sourceUrl: expect.any(String),
+      }),
+    );
     expect(row?.lastMatchedAt).toBe("2026-05-19T12:00:00.000Z");
     expect(row?.updatedAt).toBe("2026-05-19T12:00:00.000Z");
   });
@@ -83,6 +101,7 @@ describe("search alert matcher", () => {
       evaluatedAlerts: 1,
       matchedAlerts: 0,
       updatedAlerts: 0,
+      matches: [],
     });
     expect(disabled?.lastMatchedAt).toBeNull();
     expect(noMatch?.lastMatchedAt).toBeNull();
