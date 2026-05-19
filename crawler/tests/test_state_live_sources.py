@@ -15,6 +15,7 @@ from apsi_crawler.spiders.ca_caleprocure import (
     fetch_ca_caleprocure_opportunities,
 )
 from apsi_crawler.spiders.ny_contract_reporter import (
+    NyContractReporterError,
     fetch_ny_contract_reporter_opportunities,
 )
 from apsi_crawler.spiders.tx_esbd import (
@@ -73,6 +74,221 @@ def test_registry_reports_unsupported_live_state_sources():
         get_live_fetcher("fl_mfmp")
 
     assert str(error.value) == "Live fetch is not implemented for source: fl_mfmp"
+
+
+def test_fetch_ny_contract_reporter_opportunities_normalizes_live_response():
+    fixture_path = FIXTURES_DIR / "ny_contract_reporter_live_response.json"
+    with fixture_path.open() as fixture:
+        payload = json.load(fixture)
+    session = FakeSession(FakeResponse(payload=payload))
+
+    bids = fetch_ny_contract_reporter_opportunities(
+        get_source("ny_contract_reporter"),
+        query="records",
+        limit=5,
+        session=session,
+        timeout=10,
+    )
+
+    assert session.calls[0]["url"] == "https://www.nyscr.ny.gov/home/contracts"
+    assert session.calls[0]["params"] == {"query": "records", "limit": 5}
+    assert session.calls[0]["timeout"] == 10
+    assert len(bids) == 1
+    bid = bids[0]
+    assert bid["dedupe_key"] == "ny_contract_reporter:NYSCR-LIVE-2026-310"
+    assert bid["title"] == "Digital records archive"
+    assert bid["issuer_name"] == "New York State Archives"
+    assert bid["issuer_type"] == "state"
+    assert bid["state_code"] == "NY"
+    assert (
+        bid["source_url"]
+        == "https://www.nyscr.ny.gov/adsOpen.cfm?ID=NYSCR-LIVE-2026-310"
+    )
+
+
+def test_fetch_ny_contract_reporter_opportunities_raises_on_unexpected_payload_shape():
+    session = FakeSession(FakeResponse(payload={"error": "changed"}))
+
+    with pytest.raises(NyContractReporterError) as error:
+        fetch_ny_contract_reporter_opportunities(
+            get_source("ny_contract_reporter"),
+            query="records",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == (
+        "NY Contract Reporter response did not contain opportunities or results"
+    )
+
+
+def test_fetch_ny_contract_reporter_opportunities_raises_when_record_is_not_object():
+    session = FakeSession(FakeResponse(payload={"opportunities": [None]}))
+
+    with pytest.raises(NyContractReporterError) as error:
+        fetch_ny_contract_reporter_opportunities(
+            get_source("ny_contract_reporter"),
+            query="records",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "NY Contract Reporter record was not an object"
+
+
+def test_fetch_ny_contract_reporter_opportunities_raises_when_record_missing_source_id():
+    session = FakeSession(FakeResponse(payload={"opportunities": [{"title": "Records"}]}))
+
+    with pytest.raises(NyContractReporterError) as error:
+        fetch_ny_contract_reporter_opportunities(
+            get_source("ny_contract_reporter"),
+            query="records",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "NY Contract Reporter record is missing source id"
+
+
+def test_fetch_ny_contract_reporter_opportunities_preserves_normalized_aliases():
+    session = FakeSession(
+        FakeResponse(
+            payload=[
+                {
+                    "source_bid_id": "NY-NORMALIZED-001",
+                    "title": "Normalized records services",
+                    "source_url": "https://www.nyscr.ny.gov/adsOpen.cfm?ID=NY-NORMALIZED-001",
+                    "published_date": "2026-05-18",
+                    "deadline_date": "2026-06-10",
+                    "issuer_name": "New York State Archives",
+                }
+            ]
+        )
+    )
+
+    bids = fetch_ny_contract_reporter_opportunities(
+        get_source("ny_contract_reporter"),
+        query="records",
+        limit=5,
+        session=session,
+        timeout=10,
+    )
+
+    assert len(bids) == 1
+    bid = bids[0]
+    assert bid["source_bid_id"] == "NY-NORMALIZED-001"
+    assert bid["dedupe_key"] == "ny_contract_reporter:NY-NORMALIZED-001"
+    assert bid["source_url"] == "https://www.nyscr.ny.gov/adsOpen.cfm?ID=NY-NORMALIZED-001"
+    assert bid["published_date"] == "2026-05-18"
+    assert bid["deadline_date"] == "2026-06-10"
+    assert bid["issuer_name"] == "New York State Archives"
+
+
+def test_fetch_ny_contract_reporter_opportunities_uses_ny_title_and_category_precedence():
+    session = FakeSession(
+        FakeResponse(
+            payload=[
+                {
+                    "source_bid_id": "NY-ALIAS-001",
+                    "title": "Title wins",
+                    "name": "Name loses",
+                    "contractTitle": "Contract title loses",
+                    "category": "Category wins",
+                    "type": "Type loses",
+                    "classification": "Classification loses",
+                },
+                {
+                    "source_bid_id": "NY-ALIAS-002",
+                    "name": "Name wins",
+                    "contractTitle": "Contract title loses",
+                    "type": "Type wins",
+                    "classification": "Classification loses",
+                },
+                {
+                    "source_bid_id": "NY-ALIAS-003",
+                    "contractTitle": "Contract title fallback",
+                    "classification": "Classification fallback",
+                },
+            ]
+        )
+    )
+
+    bids = fetch_ny_contract_reporter_opportunities(
+        get_source("ny_contract_reporter"),
+        query="records",
+        limit=5,
+        session=session,
+        timeout=10,
+    )
+
+    assert bids[0]["title"] == "Title wins"
+    assert bids[0]["original_category"] == "Category wins"
+    assert bids[1]["title"] == "Name wins"
+    assert bids[1]["original_category"] == "Type wins"
+    assert bids[2]["title"] == "Contract title fallback"
+    assert bids[2]["original_category"] == "Classification fallback"
+
+
+def test_fetch_ny_contract_reporter_opportunities_raises_on_http_error():
+    session = FakeSession(FakeResponse(status_code=503, text="maintenance"))
+
+    with pytest.raises(NyContractReporterError) as error:
+        fetch_ny_contract_reporter_opportunities(
+            get_source("ny_contract_reporter"),
+            query="records",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == (
+        "NY Contract Reporter request failed with status 503: maintenance"
+    )
+
+
+def test_fetch_ny_contract_reporter_opportunities_raises_on_invalid_http_json():
+    session = FakeSession(FakeResponse(json_error=ValueError("not json")))
+
+    with pytest.raises(NyContractReporterError) as error:
+        fetch_ny_contract_reporter_opportunities(
+            get_source("ny_contract_reporter"),
+            query="records",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "NY Contract Reporter response was not valid JSON"
+
+
+def test_fetch_ny_contract_reporter_opportunities_wraps_request_errors():
+    session = FakeSession(requests.Timeout("slow"))
+
+    with pytest.raises(NyContractReporterError) as error:
+        fetch_ny_contract_reporter_opportunities(
+            get_source("ny_contract_reporter"),
+            query="records",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "NY Contract Reporter request failed: slow"
+
+
+def test_fetch_ny_contract_reporter_opportunities_replays_adapter_fixture_json():
+    bids = fetch_ny_contract_reporter_opportunities(
+        get_source("ny_contract_reporter"),
+        query="records",
+        limit=5,
+        fixture_json=str(FIXTURES_DIR / "ny_contract_reporter_live_response.json"),
+    )
+
+    assert len(bids) == 1
+    assert bids[0]["dedupe_key"] == "ny_contract_reporter:NYSCR-LIVE-2026-310"
 
 
 def test_fetch_ca_caleprocure_opportunities_normalizes_live_response():
