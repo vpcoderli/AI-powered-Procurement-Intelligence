@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/layout/app-sidebar";
@@ -7,8 +6,6 @@ import { AuthProvider } from "@/context/AuthContext";
 import { SavedBidsProvider } from "@/context/SavedBidsContext";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 import { LanguageSwitcher } from "@/components/i18n/LanguageSwitcher";
-
-const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "APSi - AI-powered Procurement Intelligence",
@@ -22,7 +19,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.className} antialiased bg-slate-50 text-slate-900 selection:bg-slate-200 selection:text-slate-900`}>
+      <body className="antialiased bg-slate-50 text-slate-900 selection:bg-slate-200 selection:text-slate-900">
         <LanguageProvider>
           <AuthProvider>
             <SavedBidsProvider>
