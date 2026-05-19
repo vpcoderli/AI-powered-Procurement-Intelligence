@@ -13,6 +13,11 @@
 # testing
 /coverage
 
+# local runtime state
+/data/*.json
+/data/*.tmp
+!/data/.gitkeep
+
 # next.js
 /.next/
 /out/
