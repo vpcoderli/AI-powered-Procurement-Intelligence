@@ -1,22 +1,37 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { resetBidRepositoryForTests } from "@/server/bids/repository";
+import { MOCK_BIDS } from "@/lib/mock-data";
 import * as bidService from "@/server/bids/service";
 import { BidNotFoundError } from "@/server/bids/types";
 import { ANONYMOUS_USER_COOKIE_NAME } from "@/server/bids/user";
 import { GET, POST } from "./route";
 
+vi.mock("@/server/bids/service", () => ({
+  getSavedBids: vi.fn(),
+  saveBid: vi.fn(),
+}));
+
+const getSavedBids = vi.mocked(bidService.getSavedBids);
+const saveBid = vi.mocked(bidService.saveBid);
+
+function cloneBid(index: number) {
+  const bid = MOCK_BIDS[index];
+
+  return {
+    ...bid,
+    attachments: [...bid.attachments],
+    tags: [...bid.tags],
+  };
+}
+
 describe("GET /api/saved-bids", () => {
   beforeEach(() => {
-    resetBidRepositoryForTests();
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   it("returns saved bids", async () => {
-    const bid = bidService.getBidById("2");
-    if (!bid) throw new Error("Expected mock bid 2 to exist");
-    vi.spyOn(bidService, "getSavedBids").mockResolvedValueOnce({
+    getSavedBids.mockResolvedValueOnce({
       savedBidIds: ["2"],
-      bids: [bid],
+      bids: [cloneBid(1)],
     });
 
     const response = await GET(
@@ -29,11 +44,11 @@ describe("GET /api/saved-bids", () => {
     expect(response.status).toBe(200);
     expect(body.savedBidIds).toEqual(["2"]);
     expect(body.bids[0].title).toBe("Statewide Broadband Infrastructure Upgrade");
-    expect(bidService.getSavedBids).toHaveBeenCalledWith("anon_existing");
+    expect(getSavedBids).toHaveBeenCalledWith("anon_existing");
   });
 
   it("sets an anonymous user cookie when one is missing", async () => {
-    vi.spyOn(bidService, "getSavedBids").mockResolvedValueOnce({
+    getSavedBids.mockResolvedValueOnce({
       savedBidIds: [],
       bids: [],
     });
@@ -44,7 +59,7 @@ describe("GET /api/saved-bids", () => {
   });
 
   it("does not reset the cookie when a valid anonymous user exists", async () => {
-    vi.spyOn(bidService, "getSavedBids").mockResolvedValueOnce({
+    getSavedBids.mockResolvedValueOnce({
       savedBidIds: [],
       bids: [],
     });
@@ -59,7 +74,7 @@ describe("GET /api/saved-bids", () => {
   });
 
   it("returns INTERNAL_ERROR when fetching saved bids fails", async () => {
-    vi.spyOn(bidService, "getSavedBids").mockRejectedValueOnce(new Error("saved bids failed"));
+    getSavedBids.mockRejectedValueOnce(new Error("saved bids failed"));
 
     const response = await GET(new Request("http://localhost/api/saved-bids"));
     const body = await response.json();
@@ -75,16 +90,13 @@ describe("GET /api/saved-bids", () => {
 
 describe("POST /api/saved-bids", () => {
   beforeEach(() => {
-    resetBidRepositoryForTests();
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   it("saves an existing bid", async () => {
-    const bid = bidService.getBidById("1");
-    if (!bid) throw new Error("Expected mock bid 1 to exist");
-    vi.spyOn(bidService, "saveBid").mockResolvedValueOnce({
+    saveBid.mockResolvedValueOnce({
       savedBidIds: ["1"],
-      bids: [bid],
+      bids: [cloneBid(0)],
     });
 
     const response = await POST(
@@ -98,20 +110,18 @@ describe("POST /api/saved-bids", () => {
 
     expect(response.status).toBe(200);
     expect(body.savedBidIds).toEqual(["1"]);
-    expect(bidService.saveBid).toHaveBeenCalledWith("anon_existing", "1");
+    expect(saveBid).toHaveBeenCalledWith("anon_existing", "1");
   });
 
   it("persists saved bids for the same anonymous user only", async () => {
-    const bid = bidService.getBidById("1");
-    if (!bid) throw new Error("Expected mock bid 1 to exist");
-    vi.spyOn(bidService, "saveBid").mockResolvedValueOnce({
+    saveBid.mockResolvedValueOnce({
       savedBidIds: ["1"],
-      bids: [bid],
+      bids: [cloneBid(0)],
     });
-    vi.spyOn(bidService, "getSavedBids")
+    getSavedBids
       .mockResolvedValueOnce({
         savedBidIds: ["1"],
-        bids: [bid],
+        bids: [cloneBid(0)],
       })
       .mockResolvedValueOnce({
         savedBidIds: [],
@@ -139,9 +149,9 @@ describe("POST /api/saved-bids", () => {
 
     expect((await sameUserResponse.json()).savedBidIds).toEqual(["1"]);
     expect((await otherUserResponse.json()).savedBidIds).toEqual([]);
-    expect(bidService.saveBid).toHaveBeenCalledWith("anon_a", "1");
-    expect(bidService.getSavedBids).toHaveBeenNthCalledWith(1, "anon_a");
-    expect(bidService.getSavedBids).toHaveBeenNthCalledWith(2, "anon_b");
+    expect(saveBid).toHaveBeenCalledWith("anon_a", "1");
+    expect(getSavedBids).toHaveBeenNthCalledWith(1, "anon_a");
+    expect(getSavedBids).toHaveBeenNthCalledWith(2, "anon_b");
   });
 
   it("returns INVALID_REQUEST when bidId is missing", async () => {
@@ -197,7 +207,7 @@ describe("POST /api/saved-bids", () => {
   });
 
   it("returns BID_NOT_FOUND when bidId does not exist", async () => {
-    vi.spyOn(bidService, "saveBid").mockRejectedValueOnce(new BidNotFoundError());
+    saveBid.mockRejectedValueOnce(new BidNotFoundError());
 
     const response = await POST(
       new Request("http://localhost/api/saved-bids", {
@@ -213,7 +223,7 @@ describe("POST /api/saved-bids", () => {
   });
 
   it("returns INTERNAL_ERROR when saving a bid fails unexpectedly", async () => {
-    vi.spyOn(bidService, "saveBid").mockRejectedValueOnce(new Error("save failed"));
+    saveBid.mockRejectedValueOnce(new Error("save failed"));
 
     const response = await POST(
       new Request("http://localhost/api/saved-bids", {

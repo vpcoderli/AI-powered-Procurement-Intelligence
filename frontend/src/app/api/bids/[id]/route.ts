@@ -20,7 +20,7 @@ function internalError(error: unknown) {
 export async function GET(_request: Request, context: RouteContext) {
   try {
     const { id } = await context.params;
-    const bid = bidService.getBidById(id);
+    const bid = await bidService.getBidById(id);
 
     if (!bid) {
       return NextResponse.json(

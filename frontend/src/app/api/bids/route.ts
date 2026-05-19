@@ -5,8 +5,8 @@ import type {
   BidQuery,
   DeadlinePreset,
   PublishedPreset,
+  SortOption,
 } from "@/server/bids/types";
-import type { SortOption } from "@/lib/mock-data";
 
 const issuerTypes: ApiIssuerType[] = ["all", "federal", "state"];
 const deadlinePresets: DeadlinePreset[] = ["any", "next7", "next30"];
@@ -51,7 +51,7 @@ export async function GET(request: Request) {
       sort: oneOf(firstParam(searchParams, "sort"), sortOptions),
     };
 
-    return NextResponse.json(bidService.queryBids(query));
+    return NextResponse.json(await bidService.queryBids(query));
   } catch (error) {
     return internalError(error);
   }

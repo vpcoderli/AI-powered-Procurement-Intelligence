@@ -1,8 +1,9 @@
-import type { Bid, DatePreset, IssuerType, SortOption } from "@/lib/mock-data";
+import type { Bid, IssuerType } from "./domain";
 
+export type SortOption = "relevance" | "newest" | "deadline";
 export type ApiIssuerType = "all" | IssuerType;
-export type DeadlinePreset = Extract<DatePreset, "any" | "next7" | "next30">;
-export type PublishedPreset = Extract<DatePreset, "any" | "last24" | "last7">;
+export type DeadlinePreset = "any" | "next7" | "next30";
+export type PublishedPreset = "any" | "last24" | "last7";
 
 export interface BidQuery {
   q?: string;
