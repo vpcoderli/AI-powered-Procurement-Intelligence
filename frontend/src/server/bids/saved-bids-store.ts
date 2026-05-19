@@ -18,7 +18,7 @@ export class SavedBidsStoreCorruptError extends Error {
 }
 
 // Runtime data lives under the app working directory in local deployments.
-const DEFAULT_FILE_PATH = path.join(process.cwd(), "data", "saved-bids.json");
+const DEFAULT_FILE_PATH = path.join("data", "saved-bids.json");
 const EMPTY_STORE: SavedBidsStoreData = { users: {} };
 
 function isStringArray(value: unknown): value is string[] {
@@ -59,18 +59,22 @@ export function createSavedBidsStore(options: SavedBidsStoreOptions = {}) {
   }
 
   async function writeStore(data: SavedBidsStoreData) {
-    await mkdir(path.dirname(filePath), { recursive: true });
+    await mkdir(path.dirname(/*turbopackIgnore: true*/ filePath), { recursive: true });
 
     const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-    await writeFile(temporaryPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
-    await rename(temporaryPath, filePath);
+    await writeFile(
+      /*turbopackIgnore: true*/ temporaryPath,
+      `${JSON.stringify(data, null, 2)}\n`,
+      "utf8",
+    );
+    await rename(/*turbopackIgnore: true*/ temporaryPath, /*turbopackIgnore: true*/ filePath);
   }
 
   async function readStore(): Promise<SavedBidsStoreData> {
     let raw: string;
 
     try {
-      raw = await readFile(filePath, "utf8");
+      raw = await readFile(/*turbopackIgnore: true*/ filePath, "utf8");
     } catch (error) {
       if (
         error &&
