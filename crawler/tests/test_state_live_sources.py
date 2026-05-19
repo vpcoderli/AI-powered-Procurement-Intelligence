@@ -45,6 +45,7 @@ class FakeSession:
     def __init__(self, response):
         self.response = response
         self.calls = []
+        self.closed = False
 
     def get(self, url, params=None, timeout=None):
         self.calls.append({"url": url, "params": params, "timeout": timeout})
@@ -59,6 +60,9 @@ class FakeSession:
         if isinstance(self.response, Exception):
             raise self.response
         return self.response
+
+    def close(self):
+        self.closed = True
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -887,6 +891,7 @@ def test_fetch_fl_mfmp_opportunities_replays_adapter_fixture_json_without_sessio
     assert len(bids) == 1
     assert bids[0]["dedupe_key"] == "fl_mfmp:FL-MFMP-LIVE-2026-42"
     assert session.calls == []
+    assert session.closed is False
 
 
 def test_fetch_fl_mfmp_opportunities_raises_on_invalid_fixture_json(tmp_path):
@@ -900,3 +905,36 @@ def test_fetch_fl_mfmp_opportunities_raises_on_invalid_fixture_json(tmp_path):
         )
 
     assert str(error.value) == "MyFloridaMarketPlace response was not valid JSON"
+
+
+def test_fetch_fl_mfmp_opportunities_does_not_close_injected_session():
+    session = FakeSession(FakeResponse(payload=[]))
+
+    bids = fetch_fl_mfmp_opportunities(
+        get_source("fl_mfmp"),
+        query="communications",
+        limit=5,
+        session=session,
+        timeout=10,
+    )
+
+    assert bids == []
+    assert session.closed is False
+
+
+def test_fetch_fl_mfmp_opportunities_closes_owned_session(monkeypatch):
+    session = FakeSession(FakeResponse(payload=[]))
+    monkeypatch.setattr(
+        "apsi_crawler.spiders.fl_mfmp.requests.Session",
+        lambda: session,
+    )
+
+    bids = fetch_fl_mfmp_opportunities(
+        get_source("fl_mfmp"),
+        query="communications",
+        limit=5,
+        timeout=10,
+    )
+
+    assert bids == []
+    assert session.closed is True
