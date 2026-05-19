@@ -1,25 +1,20 @@
 import { createDatabase } from "../src/server/db/client";
 import { runMigrations } from "../src/server/db/migrate";
-import { runCrawlerSourceOnce } from "../src/server/crawler/orchestrator";
-import { runSamGovCrawler } from "../src/server/crawler/sam-gov-runner";
-import { sendMatchedAlertNotifications } from "../src/server/notifications/service";
-import { matchEnabledSearchAlerts } from "../src/server/search-alerts/matcher";
+import { parseStateCrawlerLimit, runConfiguredCrawlerSourcesOnce } from "../src/server/crawler/configured-runner";
 
 function owner() {
   return process.env.CRAWLER_OWNER ?? `crawler-once:${process.pid}`;
 }
 
-export async function runSamGovCrawlerOnce() {
+export async function runCrawlerOnce() {
   const db = createDatabase();
   runMigrations(db);
 
   try {
-    return await runCrawlerSourceOnce(db, {
-      source: "SAM.gov",
+    return await runConfiguredCrawlerSourcesOnce({
+      database: db,
       owner: owner(),
-      runner: runSamGovCrawler,
-      matcher: () => matchEnabledSearchAlerts(db),
-      notifier: ({ alertMatching }) => sendMatchedAlertNotifications(db, alertMatching),
+      stateRunnerOptions: { limit: parseStateCrawlerLimit() },
     });
   } finally {
     db.$client.close();
@@ -27,10 +22,10 @@ export async function runSamGovCrawlerOnce() {
 }
 
 async function main() {
-  const result = await runSamGovCrawlerOnce();
-  console.log(JSON.stringify(result, null, 2));
+  const results = await runCrawlerOnce();
+  console.log(JSON.stringify(results, null, 2));
 
-  if (result.status === "failure") {
+  if (results.some((result) => result.status === "failure")) {
     process.exitCode = 1;
   }
 }
