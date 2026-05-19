@@ -5,7 +5,10 @@ import requests
 from apsi_crawler.normalizers.state_bids import normalize_state_opportunity
 
 
-FL_MFMP_SEARCH_URL = "https://vendor.myfloridamarketplace.com/search/bids"
+FL_MFMP_SEARCH_URL = "https://vendor.myfloridamarketplace.com/mfmp/pub/search/bids"
+FL_MFMP_DETAIL_URL_TEMPLATE = (
+    "https://vendor.myfloridamarketplace.com/search/bids/detail/{source_bid_id}"
+)
 
 
 class FlMfmpError(Exception):
@@ -41,9 +44,11 @@ def _normalize_record(record):
         record,
         (
             "source_bid_id",
+            "advertisementId",
             "id",
             "advertisement_id",
-            "advertisementId",
+            "adNumber",
+            "agencyAdNumber",
             "bid_id",
             "solicitation_id",
         ),
@@ -55,7 +60,13 @@ def _normalize_record(record):
         "source_bid_id": source_bid_id,
         "title": _first_present(
             record,
-            ("title", "name", "advertisementTitle", "solicitationTitle"),
+            (
+                "title",
+                "uniqueName",
+                "name",
+                "advertisementTitle",
+                "solicitationTitle",
+            ),
         ),
         "description": _first_present(record, ("description", "summary")),
         "original_category": _first_present(
@@ -64,17 +75,32 @@ def _normalize_record(record):
         ),
         "published_date": _first_present(
             record,
-            ("published_date", "postedDate", "posted_date", "advertisementDate"),
+            (
+                "published_date",
+                "publishDate",
+                "postedDate",
+                "posted_date",
+                "advertisementDate",
+                "openDate",
+            ),
         ),
         "deadline_date": _first_present(
             record,
-            ("deadline_date", "dueDate", "due_date", "response_deadline", "endDate"),
+            (
+                "deadline_date",
+                "closeDate",
+                "dueDate",
+                "due_date",
+                "response_deadline",
+                "endDate",
+            ),
         ),
         "issuer_name": _first_present(
             record,
-            ("issuer_name", "agency", "department", "buyer"),
+            ("issuer_name", "agency", "organization", "department", "buyer"),
         ),
-        "source_url": _first_present(record, ("source_url", "url", "link")),
+        "source_url": _first_present(record, ("source_url", "url", "link"))
+        or FL_MFMP_DETAIL_URL_TEMPLATE.format(source_bid_id=source_bid_id),
     }
 
 
@@ -93,12 +119,27 @@ def fetch_fl_mfmp_opportunities(
     else:
         client = session or requests.Session()
         close_client = session is None
-        params = {"query": query or "", "limit": limit_count}
+        payload = {
+            "pageSize": limit_count,
+            "type": [],
+            "status": [],
+            "agency": [],
+            "adNumber": "",
+            "agencyAdvertisementNumber": "",
+            "title": query or "",
+            "publishedDate": "",
+            "openDate": "",
+            "endDate": "",
+            "commodityCodes": [],
+            "intendsToParticipate": "",
+            "assignee": "",
+            "page": 1,
+        }
         try:
             try:
-                response = client.get(
+                response = client.post(
                     FL_MFMP_SEARCH_URL,
-                    params=params,
+                    json=payload,
                     timeout=timeout,
                 )
             except requests.RequestException as error:
