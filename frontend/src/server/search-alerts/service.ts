@@ -73,7 +73,7 @@ function parseStates(value: string | null) {
   return [];
 }
 
-function toSearchAlert(row: typeof alerts.$inferSelect): SearchAlert {
+export function toSearchAlert(row: typeof alerts.$inferSelect): SearchAlert {
   const storedQuery = parseStoredQuery(row.query);
   const query: BidQuery = {
     q: storedQuery.q ?? "",
