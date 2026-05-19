@@ -1,5 +1,6 @@
 import { STATE_FILTERS, type Bid } from "@/lib/mock-data";
-import { getSavedBidIds, listBids, replaceSavedBidIds } from "./repository";
+import { getBidByIdFromRepository, listBids } from "./repository";
+import { savedBidsStore } from "./saved-bids-store";
 import {
   BidNotFoundError,
   type BidListResponse,
@@ -93,13 +94,13 @@ function sortBids(bids: Bid[], sort: NormalizedBidQuery["sort"]) {
   return bids;
 }
 
-function savedBidsResponse(): SavedBidsResponse {
-  const savedIds = getSavedBidIds();
+async function savedBidsResponse(userId: string): Promise<SavedBidsResponse> {
+  const savedIds = await savedBidsStore.getSavedBidIds(userId);
   const savedIdSet = new Set(savedIds);
 
   return {
     savedBidIds: savedIds,
-    bids: listBids().filter((bid) => savedIdSet.has(bid.id)),
+    bids: listBids(savedIds).filter((bid) => savedIdSet.has(bid.id)),
   };
 }
 
@@ -125,29 +126,25 @@ export function queryBids(query: BidQuery, options: BidQueryOptions = {}): BidLi
 }
 
 export function getBidById(id: string) {
-  return listBids().find((bid) => bid.id === id);
+  return getBidByIdFromRepository(id);
 }
 
-export function getSavedBids() {
-  return savedBidsResponse();
+export async function getSavedBids(userId: string) {
+  return savedBidsResponse(userId);
 }
 
-export function saveBid(id: string) {
+export async function saveBid(userId: string, id: string) {
   if (!getBidById(id)) {
     throw new BidNotFoundError();
   }
 
-  const savedIds = getSavedBidIds();
+  await savedBidsStore.saveBidId(userId, id);
 
-  if (!savedIds.includes(id)) {
-    replaceSavedBidIds([...savedIds, id]);
-  }
-
-  return savedBidsResponse();
+  return savedBidsResponse(userId);
 }
 
-export function removeSavedBid(id: string) {
-  replaceSavedBidIds(getSavedBidIds().filter((savedId) => savedId !== id));
+export async function removeSavedBid(userId: string, id: string) {
+  await savedBidsStore.removeBidId(userId, id);
 
-  return savedBidsResponse();
+  return savedBidsResponse(userId);
 }

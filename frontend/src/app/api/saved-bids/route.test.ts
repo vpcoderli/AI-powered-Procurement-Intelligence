@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetBidRepositoryForTests } from "@/server/bids/repository";
 import * as bidService from "@/server/bids/service";
+import { BidNotFoundError } from "@/server/bids/types";
 import { GET, POST } from "./route";
 
 describe("GET /api/saved-bids", () => {
@@ -10,18 +11,24 @@ describe("GET /api/saved-bids", () => {
   });
 
   it("returns saved bids", async () => {
+    const bid = bidService.getBidById("2");
+    if (!bid) throw new Error("Expected mock bid 2 to exist");
+    vi.spyOn(bidService, "getSavedBids").mockResolvedValueOnce({
+      savedBidIds: ["2"],
+      bids: [bid],
+    });
+
     const response = await GET();
     const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(body.savedBidIds).toEqual(["2"]);
     expect(body.bids[0].title).toBe("Statewide Broadband Infrastructure Upgrade");
+    expect(bidService.getSavedBids).toHaveBeenCalledWith("demo-user");
   });
 
   it("returns INTERNAL_ERROR when fetching saved bids fails", async () => {
-    vi.spyOn(bidService, "getSavedBids").mockImplementationOnce(() => {
-      throw new Error("saved bids failed");
-    });
+    vi.spyOn(bidService, "getSavedBids").mockRejectedValueOnce(new Error("saved bids failed"));
 
     const response = await GET();
     const body = await response.json();
@@ -41,6 +48,13 @@ describe("POST /api/saved-bids", () => {
   });
 
   it("saves an existing bid", async () => {
+    const bid = bidService.getBidById("1");
+    if (!bid) throw new Error("Expected mock bid 1 to exist");
+    vi.spyOn(bidService, "saveBid").mockResolvedValueOnce({
+      savedBidIds: ["1"],
+      bids: [bid],
+    });
+
     const response = await POST(
       new Request("http://localhost/api/saved-bids", {
         method: "POST",
@@ -50,7 +64,8 @@ describe("POST /api/saved-bids", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.savedBidIds).toEqual(["2", "1"]);
+    expect(body.savedBidIds).toEqual(["1"]);
+    expect(bidService.saveBid).toHaveBeenCalledWith("demo-user", "1");
   });
 
   it("returns INVALID_REQUEST when bidId is missing", async () => {
@@ -106,6 +121,8 @@ describe("POST /api/saved-bids", () => {
   });
 
   it("returns BID_NOT_FOUND when bidId does not exist", async () => {
+    vi.spyOn(bidService, "saveBid").mockRejectedValueOnce(new BidNotFoundError());
+
     const response = await POST(
       new Request("http://localhost/api/saved-bids", {
         method: "POST",
@@ -119,9 +136,7 @@ describe("POST /api/saved-bids", () => {
   });
 
   it("returns INTERNAL_ERROR when saving a bid fails unexpectedly", async () => {
-    vi.spyOn(bidService, "saveBid").mockImplementationOnce(() => {
-      throw new Error("save failed");
-    });
+    vi.spyOn(bidService, "saveBid").mockRejectedValueOnce(new Error("save failed"));
 
     const response = await POST(
       new Request("http://localhost/api/saved-bids", {

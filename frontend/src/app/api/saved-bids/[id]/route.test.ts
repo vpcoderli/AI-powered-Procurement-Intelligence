@@ -10,6 +10,11 @@ describe("DELETE /api/saved-bids/[id]", () => {
   });
 
   it("removes a saved bid", async () => {
+    vi.spyOn(bidService, "removeSavedBid").mockResolvedValueOnce({
+      savedBidIds: [],
+      bids: [],
+    });
+
     const response = await DELETE(new Request("http://localhost/api/saved-bids/2"), {
       params: Promise.resolve({ id: "2" }),
     });
@@ -17,12 +22,11 @@ describe("DELETE /api/saved-bids/[id]", () => {
 
     expect(response.status).toBe(200);
     expect(body.savedBidIds).toEqual([]);
+    expect(bidService.removeSavedBid).toHaveBeenCalledWith("demo-user", "2");
   });
 
   it("returns INTERNAL_ERROR when removing a saved bid fails", async () => {
-    vi.spyOn(bidService, "removeSavedBid").mockImplementationOnce(() => {
-      throw new Error("remove failed");
-    });
+    vi.spyOn(bidService, "removeSavedBid").mockRejectedValueOnce(new Error("remove failed"));
 
     const response = await DELETE(new Request("http://localhost/api/saved-bids/2"), {
       params: Promise.resolve({ id: "2" }),

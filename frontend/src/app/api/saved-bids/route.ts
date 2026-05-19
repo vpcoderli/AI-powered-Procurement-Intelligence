@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import * as bidService from "@/server/bids/service";
 import { BidNotFoundError } from "@/server/bids/types";
 
+const LEGACY_SAVED_BIDS_USER_ID = "demo-user";
+
 function invalidRequest() {
   return NextResponse.json(
     { error: { code: "INVALID_REQUEST", message: "Request body must include bidId" } },
@@ -23,7 +25,7 @@ function internalError(error: unknown) {
 
 export async function GET() {
   try {
-    return NextResponse.json(bidService.getSavedBids());
+    return NextResponse.json(await bidService.getSavedBids(LEGACY_SAVED_BIDS_USER_ID));
   } catch (error) {
     return internalError(error);
   }
@@ -49,7 +51,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    return NextResponse.json(bidService.saveBid(body.bidId));
+    return NextResponse.json(await bidService.saveBid(LEGACY_SAVED_BIDS_USER_ID, body.bidId));
   } catch (error) {
     if (error instanceof BidNotFoundError) {
       return NextResponse.json(
