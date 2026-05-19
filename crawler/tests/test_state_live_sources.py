@@ -52,8 +52,10 @@ class FakeSession:
             raise self.response
         return self.response
 
-    def post(self, url, json=None, timeout=None):
-        self.calls.append({"url": url, "json": json, "timeout": timeout})
+    def post(self, url, json=None, headers=None, timeout=None):
+        self.calls.append(
+            {"url": url, "json": json, "headers": headers, "timeout": timeout}
+        )
         if isinstance(self.response, Exception):
             raise self.response
         return self.response
@@ -662,6 +664,7 @@ def test_fetch_fl_mfmp_opportunities_normalizes_live_response():
         "assignee": "",
         "page": 1,
     }
+    assert session.calls[0]["headers"] == {"Accept": "application/json"}
     assert session.calls[0]["timeout"] == 10
     assert len(bids) == 1
     bid = bids[0]
