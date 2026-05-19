@@ -164,6 +164,7 @@ export const zh: Dictionary = {
     runSourceFailed: "无法运行 {source} 州级爬虫。",
     updateFailed: "无法更新数据源。",
     errorReason: "错误",
+    fallbackUsed: "已使用兜底数据",
     errorTitle: "无法加载管理员数据。",
     errorDescription: "请检查管理员权限或稍后重试。",
     totalSources: "全部来源",

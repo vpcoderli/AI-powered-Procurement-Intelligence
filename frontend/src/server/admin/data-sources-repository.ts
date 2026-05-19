@@ -18,6 +18,9 @@ export interface AdminCrawlerLog {
   errorCode: string | null;
   errorMessage: string | null;
   metadata: string | null;
+  fallbackSource: string | null;
+  fallbackReason: string | null;
+  fallbackFixture: string | null;
 }
 
 export interface AdminDataSource {
@@ -81,7 +84,43 @@ function latestLogForSource(
   return null;
 }
 
+function metadataStringValue(metadata: unknown, key: string) {
+  if (typeof metadata !== "object" || metadata === null) {
+    return null;
+  }
+
+  const value = (metadata as Record<string, unknown>)[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function parseLogMetadata(metadata: string | null) {
+  if (!metadata) {
+    return {
+      fallbackSource: null,
+      fallbackReason: null,
+      fallbackFixture: null,
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(metadata) as unknown;
+    return {
+      fallbackSource: metadataStringValue(parsed, "fallback_source"),
+      fallbackReason: metadataStringValue(parsed, "fallback_reason"),
+      fallbackFixture: metadataStringValue(parsed, "fallback_fixture"),
+    };
+  } catch {
+    return {
+      fallbackSource: null,
+      fallbackReason: null,
+      fallbackFixture: null,
+    };
+  }
+}
+
 function toAdminLog(row: typeof crawlerLogs.$inferSelect): AdminCrawlerLog {
+  const parsedMetadata = parseLogMetadata(row.metadata);
+
   return {
     id: row.id,
     source: row.source,
@@ -98,6 +137,9 @@ function toAdminLog(row: typeof crawlerLogs.$inferSelect): AdminCrawlerLog {
     errorCode: row.errorCode,
     errorMessage: row.errorMessage,
     metadata: row.metadata,
+    fallbackSource: parsedMetadata.fallbackSource,
+    fallbackReason: parsedMetadata.fallbackReason,
+    fallbackFixture: parsedMetadata.fallbackFixture,
   };
 }
 

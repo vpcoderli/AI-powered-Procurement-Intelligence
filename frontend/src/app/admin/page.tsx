@@ -70,6 +70,12 @@ function compactErrorMessage(message: string) {
   return message.length > 96 ? `${message.slice(0, 93)}...` : message;
 }
 
+function fallbackMessage(log: AdminCrawlerLog | null | undefined) {
+  if (!log?.fallbackSource) return null;
+
+  return log.fallbackReason ? compactErrorMessage(log.fallbackReason) : null;
+}
+
 function SummaryCard({
   label,
   value,
@@ -289,6 +295,12 @@ export default function AdminPage() {
                           {compactErrorMessage(source.latestLog.errorMessage)}
                         </div>
                       )}
+                      {source.latestLog?.fallbackSource && (
+                        <div className="mt-1 text-xs leading-5 text-amber-700">
+                          <span className="font-medium">{t("admin.fallbackUsed")}</span>
+                          {fallbackMessage(source.latestLog) ? `: ${fallbackMessage(source.latestLog)}` : null}
+                        </div>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell>
@@ -354,6 +366,12 @@ export default function AdminPage() {
                     <span className="text-xs text-slate-500">{formatDate(log.finishedAt ?? log.startedAt)}</span>
                   </div>
                   {log.errorMessage && <div className="mt-1 text-sm text-rose-700">{log.errorMessage}</div>}
+                  {log.fallbackSource && (
+                    <div className="mt-1 text-sm text-amber-700">
+                      <span className="font-medium">{t("admin.fallbackUsed")}</span>
+                      {fallbackMessage(log) ? `: ${fallbackMessage(log)}` : null}
+                    </div>
+                  )}
                 </div>
                 <div className="text-sm text-slate-500">
                   {log.fetchedCount}/{log.insertedCount}/{log.updatedCount}/{log.failedCount}
