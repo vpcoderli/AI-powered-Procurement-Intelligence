@@ -1,5 +1,6 @@
 import { STATE_FILTERS } from "@/lib/mock-data";
 import { db } from "@/server/db/client";
+import type { AppDatabase } from "@/server/db/client";
 import type { Bid } from "./domain";
 import {
   getBidByIdFromRepository,
@@ -116,9 +117,17 @@ export async function queryBids(
   query: BidQuery,
   options: BidQueryOptions = {},
 ): Promise<BidListResponse> {
+  return queryBidsFromDatabase(db, query, options);
+}
+
+export async function queryBidsFromDatabase(
+  database: AppDatabase,
+  query: BidQuery,
+  options: BidQueryOptions = {},
+): Promise<BidListResponse> {
   const filters = normalizeQuery(query);
   const referenceDate = startOfDay(options.referenceDate ?? new Date());
-  const allBids = await listBids(db);
+  const allBids = await listBids(database);
   const filteredBids = allBids.filter(
     (bid) =>
       bid.isActive &&

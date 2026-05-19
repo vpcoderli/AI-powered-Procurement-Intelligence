@@ -12,6 +12,7 @@ import {
   getBidById,
   getSavedBids,
   queryBids,
+  queryBidsFromDatabase,
   removeSavedBid,
   saveBid,
 } from "./service";
@@ -62,6 +63,17 @@ describe("bid service", () => {
 
     expect(result.total).toBe(6);
     expect(result.bids.every((bid) => bid.isActive)).toBe(true);
+  });
+
+  it("queries bids from an injected database", async () => {
+    const injectedDb = { injected: true } as never;
+
+    const result = await queryBidsFromDatabase(injectedDb, { q: "cloud" }, { referenceDate });
+
+    expect(result.bids.map((bid) => bid.title)).toEqual([
+      "Enterprise Cloud Migration Services",
+    ]);
+    expect(repositoryListBids).toHaveBeenCalledWith(injectedDb);
   });
 
   it("filters bids by keyword across searchable fields", async () => {

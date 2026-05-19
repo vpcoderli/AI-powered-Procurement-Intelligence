@@ -4,8 +4,7 @@ from pathlib import Path
 from apsi_crawler.cli import main
 
 
-def test_import_fixture_writes_bids_and_crawler_log(tmp_path):
-    database = tmp_path / "apsi.sqlite"
+def create_crawler_database(database):
     connection = sqlite3.connect(database)
     connection.executescript(
         """
@@ -59,6 +58,32 @@ def test_import_fixture_writes_bids_and_crawler_log(tmp_path):
         """
     )
     connection.close()
+
+
+def normalized_bid():
+    timestamp = "2026-05-19T00:00:00+00:00"
+    return {
+        "id": "sam_gov:abc-123",
+        "source": "SAM.gov",
+        "source_bid_id": "abc-123",
+        "dedupe_key": "sam_gov:abc-123",
+        "title": "Cloud analytics platform",
+        "description": "Build cloud analytics.",
+        "issuer_name": "Department of Health",
+        "issuer_type": "federal",
+        "state_code": "US",
+        "source_url": "https://sam.gov/opp/abc-123/view",
+        "is_active": 1,
+        "first_seen_at": timestamp,
+        "last_seen_at": timestamp,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+
+
+def test_import_fixture_writes_bids_and_crawler_log(tmp_path):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
     fixture = Path(__file__).parent / "fixtures" / "sam_gov_opportunities.json"
 
     exit_code = main(
@@ -78,3 +103,77 @@ def test_import_fixture_writes_bids_and_crawler_log(tmp_path):
         "SELECT source, status, fetched_count, inserted_count, updated_count FROM crawler_logs"
     ).fetchone()
     assert log == ("SAM.gov", "success", 2, 2, 0)
+
+
+def test_fetch_sam_gov_writes_bids_and_crawler_log(tmp_path, monkeypatch):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+    monkeypatch.setenv("SAM_API_KEY", "secret")
+
+    calls = []
+
+    def fake_fetch_sam_gov_opportunities(**kwargs):
+        calls.append(kwargs)
+        return [normalized_bid()]
+
+    monkeypatch.setattr("apsi_crawler.cli.fetch_sam_gov_opportunities", fake_fetch_sam_gov_opportunities)
+
+    exit_code = main(
+        [
+            "fetch-sam-gov",
+            "--database",
+            str(database),
+            "--posted-from",
+            "05/01/2026",
+            "--posted-to",
+            "05/19/2026",
+            "--limit",
+            "50",
+            "--max-records",
+            "75",
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 0
+    assert connection.execute("SELECT COUNT(*) FROM bids").fetchone()[0] == 1
+    assert calls[0]["api_key"] == "secret"
+    assert calls[0]["posted_from"] == "05/01/2026"
+    assert calls[0]["posted_to"] == "05/19/2026"
+    assert calls[0]["limit"] == 50
+    assert calls[0]["max_records"] == 75
+    log = connection.execute(
+        "SELECT source, status, fetched_count, inserted_count, updated_count FROM crawler_logs"
+    ).fetchone()
+    assert log == ("SAM.gov", "success", 1, 1, 0)
+
+
+def test_fetch_sam_gov_failure_writes_crawler_log(tmp_path, monkeypatch):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+
+    def fake_fetch_sam_gov_opportunities(**kwargs):
+        raise RuntimeError("api unavailable")
+
+    monkeypatch.setattr("apsi_crawler.cli.fetch_sam_gov_opportunities", fake_fetch_sam_gov_opportunities)
+
+    exit_code = main(
+        [
+            "fetch-sam-gov",
+            "--database",
+            str(database),
+            "--api-key",
+            "secret",
+            "--posted-from",
+            "05/01/2026",
+            "--posted-to",
+            "05/19/2026",
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 1
+    log = connection.execute(
+        "SELECT status, fetched_count, inserted_count, updated_count, failed_count, error_message FROM crawler_logs"
+    ).fetchone()
+    assert log == ("failure", 0, 0, 0, 1, "api unavailable")
