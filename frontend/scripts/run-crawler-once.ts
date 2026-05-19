@@ -1,15 +1,9 @@
 import { createDatabase } from "../src/server/db/client";
 import { runMigrations } from "../src/server/db/migrate";
-import { runCrawlerSourceOnce, type CrawlerNotifier } from "../src/server/crawler/orchestrator";
+import { runCrawlerSourceOnce } from "../src/server/crawler/orchestrator";
 import { runSamGovCrawler } from "../src/server/crawler/sam-gov-runner";
+import { sendMatchedAlertNotifications } from "../src/server/notifications/service";
 import { matchEnabledSearchAlerts } from "../src/server/search-alerts/matcher";
-
-const noopNotifier: CrawlerNotifier = async () => ({
-  queued: 0,
-  sent: 0,
-  skipped: 0,
-  failed: 0,
-});
 
 function owner() {
   return process.env.CRAWLER_OWNER ?? `crawler-once:${process.pid}`;
@@ -25,7 +19,7 @@ export async function runSamGovCrawlerOnce() {
       owner: owner(),
       runner: runSamGovCrawler,
       matcher: () => matchEnabledSearchAlerts(db),
-      notifier: noopNotifier,
+      notifier: ({ alertMatching }) => sendMatchedAlertNotifications(db, alertMatching),
     });
   } finally {
     db.$client.close();
