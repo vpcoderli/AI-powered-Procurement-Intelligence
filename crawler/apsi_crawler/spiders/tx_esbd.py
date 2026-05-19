@@ -32,6 +32,9 @@ def _first_present(record, keys):
 
 
 def _normalize_record(record):
+    if not isinstance(record, dict):
+        raise TxEsbdError("Texas ESBD record was not an object")
+
     source_bid_id = _first_present(
         record,
         ("source_bid_id", "solicitationId", "solicitation_id", "id", "bid_id"),
