@@ -69,4 +69,22 @@ describe("POST /api/auth/register", () => {
     expect(body.error.code).toBe("WEAK_PASSWORD");
     expect(authService.registerUser).not.toHaveBeenCalled();
   });
+
+  it("does not expose internal error details", async () => {
+    vi.mocked(authService.registerUser).mockRejectedValueOnce(new Error("SQLITE_CONSTRAINT users.email"));
+
+    const response = await POST(
+      new Request("http://localhost/api/auth/register", {
+        method: "POST",
+        body: JSON.stringify({ email: "buyer@example.com", password: "strong-password" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body.error).toEqual({
+      code: "INTERNAL_ERROR",
+      message: "Internal server error",
+    });
+  });
 });

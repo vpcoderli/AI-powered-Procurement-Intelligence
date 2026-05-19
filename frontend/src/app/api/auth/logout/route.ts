@@ -19,11 +19,7 @@ export async function POST(request: Request) {
     response.headers.set("Set-Cookie", clearSessionCookie());
 
     return response;
-  } catch (error) {
-    return errorResponse(
-      "INTERNAL_ERROR",
-      error instanceof Error ? error.message : "Internal server error",
-      500,
-    );
+  } catch {
+    return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
   }
 }

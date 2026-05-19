@@ -79,6 +79,16 @@ function toPublicUser(row: {
   };
 }
 
+function isUniqueEmailConflict(error: unknown) {
+  if (!(error instanceof Error)) return false;
+
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  return (
+    code.includes("SQLITE_CONSTRAINT") ||
+    error.message.includes("UNIQUE constraint failed: users.email")
+  );
+}
+
 async function createSession(db: AppDatabase, userId: string) {
   const sessionToken = createSessionToken();
   const timestamp = nowIso();
@@ -124,7 +134,15 @@ export async function registerUser(db: AppDatabase, input: RegisterUserInput) {
     updatedAt: timestamp,
   };
 
-  db.insert(users).values(user).run();
+  try {
+    db.insert(users).values(user).run();
+  } catch (error) {
+    if (isUniqueEmailConflict(error)) {
+      throw new DuplicateEmailError();
+    }
+
+    throw error;
+  }
 
   return {
     user: toPublicUser(user),

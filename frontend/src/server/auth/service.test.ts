@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { AppDatabase } from "@/server/db/client";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
   DuplicateEmailError,
@@ -50,6 +51,34 @@ describe("auth service", () => {
       registerUser(testDb.db, {
         email: " Buyer@Example.com ",
         password: "another-password",
+      }),
+    ).rejects.toBeInstanceOf(DuplicateEmailError);
+  });
+
+  it("maps database unique email conflicts to duplicate email errors", async () => {
+    const fakeDb = {
+      select: () => ({
+        from: () => ({
+          where: () => ({
+            limit: () => ({
+              get: () => undefined,
+            }),
+          }),
+        }),
+      }),
+      insert: () => ({
+        values: () => ({
+          run: () => {
+            throw new Error("UNIQUE constraint failed: users.email");
+          },
+        }),
+      }),
+    } as unknown as AppDatabase;
+
+    await expect(
+      registerUser(fakeDb, {
+        email: "buyer@example.com",
+        password: "strong-password",
       }),
     ).rejects.toBeInstanceOf(DuplicateEmailError);
   });

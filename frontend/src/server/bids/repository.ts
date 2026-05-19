@@ -11,7 +11,27 @@ function isPresent(value: string | null): value is string {
   return value !== null && value.length > 0;
 }
 
+function stringArray(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    return null;
+  }
+
+  return value;
+}
+
 function tagsFromBid(row: typeof bids.$inferSelect) {
+  if (row.rawPayload) {
+    try {
+      const parsed: unknown = JSON.parse(row.rawPayload);
+      if (typeof parsed === "object" && parsed !== null && "tags" in parsed) {
+        const tags = stringArray(parsed.tags);
+        if (tags) return tags;
+      }
+    } catch {
+      // Fall back to derived tags for imported rows with non-JSON payloads.
+    }
+  }
+
   return [row.originalCategory, row.stateCode, row.issuerType].filter(isPresent);
 }
 

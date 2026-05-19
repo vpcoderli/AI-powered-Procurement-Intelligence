@@ -33,6 +33,7 @@ describe("bid repository", () => {
     const bid = await getBidByIdFromRepository(testDb.db, "1");
 
     expect(bid?.title).toBe("Enterprise Cloud Migration Services");
+    expect(bid?.tags).toEqual(["IT Services", "Cloud", "Federal"]);
     expect(bid?.attachments.map((attachment) => attachment.name)).toContain(
       "Statement_of_Work_v2.pdf",
     );
