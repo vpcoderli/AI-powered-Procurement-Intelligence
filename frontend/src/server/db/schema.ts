@@ -126,8 +126,8 @@ export const alerts = sqliteTable(
     issuerType: text("issuer_type"),
     deadlinePreset: text("deadline_preset"),
     publishedPreset: text("published_preset"),
-    frequency: text("frequency").notNull().default("daily"),
-    notificationChannel: text("notification_channel").notNull().default("email"),
+    frequency: text("frequency", { enum: ["daily", "weekly"] }).notNull().default("daily"),
+    notificationChannel: text("notification_channel", { enum: ["email"] }).notNull().default("email"),
     isEnabled: integer("is_enabled").notNull().default(1),
     lastMatchedAt: text("last_matched_at"),
     lastNotifiedAt: text("last_notified_at"),
@@ -162,6 +162,40 @@ export const crawlerLogs = sqliteTable(
   (table) => ({
     sourceStartedIdx: index("idx_crawler_logs_source_started").on(table.source, table.startedAt),
     runIdx: index("idx_crawler_logs_run_id").on(table.runId),
+  }),
+);
+
+export const crawlerLocks = sqliteTable("crawler_locks", {
+  source: text("source").primaryKey(),
+  owner: text("owner").notNull(),
+  acquiredAt: text("acquired_at").notNull(),
+  expiresAt: text("expires_at").notNull(),
+});
+
+export const notificationOutbox = sqliteTable(
+  "notification_outbox",
+  {
+    id: text("id").primaryKey(),
+    alertId: text("alert_id").notNull(),
+    userId: text("user_id").notNull(),
+    channel: text("channel", { enum: ["email"] }).notNull(),
+    recipient: text("recipient").notNull(),
+    frequency: text("frequency", { enum: ["daily", "weekly"] }).notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    subject: text("subject").notNull(),
+    bodyText: text("body_text").notNull(),
+    matchedBidIds: text("matched_bid_ids").notNull(),
+    status: text("status", { enum: ["pending", "sent", "failed"] }).notNull(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt: text("created_at").notNull(),
+    sentAt: text("sent_at"),
+  },
+  (table) => ({
+    dedupeIdx: uniqueIndex("idx_notification_outbox_dedupe_key").on(table.dedupeKey),
+    statusCreatedIdx: index("idx_notification_outbox_status_created").on(table.status, table.createdAt),
+    alertIdx: index("idx_notification_outbox_alert_id").on(table.alertId),
+    userIdx: index("idx_notification_outbox_user_id").on(table.userId),
   }),
 );
 
