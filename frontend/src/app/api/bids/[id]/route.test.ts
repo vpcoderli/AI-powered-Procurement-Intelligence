@@ -1,15 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { resetBidRepositoryForTests } from "@/server/bids/repository";
+import { MOCK_BIDS } from "@/lib/mock-data";
 import * as bidService from "@/server/bids/service";
 import { GET } from "./route";
 
+vi.mock("@/server/bids/service", () => ({
+  getBidById: vi.fn(),
+}));
+
+const getBidById = vi.mocked(bidService.getBidById);
+
 describe("GET /api/bids/[id]", () => {
   beforeEach(() => {
-    resetBidRepositoryForTests();
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   it("returns a bid by id", async () => {
+    getBidById.mockResolvedValueOnce({
+      ...MOCK_BIDS[0],
+      attachments: [...MOCK_BIDS[0].attachments],
+      tags: [...MOCK_BIDS[0].tags],
+    });
+
     const response = await GET(new Request("http://localhost/api/bids/1"), {
       params: Promise.resolve({ id: "1" }),
     });
@@ -20,6 +31,8 @@ describe("GET /api/bids/[id]", () => {
   });
 
   it("returns BID_NOT_FOUND for a missing bid", async () => {
+    getBidById.mockResolvedValueOnce(undefined);
+
     const response = await GET(new Request("http://localhost/api/bids/missing"), {
       params: Promise.resolve({ id: "missing" }),
     });
@@ -30,9 +43,7 @@ describe("GET /api/bids/[id]", () => {
   });
 
   it("returns INTERNAL_ERROR when looking up a bid fails", async () => {
-    vi.spyOn(bidService, "getBidById").mockImplementationOnce(() => {
-      throw new Error("lookup failed");
-    });
+    getBidById.mockRejectedValueOnce(new Error("lookup failed"));
 
     const response = await GET(new Request("http://localhost/api/bids/1"), {
       params: Promise.resolve({ id: "1" }),

@@ -1,6 +1,13 @@
-import { STATE_FILTERS, type Bid } from "@/lib/mock-data";
-import { getBidByIdFromRepository, listBids } from "./repository";
-import { savedBidsStore } from "./saved-bids-store";
+import { STATE_FILTERS } from "@/lib/mock-data";
+import { db } from "@/server/db/client";
+import type { Bid } from "./domain";
+import {
+  getBidByIdFromRepository,
+  listBids,
+  listSavedBidIds,
+  removeSavedBidId,
+  saveSavedBidId,
+} from "./repository";
 import {
   BidNotFoundError,
   type BidListResponse,
@@ -95,19 +102,24 @@ function sortBids(bids: Bid[], sort: NormalizedBidQuery["sort"]) {
 }
 
 async function savedBidsResponse(userId: string): Promise<SavedBidsResponse> {
-  const savedIds = await savedBidsStore.getSavedBidIds(userId);
+  const savedIds = await listSavedBidIds(db, userId);
   const savedIdSet = new Set(savedIds);
+  const bids = await listBids(db, savedIds);
 
   return {
     savedBidIds: savedIds,
-    bids: listBids(savedIds).filter((bid) => savedIdSet.has(bid.id)),
+    bids: bids.filter((bid) => savedIdSet.has(bid.id)),
   };
 }
 
-export function queryBids(query: BidQuery, options: BidQueryOptions = {}): BidListResponse {
+export async function queryBids(
+  query: BidQuery,
+  options: BidQueryOptions = {},
+): Promise<BidListResponse> {
   const filters = normalizeQuery(query);
   const referenceDate = startOfDay(options.referenceDate ?? new Date());
-  const filteredBids = listBids().filter(
+  const allBids = await listBids(db);
+  const filteredBids = allBids.filter(
     (bid) =>
       bid.isActive &&
       matchesKeyword(bid, filters.q) &&
@@ -125,26 +137,26 @@ export function queryBids(query: BidQuery, options: BidQueryOptions = {}): BidLi
   };
 }
 
-export function getBidById(id: string) {
-  return getBidByIdFromRepository(id);
+export async function getBidById(id: string): Promise<Bid | undefined> {
+  return getBidByIdFromRepository(db, id);
 }
 
-export async function getSavedBids(userId: string) {
+export async function getSavedBids(userId: string): Promise<SavedBidsResponse> {
   return savedBidsResponse(userId);
 }
 
-export async function saveBid(userId: string, id: string) {
-  if (!getBidById(id)) {
+export async function saveBid(userId: string, id: string): Promise<SavedBidsResponse> {
+  if (!(await getBidById(id))) {
     throw new BidNotFoundError();
   }
 
-  await savedBidsStore.saveBidId(userId, id);
+  await saveSavedBidId(db, userId, id);
 
   return savedBidsResponse(userId);
 }
 
-export async function removeSavedBid(userId: string, id: string) {
-  await savedBidsStore.removeBidId(userId, id);
+export async function removeSavedBid(userId: string, id: string): Promise<SavedBidsResponse> {
+  await removeSavedBidId(db, userId, id);
 
   return savedBidsResponse(userId);
 }
