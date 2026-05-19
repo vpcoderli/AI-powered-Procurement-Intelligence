@@ -161,6 +161,7 @@ export const en = {
     runSourceQueued: "State crawler run completed for {source}.",
     runSourceFailed: "Unable to run state crawler for {source}.",
     updateFailed: "Unable to update source.",
+    errorReason: "Error",
     errorTitle: "Unable to load admin data.",
     errorDescription: "Check admin access or try again.",
     totalSources: "Total sources",
