@@ -258,6 +258,51 @@ def test_extract_table_rows_preserves_outer_table_when_cell_contains_nested_tabl
     ]
 
 
+def test_extract_table_rows_prefers_outer_table_over_nested_table_with_same_headers():
+    html = """
+    <table>
+      <tr>
+        <th>Bid Solicitation #</th>
+        <th>Description</th>
+        <th>Organization Name</th>
+      </tr>
+      <tr>
+        <td><a href="/bso/detail.xhtml?bidId=OUTER-001">OUTER-001</a></td>
+        <td>
+          Outer data center services
+          <table>
+            <tr>
+              <th>Bid Solicitation #</th>
+              <th>Description</th>
+              <th>Organization Name</th>
+            </tr>
+            <tr>
+              <td><a href="/bso/detail.xhtml?bidId=INNER-001">INNER-001</a></td>
+              <td>Nested layout row</td>
+              <td>Nested Organization</td>
+            </tr>
+          </table>
+        </td>
+        <td>Outer Organization</td>
+      </tr>
+    </table>
+    """
+
+    rows = extract_table_rows(
+        html,
+        required_headers=("Bid Solicitation #", "Description", "Organization Name"),
+    )
+
+    assert rows == [
+        {
+            "Bid Solicitation #": "OUTER-001",
+            "Description": "Outer data center services",
+            "Organization Name": "Outer Organization",
+            "_links": {"Bid Solicitation #": "/bso/detail.xhtml?bidId=OUTER-001"},
+        }
+    ]
+
+
 def test_extract_table_rows_raises_when_required_headers_are_missing():
     html = """
     <table>

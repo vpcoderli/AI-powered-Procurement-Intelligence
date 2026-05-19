@@ -107,7 +107,8 @@ class _TableParser(HTMLParser):
             current["row"] = None
         elif tag == "table":
             finished = self._table_stack.pop()
-            self.tables.append(finished["rows"])
+            if not self._table_stack:
+                self.tables.append(finished["rows"])
 
 
 def extract_table_rows(html, required_headers):
