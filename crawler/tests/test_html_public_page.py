@@ -156,6 +156,40 @@ def test_extract_table_rows_returns_text_and_cell_links():
     ]
 
 
+def test_extract_table_rows_fills_missing_cell_values_with_empty_string():
+    html = """
+    <table>
+      <thead>
+        <tr>
+          <th>Bid Solicitation #</th>
+          <th>Description</th>
+          <th>Organization Name</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><a href="/bso/detail.xhtml?bidId=IL-2026-002">IL-2026-002</a></td>
+          <td>Network modernization</td>
+        </tr>
+      </tbody>
+    </table>
+    """
+
+    rows = extract_table_rows(
+        html,
+        required_headers=("Bid Solicitation #", "Description", "Organization Name"),
+    )
+
+    assert rows == [
+        {
+            "Bid Solicitation #": "IL-2026-002",
+            "Description": "Network modernization",
+            "Organization Name": "",
+            "_links": {"Bid Solicitation #": "/bso/detail.xhtml?bidId=IL-2026-002"},
+        }
+    ]
+
+
 def test_extract_table_rows_raises_when_required_headers_are_missing():
     html = """
     <table>
