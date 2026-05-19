@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link"
-import { Home, Bookmark, Settings, Search } from "lucide-react"
+import { Home, Bookmark, Settings, Search, ShieldCheck } from "lucide-react"
 import { useLanguage } from "@/lib/i18n/LanguageContext"
 import {
   Sidebar,
@@ -39,6 +39,11 @@ export function AppSidebar() {
       title: t('common.settings'),
       url: "/settings",
       icon: Settings,
+    },
+    {
+      title: t('common.admin'),
+      url: "/admin",
+      icon: ShieldCheck,
     },
   ]
 
