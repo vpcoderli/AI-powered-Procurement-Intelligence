@@ -1,6 +1,8 @@
 import json
+from pathlib import Path
 
 import pytest
+import requests
 
 from apsi_crawler.sources.registry import get_source
 from apsi_crawler.sources.registry import (
@@ -31,7 +33,12 @@ class FakeSession:
 
     def get(self, url, params=None, timeout=None):
         self.calls.append({"url": url, "params": params, "timeout": timeout})
+        if isinstance(self.response, Exception):
+            raise self.response
         return self.response
+
+
+FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
 def test_registry_reports_live_support_for_reference_state():
@@ -49,7 +56,8 @@ def test_registry_reports_unsupported_live_state_sources():
 
 
 def test_fetch_ca_caleprocure_opportunities_normalizes_live_response():
-    with open("tests/fixtures/ca_caleprocure_live_response.json") as fixture:
+    fixture_path = FIXTURES_DIR / "ca_caleprocure_live_response.json"
+    with fixture_path.open() as fixture:
         payload = json.load(fixture)
     session = FakeSession(FakeResponse(payload=payload))
 
@@ -86,3 +94,18 @@ def test_fetch_ca_caleprocure_opportunities_raises_on_http_error():
         )
 
     assert str(error.value) == "Cal eProcure request failed with status 503: maintenance"
+
+
+def test_fetch_ca_caleprocure_opportunities_wraps_request_errors():
+    session = FakeSession(requests.Timeout("slow"))
+
+    with pytest.raises(CalEProcureError) as error:
+        fetch_ca_caleprocure_opportunities(
+            get_source("ca_caleprocure"),
+            query="cloud",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "Cal eProcure request failed: slow"

@@ -3,7 +3,7 @@ import requests
 from apsi_crawler.normalizers.state_bids import normalize_state_opportunity
 
 
-CA_CALEPROCURE_SEARCH_URL = "https://caleprocure.ca.gov/pages/search.aspx"
+CA_CALEPROCURE_SEARCH_URL = "https://caleprocure.ca.gov/pages/public-search.aspx"
 
 
 class CalEProcureError(Exception):
@@ -44,7 +44,10 @@ def fetch_ca_caleprocure_opportunities(
     client = session or requests.Session()
     limit_count = int(limit)
     params = {"query": query or "", "limit": limit_count}
-    response = client.get(CA_CALEPROCURE_SEARCH_URL, params=params, timeout=timeout)
+    try:
+        response = client.get(CA_CALEPROCURE_SEARCH_URL, params=params, timeout=timeout)
+    except requests.RequestException as error:
+        raise CalEProcureError(f"Cal eProcure request failed: {error}") from error
 
     if response.status_code != 200:
         raise CalEProcureError(
