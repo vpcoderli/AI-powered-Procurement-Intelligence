@@ -14,6 +14,9 @@ from apsi_crawler.spiders.ca_caleprocure import (
     CalEProcureError,
     fetch_ca_caleprocure_opportunities,
 )
+from apsi_crawler.spiders.ny_contract_reporter import (
+    fetch_ny_contract_reporter_opportunities,
+)
 from apsi_crawler.spiders.tx_esbd import (
     TxEsbdError,
     fetch_tx_esbd_opportunities,
@@ -58,16 +61,18 @@ def test_registry_reports_live_support_for_texas_esbd():
     assert get_live_fetcher("tx_esbd") is fetch_tx_esbd_opportunities
 
 
+def test_registry_reports_live_support_for_ny_contract_reporter():
+    assert supports_live_fetch("ny_contract_reporter") is True
+    assert get_live_fetcher("ny_contract_reporter") is fetch_ny_contract_reporter_opportunities
+
+
 def test_registry_reports_unsupported_live_state_sources():
-    assert supports_live_fetch("ny_contract_reporter") is False
+    assert supports_live_fetch("fl_mfmp") is False
 
     with pytest.raises(UnsupportedLiveSourceError) as error:
-        get_live_fetcher("ny_contract_reporter")
+        get_live_fetcher("fl_mfmp")
 
-    assert (
-        str(error.value)
-        == "Live fetch is not implemented for source: ny_contract_reporter"
-    )
+    assert str(error.value) == "Live fetch is not implemented for source: fl_mfmp"
 
 
 def test_fetch_ca_caleprocure_opportunities_normalizes_live_response():
