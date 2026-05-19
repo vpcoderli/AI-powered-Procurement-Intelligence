@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import * as bidService from "@/server/bids/service";
 import { BidNotFoundError } from "@/server/bids/types";
-
-const LEGACY_SAVED_BIDS_USER_ID = "demo-user";
+import {
+  createAnonymousUserCookie,
+  resolveAnonymousUser,
+} from "@/server/bids/user";
 
 function invalidRequest() {
   return NextResponse.json(
@@ -11,23 +13,40 @@ function invalidRequest() {
   );
 }
 
-function internalError(error: unknown) {
-  return NextResponse.json(
+function jsonWithUserCookie(
+  body: unknown,
+  user: ReturnType<typeof resolveAnonymousUser>,
+  init?: ResponseInit,
+) {
+  const response = NextResponse.json(body, init);
+
+  if (user.isNewUser) {
+    response.headers.set("Set-Cookie", createAnonymousUserCookie(user.userId));
+  }
+
+  return response;
+}
+
+function internalError(error: unknown, user: ReturnType<typeof resolveAnonymousUser>) {
+  return jsonWithUserCookie(
     {
       error: {
         code: "INTERNAL_ERROR",
         message: error instanceof Error ? error.message : "Internal server error",
       },
     },
+    user,
     { status: 500 },
   );
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const user = resolveAnonymousUser(request);
+
   try {
-    return NextResponse.json(await bidService.getSavedBids(LEGACY_SAVED_BIDS_USER_ID));
+    return jsonWithUserCookie(await bidService.getSavedBids(user.userId), user);
   } catch (error) {
-    return internalError(error);
+    return internalError(error, user);
   }
 }
 
@@ -50,16 +69,19 @@ export async function POST(request: Request) {
     return invalidRequest();
   }
 
+  const user = resolveAnonymousUser(request);
+
   try {
-    return NextResponse.json(await bidService.saveBid(LEGACY_SAVED_BIDS_USER_ID, body.bidId));
+    return jsonWithUserCookie(await bidService.saveBid(user.userId, body.bidId), user);
   } catch (error) {
     if (error instanceof BidNotFoundError) {
-      return NextResponse.json(
+      return jsonWithUserCookie(
         { error: { code: "BID_NOT_FOUND", message: "Bid not found" } },
+        user,
         { status: 404 },
       );
     }
 
-    return internalError(error);
+    return internalError(error, user);
   }
 }
