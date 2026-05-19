@@ -275,6 +275,7 @@ def test_fetch_state_replays_il_bidbuy_fixture_html(tmp_path):
         "Enterprise data integration services",
         "IL",
     )
+    assert connection.execute("SELECT COUNT(*) FROM bid_attachments").fetchone()[0] == 0
     log = connection.execute(
         "SELECT source, status, fetched_count, inserted_count, updated_count, metadata FROM crawler_logs"
     ).fetchone()
@@ -285,6 +286,62 @@ def test_fetch_state_replays_il_bidbuy_fixture_html(tmp_path):
         "limit": 5,
         "fixture_html": str(fixture),
     }
+
+
+def test_fetch_state_persists_attachments_from_live_fetcher(tmp_path, monkeypatch):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+    bid = state_bid()
+    bid.update(
+        {
+            "id": "il_bidbuy:IL-BIDBUY-2026-001",
+            "source": "Illinois BidBuy",
+            "source_bid_id": "IL-BIDBUY-2026-001",
+            "dedupe_key": "il_bidbuy:IL-BIDBUY-2026-001",
+            "title": "Enterprise data integration services",
+            "state_code": "IL",
+            "attachments": [
+                {
+                    "name": "Scope of Work.pdf",
+                    "url": "https://www.bidbuy.illinois.gov/documents/scope.pdf",
+                    "size_label": "242 KB",
+                    "mime_type": "application/pdf",
+                    "sort_order": 0,
+                }
+            ],
+        }
+    )
+
+    def fake_fetcher(source, query=None, limit=25):
+        return [bid]
+
+    monkeypatch.setattr("apsi_crawler.cli.get_live_fetcher", lambda source: fake_fetcher)
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "il_bidbuy",
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 0
+    rows = connection.execute(
+        "SELECT bid_id, name, url, size_label, mime_type, sort_order FROM bid_attachments"
+    ).fetchall()
+    assert rows == [
+        (
+            "il_bidbuy:IL-BIDBUY-2026-001",
+            "Scope of Work.pdf",
+            "https://www.bidbuy.illinois.gov/documents/scope.pdf",
+            "242 KB",
+            "application/pdf",
+            0,
+        )
+    ]
 
 
 def test_fetch_state_unsupported_source_writes_failure_log(tmp_path, monkeypatch):

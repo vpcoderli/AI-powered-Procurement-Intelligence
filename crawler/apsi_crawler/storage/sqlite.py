@@ -12,6 +12,14 @@ def _table_columns(connection, table_name):
     return {row[1] for row in rows}
 
 
+def _table_exists(connection, table_name):
+    row = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
 def _sqlite_value(value):
     if isinstance(value, (dict, list)):
         return json.dumps(value, separators=(",", ":"), sort_keys=True)
@@ -26,6 +34,35 @@ def _execute_insert(connection, table_name, values):
         f"INSERT INTO {table_name} ({quoted_columns}) VALUES ({placeholders})",
         tuple(_sqlite_value(values[column]) for column in columns),
     )
+
+
+def _replace_bid_attachments(connection, bid):
+    if not _table_exists(connection, "bid_attachments"):
+        return
+
+    table_columns = _table_columns(connection, "bid_attachments")
+    bid_id = bid["id"]
+    connection.execute("DELETE FROM bid_attachments WHERE bid_id = ?", (bid_id,))
+
+    for index, attachment in enumerate(bid.get("attachments") or []):
+        url = attachment.get("url")
+        if not url:
+            continue
+        values = {
+            "id": f"{bid_id}:attachment:{index + 1}",
+            "bid_id": bid_id,
+            "name": attachment.get("name") or f"Attachment {index + 1}",
+            "url": url,
+            "size_label": attachment.get("size_label"),
+            "mime_type": attachment.get("mime_type"),
+            "sort_order": attachment.get("sort_order", index),
+            "created_at": now_iso(),
+        }
+        _execute_insert(
+            connection,
+            "bid_attachments",
+            {column: value for column, value in values.items() if column in table_columns},
+        )
 
 
 def upsert_bid(connection, bid):
@@ -69,6 +106,7 @@ def upsert_bid(connection, bid):
             f"UPDATE bids SET {assignments} WHERE dedupe_key = ?",
             tuple(_sqlite_value(bid[column]) for column in update_columns) + (bid["dedupe_key"],),
         )
+        _replace_bid_attachments(connection, bid)
         connection.commit()
         return "updated"
 
@@ -106,6 +144,7 @@ def upsert_bid(connection, bid):
         if column in table_columns and column in bid
     }
     _execute_insert(connection, "bids", insert_values)
+    _replace_bid_attachments(connection, bid)
     connection.commit()
     return "inserted"
 

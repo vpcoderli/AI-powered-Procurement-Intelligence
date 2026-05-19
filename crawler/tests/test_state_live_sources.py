@@ -21,6 +21,7 @@ from apsi_crawler.spiders.fl_mfmp import (
 from apsi_crawler.spiders.il_bidbuy import (
     IL_BIDBUY_OPEN_BIDS_URL,
     IlBidBuyError,
+    discover_il_bidbuy_attachments,
     fetch_il_bidbuy_opportunities,
 )
 from apsi_crawler.spiders.ny_contract_reporter import (
@@ -820,6 +821,47 @@ def test_fetch_il_bidbuy_opportunities_raises_when_row_missing_source_id(tmp_pat
         )
 
     assert str(error.value) == "Illinois BidBuy row is missing bid solicitation number"
+
+
+def test_discover_il_bidbuy_attachments_from_detail_html_fixture():
+    attachments = discover_il_bidbuy_attachments(
+        str(FIXTURES_DIR / "il_bidbuy_detail.html"),
+        base_url="https://www.bidbuy.illinois.gov/bso/external/bidDetail.sdo?docId=IL-BIDBUY-2026-001",
+    )
+
+    assert attachments == [
+        {
+            "name": "Scope of Work.pdf",
+            "url": (
+                "https://www.bidbuy.illinois.gov/bso/external/document.sdo?"
+                "docId=IL-BIDBUY-2026-001&file=scope.pdf"
+            ),
+            "size_label": "242 KB",
+            "mime_type": "application/pdf",
+            "sort_order": 0,
+        }
+    ]
+
+
+def test_discover_il_bidbuy_attachments_raises_on_missing_attachment_url(tmp_path):
+    fixture = tmp_path / "detail_missing_url.html"
+    fixture.write_text(
+        """
+        <table>
+          <tr><th>File Name</th><th>Size</th><th>Type</th></tr>
+          <tr><td>Scope of Work.pdf</td><td>242 KB</td><td>application/pdf</td></tr>
+        </table>
+        """,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(IlBidBuyError) as error:
+        discover_il_bidbuy_attachments(
+            str(fixture),
+            base_url="https://www.bidbuy.illinois.gov/bso/external/bidDetail.sdo",
+        )
+
+    assert str(error.value) == "Illinois BidBuy attachment row is missing URL"
 
 
 def test_fetch_tx_esbd_opportunities_replays_adapter_fixture_json():
