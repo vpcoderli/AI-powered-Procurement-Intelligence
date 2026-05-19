@@ -107,6 +107,51 @@ def test_fetch_state_replays_ca_caleprocure_fixture_json(tmp_path):
     }
 
 
+def test_fetch_state_replays_tx_esbd_fixture_json(tmp_path):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+    fixture = Path(__file__).parent / "fixtures" / "tx_esbd_live_response.json"
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "tx_esbd",
+            "--query",
+            "data",
+            "--limit",
+            "5",
+            "--fixture-json",
+            str(fixture),
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 0
+    bid = connection.execute(
+        "SELECT source, source_bid_id, dedupe_key, title, state_code FROM bids"
+    ).fetchone()
+    assert bid == (
+        "Texas ESBD",
+        "ESBD-LIVE-2026-77",
+        "tx_esbd:ESBD-LIVE-2026-77",
+        "Statewide data catalog services",
+        "TX",
+    )
+    log = connection.execute(
+        "SELECT source, status, fetched_count, inserted_count, updated_count, metadata FROM crawler_logs"
+    ).fetchone()
+    assert log[:5] == ("tx_esbd", "success", 1, 1, 0)
+    assert json.loads(log[5]) == {
+        "mode": "live",
+        "query": "data",
+        "limit": 5,
+        "fixture_json": str(fixture),
+    }
+
+
 def test_fetch_state_unsupported_source_writes_failure_log(tmp_path):
     database = tmp_path / "apsi.sqlite"
     create_crawler_database(database)
