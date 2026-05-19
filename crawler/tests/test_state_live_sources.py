@@ -282,6 +282,40 @@ def test_fetch_tx_esbd_opportunities_preserves_normalized_aliases():
     assert bid["issuer_name"] == "Texas Department of Information Resources"
 
 
+def test_fetch_tx_esbd_opportunities_uses_tx_title_and_category_precedence():
+    session = FakeSession(
+        FakeResponse(
+            payload=[
+                {
+                    "source_bid_id": "TX-ALIAS-001",
+                    "name": "Name title wins",
+                    "solicitationTitle": "Solicitation title loses",
+                    "category": "Category wins",
+                    "classItem": "Class item loses",
+                    "commodity": "Commodity loses",
+                },
+                {
+                    "source_bid_id": "TX-ALIAS-002",
+                    "name": "Commodity-only opportunity",
+                    "commodity": "Commodity fallback",
+                },
+            ]
+        )
+    )
+
+    bids = fetch_tx_esbd_opportunities(
+        get_source("tx_esbd"),
+        query="data",
+        limit=5,
+        session=session,
+        timeout=10,
+    )
+
+    assert bids[0]["title"] == "Name title wins"
+    assert bids[0]["original_category"] == "Category wins"
+    assert bids[1]["original_category"] == "Commodity fallback"
+
+
 def test_fetch_tx_esbd_opportunities_raises_on_http_error():
     session = FakeSession(FakeResponse(status_code=503, text="maintenance"))
 

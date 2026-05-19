@@ -41,11 +41,11 @@ def _normalize_record(record):
 
     return {
         "source_bid_id": source_bid_id,
-        "title": _first_present(record, ("title", "solicitationTitle", "name")),
+        "title": _first_present(record, ("title", "name", "solicitationTitle")),
         "description": _first_present(record, ("description", "summary")),
         "original_category": _first_present(
             record,
-            ("original_category", "classItem", "category", "type"),
+            ("category", "classItem", "commodity"),
         ),
         "published_date": _first_present(
             record,
