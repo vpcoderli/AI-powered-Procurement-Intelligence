@@ -238,6 +238,47 @@ def test_upsert_bid_rolls_back_bid_and_attachment_changes_when_attachment_insert
     ]
 
 
+def test_upsert_bid_raises_and_rolls_back_when_attachment_is_missing_url(tmp_path):
+    db_path = tmp_path / "apsi.sqlite"
+    connection = sqlite3.connect(db_path)
+    _create_bid_attachment_database(connection)
+    bid = _il_bid(
+        title="Original title",
+        attachments=[
+            {
+                "name": "Original Scope.pdf",
+                "url": "https://www.bidbuy.illinois.gov/documents/original.pdf",
+            }
+        ],
+    )
+    assert upsert_bid(connection, bid) == "inserted"
+
+    with pytest.raises(ValueError) as error:
+        upsert_bid(
+            connection,
+            {
+                **bid,
+                "title": "Updated title",
+                "attachments": [{"name": "Broken Scope.pdf"}],
+            },
+        )
+
+    assert str(error.value) == "Bid attachment is missing url"
+    connection.commit()
+
+    assert connection.execute("SELECT title FROM bids").fetchone()[0] == "Original title"
+    rows = connection.execute(
+        "SELECT bid_id, name, url FROM bid_attachments"
+    ).fetchall()
+    assert rows == [
+        (
+            "il_bidbuy:IL-BIDBUY-2026-001",
+            "Original Scope.pdf",
+            "https://www.bidbuy.illinois.gov/documents/original.pdf",
+        )
+    ]
+
+
 def test_upsert_bid_uses_index_when_attachment_sort_order_is_none(tmp_path):
     db_path = tmp_path / "apsi.sqlite"
     connection = sqlite3.connect(db_path)
