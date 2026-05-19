@@ -39,16 +39,18 @@ type LoadState =
   | { status: "error" }
   | { status: "ready"; data: AdminDataSourcesResponse; logs: AdminCrawlerLog[] };
 
-const RUNNABLE_STATE_SOURCE_IDS = new Set([
-  "ca_caleprocure",
-  "tx_esbd",
-  "ny_contract_reporter",
-  "fl_mfmp",
-  "il_bidbuy",
-]);
+const STATE_CRAWLER_SOURCE_IDS_BY_STATE: Record<string, string> = {
+  CA: "ca_caleprocure",
+  TX: "tx_esbd",
+  NY: "ny_contract_reporter",
+  FL: "fl_mfmp",
+  IL: "il_bidbuy",
+};
 
-function isRunnableStateSource(source: AdminDataSource) {
-  return RUNNABLE_STATE_SOURCE_IDS.has(source.id);
+function stateCrawlerSourceIdFor(source: AdminDataSource) {
+  if (source.issuerType !== "state") return null;
+
+  return STATE_CRAWLER_SOURCE_IDS_BY_STATE[source.stateCode] ?? null;
 }
 
 function formatDate(value: string | null) {
@@ -168,9 +170,12 @@ export default function AdminPage() {
   };
 
   const runSourceNow = (source: AdminDataSource) => {
+    const stateCrawlerSourceId = stateCrawlerSourceIdFor(source);
+    if (!stateCrawlerSourceId) return;
+
     setRunningSourceId(source.id);
     setRunMessage(null);
-    runStateCrawlersNow([source.id])
+    runStateCrawlersNow([stateCrawlerSourceId])
       .then(() => {
         setRunMessage(t("admin.runSourceQueued").replace("{source}", source.label));
         load();
@@ -289,7 +294,7 @@ export default function AdminPage() {
                       : "-"}
                   </TableCell>
                   <TableCell className="text-right">
-                    {isRunnableStateSource(source) ? (
+                    {stateCrawlerSourceIdFor(source) ? (
                       <Button
                         type="button"
                         variant="outline"
