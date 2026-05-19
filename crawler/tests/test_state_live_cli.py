@@ -242,7 +242,65 @@ def test_fetch_state_replays_fl_mfmp_fixture_json(tmp_path):
     }
 
 
-def test_fetch_state_unsupported_source_writes_failure_log(tmp_path):
+def test_fetch_state_replays_il_bidbuy_fixture_html(tmp_path):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+    fixture = Path(__file__).parent / "fixtures" / "il_bidbuy_open_bids.html"
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "il_bidbuy",
+            "--query",
+            "data",
+            "--limit",
+            "5",
+            "--fixture-html",
+            str(fixture),
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 0
+    bid = connection.execute(
+        "SELECT source, source_bid_id, dedupe_key, title, state_code FROM bids"
+    ).fetchone()
+    assert bid == (
+        "Illinois BidBuy",
+        "IL-BIDBUY-2026-001",
+        "il_bidbuy:IL-BIDBUY-2026-001",
+        "Enterprise data integration services",
+        "IL",
+    )
+    log = connection.execute(
+        "SELECT source, status, fetched_count, inserted_count, updated_count, metadata FROM crawler_logs"
+    ).fetchone()
+    assert log[:5] == ("il_bidbuy", "success", 1, 1, 0)
+    assert json.loads(log[5]) == {
+        "mode": "live",
+        "query": "data",
+        "limit": 5,
+        "fixture_html": str(fixture),
+    }
+
+
+def test_fetch_state_unsupported_source_writes_failure_log(tmp_path, monkeypatch):
+    from apsi_crawler.sources.base import Source
+    from apsi_crawler.sources import registry
+
+    static_source = Source(
+        id="test_static_source",
+        name="Static Test Source",
+        source_label="Static Test Source",
+        jurisdiction="state",
+        state_code="TS",
+        fixture_loader=lambda path: [],
+    )
+    monkeypatch.setitem(registry.STATE_SOURCES, "test_static_source", static_source)
+    monkeypatch.setitem(registry.SOURCES, "test_static_source", static_source)
     database = tmp_path / "apsi.sqlite"
     create_crawler_database(database)
 
@@ -252,7 +310,7 @@ def test_fetch_state_unsupported_source_writes_failure_log(tmp_path):
             "--database",
             str(database),
             "--source",
-            "il_bidbuy",
+            "test_static_source",
         ]
     )
 
@@ -262,11 +320,11 @@ def test_fetch_state_unsupported_source_writes_failure_log(tmp_path):
         "SELECT source, status, failed_count, error_code, error_message FROM crawler_logs"
     ).fetchone()
     assert log == (
-        "il_bidbuy",
+        "test_static_source",
         "failure",
         1,
         "UnsupportedLiveSourceError",
-        "Live fetch is not implemented for source: il_bidbuy",
+        "Live fetch is not implemented for source: test_static_source",
     )
 
 

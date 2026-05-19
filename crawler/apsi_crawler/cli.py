@@ -109,7 +109,14 @@ def fetch_sam_gov(database, posted_from, posted_to, api_key=None, limit=100, max
         connection.close()
 
 
-def fetch_state(database, source, query=None, limit=25, fixture_json=None):
+def fetch_state(
+    database,
+    source,
+    query=None,
+    limit=25,
+    fixture_json=None,
+    fixture_html=None,
+):
     started_at = now_iso()
     started = perf_counter()
     run_id = str(uuid4())
@@ -117,6 +124,8 @@ def fetch_state(database, source, query=None, limit=25, fixture_json=None):
     metadata = {"mode": "live", "query": query, "limit": limit}
     if fixture_json:
         metadata["fixture_json"] = fixture_json
+    if fixture_html:
+        metadata["fixture_html"] = fixture_html
 
     connection = sqlite3.connect(database)
     try:
@@ -125,6 +134,8 @@ def fetch_state(database, source, query=None, limit=25, fixture_json=None):
         fetch_kwargs = {"query": query, "limit": limit}
         if fixture_json:
             fetch_kwargs["fixture_json"] = fixture_json
+        if fixture_html:
+            fetch_kwargs["fixture_html"] = fixture_html
         bids = fetcher(source_metadata, **fetch_kwargs)
         inserted_count, updated_count = _upsert_bids(connection, bids)
 
@@ -188,6 +199,7 @@ def build_parser():
     fetch_state_parser.add_argument("--query")
     fetch_state_parser.add_argument("--limit", type=int, default=25)
     fetch_state_parser.add_argument("--fixture-json")
+    fetch_state_parser.add_argument("--fixture-html")
 
     return parser
 
@@ -216,6 +228,7 @@ def main(argv=None):
             query=args.query,
             limit=args.limit,
             fixture_json=args.fixture_json,
+            fixture_html=args.fixture_html,
         )
 
     parser.error(f"Unsupported command: {args.command}")

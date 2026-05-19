@@ -18,6 +18,11 @@ from apsi_crawler.spiders.fl_mfmp import (
     FlMfmpError,
     fetch_fl_mfmp_opportunities,
 )
+from apsi_crawler.spiders.il_bidbuy import (
+    IL_BIDBUY_OPEN_BIDS_URL,
+    IlBidBuyError,
+    fetch_il_bidbuy_opportunities,
+)
 from apsi_crawler.spiders.ny_contract_reporter import (
     NyContractReporterError,
     fetch_ny_contract_reporter_opportunities,
@@ -29,11 +34,19 @@ from apsi_crawler.spiders.tx_esbd import (
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, payload=None, text="", json_error=None):
+    def __init__(
+        self,
+        status_code=200,
+        payload=None,
+        text="",
+        json_error=None,
+        headers=None,
+    ):
         self.status_code = status_code
         self._payload = payload
         self.text = text
         self._json_error = json_error
+        self.headers = headers or {"Content-Type": "application/json"}
 
     def json(self):
         if self._json_error:
@@ -47,8 +60,10 @@ class FakeSession:
         self.calls = []
         self.closed = False
 
-    def get(self, url, params=None, timeout=None):
-        self.calls.append({"url": url, "params": params, "timeout": timeout})
+    def get(self, url, params=None, headers=None, timeout=None):
+        self.calls.append(
+            {"url": url, "params": params, "headers": headers, "timeout": timeout}
+        )
         if isinstance(self.response, Exception):
             raise self.response
         return self.response
@@ -88,13 +103,32 @@ def test_registry_reports_live_support_for_fl_mfmp():
     assert get_live_fetcher("fl_mfmp") is fetch_fl_mfmp_opportunities
 
 
-def test_registry_reports_unsupported_live_state_sources():
-    assert supports_live_fetch("il_bidbuy") is False
+def test_registry_reports_live_support_for_il_bidbuy():
+    assert supports_live_fetch("il_bidbuy") is True
+    assert get_live_fetcher("il_bidbuy") is fetch_il_bidbuy_opportunities
+
+
+def test_registry_reports_unsupported_live_state_sources(monkeypatch):
+    from apsi_crawler.sources.base import Source
+    from apsi_crawler.sources import registry
+
+    static_source = Source(
+        id="test_static_source",
+        name="Static Test Source",
+        source_label="Static Test Source",
+        jurisdiction="state",
+        state_code="TS",
+        fixture_loader=lambda path: [],
+    )
+    monkeypatch.setitem(registry.STATE_SOURCES, "test_static_source", static_source)
+    monkeypatch.setitem(registry.SOURCES, "test_static_source", static_source)
+
+    assert supports_live_fetch("test_static_source") is False
 
     with pytest.raises(UnsupportedLiveSourceError) as error:
-        get_live_fetcher("il_bidbuy")
+        get_live_fetcher("test_static_source")
 
-    assert str(error.value) == "Live fetch is not implemented for source: il_bidbuy"
+    assert str(error.value) == "Live fetch is not implemented for source: test_static_source"
 
 
 def test_fetch_ny_contract_reporter_opportunities_normalizes_live_response():
@@ -621,6 +655,117 @@ def test_fetch_tx_esbd_opportunities_wraps_request_errors():
         )
 
     assert str(error.value) == "Texas ESBD request failed: slow"
+
+
+def test_fetch_il_bidbuy_opportunities_replays_html_fixture():
+    bids = fetch_il_bidbuy_opportunities(
+        get_source("il_bidbuy"),
+        query="data",
+        limit=5,
+        fixture_html=str(FIXTURES_DIR / "il_bidbuy_open_bids.html"),
+    )
+
+    assert len(bids) == 1
+    bid = bids[0]
+    assert bid["source"] == "Illinois BidBuy"
+    assert bid["source_bid_id"] == "IL-BIDBUY-2026-001"
+    assert bid["dedupe_key"] == "il_bidbuy:IL-BIDBUY-2026-001"
+    assert bid["title"] == "Enterprise data integration services"
+    assert bid["description"] == "Enterprise data integration services"
+    assert bid["issuer_name"] == "Illinois Department of Innovation and Technology"
+    assert bid["issuer_type"] == "state"
+    assert bid["state_code"] == "IL"
+    assert bid["deadline_date"] == "06/30/2026 02:00 PM"
+    assert bid["source_url"] == (
+        "https://www.bidbuy.illinois.gov/bso/external/bidDetail.sdo?"
+        "docId=IL-BIDBUY-2026-001"
+    )
+    assert bid["raw_payload"]["alternate_id"] == "DoIT-26-Data"
+    assert bid["raw_payload"]["status"] == "Open"
+
+
+def test_fetch_il_bidbuy_opportunities_uses_public_open_bids_page():
+    fixture_path = FIXTURES_DIR / "il_bidbuy_open_bids.html"
+    session = FakeSession(
+        FakeResponse(
+            text=fixture_path.read_text(encoding="utf-8"),
+            headers={"Content-Type": "text/html; charset=utf-8"},
+        )
+    )
+
+    bids = fetch_il_bidbuy_opportunities(
+        get_source("il_bidbuy"),
+        query="data",
+        limit=5,
+        session=session,
+        timeout=10,
+    )
+
+    assert session.calls[0]["url"] == IL_BIDBUY_OPEN_BIDS_URL
+    assert session.calls[0]["params"] == {"openBids": "true"}
+    assert session.calls[0]["timeout"] == 10
+    assert len(bids) == 1
+
+
+def test_fetch_il_bidbuy_opportunities_raises_when_required_headers_missing():
+    html = """
+    <table>
+      <tr><th>Description</th></tr>
+      <tr><td>Enterprise data integration services</td></tr>
+    </table>
+    """
+
+    with pytest.raises(IlBidBuyError) as error:
+        fetch_il_bidbuy_opportunities(
+            get_source("il_bidbuy"),
+            limit=5,
+            fixture_html=None,
+            fixture_json=None,
+            session=FakeSession(
+                FakeResponse(
+                    text=html,
+                    headers={"Content-Type": "text/html; charset=utf-8"},
+                )
+            ),
+        )
+
+    assert str(error.value) == "Illinois BidBuy page missing expected bid table headers"
+
+
+def test_fetch_il_bidbuy_opportunities_raises_when_row_missing_source_id(tmp_path):
+    fixture = tmp_path / "il_missing_id.html"
+    fixture.write_text(
+        """
+        <table>
+          <tr>
+            <th>Bid Solicitation #</th>
+            <th>Description</th>
+            <th>Organization Name</th>
+            <th>Bid Opening Date</th>
+            <th>Status</th>
+            <th>Alternate Id</th>
+          </tr>
+          <tr>
+            <td></td>
+            <td>Enterprise data integration services</td>
+            <td>Illinois Department of Innovation and Technology</td>
+            <td>06/30/2026 02:00 PM</td>
+            <td>Open</td>
+            <td>DoIT-26-Data</td>
+          </tr>
+        </table>
+        """,
+        encoding="utf-8",
+    )
+
+    with pytest.raises(IlBidBuyError) as error:
+        fetch_il_bidbuy_opportunities(
+            get_source("il_bidbuy"),
+            limit=5,
+            fixture_html=str(fixture),
+        )
+
+    assert str(error.value) == "Illinois BidBuy row is missing bid solicitation number"
 
 
 def test_fetch_tx_esbd_opportunities_replays_adapter_fixture_json():
