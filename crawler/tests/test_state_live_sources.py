@@ -14,7 +14,10 @@ from apsi_crawler.spiders.ca_caleprocure import (
     CalEProcureError,
     fetch_ca_caleprocure_opportunities,
 )
-from apsi_crawler.spiders.tx_esbd import fetch_tx_esbd_opportunities
+from apsi_crawler.spiders.tx_esbd import (
+    TxEsbdError,
+    fetch_tx_esbd_opportunities,
+)
 
 
 class FakeResponse:
@@ -184,3 +187,128 @@ def test_fetch_ca_caleprocure_opportunities_wraps_request_errors():
         )
 
     assert str(error.value) == "Cal eProcure request failed: slow"
+
+
+def test_fetch_tx_esbd_opportunities_normalizes_live_response():
+    fixture_path = FIXTURES_DIR / "tx_esbd_live_response.json"
+    with fixture_path.open() as fixture:
+        payload = json.load(fixture)
+    session = FakeSession(FakeResponse(payload=payload))
+
+    bids = fetch_tx_esbd_opportunities(
+        get_source("tx_esbd"),
+        query="data",
+        limit=5,
+        session=session,
+        timeout=10,
+    )
+
+    assert session.calls[0]["url"] == "https://www.txsmartbuy.gov/esbd"
+    assert session.calls[0]["params"] == {"query": "data", "limit": 5}
+    assert session.calls[0]["timeout"] == 10
+    assert len(bids) == 1
+    bid = bids[0]
+    assert bid["dedupe_key"] == "tx_esbd:ESBD-LIVE-2026-77"
+    assert bid["title"] == "Statewide data catalog services"
+    assert bid["issuer_name"] == "Texas Department of Information Resources"
+    assert bid["issuer_type"] == "state"
+    assert bid["state_code"] == "TX"
+    assert bid["source_url"] == "https://www.txsmartbuy.gov/esbd/ESBD-LIVE-2026-77"
+
+
+def test_fetch_tx_esbd_opportunities_raises_on_unexpected_payload_shape():
+    session = FakeSession(FakeResponse(payload={"error": "changed"}))
+
+    with pytest.raises(TxEsbdError) as error:
+        fetch_tx_esbd_opportunities(
+            get_source("tx_esbd"),
+            query="data",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == (
+        "Texas ESBD response did not contain opportunities or results"
+    )
+
+
+def test_fetch_tx_esbd_opportunities_raises_when_record_missing_source_id():
+    session = FakeSession(FakeResponse(payload={"opportunities": [{"title": "Data"}]}))
+
+    with pytest.raises(TxEsbdError) as error:
+        fetch_tx_esbd_opportunities(
+            get_source("tx_esbd"),
+            query="data",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "Texas ESBD record is missing source id"
+
+
+def test_fetch_tx_esbd_opportunities_preserves_normalized_aliases():
+    session = FakeSession(
+        FakeResponse(
+            payload=[
+                {
+                    "source_bid_id": "TX-NORMALIZED-001",
+                    "title": "Normalized data services",
+                    "source_url": "https://www.txsmartbuy.gov/esbd/TX-NORMALIZED-001",
+                    "published_date": "2026-05-18",
+                    "deadline_date": "2026-06-10",
+                    "issuer_name": "Texas Department of Information Resources",
+                }
+            ]
+        )
+    )
+
+    bids = fetch_tx_esbd_opportunities(
+        get_source("tx_esbd"),
+        query="data",
+        limit=5,
+        session=session,
+        timeout=10,
+    )
+
+    assert len(bids) == 1
+    bid = bids[0]
+    assert bid["source_bid_id"] == "TX-NORMALIZED-001"
+    assert bid["dedupe_key"] == "tx_esbd:TX-NORMALIZED-001"
+    assert bid["source_url"] == "https://www.txsmartbuy.gov/esbd/TX-NORMALIZED-001"
+    assert bid["published_date"] == "2026-05-18"
+    assert bid["deadline_date"] == "2026-06-10"
+    assert bid["issuer_name"] == "Texas Department of Information Resources"
+
+
+def test_fetch_tx_esbd_opportunities_raises_on_http_error():
+    session = FakeSession(FakeResponse(status_code=503, text="maintenance"))
+
+    with pytest.raises(TxEsbdError) as error:
+        fetch_tx_esbd_opportunities(
+            get_source("tx_esbd"),
+            query="data",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == (
+        "Texas ESBD request failed with status 503: maintenance"
+    )
+
+
+def test_fetch_tx_esbd_opportunities_wraps_request_errors():
+    session = FakeSession(requests.Timeout("slow"))
+
+    with pytest.raises(TxEsbdError) as error:
+        fetch_tx_esbd_opportunities(
+            get_source("tx_esbd"),
+            query="data",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "Texas ESBD request failed: slow"
