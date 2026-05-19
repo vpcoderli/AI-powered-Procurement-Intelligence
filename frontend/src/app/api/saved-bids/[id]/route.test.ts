@@ -76,7 +76,7 @@ describe("DELETE /api/saved-bids/[id]", () => {
     expect(response.status).toBe(500);
     expect(body.error).toEqual({
       code: "INTERNAL_ERROR",
-      message: "remove failed",
+      message: "Internal server error",
     });
     expect(response.headers.get("set-cookie")).toContain(`${ANONYMOUS_USER_COOKIE_NAME}=anon_`);
   });

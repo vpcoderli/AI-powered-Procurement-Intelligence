@@ -5,6 +5,18 @@ export const ANONYMOUS_USER_COOKIE_NAME = "apsi_user_id";
 const USER_ID_PATTERN = /^anon_[a-zA-Z0-9_-]+$/;
 const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
+interface AnonymousCookieOptions {
+  secure?: boolean;
+}
+
+function shouldUseSecureCookie(options: AnonymousCookieOptions = {}) {
+  return options.secure ?? process.env.NODE_ENV === "production";
+}
+
+function cookieParts(parts: string[], options?: AnonymousCookieOptions) {
+  return [...parts, ...(shouldUseSecureCookie(options) ? ["Secure"] : [])].join("; ");
+}
+
 function parseCookies(cookieHeader: string | null) {
   const cookies = new Map<string, string>();
 
@@ -35,24 +47,24 @@ function createAnonymousUserId() {
   return `anon_${randomUUID().replaceAll("-", "")}`;
 }
 
-export function createAnonymousUserCookie(userId: string) {
-  return [
+export function createAnonymousUserCookie(userId: string, options?: AnonymousCookieOptions) {
+  return cookieParts([
     `${ANONYMOUS_USER_COOKIE_NAME}=${encodeURIComponent(userId)}`,
     "Path=/",
     "HttpOnly",
     "SameSite=Lax",
     `Max-Age=${COOKIE_MAX_AGE_SECONDS}`,
-  ].join("; ");
+  ], options);
 }
 
-export function clearAnonymousUserCookie() {
-  return [
+export function clearAnonymousUserCookie(options?: AnonymousCookieOptions) {
+  return cookieParts([
     `${ANONYMOUS_USER_COOKIE_NAME}=`,
     "Path=/",
     "HttpOnly",
     "SameSite=Lax",
     "Max-Age=0",
-  ].join("; ");
+  ], options);
 }
 
 export function resolveAnonymousUser(request: Request) {
