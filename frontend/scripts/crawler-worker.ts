@@ -1,9 +1,6 @@
 import { createDatabase } from "../src/server/db/client";
 import { runMigrations } from "../src/server/db/migrate";
-import { runCrawlerSourceOnce } from "../src/server/crawler/orchestrator";
-import { runSamGovCrawler } from "../src/server/crawler/sam-gov-runner";
-import { sendMatchedAlertNotifications } from "../src/server/notifications/service";
-import { matchEnabledSearchAlerts } from "../src/server/search-alerts/matcher";
+import { parseStateCrawlerLimit, runConfiguredCrawlerSourcesOnce } from "../src/server/crawler/configured-runner";
 
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
 
@@ -34,14 +31,12 @@ async function main() {
 
   try {
     while (!stopping) {
-      const result = await runCrawlerSourceOnce(db, {
-        source: "SAM.gov",
+      const results = await runConfiguredCrawlerSourcesOnce({
+        database: db,
         owner: owner(),
-        runner: runSamGovCrawler,
-        matcher: () => matchEnabledSearchAlerts(db),
-        notifier: ({ alertMatching }) => sendMatchedAlertNotifications(db, alertMatching),
+        stateRunnerOptions: { limit: parseStateCrawlerLimit() },
       });
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify(results, null, 2));
 
       if (!stopping) {
         await sleep(intervalMs());
