@@ -109,6 +109,31 @@ export function runMigrations(db: AppDatabase) {
       metadata TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS crawler_locks (
+      source TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      acquired_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS notification_outbox (
+      id TEXT PRIMARY KEY,
+      alert_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      recipient TEXT NOT NULL,
+      frequency TEXT NOT NULL,
+      dedupe_key TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      body_text TEXT NOT NULL,
+      matched_bid_ids TEXT NOT NULL,
+      status TEXT NOT NULL,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      sent_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS data_sources (
       id TEXT PRIMARY KEY,
       label TEXT NOT NULL,
@@ -139,5 +164,9 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_alerts_user_id ON alerts(user_id);
     CREATE INDEX IF NOT EXISTS idx_crawler_logs_source_started ON crawler_logs(source, started_at);
     CREATE INDEX IF NOT EXISTS idx_crawler_logs_run_id ON crawler_logs(run_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_outbox_dedupe_key ON notification_outbox(dedupe_key);
+    CREATE INDEX IF NOT EXISTS idx_notification_outbox_status_created ON notification_outbox(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_notification_outbox_alert_id ON notification_outbox(alert_id);
+    CREATE INDEX IF NOT EXISTS idx_notification_outbox_user_id ON notification_outbox(user_id);
   `);
 }

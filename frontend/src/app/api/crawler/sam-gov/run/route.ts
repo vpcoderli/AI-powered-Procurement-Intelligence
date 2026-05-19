@@ -1,14 +1,29 @@
 import { NextResponse } from "next/server";
 import {
+  runCrawlerSourceOnce,
+  type CrawlerNotifier,
+  type CrawlerRunner,
+  type RunCrawlerSourceOnceOptions,
+  type RunCrawlerSourceOnceResult,
+} from "@/server/crawler/orchestrator";
+import {
   runSamGovCrawler,
   type SamGovCrawlerRunOptions,
-  type SamGovCrawlerRunResult,
 } from "@/server/crawler/sam-gov-runner";
-import { db } from "@/server/db/client";
+import { db, type AppDatabase } from "@/server/db/client";
 import { matchEnabledSearchAlerts, type SearchAlertMatchResult } from "@/server/search-alerts/matcher";
 
-type Runner = (options?: SamGovCrawlerRunOptions) => Promise<SamGovCrawlerRunResult>;
 type Matcher = () => Promise<SearchAlertMatchResult>;
+type Orchestrator = (db: AppDatabase, options: RunCrawlerSourceOnceOptions) => Promise<RunCrawlerSourceOnceResult>;
+
+interface SamGovRunRouteDependencies {
+  database: AppDatabase;
+  owner: string;
+  runner: CrawlerRunner;
+  matcher: Matcher;
+  notifier: CrawlerNotifier;
+  runCrawlerSourceOnce: Orchestrator;
+}
 
 function tokenFromRequest(request: Request) {
   const authorization = request.headers.get("authorization");
@@ -40,10 +55,28 @@ async function parseOptions(request: Request): Promise<SamGovCrawlerRunOptions> 
   };
 }
 
-export function createSamGovRunPost(
-  runner: Runner = runSamGovCrawler,
-  matcher: Matcher = () => matchEnabledSearchAlerts(db),
-) {
+function defaultOwner() {
+  return `sam-gov-route:${process.pid}`;
+}
+
+const noopNotifier: CrawlerNotifier = async () => ({
+  queued: 0,
+  sent: 0,
+  skipped: 0,
+  failed: 0,
+});
+
+export function createSamGovRunPost(overrides: Partial<SamGovRunRouteDependencies> = {}) {
+  const dependencies: SamGovRunRouteDependencies = {
+    database: db,
+    owner: defaultOwner(),
+    runner: runSamGovCrawler,
+    matcher: () => matchEnabledSearchAlerts(overrides.database ?? db),
+    notifier: noopNotifier,
+    runCrawlerSourceOnce,
+    ...overrides,
+  };
+
   return async function POST(request: Request) {
     if (!isAuthorized(request)) {
       return NextResponse.json(
@@ -57,14 +90,23 @@ export function createSamGovRunPost(
       );
     }
 
-    const result = await runner(await parseOptions(request));
+    const result = await dependencies.runCrawlerSourceOnce(dependencies.database, {
+      source: "SAM.gov",
+      owner: dependencies.owner,
+      runner: dependencies.runner,
+      runnerOptions: await parseOptions(request),
+      matcher: dependencies.matcher,
+      notifier: dependencies.notifier,
+    });
+
+    if (result.status === "locked") {
+      return NextResponse.json(result, { status: 409 });
+    }
     if (!result.ok) {
       return NextResponse.json(result, { status: 500 });
     }
 
-    const alertMatching = await matcher();
-
-    return NextResponse.json({ ...result, alertMatching }, { status: 200 });
+    return NextResponse.json(result, { status: 200 });
   };
 }
 

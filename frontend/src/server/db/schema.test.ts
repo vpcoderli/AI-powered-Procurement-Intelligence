@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDatabase } from "./client";
 import { runMigrations } from "./migrate";
-import { bids, users } from "./schema";
+import { bids, crawlerLocks, notificationOutbox, users } from "./schema";
 
 describe("database schema", () => {
   let directory: string | undefined;
@@ -63,5 +63,56 @@ describe("database schema", () => {
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
         .get("idx_bids_dedupe_key"),
     ).toEqual({ name: "idx_bids_dedupe_key" });
+
+    expect(() =>
+      db!.insert(crawlerLocks)
+        .values({
+          source: "SAM.gov",
+          owner: "worker_1",
+          acquiredAt: "2026-05-19T00:00:00.000Z",
+          expiresAt: "2026-05-19T00:10:00.000Z",
+        })
+        .run(),
+    ).not.toThrow();
+
+    expect(() =>
+      db!.insert(notificationOutbox)
+        .values({
+          id: "notification_1",
+          alertId: "alert_1",
+          userId: "user_1",
+          channel: "email",
+          recipient: "buyer@example.com",
+          frequency: "daily",
+          dedupeKey: "alert_1:2026-05-19:email",
+          subject: "APSi daily bid matches",
+          bodyText: "1 matching bid",
+          matchedBidIds: JSON.stringify(["bid_1"]),
+          status: "pending",
+          attemptCount: 0,
+          createdAt: "2026-05-19T00:00:00.000Z",
+        })
+        .run(),
+    ).not.toThrow();
+
+    expect(() =>
+      db!.insert(notificationOutbox)
+        .values({
+          id: "notification_2",
+          alertId: "alert_1",
+          userId: "user_1",
+          channel: "email",
+          recipient: "buyer@example.com",
+          frequency: "daily",
+          dedupeKey: "alert_1:2026-05-19:email",
+          subject: "Duplicate",
+          bodyText: "Duplicate",
+          matchedBidIds: JSON.stringify(["bid_1"]),
+          status: "pending",
+          attemptCount: 0,
+          createdAt: "2026-05-19T00:00:00.000Z",
+        })
+        .run(),
+    ).toThrow();
   });
 });
