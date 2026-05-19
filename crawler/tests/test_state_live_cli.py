@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from pathlib import Path
 
 from apsi_crawler.cli import main
 from tests.test_cli import create_crawler_database, normalized_bid
@@ -57,6 +58,53 @@ def test_fetch_state_writes_bids_and_success_log(tmp_path, monkeypatch):
     ).fetchone()
     assert log[:5] == ("ca_caleprocure", "success", 1, 1, 0)
     assert json.loads(log[5]) == {"mode": "live", "query": "cloud", "limit": 5}
+
+
+def test_fetch_state_replays_ca_caleprocure_fixture_json(tmp_path):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+    fixture = (
+        Path(__file__).parent
+        / "fixtures"
+        / "ca_caleprocure_live_response.json"
+    )
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "ca_caleprocure",
+            "--query",
+            "cloud",
+            "--limit",
+            "5",
+            "--fixture-json",
+            str(fixture),
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 0
+    bid = connection.execute(
+        "SELECT source_bid_id, dedupe_key, title FROM bids"
+    ).fetchone()
+    assert bid == (
+        "CA-LIVE-2026-001",
+        "ca_caleprocure:CA-LIVE-2026-001",
+        "Cloud data warehouse modernization",
+    )
+    log = connection.execute(
+        "SELECT source, status, fetched_count, inserted_count, updated_count, metadata FROM crawler_logs"
+    ).fetchone()
+    assert log[:5] == ("ca_caleprocure", "success", 1, 1, 0)
+    assert json.loads(log[5]) == {
+        "mode": "live",
+        "query": "cloud",
+        "limit": 5,
+        "fixture_json": str(fixture),
+    }
 
 
 def test_fetch_state_unsupported_source_writes_failure_log(tmp_path):

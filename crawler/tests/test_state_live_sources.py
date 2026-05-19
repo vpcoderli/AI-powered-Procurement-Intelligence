@@ -81,6 +81,72 @@ def test_fetch_ca_caleprocure_opportunities_normalizes_live_response():
     assert bid["source_url"] == "https://caleprocure.ca.gov/event/CA-LIVE-2026-001"
 
 
+def test_fetch_ca_caleprocure_opportunities_raises_on_unexpected_payload_shape():
+    session = FakeSession(FakeResponse(payload={"error": "changed"}))
+
+    with pytest.raises(CalEProcureError) as error:
+        fetch_ca_caleprocure_opportunities(
+            get_source("ca_caleprocure"),
+            query="cloud",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == (
+        "Cal eProcure response did not contain opportunities or results"
+    )
+
+
+def test_fetch_ca_caleprocure_opportunities_raises_when_record_missing_source_id():
+    session = FakeSession(FakeResponse(payload={"opportunities": [{"title": "Cloud"}]}))
+
+    with pytest.raises(CalEProcureError) as error:
+        fetch_ca_caleprocure_opportunities(
+            get_source("ca_caleprocure"),
+            query="cloud",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "Cal eProcure record is missing source id"
+
+
+def test_fetch_ca_caleprocure_opportunities_preserves_normalized_aliases():
+    session = FakeSession(
+        FakeResponse(
+            payload=[
+                {
+                    "source_bid_id": "CA-NORMALIZED-001",
+                    "title": "Normalized cloud services",
+                    "source_url": "https://caleprocure.ca.gov/event/CA-NORMALIZED-001",
+                    "published_date": "2026-05-18",
+                    "deadline_date": "2026-06-10",
+                    "issuer_name": "Department of General Services",
+                }
+            ]
+        )
+    )
+
+    bids = fetch_ca_caleprocure_opportunities(
+        get_source("ca_caleprocure"),
+        query="cloud",
+        limit=5,
+        session=session,
+        timeout=10,
+    )
+
+    assert len(bids) == 1
+    bid = bids[0]
+    assert bid["source_bid_id"] == "CA-NORMALIZED-001"
+    assert bid["dedupe_key"] == "ca_caleprocure:CA-NORMALIZED-001"
+    assert bid["source_url"] == "https://caleprocure.ca.gov/event/CA-NORMALIZED-001"
+    assert bid["published_date"] == "2026-05-18"
+    assert bid["deadline_date"] == "2026-06-10"
+    assert bid["issuer_name"] == "Department of General Services"
+
+
 def test_fetch_ca_caleprocure_opportunities_raises_on_http_error():
     session = FakeSession(FakeResponse(status_code=503, text="maintenance"))
 
