@@ -45,6 +45,16 @@ export function createAnonymousUserCookie(userId: string) {
   ].join("; ");
 }
 
+export function clearAnonymousUserCookie() {
+  return [
+    `${ANONYMOUS_USER_COOKIE_NAME}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=0",
+  ].join("; ");
+}
+
 export function resolveAnonymousUser(request: Request) {
   const cookies = parseCookies(request.headers.get("cookie"));
   const existingUserId = cookies.get(ANONYMOUS_USER_COOKIE_NAME);

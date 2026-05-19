@@ -4,6 +4,7 @@ import {
   getBidByIdFromRepository,
   listBids,
   listSavedBidIds,
+  mergeSavedBidIds,
   removeSavedBidId,
   saveSavedBidId,
 } from "./repository";
@@ -50,5 +51,18 @@ describe("bid repository", () => {
 
     expect(await listSavedBidIds(testDb.db, "anon_a")).toEqual([]);
     expect(await listSavedBidIds(testDb.db, "anon_b")).toEqual(["2"]);
+  });
+
+  it("merges anonymous saved bids into an authenticated user idempotently", async () => {
+    await saveSavedBidId(testDb.db, "user_target", "2");
+    await saveSavedBidId(testDb.db, "user_target", "3");
+    await saveSavedBidId(testDb.db, "anon_source", "1");
+    await saveSavedBidId(testDb.db, "anon_source", "2");
+
+    await mergeSavedBidIds(testDb.db, "anon_source", "user_target");
+    await mergeSavedBidIds(testDb.db, "anon_source", "user_target");
+
+    expect(await listSavedBidIds(testDb.db, "user_target")).toEqual(["2", "3", "1"]);
+    expect(await listSavedBidIds(testDb.db, "anon_source")).toEqual(["1", "2"]);
   });
 });

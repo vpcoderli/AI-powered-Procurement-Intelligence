@@ -5,6 +5,8 @@ import {
   InvalidCredentialsError,
   loginUser,
 } from "@/server/auth/service";
+import { mergeSavedBidIds } from "@/server/bids/repository";
+import { clearAnonymousUserCookie, resolveAnonymousUser } from "@/server/bids/user";
 import { db } from "@/server/db/client";
 
 function errorResponse(code: string, message: string, status: number) {
@@ -33,8 +35,18 @@ export async function POST(request: Request) {
 
   try {
     const result = await loginUser(db, body.email, body.password);
+    const anonymousUser = resolveAnonymousUser(request);
+
+    if (!anonymousUser.isNewUser) {
+      await mergeSavedBidIds(db, anonymousUser.userId, result.user.id);
+    }
+
     const response = NextResponse.json({ user: result.user });
-    response.headers.set("Set-Cookie", createSessionCookie(result.sessionToken));
+    response.headers.append("Set-Cookie", createSessionCookie(result.sessionToken));
+
+    if (!anonymousUser.isNewUser) {
+      response.headers.append("Set-Cookie", clearAnonymousUserCookie());
+    }
 
     return response;
   } catch (error) {

@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
+import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
 import * as bidService from "@/server/bids/service";
 import { BidNotFoundError } from "@/server/bids/types";
-import {
-  createAnonymousUserCookie,
-  resolveAnonymousUser,
-} from "@/server/bids/user";
+import { db } from "@/server/db/client";
 
 function invalidRequest() {
   return NextResponse.json(
@@ -13,40 +11,40 @@ function invalidRequest() {
   );
 }
 
-function jsonWithUserCookie(
+function jsonWithPrincipalCookie(
   body: unknown,
-  user: ReturnType<typeof resolveAnonymousUser>,
+  principal: RequestPrincipal,
   init?: ResponseInit,
 ) {
   const response = NextResponse.json(body, init);
 
-  if (user.isNewUser) {
-    response.headers.set("Set-Cookie", createAnonymousUserCookie(user.userId));
+  if (principal.kind === "anonymous" && principal.anonymousCookie) {
+    response.headers.set("Set-Cookie", principal.anonymousCookie);
   }
 
   return response;
 }
 
-function internalError(error: unknown, user: ReturnType<typeof resolveAnonymousUser>) {
-  return jsonWithUserCookie(
+function internalError(error: unknown, principal: RequestPrincipal) {
+  return jsonWithPrincipalCookie(
     {
       error: {
         code: "INTERNAL_ERROR",
         message: error instanceof Error ? error.message : "Internal server error",
       },
     },
-    user,
+    principal,
     { status: 500 },
   );
 }
 
 export async function GET(request: Request) {
-  const user = resolveAnonymousUser(request);
+  const principal = await resolvePrincipal(db, request);
 
   try {
-    return jsonWithUserCookie(await bidService.getSavedBids(user.userId), user);
+    return jsonWithPrincipalCookie(await bidService.getSavedBids(principal.userId), principal);
   } catch (error) {
-    return internalError(error, user);
+    return internalError(error, principal);
   }
 }
 
@@ -69,19 +67,19 @@ export async function POST(request: Request) {
     return invalidRequest();
   }
 
-  const user = resolveAnonymousUser(request);
+  const principal = await resolvePrincipal(db, request);
 
   try {
-    return jsonWithUserCookie(await bidService.saveBid(user.userId, body.bidId), user);
+    return jsonWithPrincipalCookie(await bidService.saveBid(principal.userId, body.bidId), principal);
   } catch (error) {
     if (error instanceof BidNotFoundError) {
-      return jsonWithUserCookie(
+      return jsonWithPrincipalCookie(
         { error: { code: "BID_NOT_FOUND", message: "Bid not found" } },
-        user,
+        principal,
         { status: 404 },
       );
     }
 
-    return internalError(error, user);
+    return internalError(error, principal);
   }
 }

@@ -156,6 +156,36 @@ export async function removeSavedBidId(db: AppDatabase, userId: string, bidId: s
   return listSavedBidIds(db, userId);
 }
 
+export async function mergeSavedBidIds(db: AppDatabase, fromUserId: string, toUserId: string) {
+  await ensureUser(db, toUserId);
+
+  if (fromUserId === toUserId) {
+    return listSavedBidIds(db, toUserId);
+  }
+
+  const sourceRows = db
+    .select({ bidId: savedBids.bidId })
+    .from(savedBids)
+    .where(eq(savedBids.userId, fromUserId))
+    .orderBy(asc(savedBids.createdAt), asc(savedBids.bidId))
+    .all();
+
+  const mergeStartedAt = Date.now();
+
+  sourceRows.forEach((row, index) => {
+    db.insert(savedBids)
+      .values({
+        userId: toUserId,
+        bidId: row.bidId,
+        createdAt: new Date(mergeStartedAt + index + 1).toISOString(),
+      })
+      .onConflictDoNothing()
+      .run();
+  });
+
+  return listSavedBidIds(db, toUserId);
+}
+
 export function resetBidRepositoryForTests() {
   // Repository state now lives in SQLite. Kept as a no-op for legacy tests that
   // only need to clear spies/mocks around route handlers.

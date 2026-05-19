@@ -1,15 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MOCK_BIDS } from "@/lib/mock-data";
+import * as principal from "@/server/auth/principal";
 import * as bidService from "@/server/bids/service";
 import { BidNotFoundError } from "@/server/bids/types";
 import { ANONYMOUS_USER_COOKIE_NAME } from "@/server/bids/user";
 import { GET, POST } from "./route";
 
+vi.mock("@/server/db/client", () => ({ db: {} }));
+vi.mock("@/server/auth/principal", () => ({
+  resolvePrincipal: vi.fn(),
+}));
 vi.mock("@/server/bids/service", () => ({
   getSavedBids: vi.fn(),
   saveBid: vi.fn(),
 }));
 
+const resolvePrincipal = vi.mocked(principal.resolvePrincipal);
 const getSavedBids = vi.mocked(bidService.getSavedBids);
 const saveBid = vi.mocked(bidService.saveBid);
 
@@ -26,6 +32,7 @@ function cloneBid(index: number) {
 describe("GET /api/saved-bids", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resolvePrincipal.mockResolvedValue({ kind: "anonymous", userId: "anon_existing" });
   });
 
   it("returns saved bids", async () => {
@@ -47,7 +54,31 @@ describe("GET /api/saved-bids", () => {
     expect(getSavedBids).toHaveBeenCalledWith("anon_existing");
   });
 
+  it("uses the authenticated principal when a valid session exists", async () => {
+    resolvePrincipal.mockResolvedValueOnce({ kind: "authenticated", userId: "user_1" });
+    getSavedBids.mockResolvedValueOnce({
+      savedBidIds: ["2"],
+      bids: [cloneBid(1)],
+    });
+
+    const response = await GET(
+      new Request("http://localhost/api/saved-bids", {
+        headers: {
+          cookie: `${ANONYMOUS_USER_COOKIE_NAME}=anon_existing; apsi_session=sess_valid`,
+        },
+      }),
+    );
+
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(getSavedBids).toHaveBeenCalledWith("user_1");
+  });
+
   it("sets an anonymous user cookie when one is missing", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "anonymous",
+      userId: "anon_new",
+      anonymousCookie: `${ANONYMOUS_USER_COOKIE_NAME}=anon_new; Path=/`,
+    });
     getSavedBids.mockResolvedValueOnce({
       savedBidIds: [],
       bids: [],
@@ -74,6 +105,11 @@ describe("GET /api/saved-bids", () => {
   });
 
   it("returns INTERNAL_ERROR when fetching saved bids fails", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "anonymous",
+      userId: "anon_new",
+      anonymousCookie: `${ANONYMOUS_USER_COOKIE_NAME}=anon_new; Path=/`,
+    });
     getSavedBids.mockRejectedValueOnce(new Error("saved bids failed"));
 
     const response = await GET(new Request("http://localhost/api/saved-bids"));
@@ -91,6 +127,7 @@ describe("GET /api/saved-bids", () => {
 describe("POST /api/saved-bids", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resolvePrincipal.mockResolvedValue({ kind: "anonymous", userId: "anon_existing" });
   });
 
   it("saves an existing bid", async () => {
@@ -114,6 +151,10 @@ describe("POST /api/saved-bids", () => {
   });
 
   it("persists saved bids for the same anonymous user only", async () => {
+    resolvePrincipal
+      .mockResolvedValueOnce({ kind: "anonymous", userId: "anon_a" })
+      .mockResolvedValueOnce({ kind: "anonymous", userId: "anon_a" })
+      .mockResolvedValueOnce({ kind: "anonymous", userId: "anon_b" });
     saveBid.mockResolvedValueOnce({
       savedBidIds: ["1"],
       bids: [cloneBid(0)],
@@ -207,6 +248,11 @@ describe("POST /api/saved-bids", () => {
   });
 
   it("returns BID_NOT_FOUND when bidId does not exist", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "anonymous",
+      userId: "anon_new",
+      anonymousCookie: `${ANONYMOUS_USER_COOKIE_NAME}=anon_new; Path=/`,
+    });
     saveBid.mockRejectedValueOnce(new BidNotFoundError());
 
     const response = await POST(
@@ -223,6 +269,11 @@ describe("POST /api/saved-bids", () => {
   });
 
   it("returns INTERNAL_ERROR when saving a bid fails unexpectedly", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "anonymous",
+      userId: "anon_new",
+      anonymousCookie: `${ANONYMOUS_USER_COOKIE_NAME}=anon_new; Path=/`,
+    });
     saveBid.mockRejectedValueOnce(new Error("save failed"));
 
     const response = await POST(

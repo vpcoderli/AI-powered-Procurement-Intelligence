@@ -1,9 +1,14 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { SESSION_COOKIE_NAME } from "@/server/auth/session";
 import * as authService from "@/server/auth/service";
+import * as bidRepository from "@/server/bids/repository";
+import { ANONYMOUS_USER_COOKIE_NAME } from "@/server/bids/user";
 import { POST } from "./route";
 
 vi.mock("@/server/db/client", () => ({ db: {} }));
+vi.mock("@/server/bids/repository", () => ({
+  mergeSavedBidIds: vi.fn(),
+}));
 vi.mock("@/server/auth/service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/server/auth/service")>();
 
@@ -39,6 +44,33 @@ describe("POST /api/auth/register", () => {
     expect(response.status).toBe(201);
     expect(body.user.email).toBe("buyer@example.com");
     expect(response.headers.get("set-cookie")).toContain(`${SESSION_COOKIE_NAME}=sess_register`);
+  });
+
+  it("merges anonymous saved bids and clears the anonymous cookie", async () => {
+    vi.mocked(authService.registerUser).mockResolvedValueOnce({
+      user: { id: "user_1", email: "buyer@example.com", displayName: "Buyer One" },
+      sessionToken: "sess_register",
+    });
+    vi.mocked(bidRepository.mergeSavedBidIds).mockResolvedValueOnce(["1", "2"]);
+
+    const response = await POST(
+      new Request("http://localhost/api/auth/register", {
+        method: "POST",
+        headers: { cookie: `${ANONYMOUS_USER_COOKIE_NAME}=anon_old` },
+        body: JSON.stringify({
+          email: "buyer@example.com",
+          password: "strong-password",
+          displayName: "Buyer One",
+        }),
+      }),
+    );
+    const setCookie = response.headers.get("set-cookie");
+
+    expect(response.status).toBe(201);
+    expect(bidRepository.mergeSavedBidIds).toHaveBeenCalledWith({}, "anon_old", "user_1");
+    expect(setCookie).toContain(`${SESSION_COOKIE_NAME}=sess_register`);
+    expect(setCookie).toContain(`${ANONYMOUS_USER_COOKIE_NAME}=`);
+    expect(setCookie).toContain("Max-Age=0");
   });
 
   it("returns 409 for duplicate email", async () => {
