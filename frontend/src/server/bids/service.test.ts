@@ -1,5 +1,25 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetBidRepositoryForTests } from "./repository";
+
+const savedIdsByUser = new Map<string, string[]>();
+
+vi.mock("./saved-bids-store", () => ({
+  savedBidsStore: {
+    getSavedBidIds: vi.fn(async (userId: string) => [...(savedIdsByUser.get(userId) ?? [])]),
+    saveBidId: vi.fn(async (userId: string, bidId: string) => {
+      const ids = savedIdsByUser.get(userId) ?? [];
+      const nextIds = ids.includes(bidId) ? ids : [...ids, bidId];
+      savedIdsByUser.set(userId, nextIds);
+      return [...nextIds];
+    }),
+    removeBidId: vi.fn(async (userId: string, bidId: string) => {
+      const nextIds = (savedIdsByUser.get(userId) ?? []).filter((id) => id !== bidId);
+      savedIdsByUser.set(userId, nextIds);
+      return [...nextIds];
+    }),
+  },
+}));
+
 import {
   getBidById,
   getSavedBids,
@@ -15,6 +35,7 @@ describe("bid service", () => {
 
   beforeEach(() => {
     resetBidRepositoryForTests();
+    savedIdsByUser.clear();
   });
 
   it("returns all active bids by default", () => {
@@ -92,22 +113,31 @@ describe("bid service", () => {
     expect(getBidById("missing")).toBeUndefined();
   });
 
-  it("saves an existing bid idempotently", () => {
-    const first = saveBid("1");
-    const second = saveBid("1");
+  it("returns saved bids for one user", async () => {
+    await saveBid("anon_a", "1");
 
-    expect(first.savedBidIds).toEqual(["2", "1"]);
-    expect(second.savedBidIds).toEqual(["2", "1"]);
-    expect(second.bids.map((bid) => bid.id)).toEqual(["1", "2"]);
+    expect((await getSavedBids("anon_a")).savedBidIds).toEqual(["1"]);
+    expect((await getSavedBids("anon_b")).savedBidIds).toEqual([]);
   });
 
-  it("rejects saving an unknown bid", () => {
-    expect(() => saveBid("missing")).toThrow("Bid not found");
+  it("saves an existing bid idempotently for one user", async () => {
+    const first = await saveBid("anon_a", "1");
+    const second = await saveBid("anon_a", "1");
+
+    expect(first.savedBidIds).toEqual(["1"]);
+    expect(second.savedBidIds).toEqual(["1"]);
+    expect(second.bids.map((bid) => bid.id)).toEqual(["1"]);
   });
 
-  it("removes a saved bid idempotently", () => {
-    expect(getSavedBids().savedBidIds).toEqual(["2"]);
-    expect(removeSavedBid("2").savedBidIds).toEqual([]);
-    expect(removeSavedBid("2").savedBidIds).toEqual([]);
+  it("rejects saving an unknown bid", async () => {
+    await expect(saveBid("anon_a", "missing")).rejects.toThrow("Bid not found");
   });
+
+  it("removes a saved bid idempotently for one user", async () => {
+    await saveBid("anon_a", "2");
+
+    expect((await removeSavedBid("anon_a", "2")).savedBidIds).toEqual([]);
+    expect((await removeSavedBid("anon_a", "2")).savedBidIds).toEqual([]);
+  });
+
 });
