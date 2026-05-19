@@ -1,0 +1,26 @@
+{
+  "opportunitiesData": [
+    {
+      "noticeId": "abc-123",
+      "title": "Enterprise Cloud Migration Services",
+      "solicitationNumber": "DOD-CLOUD-2026",
+      "department": "DEPARTMENT OF DEFENSE",
+      "postedDate": "2026-05-01",
+      "responseDeadLine": "2026-06-15T17:00:00-05:00",
+      "uiLink": "https://sam.gov/opp/abc-123/view",
+      "type": "Solicitation",
+      "description": "Modernize enterprise cloud workloads."
+    },
+    {
+      "noticeId": "def-456",
+      "title": "Cybersecurity Assessment Support",
+      "solicitationNumber": "DHS-CYBER-2026",
+      "department": "DEPARTMENT OF HOMELAND SECURITY",
+      "postedDate": "2026-05-05",
+      "responseDeadLine": "2026-06-20T12:00:00-05:00",
+      "uiLink": "https://sam.gov/opp/def-456/view",
+      "type": "Sources Sought",
+      "description": "Assess security posture for federal systems."
+    }
+  ]
+}
