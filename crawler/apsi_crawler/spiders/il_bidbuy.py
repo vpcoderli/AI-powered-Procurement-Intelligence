@@ -25,6 +25,7 @@ IL_BIDBUY_HEADERS = (
     "Status",
     "Alternate Id",
 )
+IL_BIDBUY_ATTACHMENT_HEADERS = ("File Name", "Size", "Type")
 
 
 class IlBidBuyError(Exception):
@@ -75,6 +76,33 @@ def _records_from_json(path):
     raise IlBidBuyError(
         "Illinois BidBuy fixture JSON did not contain opportunities or results"
     )
+
+
+def discover_il_bidbuy_attachments(fixture_html, base_url):
+    html = read_html_fixture(fixture_html)
+    try:
+        rows = extract_table_rows(html, required_headers=IL_BIDBUY_ATTACHMENT_HEADERS)
+    except HtmlPageError as error:
+        raise IlBidBuyError(
+            "Illinois BidBuy detail page missing expected attachment table headers"
+        ) from error
+
+    attachments = []
+    for index, row in enumerate(rows):
+        links = row.get("_links", {})
+        href = links.get("File Name")
+        if not href:
+            raise IlBidBuyError("Illinois BidBuy attachment row is missing URL")
+        attachments.append(
+            {
+                "name": row.get("File Name") or f"Attachment {index + 1}",
+                "url": absolute_url(base_url, href),
+                "size_label": row.get("Size") or None,
+                "mime_type": row.get("Type") or None,
+                "sort_order": index,
+            }
+        )
+    return attachments
 
 
 def fetch_il_bidbuy_opportunities(
