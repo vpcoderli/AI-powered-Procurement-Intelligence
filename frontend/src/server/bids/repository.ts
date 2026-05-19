@@ -7,8 +7,12 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function isPresent(value: string | null): value is string {
+  return value !== null && value.length > 0;
+}
+
 function tagsFromBid(row: typeof bids.$inferSelect) {
-  return [row.originalCategory, row.stateCode, row.issuerType].filter(Boolean);
+  return [row.originalCategory, row.stateCode, row.issuerType].filter(isPresent);
 }
 
 function attachmentsForBids(db: AppDatabase, bidIds: string[]) {
