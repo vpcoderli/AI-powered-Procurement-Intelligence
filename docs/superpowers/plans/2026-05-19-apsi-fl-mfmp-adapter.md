@@ -516,7 +516,12 @@ def fetch_fl_mfmp_opportunities(
         }
         try:
             try:
-                response = client.post(FL_MFMP_SEARCH_URL, json=payload, timeout=timeout)
+                response = client.post(
+                    FL_MFMP_SEARCH_URL,
+                    json=payload,
+                    headers={"Accept": "application/json"},
+                    timeout=timeout,
+                )
             except requests.RequestException as error:
                 raise FlMfmpError(f"MyFloridaMarketPlace request failed: {error}") from error
 
