@@ -9,3 +9,4 @@ class Source:
     jurisdiction: str
     state_code: str
     fixture_loader: object
+    live_fetcher: object = None

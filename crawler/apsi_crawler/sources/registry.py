@@ -22,6 +22,10 @@ SOURCE_ALIASES = {
 }
 
 
+class UnsupportedLiveSourceError(Exception):
+    pass
+
+
 def get_source(source=DEFAULT_SOURCE):
     source_id = SOURCE_ALIASES.get(source, source)
     return SOURCES[source_id]
@@ -40,3 +44,17 @@ def get_fixture_loader(source=DEFAULT_SOURCE):
         return source_metadata.fixture_loader(path)
 
     return load
+
+
+def supports_live_fetch(source=DEFAULT_SOURCE):
+    source_metadata = get_source(source)
+    return source_metadata.live_fetcher is not None
+
+
+def get_live_fetcher(source=DEFAULT_SOURCE):
+    source_metadata = get_source(source)
+    if source_metadata.live_fetcher is None:
+        raise UnsupportedLiveSourceError(
+            f"Live fetch is not implemented for source: {source_metadata.id}"
+        )
+    return source_metadata.live_fetcher
