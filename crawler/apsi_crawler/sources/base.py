@@ -1,0 +1,11 @@
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class Source:
+    id: str
+    name: str
+    source_label: str
+    jurisdiction: str
+    state_code: str
+    fixture_loader: object

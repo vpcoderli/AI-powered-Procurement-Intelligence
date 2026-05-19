@@ -1,0 +1,17 @@
+{
+  "opportunities": [
+    {
+      "id": "CA-2026-001",
+      "title": "Case management modernization",
+      "description": "Modernize case management workflows.",
+      "category": "IT Services",
+      "published_date": "2026-05-01",
+      "deadline_date": "2026-06-10T17:00:00-07:00",
+      "issuer_name": "California Department of Technology",
+      "contact_name": "Avery Buyer",
+      "contact_email": "avery.buyer@state.ca.gov",
+      "contact_phone": "916-555-0100",
+      "url": "https://caleprocure.ca.gov/event/CA-2026-001"
+    }
+  ]
+}
