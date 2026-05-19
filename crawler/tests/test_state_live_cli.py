@@ -1,0 +1,114 @@
+import json
+import sqlite3
+
+from apsi_crawler.cli import main
+from tests.test_cli import create_crawler_database, normalized_bid
+
+
+def state_bid():
+    bid = normalized_bid()
+    bid.update(
+        {
+            "id": "ca_caleprocure:CA-LIVE-2026-001",
+            "source": "California Cal eProcure",
+            "source_bid_id": "CA-LIVE-2026-001",
+            "dedupe_key": "ca_caleprocure:CA-LIVE-2026-001",
+            "title": "Cloud data warehouse modernization",
+            "issuer_name": "Department of Technology",
+            "issuer_type": "state",
+            "state_code": "CA",
+            "source_url": "https://caleprocure.ca.gov/event/CA-LIVE-2026-001",
+        }
+    )
+    return bid
+
+
+def test_fetch_state_writes_bids_and_success_log(tmp_path, monkeypatch):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+    calls = []
+
+    def fake_fetcher(source, query=None, limit=25):
+        calls.append({"source": source.id, "query": query, "limit": limit})
+        return [state_bid()]
+
+    monkeypatch.setattr("apsi_crawler.cli.get_live_fetcher", lambda source: fake_fetcher)
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "ca_caleprocure",
+            "--query",
+            "cloud",
+            "--limit",
+            "5",
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 0
+    assert calls == [{"source": "ca_caleprocure", "query": "cloud", "limit": 5}]
+    assert connection.execute("SELECT COUNT(*) FROM bids").fetchone()[0] == 1
+    log = connection.execute(
+        "SELECT source, status, fetched_count, inserted_count, updated_count, metadata FROM crawler_logs"
+    ).fetchone()
+    assert log[:5] == ("ca_caleprocure", "success", 1, 1, 0)
+    assert json.loads(log[5]) == {"mode": "live", "query": "cloud", "limit": 5}
+
+
+def test_fetch_state_unsupported_source_writes_failure_log(tmp_path):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "tx_esbd",
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 1
+    log = connection.execute(
+        "SELECT source, status, failed_count, error_code, error_message FROM crawler_logs"
+    ).fetchone()
+    assert log == (
+        "tx_esbd",
+        "failure",
+        1,
+        "UnsupportedLiveSourceError",
+        "Live fetch is not implemented for source: tx_esbd",
+    )
+
+
+def test_fetch_state_adapter_failure_writes_failure_log(tmp_path, monkeypatch):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+
+    def fake_fetcher(source, query=None, limit=25):
+        raise RuntimeError("state portal unavailable")
+
+    monkeypatch.setattr("apsi_crawler.cli.get_live_fetcher", lambda source: fake_fetcher)
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "ca_caleprocure",
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 1
+    log = connection.execute(
+        "SELECT source, status, failed_count, error_code, error_message FROM crawler_logs"
+    ).fetchone()
+    assert log == ("ca_caleprocure", "failure", 1, "RuntimeError", "state portal unavailable")

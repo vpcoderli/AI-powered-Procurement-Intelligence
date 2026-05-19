@@ -7,7 +7,7 @@ from time import perf_counter
 from uuid import uuid4
 
 from apsi_crawler.config import DEFAULT_SOURCE
-from apsi_crawler.sources.registry import get_fixture_loader
+from apsi_crawler.sources.registry import get_fixture_loader, get_live_fetcher, get_source
 from apsi_crawler.spiders.sam_gov_api import fetch_sam_gov_opportunities
 from apsi_crawler.storage.sqlite import now_iso, upsert_bid, write_crawler_log
 
@@ -109,6 +109,57 @@ def fetch_sam_gov(database, posted_from, posted_to, api_key=None, limit=100, max
         connection.close()
 
 
+def fetch_state(database, source, query=None, limit=25):
+    started_at = now_iso()
+    started = perf_counter()
+    run_id = str(uuid4())
+    Path(database).parent.mkdir(parents=True, exist_ok=True)
+    metadata = {"mode": "live", "query": query, "limit": limit}
+
+    connection = sqlite3.connect(database)
+    try:
+        source_metadata = get_source(source)
+        fetcher = get_live_fetcher(source)
+        bids = fetcher(source_metadata, query=query, limit=limit)
+        inserted_count, updated_count = _upsert_bids(connection, bids)
+
+        write_crawler_log(
+            connection,
+            source=source_metadata.id,
+            run_id=run_id,
+            status="success",
+            fetched_count=len(bids),
+            inserted_count=inserted_count,
+            updated_count=updated_count,
+            started_at=started_at,
+            finished_at=now_iso(),
+            duration_ms=int((perf_counter() - started) * 1000),
+            metadata=metadata,
+        )
+        return 0
+    except Exception as error:
+        write_crawler_log(
+            connection,
+            source=source,
+            run_id=run_id,
+            status="failure",
+            fetched_count=0,
+            inserted_count=0,
+            updated_count=0,
+            failed_count=1,
+            started_at=started_at,
+            finished_at=now_iso(),
+            duration_ms=int((perf_counter() - started) * 1000),
+            error_code=type(error).__name__,
+            error_message=str(error),
+            error_stack=traceback.format_exc(),
+            metadata=metadata,
+        )
+        return 1
+    finally:
+        connection.close()
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="apsi-crawler")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -125,6 +176,12 @@ def build_parser():
     fetch_sam_gov_parser.add_argument("--posted-to", required=True)
     fetch_sam_gov_parser.add_argument("--limit", type=int, default=100)
     fetch_sam_gov_parser.add_argument("--max-records", type=int)
+
+    fetch_state_parser = subparsers.add_parser("fetch-state")
+    fetch_state_parser.add_argument("--database", required=True)
+    fetch_state_parser.add_argument("--source", required=True)
+    fetch_state_parser.add_argument("--query")
+    fetch_state_parser.add_argument("--limit", type=int, default=25)
 
     return parser
 
@@ -144,6 +201,14 @@ def main(argv=None):
             api_key=args.api_key,
             limit=args.limit,
             max_records=args.max_records,
+        )
+
+    if args.command == "fetch-state":
+        return fetch_state(
+            args.database,
+            source=args.source,
+            query=args.query,
+            limit=args.limit,
         )
 
     parser.error(f"Unsupported command: {args.command}")
