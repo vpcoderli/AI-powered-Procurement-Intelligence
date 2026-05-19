@@ -14,7 +14,10 @@ from apsi_crawler.spiders.ca_caleprocure import (
     CalEProcureError,
     fetch_ca_caleprocure_opportunities,
 )
-from apsi_crawler.spiders.fl_mfmp import fetch_fl_mfmp_opportunities
+from apsi_crawler.spiders.fl_mfmp import (
+    FlMfmpError,
+    fetch_fl_mfmp_opportunities,
+)
 from apsi_crawler.spiders.ny_contract_reporter import (
     NyContractReporterError,
     fetch_ny_contract_reporter_opportunities,
@@ -618,3 +621,202 @@ def test_fetch_tx_esbd_opportunities_replays_adapter_fixture_json():
 
     assert len(bids) == 1
     assert bids[0]["dedupe_key"] == "tx_esbd:ESBD-LIVE-2026-77"
+
+
+def test_fetch_fl_mfmp_opportunities_normalizes_live_response():
+    fixture_path = FIXTURES_DIR / "fl_mfmp_live_response.json"
+    with fixture_path.open() as fixture:
+        payload = json.load(fixture)
+    session = FakeSession(FakeResponse(payload=payload))
+
+    bids = fetch_fl_mfmp_opportunities(
+        get_source("fl_mfmp"),
+        query="communications",
+        limit=5,
+        session=session,
+        timeout=10,
+    )
+
+    assert session.calls[0]["url"] == "https://vendor.myfloridamarketplace.com/search/bids"
+    assert session.calls[0]["params"] == {"query": "communications", "limit": 5}
+    assert session.calls[0]["timeout"] == 10
+    assert len(bids) == 1
+    bid = bids[0]
+    assert bid["dedupe_key"] == "fl_mfmp:FL-MFMP-LIVE-2026-42"
+    assert bid["title"] == "Emergency communications assessment"
+    assert bid["issuer_name"] == "Florida Department of Management Services"
+    assert bid["issuer_type"] == "state"
+    assert bid["state_code"] == "FL"
+    assert bid["source_url"] == "https://vendor.myfloridamarketplace.com/bids/FL-MFMP-LIVE-2026-42"
+
+
+def test_fetch_fl_mfmp_opportunities_raises_on_unexpected_payload_shape():
+    session = FakeSession(FakeResponse(payload={"error": "changed"}))
+
+    with pytest.raises(FlMfmpError) as error:
+        fetch_fl_mfmp_opportunities(
+            get_source("fl_mfmp"),
+            query="communications",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "MyFloridaMarketPlace response did not contain opportunities or results"
+
+
+def test_fetch_fl_mfmp_opportunities_raises_when_record_is_not_object():
+    session = FakeSession(FakeResponse(payload={"opportunities": [None]}))
+
+    with pytest.raises(FlMfmpError) as error:
+        fetch_fl_mfmp_opportunities(
+            get_source("fl_mfmp"),
+            query="communications",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "MyFloridaMarketPlace record was not an object"
+
+
+def test_fetch_fl_mfmp_opportunities_raises_when_record_missing_source_id():
+    session = FakeSession(FakeResponse(payload={"opportunities": [{"title": "Comms"}]}))
+
+    with pytest.raises(FlMfmpError) as error:
+        fetch_fl_mfmp_opportunities(
+            get_source("fl_mfmp"),
+            query="communications",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "MyFloridaMarketPlace record is missing source id"
+
+
+def test_fetch_fl_mfmp_opportunities_preserves_normalized_aliases():
+    session = FakeSession(
+        FakeResponse(
+            payload=[
+                {
+                    "source_bid_id": "FL-NORMALIZED-001",
+                    "title": "Normalized communications services",
+                    "source_url": "https://vendor.myfloridamarketplace.com/bids/FL-NORMALIZED-001",
+                    "published_date": "2026-05-18",
+                    "deadline_date": "2026-06-10",
+                    "issuer_name": "Florida Department of Management Services",
+                }
+            ]
+        )
+    )
+
+    bids = fetch_fl_mfmp_opportunities(
+        get_source("fl_mfmp"),
+        query="communications",
+        limit=5,
+        session=session,
+        timeout=10,
+    )
+
+    assert len(bids) == 1
+    bid = bids[0]
+    assert bid["source_bid_id"] == "FL-NORMALIZED-001"
+    assert bid["dedupe_key"] == "fl_mfmp:FL-NORMALIZED-001"
+    assert bid["source_url"] == "https://vendor.myfloridamarketplace.com/bids/FL-NORMALIZED-001"
+    assert bid["published_date"] == "2026-05-18"
+    assert bid["deadline_date"] == "2026-06-10"
+    assert bid["issuer_name"] == "Florida Department of Management Services"
+
+
+def test_fetch_fl_mfmp_opportunities_uses_fl_title_and_category_precedence():
+    session = FakeSession(
+        FakeResponse(
+            payload=[
+                {
+                    "source_bid_id": "FL-ALIAS-001",
+                    "title": "Title wins",
+                    "name": "Name loses",
+                    "advertisementTitle": "Advertisement title loses",
+                    "category": "Category wins",
+                    "type": "Type loses",
+                    "commodity": "Commodity loses",
+                },
+                {
+                    "source_bid_id": "FL-ALIAS-002",
+                    "advertisementTitle": "Advertisement title fallback",
+                    "commodity": "Commodity fallback",
+                },
+            ]
+        )
+    )
+
+    bids = fetch_fl_mfmp_opportunities(
+        get_source("fl_mfmp"),
+        query="communications",
+        limit=5,
+        session=session,
+        timeout=10,
+    )
+
+    assert bids[0]["title"] == "Title wins"
+    assert bids[0]["original_category"] == "Category wins"
+    assert bids[1]["title"] == "Advertisement title fallback"
+    assert bids[1]["original_category"] == "Commodity fallback"
+
+
+def test_fetch_fl_mfmp_opportunities_raises_on_http_error():
+    session = FakeSession(FakeResponse(status_code=503, text="maintenance"))
+
+    with pytest.raises(FlMfmpError) as error:
+        fetch_fl_mfmp_opportunities(
+            get_source("fl_mfmp"),
+            query="communications",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "MyFloridaMarketPlace request failed with status 503: maintenance"
+
+
+def test_fetch_fl_mfmp_opportunities_raises_on_invalid_http_json():
+    session = FakeSession(FakeResponse(json_error=ValueError("not json")))
+
+    with pytest.raises(FlMfmpError) as error:
+        fetch_fl_mfmp_opportunities(
+            get_source("fl_mfmp"),
+            query="communications",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "MyFloridaMarketPlace response was not valid JSON"
+
+
+def test_fetch_fl_mfmp_opportunities_wraps_request_errors():
+    session = FakeSession(requests.Timeout("slow"))
+
+    with pytest.raises(FlMfmpError) as error:
+        fetch_fl_mfmp_opportunities(
+            get_source("fl_mfmp"),
+            query="communications",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "MyFloridaMarketPlace request failed: slow"
+
+
+def test_fetch_fl_mfmp_opportunities_replays_adapter_fixture_json():
+    bids = fetch_fl_mfmp_opportunities(
+        get_source("fl_mfmp"),
+        query="communications",
+        limit=5,
+        fixture_json=str(FIXTURES_DIR / "fl_mfmp_live_response.json"),
+    )
+
+    assert len(bids) == 1
+    assert bids[0]["dedupe_key"] == "fl_mfmp:FL-MFMP-LIVE-2026-42"
