@@ -884,3 +884,16 @@ def test_fetch_fl_mfmp_opportunities_replays_adapter_fixture_json_without_sessio
     assert len(bids) == 1
     assert bids[0]["dedupe_key"] == "fl_mfmp:FL-MFMP-LIVE-2026-42"
     assert session.calls == []
+
+
+def test_fetch_fl_mfmp_opportunities_raises_on_invalid_fixture_json(tmp_path):
+    fixture = tmp_path / "invalid.json"
+    fixture.write_text("{not json")
+
+    with pytest.raises(FlMfmpError) as error:
+        fetch_fl_mfmp_opportunities(
+            get_source("fl_mfmp"),
+            fixture_json=str(fixture),
+        )
+
+    assert str(error.value) == "MyFloridaMarketPlace response was not valid JSON"

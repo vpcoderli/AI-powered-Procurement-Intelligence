@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add MyFloridaMarketPlace as a live-supported state source with deterministic fixture replay and clear direct-HTTP failure behavior.
+**Goal:** Add MyFloridaMarketPlace as a live-supported state source with deterministic fixture replay and the MFMP public JSON search API.
 
 **Architecture:** Reuse the existing CA/TX/NY state live adapter contract. The FL adapter remains a focused spider module that accepts injected sessions for tests, supports `fixture_json` replay without HTTP, normalizes MFMP-style records through `normalize_state_opportunity`, and leaves browser/HTML handling for a separate stage.
 

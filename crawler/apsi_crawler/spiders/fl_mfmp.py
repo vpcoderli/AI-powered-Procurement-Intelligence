@@ -114,8 +114,13 @@ def fetch_fl_mfmp_opportunities(
 ):
     limit_count = int(limit)
     if fixture_json:
-        with open(fixture_json) as fixture:
-            payload = json.load(fixture)
+        try:
+            with open(fixture_json) as fixture:
+                payload = json.load(fixture)
+        except ValueError as error:
+            raise FlMfmpError(
+                "MyFloridaMarketPlace response was not valid JSON"
+            ) from error
     else:
         client = session or requests.Session()
         close_client = session is None
