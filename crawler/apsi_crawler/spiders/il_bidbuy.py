@@ -1,10 +1,14 @@
 import json
+import re
+from html.parser import HTMLParser
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from apsi_crawler.html.public_page import (
     HtmlPageError,
     absolute_url,
     extract_table_rows,
     fetch_html,
+    normalize_space,
     read_html_fixture,
 )
 from apsi_crawler.normalizers.state_bids import normalize_state_opportunity
@@ -25,11 +29,115 @@ IL_BIDBUY_HEADERS = (
     "Status",
     "Alternate Id",
 )
-IL_BIDBUY_ATTACHMENT_HEADERS = ("File Name", "Size", "Type")
+IL_BIDBUY_ATTACHMENT_LABEL = "File Attachments:"
 
 
 class IlBidBuyError(Exception):
     pass
+
+
+class _BidDetailParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.hidden_inputs = {}
+        self.rows = []
+        self._row = None
+        self._cell = None
+        self._link = None
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "input" and attrs.get("type", "").lower() == "hidden":
+            name = attrs.get("name")
+            if name:
+                self.hidden_inputs[name] = attrs.get("value", "")
+            return
+
+        if tag == "tr":
+            self._row = []
+        elif self._row is not None and tag in ("th", "td"):
+            self._cell = {"text": [], "links": []}
+        elif self._cell is not None and tag == "a":
+            self._link = {"href": attrs.get("href"), "text": []}
+
+    def handle_data(self, data):
+        if self._cell is None:
+            return
+        self._cell["text"].append(data)
+        if self._link is not None:
+            self._link["text"].append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._link is not None:
+            self._cell["links"].append(
+                {
+                    "href": self._link.get("href"),
+                    "text": normalize_space("".join(self._link["text"])),
+                }
+            )
+            self._link = None
+        elif tag in ("th", "td") and self._cell is not None and self._row is not None:
+            self._row.append(
+                {
+                    "text": normalize_space("".join(self._cell["text"])),
+                    "links": list(self._cell["links"]),
+                }
+            )
+            self._cell = None
+        elif tag == "tr" and self._row is not None:
+            if self._row:
+                self.rows.append(self._row)
+            self._row = None
+
+
+def _base_query_value(base_url, name):
+    values = parse_qs(urlparse(base_url).query).get(name)
+    return values[0] if values else None
+
+
+def _bid_detail_context(hidden_inputs, base_url):
+    return {
+        "docId": hidden_inputs.get("docId") or _base_query_value(base_url, "docId"),
+        "currentPage": (
+            hidden_inputs.get("currentPage")
+            or _base_query_value(base_url, "currentPage")
+            or "1"
+        ),
+        "parentUrl": (
+            hidden_inputs.get("parentUrl")
+            or _base_query_value(base_url, "parentUrl")
+            or "close"
+        ),
+    }
+
+
+def _download_file_args(href):
+    if not href:
+        return None
+    match = re.search(
+        r"downloadFile\(\s*['\"]([^'\"]+)['\"](?:\s*,\s*['\"]?([^'\",\)]+)['\"]?)?\s*\)",
+        href,
+    )
+    if not match:
+        return None
+    return match.group(1), match.group(2)
+
+
+def _download_url(base_url, context, file_number, item_number=None):
+    query = {
+        "downloadFileNbr": file_number,
+        "docId": context["docId"],
+        "currentPage": context["currentPage"],
+        "mode": "download",
+        "parentUrl": context["parentUrl"],
+    }
+    if item_number:
+        query["itemNbr"] = item_number
+    return (
+        absolute_url(base_url, "/bso/external/bidDetail.sda")
+        + "?"
+        + urlencode(query)
+    )
 
 
 def _row_to_record(row):
@@ -80,28 +188,38 @@ def _records_from_json(path):
 
 def discover_il_bidbuy_attachments(fixture_html, base_url):
     html = read_html_fixture(fixture_html)
-    try:
-        rows = extract_table_rows(html, required_headers=IL_BIDBUY_ATTACHMENT_HEADERS)
-    except HtmlPageError as error:
-        raise IlBidBuyError(
-            "Illinois BidBuy detail page missing expected attachment table headers"
-        ) from error
+    parser = _BidDetailParser()
+    parser.feed(html)
+    context = _bid_detail_context(parser.hidden_inputs, base_url)
 
     attachments = []
-    for index, row in enumerate(rows):
-        links = row.get("_links", {})
-        href = links.get("File Name")
-        if not href:
-            raise IlBidBuyError("Illinois BidBuy attachment row is missing URL")
-        attachments.append(
-            {
-                "name": row.get("File Name") or f"Attachment {index + 1}",
-                "url": absolute_url(base_url, href),
-                "size_label": row.get("Size") or None,
-                "mime_type": row.get("Type") or None,
-                "sort_order": index,
-            }
-        )
+    for row in parser.rows:
+        label_indexes = [
+            index
+            for index, cell in enumerate(row)
+            if normalize_space(cell["text"]) == IL_BIDBUY_ATTACHMENT_LABEL
+        ]
+        for label_index in label_indexes:
+            for cell in row[label_index + 1:]:
+                for link in cell["links"]:
+                    download_args = _download_file_args(link.get("href"))
+                    if not download_args:
+                        raise IlBidBuyError(
+                            "Illinois BidBuy attachment row is missing URL"
+                        )
+                    file_number, item_number = download_args
+                    attachments.append(
+                        {
+                            "name": link.get("text")
+                            or f"Attachment {len(attachments) + 1}",
+                            "url": _download_url(
+                                base_url, context, file_number, item_number
+                            ),
+                            "size_label": None,
+                            "mime_type": None,
+                            "sort_order": len(attachments),
+                        }
+                    )
     return attachments
 
 

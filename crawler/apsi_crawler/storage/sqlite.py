@@ -47,7 +47,7 @@ def _replace_bid_attachments(connection, bid):
     for index, attachment in enumerate(bid.get("attachments") or []):
         url = attachment.get("url")
         if not url:
-            continue
+            raise ValueError("Bid attachment is missing url")
         values = {
             "id": f"{bid_id}:attachment:{index + 1}",
             "bid_id": bid_id,

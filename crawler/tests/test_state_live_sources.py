@@ -826,18 +826,19 @@ def test_fetch_il_bidbuy_opportunities_raises_when_row_missing_source_id(tmp_pat
 def test_discover_il_bidbuy_attachments_from_detail_html_fixture():
     attachments = discover_il_bidbuy_attachments(
         str(FIXTURES_DIR / "il_bidbuy_detail.html"),
-        base_url="https://www.bidbuy.illinois.gov/bso/external/bidDetail.sdo?docId=IL-BIDBUY-2026-001",
+        base_url="https://www.bidbuy.illinois.gov/bso/external/bidDetail.sda",
     )
 
     assert attachments == [
         {
-            "name": "Scope of Work.pdf",
+            "name": "Automatic Door Contract RFQ 26PS013075.pdf",
             "url": (
-                "https://www.bidbuy.illinois.gov/bso/external/document.sdo?"
-                "docId=IL-BIDBUY-2026-001&file=scope.pdf"
+                "https://www.bidbuy.illinois.gov/bso/external/bidDetail.sda?"
+                "downloadFileNbr=1703214&docId=26-350SOS-PHYSE-B-52568&"
+                "currentPage=1&mode=download&parentUrl=close"
             ),
-            "size_label": "242 KB",
-            "mime_type": "application/pdf",
+            "size_label": None,
+            "mime_type": None,
             "sort_order": 0,
         }
     ]
@@ -848,8 +849,12 @@ def test_discover_il_bidbuy_attachments_raises_on_missing_attachment_url(tmp_pat
     fixture.write_text(
         """
         <table>
-          <tr><th>File Name</th><th>Size</th><th>Type</th></tr>
-          <tr><td>Scope of Work.pdf</td><td>242 KB</td><td>application/pdf</td></tr>
+          <tr>
+            <td class="t-head-01" nowrap>File Attachments:</td>
+            <td colspan="5">
+              <a href="javascript:void(0);" class="link-01">Scope of Work.pdf</a>
+            </td>
+          </tr>
         </table>
         """,
         encoding="utf-8",

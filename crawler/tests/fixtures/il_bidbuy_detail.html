@@ -1,25 +1,19 @@
 <!doctype html>
 <html>
   <body>
-    <table id="attachments">
-      <thead>
+    <form id="bidDetail" action="/bso/seller/bidDetail.sda" method="post">
+      <input type="hidden" name="docId" value="26-350SOS-PHYSE-B-52568" id="bidDetail_docId"/>
+      <input type="hidden" name="currentPage" value="1" id="bidDetail_currentPage"/>
+      <input type="hidden" name="parentUrl" value="close" id="bidDetail_parentUrl"/>
+      <table>
         <tr>
-          <th>File Name</th>
-          <th>Size</th>
-          <th>Type</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>
-            <a href="/bso/external/document.sdo?docId=IL-BIDBUY-2026-001&amp;file=scope.pdf">
-              Scope of Work.pdf
-            </a>
+          <td class="t-head-01" nowrap>File Attachments:</td>
+          <td colspan="5">
+            <a href="javascript:downloadFile('1703214');" class="link-01">Automatic Door Contract RFQ 26PS013075.pdf</a>
+            <br>
           </td>
-          <td>242 KB</td>
-          <td>application/pdf</td>
         </tr>
-      </tbody>
-    </table>
+      </table>
+    </form>
   </body>
 </html>
