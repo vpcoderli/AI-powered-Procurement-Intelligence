@@ -39,6 +39,18 @@ type LoadState =
   | { status: "error" }
   | { status: "ready"; data: AdminDataSourcesResponse; logs: AdminCrawlerLog[] };
 
+const RUNNABLE_STATE_SOURCE_IDS = new Set([
+  "ca_caleprocure",
+  "tx_esbd",
+  "ny_contract_reporter",
+  "fl_mfmp",
+  "il_bidbuy",
+]);
+
+function isRunnableStateSource(source: AdminDataSource) {
+  return RUNNABLE_STATE_SOURCE_IDS.has(source.id);
+}
+
 function formatDate(value: string | null) {
   if (!value) return "-";
 
@@ -86,6 +98,7 @@ export default function AdminPage() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [pendingSourceId, setPendingSourceId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [runningSourceId, setRunningSourceId] = useState<string | null>(null);
   const [runMessage, setRunMessage] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -154,6 +167,22 @@ export default function AdminPage() {
       });
   };
 
+  const runSourceNow = (source: AdminDataSource) => {
+    setRunningSourceId(source.id);
+    setRunMessage(null);
+    runStateCrawlersNow([source.id])
+      .then(() => {
+        setRunMessage(t("admin.runSourceQueued").replace("{source}", source.label));
+        load();
+      })
+      .catch(() => {
+        setRunMessage(t("admin.runSourceFailed").replace("{source}", source.label));
+      })
+      .finally(() => {
+        setRunningSourceId(null);
+      });
+  };
+
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 pb-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -173,7 +202,7 @@ export default function AdminPage() {
           </Button>
           <Button
             onClick={runNow}
-            disabled={isRunning}
+            disabled={isRunning || runningSourceId !== null}
             className="h-10 rounded-lg bg-slate-900 text-white hover:bg-slate-800"
           >
             <Play size={16} />
@@ -235,6 +264,7 @@ export default function AdminPage() {
                 <TableHead>{t("admin.lastRun")}</TableHead>
                 <TableHead>{t("admin.status")}</TableHead>
                 <TableHead>{t("admin.counts")}</TableHead>
+                <TableHead className="text-right">{t("admin.run")}</TableHead>
                 <TableHead className="text-right">{t("admin.enabled")}</TableHead>
               </TableRow>
             </TableHeader>
@@ -257,6 +287,24 @@ export default function AdminPage() {
                     {source.latestLog
                       ? `${source.latestLog.fetchedCount}/${source.latestLog.insertedCount}/${source.latestLog.updatedCount}/${source.latestLog.failedCount}`
                       : "-"}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {isRunnableStateSource(source) ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => runSourceNow(source)}
+                        disabled={isRunning || runningSourceId !== null}
+                        aria-label={t("admin.runSource").replace("{source}", source.label)}
+                        className="h-8 rounded-lg border-slate-200 px-2"
+                      >
+                        <Play size={14} />
+                        <span className="sr-only">{t("admin.runSource").replace("{source}", source.label)}</span>
+                      </Button>
+                    ) : (
+                      <span className="text-slate-400">-</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-3">
