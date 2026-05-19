@@ -104,9 +104,15 @@ def fetch_il_bidbuy_opportunities(
                 raise IlBidBuyError(str(error)) from error
         records = _records_from_html(html)
 
+    if query:
+        query_text = query.lower()
+        records = [
+            record
+            for record in records
+            if query_text in " ".join(str(value) for value in record.values()).lower()
+        ]
+
     return [
         normalize_state_opportunity(record, source)
         for record in records[:limit_count]
-        if not query
-        or query.lower() in " ".join(str(value) for value in record.values()).lower()
     ]

@@ -707,6 +707,60 @@ def test_fetch_il_bidbuy_opportunities_uses_public_open_bids_page():
     assert len(bids) == 1
 
 
+def test_fetch_il_bidbuy_opportunities_filters_query_before_limit(tmp_path):
+    fixture = tmp_path / "il_query_limit.html"
+    fixture.write_text(
+        """
+        <table>
+          <tr>
+            <th>Bid Solicitation #</th>
+            <th>Description</th>
+            <th>Organization Name</th>
+            <th>Bid Opening Date</th>
+            <th>Status</th>
+            <th>Alternate Id</th>
+          </tr>
+          <tr>
+            <td>
+              <a href="/bso/external/bidDetail.sdo?docId=IL-BIDBUY-2026-001">
+                IL-BIDBUY-2026-001
+              </a>
+            </td>
+            <td>Network modernization services</td>
+            <td>Illinois Department of Transportation</td>
+            <td>06/20/2026 02:00 PM</td>
+            <td>Open</td>
+            <td>IDOT-26-Network</td>
+          </tr>
+          <tr>
+            <td>
+              <a href="/bso/external/bidDetail.sdo?docId=IL-BIDBUY-2026-002">
+                IL-BIDBUY-2026-002
+              </a>
+            </td>
+            <td>Enterprise analytics platform services</td>
+            <td>Illinois Department of Innovation and Technology</td>
+            <td>06/30/2026 02:00 PM</td>
+            <td>Open</td>
+            <td>DoIT-26-Analytics</td>
+          </tr>
+        </table>
+        """,
+        encoding="utf-8",
+    )
+
+    bids = fetch_il_bidbuy_opportunities(
+        get_source("il_bidbuy"),
+        query="analytics",
+        limit=1,
+        fixture_html=str(fixture),
+    )
+
+    assert len(bids) == 1
+    assert bids[0]["source_bid_id"] == "IL-BIDBUY-2026-002"
+    assert bids[0]["title"] == "Enterprise analytics platform services"
+
+
 def test_fetch_il_bidbuy_opportunities_raises_when_required_headers_missing():
     html = """
     <table>
