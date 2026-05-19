@@ -18,6 +18,7 @@ function insertCrawlerLog(
     startedAt: string;
     errorCode?: string | null;
     errorMessage?: string | null;
+    metadata?: Record<string, unknown> | null;
   },
 ) {
   testDb.db
@@ -38,7 +39,7 @@ function insertCrawlerLog(
       errorCode: input.errorCode ?? null,
       errorMessage: input.errorMessage ?? null,
       errorStack: null,
-      metadata: null,
+      metadata: input.metadata ? JSON.stringify(input.metadata) : null,
     })
     .run();
 }
@@ -222,6 +223,44 @@ describe("admin data sources repository", () => {
       status: "success",
     });
     expect(result.summary.healthySources).toBe(1);
+  });
+
+  it("exposes parsed fallback metadata on latest source logs", async () => {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id: "california_caleprocure",
+        label: "California Cal eProcure",
+        issuerType: "state",
+        stateCode: "CA",
+        isEnabled: 1,
+        cadence: "daily",
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+      .run();
+    insertCrawlerLog(testDb, {
+      id: "log_ca_fallback",
+      source: "ca_caleprocure",
+      status: "success",
+      startedAt: "2026-05-19T01:00:00.000Z",
+      metadata: {
+        fallback_source: "bundled_demo_fixture",
+        fallback_reason: "Cal eProcure request failed with status 403",
+        fallback_fixture: "/fixtures/ca_caleprocure_live_response.json",
+      },
+    });
+
+    const result = await listAdminDataSources(testDb.db);
+    const source = result.sources.find((item) => item.id === "california_caleprocure");
+
+    expect(source?.latestLog).toMatchObject({
+      source: "ca_caleprocure",
+      status: "success",
+      fallbackSource: "bundled_demo_fixture",
+      fallbackReason: "Cal eProcure request failed with status 403",
+      fallbackFixture: "/fixtures/ca_caleprocure_live_response.json",
+    });
   });
 
   it("lists recent crawler logs without raw stack traces", async () => {
