@@ -197,6 +197,51 @@ def test_fetch_state_replays_ny_contract_reporter_fixture_json(tmp_path):
     }
 
 
+def test_fetch_state_replays_fl_mfmp_fixture_json(tmp_path):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+    fixture = Path(__file__).parent / "fixtures" / "fl_mfmp_live_response.json"
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "fl_mfmp",
+            "--query",
+            "communications",
+            "--limit",
+            "5",
+            "--fixture-json",
+            str(fixture),
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 0
+    bid = connection.execute(
+        "SELECT source, source_bid_id, dedupe_key, title, state_code FROM bids"
+    ).fetchone()
+    assert bid == (
+        "MyFloridaMarketPlace",
+        "FL-MFMP-LIVE-2026-42",
+        "fl_mfmp:FL-MFMP-LIVE-2026-42",
+        "Emergency communications assessment",
+        "FL",
+    )
+    log = connection.execute(
+        "SELECT source, status, fetched_count, inserted_count, updated_count, metadata FROM crawler_logs"
+    ).fetchone()
+    assert log[:5] == ("fl_mfmp", "success", 1, 1, 0)
+    assert json.loads(log[5]) == {
+        "mode": "live",
+        "query": "communications",
+        "limit": 5,
+        "fixture_json": str(fixture),
+    }
+
+
 def test_fetch_state_unsupported_source_writes_failure_log(tmp_path):
     database = tmp_path / "apsi.sqlite"
     create_crawler_database(database)
