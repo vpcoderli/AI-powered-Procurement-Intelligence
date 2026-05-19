@@ -66,6 +66,10 @@ function statusTone(status: string | null | undefined) {
   return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
+function compactErrorMessage(message: string) {
+  return message.length > 96 ? `${message.slice(0, 93)}...` : message;
+}
+
 function SummaryCard({
   label,
   value,
@@ -275,9 +279,17 @@ export default function AdminPage() {
                   <TableCell>{source.cadence}</TableCell>
                   <TableCell>{formatDate(latestRunAt(source))}</TableCell>
                   <TableCell>
-                    <Badge variant="outline" className={statusTone(source.latestLog?.status)}>
-                      {source.latestLog?.status ?? t("admin.notRun")}
-                    </Badge>
+                    <div className="max-w-56">
+                      <Badge variant="outline" className={statusTone(source.latestLog?.status)}>
+                        {source.latestLog?.status ?? t("admin.notRun")}
+                      </Badge>
+                      {source.latestLog?.errorMessage && (
+                        <div className="mt-1 text-xs leading-5 text-rose-700">
+                          <span className="font-medium">{t("admin.errorReason")}:</span>{" "}
+                          {compactErrorMessage(source.latestLog.errorMessage)}
+                        </div>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell>
                     {source.latestLog
