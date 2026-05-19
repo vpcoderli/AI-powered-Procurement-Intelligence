@@ -21,12 +21,15 @@ from apsi_crawler.spiders.tx_esbd import (
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, payload=None, text=""):
+    def __init__(self, status_code=200, payload=None, text="", json_error=None):
         self.status_code = status_code
         self._payload = payload
         self.text = text
+        self._json_error = json_error
 
     def json(self):
+        if self._json_error:
+            raise self._json_error
         return self._payload
 
 
@@ -248,6 +251,21 @@ def test_fetch_tx_esbd_opportunities_raises_when_record_missing_source_id():
     assert str(error.value) == "Texas ESBD record is missing source id"
 
 
+def test_fetch_tx_esbd_opportunities_raises_when_record_is_not_object():
+    session = FakeSession(FakeResponse(payload={"opportunities": [None]}))
+
+    with pytest.raises(TxEsbdError) as error:
+        fetch_tx_esbd_opportunities(
+            get_source("tx_esbd"),
+            query="data",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "Texas ESBD record was not an object"
+
+
 def test_fetch_tx_esbd_opportunities_preserves_normalized_aliases():
     session = FakeSession(
         FakeResponse(
@@ -333,6 +351,21 @@ def test_fetch_tx_esbd_opportunities_raises_on_http_error():
     )
 
 
+def test_fetch_tx_esbd_opportunities_raises_on_invalid_http_json():
+    session = FakeSession(FakeResponse(json_error=ValueError("not json")))
+
+    with pytest.raises(TxEsbdError) as error:
+        fetch_tx_esbd_opportunities(
+            get_source("tx_esbd"),
+            query="data",
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert str(error.value) == "Texas ESBD response was not valid JSON"
+
+
 def test_fetch_tx_esbd_opportunities_wraps_request_errors():
     session = FakeSession(requests.Timeout("slow"))
 
@@ -346,3 +379,15 @@ def test_fetch_tx_esbd_opportunities_wraps_request_errors():
         )
 
     assert str(error.value) == "Texas ESBD request failed: slow"
+
+
+def test_fetch_tx_esbd_opportunities_replays_adapter_fixture_json():
+    bids = fetch_tx_esbd_opportunities(
+        get_source("tx_esbd"),
+        query="data",
+        limit=5,
+        fixture_json=str(FIXTURES_DIR / "tx_esbd_live_response.json"),
+    )
+
+    assert len(bids) == 1
+    assert bids[0]["dedupe_key"] == "tx_esbd:ESBD-LIVE-2026-77"
