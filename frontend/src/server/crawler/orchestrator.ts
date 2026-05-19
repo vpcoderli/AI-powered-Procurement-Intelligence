@@ -2,7 +2,6 @@ import { or, eq } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { dataSources } from "@/server/db/schema";
 import type { SearchAlertMatchResult } from "@/server/search-alerts/matcher";
-import type { SamGovCrawlerRunOptions, SamGovCrawlerRunResult } from "./sam-gov-runner";
 import { acquireCrawlerLock, releaseCrawlerLock } from "./lock-repository";
 
 export interface CrawlerNotificationResult {
@@ -12,19 +11,27 @@ export interface CrawlerNotificationResult {
   failed: number;
 }
 
-export type CrawlerRunner = (options?: SamGovCrawlerRunOptions) => Promise<SamGovCrawlerRunResult>;
+export interface CrawlerRunResult {
+  ok: boolean;
+  source: string;
+  status: "success" | "failure";
+  stdout: string;
+  stderr: string;
+}
+
+export type CrawlerRunner<TOptions = unknown> = (options?: TOptions) => Promise<CrawlerRunResult>;
 export type CrawlerMatcher = () => Promise<SearchAlertMatchResult & { matches?: unknown[] }>;
 export type CrawlerNotifier = (input: {
   source: string;
-  runner: SamGovCrawlerRunResult;
+  runner: CrawlerRunResult;
   alertMatching: SearchAlertMatchResult & { matches?: unknown[] };
 }) => Promise<CrawlerNotificationResult>;
 
-export interface RunCrawlerSourceOnceOptions {
+export interface RunCrawlerSourceOnceOptions<TOptions = unknown> {
   source: string;
   owner: string;
-  runner: CrawlerRunner;
-  runnerOptions?: SamGovCrawlerRunOptions;
+  runner: CrawlerRunner<TOptions>;
+  runnerOptions?: TOptions;
   matcher: CrawlerMatcher;
   notifier: CrawlerNotifier;
   now?: () => Date;
@@ -36,7 +43,7 @@ export type RunCrawlerSourceOnceResult =
       ok: true;
       source: string;
       status: "success";
-      runner: SamGovCrawlerRunResult;
+      runner: CrawlerRunResult;
       alertMatching: SearchAlertMatchResult & { matches?: unknown[] };
       notification: CrawlerNotificationResult;
     }
@@ -44,7 +51,7 @@ export type RunCrawlerSourceOnceResult =
       ok: false;
       source: string;
       status: "failure";
-      runner: SamGovCrawlerRunResult;
+      runner: CrawlerRunResult;
     }
   | {
       ok: false;
@@ -77,9 +84,9 @@ function isSourceEnabled(db: AppDatabase, source: string) {
   return sourceRow ? sourceRow.isEnabled === 1 : true;
 }
 
-export async function runCrawlerSourceOnce(
+export async function runCrawlerSourceOnce<TOptions = unknown>(
   db: AppDatabase,
-  options: RunCrawlerSourceOnceOptions,
+  options: RunCrawlerSourceOnceOptions<TOptions>,
 ): Promise<RunCrawlerSourceOnceResult> {
   if (!isSourceEnabled(db, options.source)) {
     return {

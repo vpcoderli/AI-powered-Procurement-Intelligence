@@ -16,12 +16,15 @@ import { sendMatchedAlertNotifications } from "@/server/notifications/service";
 import { matchEnabledSearchAlerts, type SearchAlertMatchResult } from "@/server/search-alerts/matcher";
 
 type Matcher = () => Promise<SearchAlertMatchResult>;
-type Orchestrator = (db: AppDatabase, options: RunCrawlerSourceOnceOptions) => Promise<RunCrawlerSourceOnceResult>;
+type Orchestrator = <TOptions>(
+  db: AppDatabase,
+  options: RunCrawlerSourceOnceOptions<TOptions>,
+) => Promise<RunCrawlerSourceOnceResult>;
 
 interface SamGovRunRouteDependencies {
   database: AppDatabase;
   owner: string;
-  runner: CrawlerRunner;
+  runner: CrawlerRunner<SamGovCrawlerRunOptions>;
   matcher: Matcher;
   notifier: CrawlerNotifier;
   runCrawlerSourceOnce: Orchestrator;
