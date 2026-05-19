@@ -16,6 +16,9 @@
 # local runtime state
 /data/*.json
 /data/*.tmp
+/data/*.sqlite
+/data/*.sqlite-shm
+/data/*.sqlite-wal
 !/data/.gitkeep
 
 # next.js
