@@ -128,7 +128,6 @@ export default function SearchAlertsPage() {
   };
 
   const removeAlert = async (alert: SearchAlert) => {
-    const previousAlerts = alerts;
     updatePending(alert.id, true);
     setError(false);
     setAlerts((current) => current.filter((item) => item.id !== alert.id));
@@ -136,7 +135,13 @@ export default function SearchAlertsPage() {
     try {
       await deleteSearchAlert(alert.id);
     } catch {
-      setAlerts(previousAlerts);
+      setAlerts((current) => {
+        if (current.some((item) => item.id === alert.id)) {
+          return current;
+        }
+
+        return [alert, ...current];
+      });
       setError(true);
     } finally {
       updatePending(alert.id, false);
@@ -339,7 +344,7 @@ export default function SearchAlertsPage() {
               );
             })}
           </div>
-        ) : (
+        ) : !error ? (
           <div className="text-center p-12 border border-dashed border-slate-300 rounded-xl bg-slate-50/50 flex flex-col items-center gap-4">
             <div className="p-4 bg-white rounded-full border border-slate-100 shadow-sm">
               <BellRing size={24} className="text-slate-300" />
@@ -358,7 +363,7 @@ export default function SearchAlertsPage() {
               <Plus className="mr-2 h-4 w-4" /> {t("searchAlerts.createAlert")}
             </Button>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
