@@ -60,10 +60,6 @@ export async function POST(request: Request) {
       return errorResponse("INVALID_REQUEST", error.message, 400);
     }
 
-    return errorResponse(
-      "INTERNAL_ERROR",
-      error instanceof Error ? error.message : "Internal server error",
-      500,
-    );
+    return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
   }
 }

@@ -16,11 +16,7 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json({ user: await getSessionUser(db, sessionToken) });
-  } catch (error) {
-    return errorResponse(
-      "INTERNAL_ERROR",
-      error instanceof Error ? error.message : "Internal server error",
-      500,
-    );
+  } catch {
+    return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
   }
 }
