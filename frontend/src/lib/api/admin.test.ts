@@ -75,6 +75,18 @@ describe("admin API client", () => {
     expect(mockFetch).toHaveBeenCalledWith("/api/crawler/state/run", { method: "POST" });
   });
 
+  it("runs a selected state crawler now", async () => {
+    const body = { status: "completed", results: [{ source: "il_bidbuy" }] };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(runStateCrawlersNow(["il_bidbuy"])).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/crawler/state/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sources: ["il_bidbuy"] }),
+    });
+  });
+
   it("throws sanitized API errors", async () => {
     mockFetch.mockResolvedValueOnce(
       jsonResponse({ error: { code: "FORBIDDEN", message: "Admin access is required." } }, { status: 403 }),
