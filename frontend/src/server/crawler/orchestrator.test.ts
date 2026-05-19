@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { crawlerLocks } from "@/server/db/schema";
+import { crawlerLocks, dataSources } from "@/server/db/schema";
 import { acquireCrawlerLock } from "./lock-repository";
 import { runCrawlerSourceOnce } from "./orchestrator";
 
@@ -125,5 +125,43 @@ describe("crawler orchestrator", () => {
     expect(runner).not.toHaveBeenCalled();
     expect(matcher).not.toHaveBeenCalled();
     expect(notifier).not.toHaveBeenCalled();
+  });
+
+  it("returns disabled and skips work when the data source is turned off", async () => {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id: "sam_gov",
+        label: "SAM.gov",
+        issuerType: "federal",
+        stateCode: "US",
+        isEnabled: 0,
+        cadence: "daily",
+        createdAt: "2026-05-19T00:00:00.000Z",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+      })
+      .run();
+    const runner = vi.fn();
+    const matcher = vi.fn();
+    const notifier = vi.fn();
+
+    const result = await runCrawlerSourceOnce(testDb.db, {
+      source: "SAM.gov",
+      owner: "test_owner",
+      now: () => new Date("2026-05-19T00:01:00.000Z"),
+      runner,
+      matcher,
+      notifier,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      source: "SAM.gov",
+      status: "disabled",
+    });
+    expect(runner).not.toHaveBeenCalled();
+    expect(matcher).not.toHaveBeenCalled();
+    expect(notifier).not.toHaveBeenCalled();
+    expect(testDb.db.select().from(crawlerLocks).all()).toHaveLength(0);
   });
 });

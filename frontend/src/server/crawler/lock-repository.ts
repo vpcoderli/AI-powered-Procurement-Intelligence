@@ -29,34 +29,39 @@ export function acquireCrawlerLock(
   db: AppDatabase,
   input: AcquireCrawlerLockInput,
 ): AcquireCrawlerLockResult {
-  const existing = db.select().from(crawlerLocks).where(eq(crawlerLocks.source, input.source)).get();
+  const acquired = db.$client
+    .prepare(
+      `
+      INSERT INTO crawler_locks (source, owner, acquired_at, expires_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(source) DO UPDATE SET
+        owner = excluded.owner,
+        acquired_at = excluded.acquired_at,
+        expires_at = excluded.expires_at
+      WHERE crawler_locks.expires_at <= excluded.acquired_at
+      RETURNING source, owner, expires_at AS expiresAt
+      `,
+    )
+    .get(input.source, input.owner, input.acquiredAt, input.expiresAt) as
+    | { source: string; owner: string; expiresAt: string }
+    | undefined;
 
-  if (existing && existing.expiresAt > input.acquiredAt) {
+  if (acquired) {
     return {
-      acquired: false,
-      source: input.source,
-      owner: existing.owner,
-      expiresAt: existing.expiresAt,
+      acquired: true,
+      source: acquired.source,
+      owner: acquired.owner,
+      expiresAt: acquired.expiresAt,
     };
   }
 
-  db.insert(crawlerLocks)
-    .values(input)
-    .onConflictDoUpdate({
-      target: crawlerLocks.source,
-      set: {
-        owner: input.owner,
-        acquiredAt: input.acquiredAt,
-        expiresAt: input.expiresAt,
-      },
-    })
-    .run();
+  const existing = db.select().from(crawlerLocks).where(eq(crawlerLocks.source, input.source)).get();
 
   return {
-    acquired: true,
+    acquired: false,
     source: input.source,
-    owner: input.owner,
-    expiresAt: input.expiresAt,
+    owner: existing?.owner,
+    expiresAt: existing?.expiresAt,
   };
 }
 

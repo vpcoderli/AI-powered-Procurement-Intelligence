@@ -1,17 +1,11 @@
 import { createDatabase } from "../src/server/db/client";
 import { runMigrations } from "../src/server/db/migrate";
-import { runCrawlerSourceOnce, type CrawlerNotifier } from "../src/server/crawler/orchestrator";
+import { runCrawlerSourceOnce } from "../src/server/crawler/orchestrator";
 import { runSamGovCrawler } from "../src/server/crawler/sam-gov-runner";
+import { sendMatchedAlertNotifications } from "../src/server/notifications/service";
 import { matchEnabledSearchAlerts } from "../src/server/search-alerts/matcher";
 
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
-
-const noopNotifier: CrawlerNotifier = async () => ({
-  queued: 0,
-  sent: 0,
-  skipped: 0,
-  failed: 0,
-});
 
 function intervalMs() {
   const value = Number(process.env.CRAWLER_WORKER_INTERVAL_MS);
@@ -45,7 +39,7 @@ async function main() {
         owner: owner(),
         runner: runSamGovCrawler,
         matcher: () => matchEnabledSearchAlerts(db),
-        notifier: noopNotifier,
+        notifier: ({ alertMatching }) => sendMatchedAlertNotifications(db, alertMatching),
       });
       console.log(JSON.stringify(result, null, 2));
 

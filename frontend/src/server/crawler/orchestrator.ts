@@ -1,4 +1,6 @@
+import { or, eq } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
+import { dataSources } from "@/server/db/schema";
 import type { SearchAlertMatchResult } from "@/server/search-alerts/matcher";
 import type { SamGovCrawlerRunOptions, SamGovCrawlerRunResult } from "./sam-gov-runner";
 import { acquireCrawlerLock, releaseCrawlerLock } from "./lock-repository";
@@ -50,12 +52,43 @@ export type RunCrawlerSourceOnceResult =
       status: "locked";
       lockedBy?: string;
       lockExpiresAt?: string;
+    }
+  | {
+      ok: false;
+      source: string;
+      status: "disabled";
     };
+
+function sourceIdFor(source: string) {
+  return source
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_|_$/g, "");
+}
+
+function isSourceEnabled(db: AppDatabase, source: string) {
+  const sourceRow = db
+    .select()
+    .from(dataSources)
+    .where(or(eq(dataSources.label, source), eq(dataSources.id, source), eq(dataSources.id, sourceIdFor(source))))
+    .limit(1)
+    .get();
+
+  return sourceRow ? sourceRow.isEnabled === 1 : true;
+}
 
 export async function runCrawlerSourceOnce(
   db: AppDatabase,
   options: RunCrawlerSourceOnceOptions,
 ): Promise<RunCrawlerSourceOnceResult> {
+  if (!isSourceEnabled(db, options.source)) {
+    return {
+      ok: false,
+      source: options.source,
+      status: "disabled",
+    };
+  }
+
   const now = options.now ?? (() => new Date());
   const lockTtlMs = options.lockTtlMs ?? 10 * 60 * 1000;
   const acquiredAt = now();

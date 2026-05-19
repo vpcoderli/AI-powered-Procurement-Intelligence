@@ -10,7 +10,9 @@ import {
   runSamGovCrawler,
   type SamGovCrawlerRunOptions,
 } from "@/server/crawler/sam-gov-runner";
+import { AdminAuthError, requireAdmin } from "@/server/admin/auth";
 import { db, type AppDatabase } from "@/server/db/client";
+import { sendMatchedAlertNotifications } from "@/server/notifications/service";
 import { matchEnabledSearchAlerts, type SearchAlertMatchResult } from "@/server/search-alerts/matcher";
 
 type Matcher = () => Promise<SearchAlertMatchResult>;
@@ -34,11 +36,19 @@ function tokenFromRequest(request: Request) {
   return request.headers.get("x-crawler-token");
 }
 
-function isAuthorized(request: Request) {
+async function isAuthorized(database: AppDatabase, request: Request) {
   const requiredToken = process.env.CRAWLER_RUN_TOKEN;
   if (!requiredToken) return true;
 
-  return tokenFromRequest(request) === requiredToken;
+  if (tokenFromRequest(request) === requiredToken) return true;
+
+  try {
+    await requireAdmin(database, request);
+    return true;
+  } catch (error) {
+    if (error instanceof AdminAuthError) return false;
+    throw error;
+  }
 }
 
 async function parseOptions(request: Request): Promise<SamGovCrawlerRunOptions> {
@@ -59,26 +69,20 @@ function defaultOwner() {
   return `sam-gov-route:${process.pid}`;
 }
 
-const noopNotifier: CrawlerNotifier = async () => ({
-  queued: 0,
-  sent: 0,
-  skipped: 0,
-  failed: 0,
-});
-
 export function createSamGovRunPost(overrides: Partial<SamGovRunRouteDependencies> = {}) {
+  const database = overrides.database ?? db;
   const dependencies: SamGovRunRouteDependencies = {
-    database: db,
+    database,
     owner: defaultOwner(),
     runner: runSamGovCrawler,
-    matcher: () => matchEnabledSearchAlerts(overrides.database ?? db),
-    notifier: noopNotifier,
+    matcher: () => matchEnabledSearchAlerts(database),
+    notifier: ({ alertMatching }) => sendMatchedAlertNotifications(database, alertMatching),
     runCrawlerSourceOnce,
     ...overrides,
   };
 
   return async function POST(request: Request) {
-    if (!isAuthorized(request)) {
+    if (!(await isAuthorized(dependencies.database, request))) {
       return NextResponse.json(
         {
           error: {
@@ -100,6 +104,9 @@ export function createSamGovRunPost(overrides: Partial<SamGovRunRouteDependencie
     });
 
     if (result.status === "locked") {
+      return NextResponse.json(result, { status: 409 });
+    }
+    if (result.status === "disabled") {
       return NextResponse.json(result, { status: 409 });
     }
     if (!result.ok) {
