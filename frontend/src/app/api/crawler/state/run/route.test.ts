@@ -70,7 +70,7 @@ describe("POST /api/crawler/state/run", () => {
       expect.objectContaining({
         source: "ca_caleprocure",
         owner: "state_route_test",
-        runnerOptions: {},
+        runnerOptions: { allowFixtureFallback: true },
       }),
     );
   });
@@ -97,10 +97,12 @@ describe("POST /api/crawler/state/run", () => {
     expect(runCrawlerSourceOnce.mock.calls[0][1].runnerOptions).toEqual({
       query: "data",
       limit: 12,
+      allowFixtureFallback: true,
     });
     expect(runCrawlerSourceOnce.mock.calls[1][1].runnerOptions).toEqual({
       query: "data",
       limit: 12,
+      allowFixtureFallback: true,
     });
   });
 

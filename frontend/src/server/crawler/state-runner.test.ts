@@ -91,6 +91,21 @@ describe("state crawler runner", () => {
     ]);
   });
 
+  it("passes fixture fallback flag when enabled", async () => {
+    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+      callback(null, "done", "");
+      return {} as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+
+    await runStateCrawler({
+      source: "ny_contract_reporter",
+      allowFixtureFallback: true,
+      databasePath: "/tmp/apsi.sqlite",
+    });
+
+    expect(mockedExecFile.mock.calls[0][1]).toContain("--fallback-fixture");
+  });
+
   it("returns failure metadata when the Python crawler exits with an error", async () => {
     mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
       callback(new Error("crawler failed"), "", "trace");

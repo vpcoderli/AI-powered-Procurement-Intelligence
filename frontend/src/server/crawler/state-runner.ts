@@ -16,12 +16,14 @@ export interface StateCrawlerRunOptions {
   query?: string;
   limit?: number;
   databasePath?: string;
+  allowFixtureFallback?: boolean;
 }
 
 export interface StateCrawlerOrchestratorOptions {
   query?: string;
   limit?: number;
   databasePath?: string;
+  allowFixtureFallback?: boolean;
 }
 
 export interface StateCrawlerRunResult {
@@ -57,6 +59,10 @@ function buildArgs(options: StateCrawlerRunOptions) {
     args.push("--query", options.query);
   }
 
+  if (options.allowFixtureFallback) {
+    args.push("--fallback-fixture");
+  }
+
   return args;
 }
 
@@ -89,5 +95,6 @@ export function createStateCrawlerRunner(source: StateCrawlerSourceId) {
       query: options.query,
       limit: options.limit,
       databasePath: options.databasePath,
+      allowFixtureFallback: options.allowFixtureFallback,
     });
 }
