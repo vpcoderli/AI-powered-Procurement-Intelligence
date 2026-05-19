@@ -4,7 +4,11 @@ import { queryBidsFromDatabase } from "@/server/bids/service";
 import type { BidQuery } from "@/server/bids/types";
 import type { AppDatabase } from "@/server/db/client";
 import { alerts } from "@/server/db/schema";
-import type { MatchedAlertNotification } from "@/server/notifications/types";
+import type {
+  MatchedAlertNotification,
+  NotificationChannel,
+  NotificationFrequency,
+} from "@/server/notifications/types";
 import { toSearchAlert } from "./service";
 
 export interface SearchAlertMatchOptions {
@@ -29,11 +33,11 @@ function toNotificationBidSummary(bid: Bid) {
   };
 }
 
-function notificationFrequency(value: string) {
+function notificationFrequency(value: string): NotificationFrequency {
   return value === "weekly" ? "weekly" : "daily";
 }
 
-function notificationChannel(value: string) {
+function notificationChannel(value: string): NotificationChannel {
   return value === "email" ? "email" : "email";
 }
 
