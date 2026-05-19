@@ -1,6 +1,7 @@
 from apsi_crawler.sources.base import Source
 from apsi_crawler.spiders.ca_caleprocure import fetch_ca_caleprocure_opportunities
 from apsi_crawler.spiders.state_fixture import load_state_fixture_opportunities
+from apsi_crawler.spiders.tx_esbd import fetch_tx_esbd_opportunities
 
 
 STATE_SOURCES = {
@@ -20,6 +21,7 @@ STATE_SOURCES = {
         jurisdiction="state",
         state_code="TX",
         fixture_loader=load_state_fixture_opportunities,
+        live_fetcher=fetch_tx_esbd_opportunities,
     ),
     "ny_contract_reporter": Source(
         id="ny_contract_reporter",
