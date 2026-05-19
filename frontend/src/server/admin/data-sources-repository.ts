@@ -55,6 +55,32 @@ export class AdminDataSourceNotFoundError extends Error {
   }
 }
 
+const CRAWLER_LOG_SOURCE_BY_STATE: Record<string, string> = {
+  CA: "ca_caleprocure",
+  TX: "tx_esbd",
+  NY: "ny_contract_reporter",
+  FL: "fl_mfmp",
+  IL: "il_bidbuy",
+};
+
+function crawlerLogKeysForSource(source: typeof dataSources.$inferSelect) {
+  return [CRAWLER_LOG_SOURCE_BY_STATE[source.stateCode], source.label, source.id].filter(
+    (value): value is string => Boolean(value),
+  );
+}
+
+function latestLogForSource(
+  source: typeof dataSources.$inferSelect,
+  latestLogsBySource: Map<string, AdminCrawlerLog>,
+) {
+  for (const key of crawlerLogKeysForSource(source)) {
+    const log = latestLogsBySource.get(key);
+    if (log) return log;
+  }
+
+  return null;
+}
+
 function toAdminLog(row: typeof crawlerLogs.$inferSelect): AdminCrawlerLog {
   return {
     id: row.id,
@@ -123,9 +149,7 @@ export async function listAdminDataSources(db: AppDatabase): Promise<AdminDataSo
     }
   }
 
-  const sources = sourceRows.map((source) =>
-    toAdminSource(source, latestLogsBySource.get(source.label) ?? latestLogsBySource.get(source.id) ?? null),
-  );
+  const sources = sourceRows.map((source) => toAdminSource(source, latestLogForSource(source, latestLogsBySource)));
 
   return {
     summary: {

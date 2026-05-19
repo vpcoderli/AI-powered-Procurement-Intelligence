@@ -9,6 +9,40 @@ import {
 
 const NOW = "2026-05-19T00:00:00.000Z";
 
+function insertCrawlerLog(
+  testDb: TestDatabase,
+  input: {
+    id: string;
+    source: string;
+    status: string;
+    startedAt: string;
+    errorCode?: string | null;
+    errorMessage?: string | null;
+  },
+) {
+  testDb.db
+    .insert(crawlerLogs)
+    .values({
+      id: input.id,
+      source: input.source,
+      runId: `${input.id}_run`,
+      status: input.status,
+      startedAt: input.startedAt,
+      finishedAt: input.startedAt,
+      durationMs: 10,
+      fetchedCount: input.status === "success" ? 1 : 0,
+      insertedCount: 0,
+      updatedCount: 0,
+      skippedCount: 0,
+      failedCount: input.status === "failure" ? 1 : 0,
+      errorCode: input.errorCode ?? null,
+      errorMessage: input.errorMessage ?? null,
+      errorStack: null,
+      metadata: null,
+    })
+    .run();
+}
+
 describe("admin data sources repository", () => {
   let testDb: TestDatabase;
 
@@ -123,6 +157,71 @@ describe("admin data sources repository", () => {
       id: "sam_gov",
       isEnabled: false,
     });
+  });
+
+  it("maps state data source rows to crawler log source ids", async () => {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id: "texas_smartbuy",
+        label: "Texas SmartBuy",
+        issuerType: "state",
+        stateCode: "TX",
+        isEnabled: 1,
+        cadence: "daily",
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+      .run();
+    insertCrawlerLog(testDb, {
+      id: "log_tx_failure",
+      source: "tx_esbd",
+      status: "failure",
+      startedAt: "2026-05-19T01:00:00.000Z",
+      errorCode: "TxEsbdError",
+      errorMessage: "Texas ESBD response was not valid JSON",
+    });
+
+    const result = await listAdminDataSources(testDb.db);
+    const source = result.sources.find((item) => item.id === "texas_smartbuy");
+
+    expect(source?.latestLog).toMatchObject({
+      source: "tx_esbd",
+      status: "failure",
+      errorMessage: "Texas ESBD response was not valid JSON",
+    });
+    expect(result.summary.failingSources).toBe(1);
+  });
+
+  it("keeps direct SAM.gov log matching", async () => {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id: "sam_gov",
+        label: "SAM.gov",
+        issuerType: "federal",
+        stateCode: "US",
+        isEnabled: 1,
+        cadence: "daily",
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+      .run();
+    insertCrawlerLog(testDb, {
+      id: "log_sam_success",
+      source: "SAM.gov",
+      status: "success",
+      startedAt: "2026-05-19T01:00:00.000Z",
+    });
+
+    const result = await listAdminDataSources(testDb.db);
+    const source = result.sources.find((item) => item.id === "sam_gov");
+
+    expect(source?.latestLog).toMatchObject({
+      source: "SAM.gov",
+      status: "success",
+    });
+    expect(result.summary.healthySources).toBe(1);
   });
 
   it("lists recent crawler logs without raw stack traces", async () => {
