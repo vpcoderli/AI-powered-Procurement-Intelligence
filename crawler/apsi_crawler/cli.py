@@ -8,8 +8,47 @@ from uuid import uuid4
 
 from apsi_crawler.config import DEFAULT_SOURCE
 from apsi_crawler.sources.registry import get_fixture_loader, get_live_fetcher, get_source
+from apsi_crawler.spiders.ca_caleprocure import fetch_ca_caleprocure_opportunities
+from apsi_crawler.spiders.fl_mfmp import fetch_fl_mfmp_opportunities
+from apsi_crawler.spiders.il_bidbuy import fetch_il_bidbuy_opportunities
+from apsi_crawler.spiders.ny_contract_reporter import fetch_ny_contract_reporter_opportunities
 from apsi_crawler.spiders.sam_gov_api import fetch_sam_gov_opportunities
+from apsi_crawler.spiders.tx_esbd import fetch_tx_esbd_opportunities
 from apsi_crawler.storage.sqlite import now_iso, upsert_bid, write_crawler_log
+
+
+STATE_FALLBACK_FIXTURES = {
+    "ca_caleprocure": ("fixture_json", "ca_caleprocure_live_response.json"),
+    "tx_esbd": ("fixture_json", "tx_esbd_live_response.json"),
+    "ny_contract_reporter": ("fixture_json", "ny_contract_reporter_live_response.json"),
+    "fl_mfmp": ("fixture_json", "fl_mfmp_live_response.json"),
+    "il_bidbuy": ("fixture_html", "il_bidbuy_open_bids.html"),
+}
+
+STATE_FALLBACK_FETCHERS = {
+    "ca_caleprocure": fetch_ca_caleprocure_opportunities,
+    "tx_esbd": fetch_tx_esbd_opportunities,
+    "ny_contract_reporter": fetch_ny_contract_reporter_opportunities,
+    "fl_mfmp": fetch_fl_mfmp_opportunities,
+    "il_bidbuy": fetch_il_bidbuy_opportunities,
+}
+
+
+def _bundled_fixture_path(filename):
+    return Path(__file__).resolve().parents[1] / "tests" / "fixtures" / filename
+
+
+def _fallback_fixture_for_source(source):
+    fixture = STATE_FALLBACK_FIXTURES.get(source)
+    if not fixture:
+        return None
+
+    fixture_kind, filename = fixture
+    path = _bundled_fixture_path(filename)
+    if not path.exists():
+        return None
+
+    return fixture_kind, str(path)
 
 
 def _upsert_bids(connection, bids):
@@ -116,6 +155,7 @@ def fetch_state(
     limit=25,
     fixture_json=None,
     fixture_html=None,
+    fallback_fixture=False,
 ):
     started_at = now_iso()
     started = perf_counter()
@@ -136,7 +176,25 @@ def fetch_state(
             fetch_kwargs["fixture_json"] = fixture_json
         if fixture_html:
             fetch_kwargs["fixture_html"] = fixture_html
-        bids = fetcher(source_metadata, **fetch_kwargs)
+        try:
+            bids = fetcher(source_metadata, **fetch_kwargs)
+        except Exception as error:
+            fallback = (
+                _fallback_fixture_for_source(source_metadata.id)
+                if fallback_fixture and not fixture_json and not fixture_html
+                else None
+            )
+            fallback_fetcher = STATE_FALLBACK_FETCHERS.get(source_metadata.id)
+            if not fallback or not fallback_fetcher:
+                raise
+
+            fixture_kind, fixture_path = fallback
+            metadata["fallback_fixture"] = fixture_path
+            metadata["fallback_reason"] = str(error)
+            metadata["fallback_source"] = "bundled_demo_fixture"
+            fallback_kwargs = {"query": query, "limit": limit, fixture_kind: fixture_path}
+            bids = fallback_fetcher(source_metadata, **fallback_kwargs)
+
         inserted_count, updated_count = _upsert_bids(connection, bids)
 
         write_crawler_log(
@@ -200,6 +258,7 @@ def build_parser():
     fetch_state_parser.add_argument("--limit", type=int, default=25)
     fetch_state_parser.add_argument("--fixture-json")
     fetch_state_parser.add_argument("--fixture-html")
+    fetch_state_parser.add_argument("--fallback-fixture", action="store_true")
 
     return parser
 
@@ -229,6 +288,7 @@ def main(argv=None):
             limit=args.limit,
             fixture_json=args.fixture_json,
             fixture_html=args.fixture_html,
+            fallback_fixture=args.fallback_fixture,
         )
 
     parser.error(f"Unsupported command: {args.command}")

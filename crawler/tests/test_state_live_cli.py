@@ -385,6 +385,96 @@ def test_fetch_state_unsupported_source_writes_failure_log(tmp_path, monkeypatch
     )
 
 
+def test_fetch_state_falls_back_to_bundled_ca_fixture_when_live_fetch_fails(tmp_path, monkeypatch):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+
+    def fake_fetcher(source, query=None, limit=25):
+        raise RuntimeError("state portal unavailable")
+
+    monkeypatch.setattr("apsi_crawler.cli.get_live_fetcher", lambda source: fake_fetcher)
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "ca_caleprocure",
+            "--query",
+            "cloud",
+            "--limit",
+            "5",
+            "--fallback-fixture",
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 0
+    bid = connection.execute(
+        "SELECT source_bid_id, dedupe_key, title FROM bids"
+    ).fetchone()
+    assert bid == (
+        "CA-LIVE-2026-001",
+        "ca_caleprocure:CA-LIVE-2026-001",
+        "Cloud data warehouse modernization",
+    )
+    log = connection.execute(
+        "SELECT source, status, fetched_count, inserted_count, updated_count, metadata FROM crawler_logs"
+    ).fetchone()
+    metadata = json.loads(log[5])
+    assert log[:5] == ("ca_caleprocure", "success", 1, 1, 0)
+    assert metadata["fallback_source"] == "bundled_demo_fixture"
+    assert metadata["fallback_reason"] == "state portal unavailable"
+    assert metadata["fallback_fixture"].endswith("ca_caleprocure_live_response.json")
+
+
+def test_fetch_state_falls_back_to_bundled_il_fixture_when_live_fetch_fails(tmp_path, monkeypatch):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+
+    def fake_fetcher(source, query=None, limit=25):
+        raise RuntimeError("Illinois BidBuy timed out")
+
+    monkeypatch.setattr("apsi_crawler.cli.get_live_fetcher", lambda source: fake_fetcher)
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "il_bidbuy",
+            "--query",
+            "data",
+            "--limit",
+            "5",
+            "--fallback-fixture",
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 0
+    bid = connection.execute(
+        "SELECT source, source_bid_id, dedupe_key, title, state_code FROM bids"
+    ).fetchone()
+    assert bid == (
+        "Illinois BidBuy",
+        "IL-BIDBUY-2026-001",
+        "il_bidbuy:IL-BIDBUY-2026-001",
+        "Enterprise data integration services",
+        "IL",
+    )
+    log = connection.execute(
+        "SELECT source, status, fetched_count, inserted_count, updated_count, metadata FROM crawler_logs"
+    ).fetchone()
+    metadata = json.loads(log[5])
+    assert log[:5] == ("il_bidbuy", "success", 1, 1, 0)
+    assert metadata["fallback_source"] == "bundled_demo_fixture"
+    assert metadata["fallback_reason"] == "Illinois BidBuy timed out"
+    assert metadata["fallback_fixture"].endswith("il_bidbuy_open_bids.html")
+
+
 def test_fetch_state_adapter_failure_writes_failure_log(tmp_path, monkeypatch):
     database = tmp_path / "apsi.sqlite"
     create_crawler_database(database)
