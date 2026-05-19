@@ -87,22 +87,22 @@ export default function SettingsPage() {
           <TabsContent value="notifications" className="m-0 space-y-6">
             <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
               <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
-                <CardTitle className="text-lg font-semibold text-slate-900">Email Preferences</CardTitle>
-                <CardDescription className="text-slate-500 font-medium">Choose what updates you want to receive.</CardDescription>
+                <CardTitle className="text-lg font-semibold text-slate-900">{t('settings.emailPreferences')}</CardTitle>
+                <CardDescription className="text-slate-500 font-medium">{t('settings.emailPreferencesDesc')}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6 p-6">
                 <div className="flex flex-row items-center justify-between gap-4">
                   <div className="flex flex-col space-y-1">
-                    <Label className="text-slate-900 font-medium text-base">Saved Search Alerts</Label>
-                    <span className="text-sm text-slate-500">Receive emails when new bids match your criteria.</span>
+                    <Label className="text-slate-900 font-medium text-base">{t('settings.savedSearchAlerts')}</Label>
+                    <span className="text-sm text-slate-500">{t('settings.savedSearchAlertsDesc')}</span>
                   </div>
                   <Switch defaultChecked className="data-[state=checked]:bg-slate-900 shrink-0" />
                 </div>
                 <Separator className="bg-slate-100" />
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div className="flex flex-col space-y-1">
-                    <Label className="text-slate-900 font-medium text-base">Alert Frequency</Label>
-                    <span className="text-sm text-slate-500">How often should we send you matched bids?</span>
+                    <Label className="text-slate-900 font-medium text-base">{t('settings.alertFrequency')}</Label>
+                    <span className="text-sm text-slate-500">{t('settings.alertFrequencyDesc')}</span>
                   </div>
                   <Select defaultValue="daily">
                     <SelectTrigger className="w-full sm:w-[180px] shrink-0 border-slate-200 focus:ring-slate-900 rounded-lg h-10">
