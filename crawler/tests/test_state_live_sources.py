@@ -52,6 +52,12 @@ class FakeSession:
             raise self.response
         return self.response
 
+    def post(self, url, json=None, timeout=None):
+        self.calls.append({"url": url, "json": json, "timeout": timeout})
+        if isinstance(self.response, Exception):
+            raise self.response
+        return self.response
+
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -637,8 +643,25 @@ def test_fetch_fl_mfmp_opportunities_normalizes_live_response():
         timeout=10,
     )
 
-    assert session.calls[0]["url"] == "https://vendor.myfloridamarketplace.com/search/bids"
-    assert session.calls[0]["params"] == {"query": "communications", "limit": 5}
+    assert session.calls[0]["url"] == (
+        "https://vendor.myfloridamarketplace.com/mfmp/pub/search/bids"
+    )
+    assert session.calls[0]["json"] == {
+        "pageSize": 5,
+        "type": [],
+        "status": [],
+        "agency": [],
+        "adNumber": "",
+        "agencyAdvertisementNumber": "",
+        "title": "communications",
+        "publishedDate": "",
+        "openDate": "",
+        "endDate": "",
+        "commodityCodes": [],
+        "intendsToParticipate": "",
+        "assignee": "",
+        "page": 1,
+    }
     assert session.calls[0]["timeout"] == 10
     assert len(bids) == 1
     bid = bids[0]
@@ -647,7 +670,10 @@ def test_fetch_fl_mfmp_opportunities_normalizes_live_response():
     assert bid["issuer_name"] == "Florida Department of Management Services"
     assert bid["issuer_type"] == "state"
     assert bid["state_code"] == "FL"
-    assert bid["source_url"] == "https://vendor.myfloridamarketplace.com/bids/FL-MFMP-LIVE-2026-42"
+    assert bid["source_url"] == (
+        "https://vendor.myfloridamarketplace.com/search/bids/detail/"
+        "FL-MFMP-LIVE-2026-42"
+    )
 
 
 def test_fetch_fl_mfmp_opportunities_raises_on_unexpected_payload_shape():
@@ -727,6 +753,40 @@ def test_fetch_fl_mfmp_opportunities_preserves_normalized_aliases():
     assert bid["published_date"] == "2026-05-18"
     assert bid["deadline_date"] == "2026-06-10"
     assert bid["issuer_name"] == "Florida Department of Management Services"
+
+
+def test_fetch_fl_mfmp_opportunities_uses_public_search_aliases():
+    session = FakeSession(
+        FakeResponse(
+            payload=[
+                {
+                    "agencyAdNumber": "DMS-26-001",
+                    "uniqueName": "Emergency communications assessment",
+                    "openDate": "2026-05-04",
+                    "closeDate": "2026-06-21T17:00:00-04:00",
+                    "organization": "Florida Department of Management Services",
+                }
+            ]
+        )
+    )
+
+    bids = fetch_fl_mfmp_opportunities(
+        get_source("fl_mfmp"),
+        query="communications",
+        limit=5,
+        session=session,
+        timeout=10,
+    )
+
+    bid = bids[0]
+    assert bid["source_bid_id"] == "DMS-26-001"
+    assert bid["title"] == "Emergency communications assessment"
+    assert bid["published_date"] == "2026-05-04"
+    assert bid["deadline_date"] == "2026-06-21T17:00:00-04:00"
+    assert bid["issuer_name"] == "Florida Department of Management Services"
+    assert bid["source_url"] == (
+        "https://vendor.myfloridamarketplace.com/search/bids/detail/DMS-26-001"
+    )
 
 
 def test_fetch_fl_mfmp_opportunities_uses_fl_title_and_category_precedence():
@@ -810,13 +870,17 @@ def test_fetch_fl_mfmp_opportunities_wraps_request_errors():
     assert str(error.value) == "MyFloridaMarketPlace request failed: slow"
 
 
-def test_fetch_fl_mfmp_opportunities_replays_adapter_fixture_json():
+def test_fetch_fl_mfmp_opportunities_replays_adapter_fixture_json_without_session_call():
+    session = FakeSession(requests.Timeout("should not call"))
+
     bids = fetch_fl_mfmp_opportunities(
         get_source("fl_mfmp"),
         query="communications",
         limit=5,
+        session=session,
         fixture_json=str(FIXTURES_DIR / "fl_mfmp_live_response.json"),
     )
 
     assert len(bids) == 1
     assert bids[0]["dedupe_key"] == "fl_mfmp:FL-MFMP-LIVE-2026-42"
+    assert session.calls == []

@@ -2,13 +2,13 @@
 
 ## Goal
 
-Add MyFloridaMarketPlace as the next state live adapter in APSi, using the existing state live adapter pattern with deterministic fixture replay and clear failure behavior for direct public-page HTTP responses.
+Add MyFloridaMarketPlace as the next state live adapter in APSi, using the existing state live adapter pattern with deterministic fixture replay and the MFMP public JSON search API.
 
 ## Confirmed Direction
 
 Use the HTTP/replay adapter approach.
 
-MyFloridaMarketPlace is a public procurement entry point, but this stage will not assume a stable public JSON API or implement browser-driven scraping. The adapter will support local `--fixture-json` replay for reliable import and tests. Direct HTTP requests must fail clearly when the response is HTML or otherwise not the expected JSON shape.
+MyFloridaMarketPlace is a public procurement entry point whose browser app calls a public JSON API for bid search. This stage uses that API directly with `POST /mfmp/pub/search/bids`, supports local `--fixture-json` replay for reliable import and tests, and keeps browser automation or HTML parsing out of scope.
 
 ## Current Context
 
@@ -49,7 +49,7 @@ The FL adapter will follow the CA/TX/NY adapter shape:
 
 - `fetch_fl_mfmp_opportunities(source, query=None, limit=25, session=None, timeout=30, fixture_json=None)`
 - If `fixture_json` is provided, read the JSON file and do not perform HTTP.
-- If `fixture_json` is not provided, request `https://vendor.myfloridamarketplace.com/search/bids`.
+- If `fixture_json` is not provided, `POST` the public search form payload to `https://vendor.myfloridamarketplace.com/mfmp/pub/search/bids`.
 - Non-200 responses raise `FlMfmpError`.
 - Network exceptions are wrapped in `FlMfmpError`.
 - Non-JSON responses raise `FlMfmpError("MyFloridaMarketPlace response was not valid JSON")`.
@@ -62,14 +62,14 @@ The FL adapter will follow the CA/TX/NY adapter shape:
 
 The adapter will preserve common replay and MFMP-style aliases:
 
-- Source ID: `source_bid_id`, `id`, `advertisement_id`, `advertisementId`, `bid_id`, `solicitation_id`
-- Title: `title`, `name`, `advertisementTitle`, `solicitationTitle`
+- Source ID: `source_bid_id`, `advertisementId`, `id`, `advertisement_id`, `adNumber`, `agencyAdNumber`, `bid_id`, `solicitation_id`
+- Title: `title`, `uniqueName`, `name`, `advertisementTitle`, `solicitationTitle`
 - Description: `description`, `summary`
 - Category: `category`, `type`, `commodity`
-- Published date: `published_date`, `postedDate`, `posted_date`, `advertisementDate`
-- Deadline date: `deadline_date`, `dueDate`, `due_date`, `response_deadline`, `endDate`
-- Issuer: `issuer_name`, `agency`, `department`, `buyer`
-- URL: `source_url`, `url`, `link`
+- Published date: `published_date`, `publishDate`, `postedDate`, `posted_date`, `advertisementDate`, `openDate`
+- Deadline date: `deadline_date`, `closeDate`, `dueDate`, `due_date`, `response_deadline`, `endDate`
+- Issuer: `issuer_name`, `agency`, `organization`, `department`, `buyer`
+- URL: `source_url`, `url`, `link`; if none is provided, construct `https://vendor.myfloridamarketplace.com/search/bids/detail/{source_bid_id}`.
 
 The final bid shape continues through `normalize_state_opportunity`, so FL rows use:
 
@@ -104,7 +104,7 @@ Tests must cover:
 - A developer can run FL replay locally through `fetch-state`.
 - FL no longer appears unsupported in the live registry.
 - IL remains unsupported until a later adapter stage.
-- The implementation remains honest about direct public-page HTTP behavior: non-JSON responses fail clearly until browser/HTML support is added later.
+- The implementation uses the public JSON API directly; browser/HTML parsing remains out of scope for later portal work.
 
 ## Remaining After This Stage
 
