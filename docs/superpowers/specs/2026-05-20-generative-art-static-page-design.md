@@ -2,7 +2,9 @@
 
 ## Goal
 
-Create an independent static frontend page using UI/UX Pro Max's "Generative Art Platform" recommendation: Minimalism (Frame) + Gen Z Chaos.
+Create an independent static frontend page using the actual UI/UX Pro Max "Generative Art Platform" demo as the visual reference:
+
+https://ui-ux-pro-max-skill.nextlevelbuilder.io/demo/generative-art-platform
 
 ## Route And Isolation
 
@@ -10,30 +12,32 @@ The page lives at `frontend/src/app/generative-art-static/page.tsx` and renders 
 
 ## Visual Direction
 
-Use a neutral, spacious canvas as the frame:
+Use the demo's dark generative platform language as the frame:
 
-- Background: canvas neutral `#FAFAFA`
-- Text: near-black `#09090B`
-- Frame colors: `#18181B`, `#FFFFFF`, `#E4E4E7`
-- Creative accent: `#EC4899`
+- Background: near-black `#0A0A0A`
+- Cards: elevated charcoal `#1A1A1A`
+- Text: white with muted gray secondary copy
+- Accents: magenta `#FF00FF`, cyan `#00FFFF`, lime `#00FF00`, yellow `#FFFF00`
+- Typography: Syne-like geometric headings and Manrope-like product body copy
 
-Layer Gen Z Chaos only as controlled visual energy:
+Translate the demo's structure into APSi procurement content:
 
-- Offset stickers and rotated labels.
-- Marquee strips.
-- High-saturation pink, green, yellow, and blue accents.
-- Collage-style gallery cards and prompt chips.
-- Jitter/float animations that respect `prefers-reduced-motion`.
+- Fixed glass-style top navigation.
+- Hero with a generation command module adapted to procurement intelligence.
+- Static visual previews for search, saved bids, crawler runs, alerts, and source health.
+- Bento-style gallery cards for core workflows.
+- Tool cards and numbered flow steps for the APSi operating model.
+- Motion and hover states that respect `prefers-reduced-motion`.
 
 ## Content
 
 The page is a static concept screen for APSi as a generative procurement intelligence workspace. It should show:
 
 - A hero with a big product headline.
-- Static prompt chips.
-- A generative art preview panel.
-- A bento-like gallery of procurement intelligence outputs.
-- Static status/workflow modules.
+- A static "generate intelligence" command panel.
+- A bento-like gallery of procurement intelligence workflows.
+- Static tool cards for state crawlers, saved bids, alerts, and source quality.
+- Numbered UE flow steps for discover, qualify, save, and monitor.
 
 No API calls, authentication, database reads, or crawler actions are included.
 
