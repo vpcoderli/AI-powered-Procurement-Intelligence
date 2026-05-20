@@ -8,17 +8,21 @@ function readRouteFile(filename: string) {
 }
 
 describe("generative art static route", () => {
-  it("keeps the page isolated, static, and styled for the requested concept", () => {
+  it("keeps the page isolated, static, and regenerated from the referenced demo language", () => {
     const page = readRouteFile("page.tsx");
     const styles = readRouteFile("page.module.css");
 
-    expect(page).toContain("Generative Bid Lab");
-    expect(page).toContain("Minimalism + Gen Z Chaos");
+    expect(page).toContain("APSi Generative Procurement Studio");
+    expect(page).toContain("Source reference: UI UX Pro Max Generative Art Platform");
+    expect(page).toContain("Crawler Command Center");
+    expect(page).toContain("Live UI/UE Map");
     expect(page).toContain("page.module.css");
     expect(page).not.toContain("/api/");
     expect(page).not.toContain("@/lib/api");
     expect(styles).toContain("position: fixed");
-    expect(styles).toContain("#EC4899");
+    expect(styles).toContain("#0A0A0A");
+    expect(styles).toContain("#FF00FF");
+    expect(styles).toContain("glassNav");
     expect(styles).toContain("prefers-reduced-motion");
   });
 });
