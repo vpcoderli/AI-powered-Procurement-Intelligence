@@ -1,0 +1,614 @@
+.page {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background:
+    linear-gradient(90deg, rgba(9, 9, 11, 0.035) 1px, transparent 1px) 0 0 / 44px 44px,
+    linear-gradient(180deg, rgba(9, 9, 11, 0.035) 1px, transparent 1px) 0 0 / 44px 44px,
+    #fafafa;
+  color: #09090b;
+  font-family: var(--font-sans);
+  padding: 24px;
+}
+
+.hero,
+.gallery,
+.signals {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+}
+
+.hero {
+  padding-top: 18px;
+}
+
+.frame {
+  position: relative;
+  border: 2px solid #18181b;
+  background: #ffffff;
+  min-height: 680px;
+  padding: clamp(18px, 3vw, 34px);
+  box-shadow: 12px 12px 0 #18181b;
+}
+
+.frame::before,
+.frame::after {
+  position: absolute;
+  z-index: 3;
+  border: 2px solid #18181b;
+  color: #09090b;
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+.frame::before {
+  content: "raw signal";
+  top: 42%;
+  left: -24px;
+  padding: 9px 14px;
+  background: #00ff41;
+  transform: rotate(-8deg);
+}
+
+.frame::after {
+  content: "no api";
+  right: 28px;
+  bottom: -17px;
+  padding: 9px 18px;
+  background: #ffff00;
+  transform: rotate(5deg);
+}
+
+.topline,
+.actions,
+.promptStrip,
+.sectionHeader,
+.footerPanel {
+  display: flex;
+  align-items: center;
+}
+
+.topline {
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 2px solid #18181b;
+  padding-bottom: 18px;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.logoMark {
+  display: inline-flex;
+  width: 42px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #18181b;
+  background: #EC4899;
+  color: #ffffff;
+  box-shadow: 5px 5px 0 #18181b;
+}
+
+.systemTag {
+  border: 2px solid #18181b;
+  background: #00ff41;
+  padding: 8px 12px;
+  box-shadow: 4px 4px 0 #18181b;
+}
+
+.heroGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(390px, 0.92fr);
+  gap: clamp(28px, 5vw, 68px);
+  align-items: center;
+  padding-top: clamp(54px, 8vw, 96px);
+}
+
+.heroCopy {
+  max-width: 600px;
+}
+
+.kicker {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+  color: #EC4899;
+}
+
+.heroCopy h1,
+.sectionHeader h2,
+.signals h2 {
+  margin: 0;
+  color: #09090b;
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 0.92;
+}
+
+.heroCopy h1 {
+  max-width: 720px;
+  font-size: clamp(54px, 7vw, 104px);
+}
+
+.heroText {
+  margin: 24px 0 0;
+  max-width: 560px;
+  color: #3f3f46;
+  font-size: clamp(17px, 1.6vw, 21px);
+  line-height: 1.55;
+}
+
+.actions {
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 34px;
+}
+
+.primaryAction,
+.secondaryAction {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 2px solid #18181b;
+  padding: 13px 18px;
+  color: #09090b;
+  font-weight: 900;
+  text-decoration: none;
+  transition: transform 180ms ease, box-shadow 180ms ease, background 180ms ease;
+}
+
+.primaryAction {
+  background: #EC4899;
+  color: #ffffff;
+  box-shadow: 6px 6px 0 #18181b;
+}
+
+.secondaryAction {
+  background: #ffffff;
+  box-shadow: 6px 6px 0 #00ff41;
+}
+
+.primaryAction:hover,
+.secondaryAction:hover {
+  transform: translate(3px, 3px);
+  box-shadow: 2px 2px 0 #18181b;
+}
+
+.artBoard {
+  position: relative;
+  min-height: 500px;
+  overflow: hidden;
+  border: 2px solid #18181b;
+  background:
+    radial-gradient(circle at 30% 25%, rgba(236, 72, 153, 0.3), transparent 24%),
+    radial-gradient(circle at 76% 38%, rgba(0, 255, 65, 0.24), transparent 22%),
+    linear-gradient(135deg, #ffffff 0%, #f4f4f5 100%);
+  box-shadow: 10px 10px 0 #18181b;
+}
+
+.marquee {
+  position: absolute;
+  top: 24px;
+  left: -30px;
+  right: -30px;
+  z-index: 3;
+  overflow: hidden;
+  border-block: 2px solid #18181b;
+  background: #0000ff;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 950;
+  transform: rotate(-5deg);
+  white-space: nowrap;
+}
+
+.marquee span {
+  display: inline-block;
+  min-width: 200%;
+  padding: 10px 0;
+  animation: marquee 12s linear infinite;
+}
+
+.orbitOne,
+.orbitTwo {
+  position: absolute;
+  border: 2px solid #18181b;
+  border-radius: 999px;
+  animation: float 6s ease-in-out infinite;
+}
+
+.orbitOne {
+  width: 240px;
+  height: 240px;
+  left: 44px;
+  top: 130px;
+  background: rgba(255, 255, 0, 0.42);
+}
+
+.orbitTwo {
+  right: 32px;
+  bottom: 66px;
+  width: 290px;
+  height: 180px;
+  background: rgba(236, 72, 153, 0.3);
+  animation-delay: -2s;
+}
+
+.canvasCard {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  z-index: 4;
+  display: grid;
+  width: min(320px, 72%);
+  min-height: 160px;
+  place-items: center;
+  border: 2px solid #18181b;
+  background: #ffffff;
+  padding: 22px;
+  color: #18181b;
+  font-size: 24px;
+  font-weight: 950;
+  line-height: 1.02;
+  text-align: center;
+  box-shadow: 9px 9px 0 #EC4899;
+  transform: translate(-50%, -50%) rotate(2deg);
+}
+
+.pixelPatch,
+.stickerPink,
+.stickerYellow,
+.stickerGreen {
+  position: absolute;
+  z-index: 5;
+  border: 2px solid #18181b;
+  padding: 10px 13px;
+  color: #09090b;
+  font-size: 13px;
+  font-weight: 950;
+  text-transform: uppercase;
+  box-shadow: 4px 4px 0 #18181b;
+}
+
+.pixelPatch {
+  left: 32px;
+  bottom: 38px;
+  background: #ffffff;
+}
+
+.stickerPink {
+  right: 46px;
+  top: 118px;
+  background: #EC4899;
+  color: #ffffff;
+  transform: rotate(11deg);
+}
+
+.stickerYellow {
+  right: 74px;
+  bottom: 154px;
+  background: #ffff00;
+  transform: rotate(-7deg);
+}
+
+.stickerGreen {
+  left: 82px;
+  top: 230px;
+  background: #00ff41;
+  transform: rotate(6deg);
+}
+
+.promptStrip {
+  flex-wrap: nowrap;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 36px 0 10px;
+  scrollbar-width: none;
+}
+
+.promptStrip::-webkit-scrollbar {
+  display: none;
+}
+
+.promptStrip span {
+  flex: 0 0 auto;
+  border: 2px solid #18181b;
+  background: #ffffff;
+  padding: 12px 14px;
+  color: #09090b;
+  font-size: 14px;
+  font-weight: 850;
+  box-shadow: 4px 4px 0 #e4e4e7;
+}
+
+.gallery,
+.signals {
+  padding-top: clamp(66px, 8vw, 104px);
+}
+
+.sectionHeader {
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 24px;
+}
+
+.sectionHeader p {
+  margin: 0;
+  border: 2px solid #18181b;
+  background: #ffff00;
+  padding: 10px 12px;
+  font-weight: 950;
+  text-transform: uppercase;
+  transform: rotate(-3deg);
+}
+
+.sectionHeader h2,
+.signals h2 {
+  max-width: 780px;
+  font-size: clamp(38px, 6vw, 82px);
+  text-align: right;
+}
+
+.galleryGrid {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr 1fr;
+  gap: 18px;
+}
+
+.galleryCard,
+.signalCard,
+.footerPanel {
+  border: 2px solid #18181b;
+  background: #ffffff;
+  box-shadow: 8px 8px 0 #18181b;
+}
+
+.galleryCard {
+  min-height: 330px;
+  padding: 22px;
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.galleryCard:nth-child(2) {
+  transform: translateY(42px) rotate(-1deg);
+}
+
+.galleryCard:nth-child(3) {
+  transform: rotate(2deg);
+}
+
+.galleryCard:hover {
+  transform: translate(4px, 4px) rotate(0deg);
+  box-shadow: 3px 3px 0 #18181b;
+}
+
+.pink {
+  background: #fff1f8;
+}
+
+.blue {
+  background: #eef2ff;
+}
+
+.green {
+  background: #f0fff4;
+}
+
+.cardIcon {
+  display: inline-flex;
+  width: 48px;
+  height: 48px;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #18181b;
+  background: #EC4899;
+  color: #ffffff;
+  box-shadow: 4px 4px 0 #18181b;
+}
+
+.cardEyebrow {
+  display: block;
+  margin-top: 28px;
+  color: #71717a;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.galleryCard h3 {
+  margin: 10px 0 0;
+  color: #09090b;
+  font-size: clamp(26px, 3vw, 40px);
+  font-weight: 950;
+  letter-spacing: 0;
+  line-height: 0.98;
+}
+
+.galleryCard p,
+.signalCard p,
+.footerPanel p {
+  color: #3f3f46;
+  line-height: 1.55;
+}
+
+.signals {
+  padding-bottom: 76px;
+}
+
+.signals > div:first-child {
+  display: grid;
+  grid-template-columns: 0.6fr 1fr;
+  gap: 28px;
+  align-items: end;
+}
+
+.signalGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 18px;
+  margin-top: 28px;
+}
+
+.signalCard {
+  padding: 22px;
+}
+
+.signalCard span {
+  color: #71717a;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.signalCard strong {
+  display: block;
+  margin-top: 16px;
+  color: #09090b;
+  font-size: clamp(42px, 6vw, 76px);
+  font-weight: 950;
+  line-height: 0.9;
+}
+
+.footerPanel {
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 18px;
+  padding: 18px;
+  background: #18181b;
+  color: #ffffff;
+}
+
+.footerPanel p {
+  margin: 0;
+  color: #ffffff;
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes float {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+
+  50% {
+    transform: translate3d(10px, -14px, 0) rotate(3deg);
+  }
+}
+
+@media (max-width: 920px) {
+  .page {
+    padding: 16px;
+  }
+
+  .frame {
+    min-height: auto;
+    box-shadow: 7px 7px 0 #18181b;
+  }
+
+  .topline,
+  .sectionHeader,
+  .signals > div:first-child {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .heroGrid,
+  .galleryGrid,
+  .signalGrid,
+  .signals > div:first-child {
+    grid-template-columns: 1fr;
+  }
+
+  .sectionHeader h2,
+  .signals h2 {
+    text-align: left;
+  }
+
+  .artBoard {
+    min-height: 420px;
+  }
+
+  .galleryCard:nth-child(2),
+  .galleryCard:nth-child(3) {
+    transform: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .page {
+    padding: 12px;
+  }
+
+  .frame::before,
+  .frame::after {
+    display: none;
+  }
+
+  .heroCopy h1 {
+    font-size: clamp(48px, 18vw, 76px);
+  }
+
+  .actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .primaryAction,
+  .secondaryAction {
+    width: 100%;
+  }
+
+  .artBoard {
+    min-height: 360px;
+  }
+
+  .canvasCard {
+    width: 76%;
+    min-height: 138px;
+    font-size: 20px;
+  }
+
+  .stickerGreen {
+    left: 20px;
+  }
+
+  .stickerPink {
+    right: 18px;
+  }
+
+  .stickerYellow {
+    right: 28px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee span,
+  .orbitOne,
+  .orbitTwo {
+    animation: none;
+  }
+
+  .primaryAction,
+  .secondaryAction,
+  .galleryCard {
+    transition: none;
+  }
+}
