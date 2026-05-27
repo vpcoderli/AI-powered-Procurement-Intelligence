@@ -72,6 +72,7 @@ export default function BidDetailsPage() {
   const { isSaved, toggleSaveBid } = useSavedBids();
   const { t } = useLanguage();
   const mountedRef = useRef(true);
+  const createIntentRequestRef = useRef(0);
   const [bid, setBid] = useState<Bid | null>(null);
   const [match, setMatch] = useState<BidMatchResult | null>(null);
   const [intent, setIntent] = useState<IntentDetail | null>(null);
@@ -102,6 +103,8 @@ export default function BidDetailsPage() {
       setPursuitError(null);
       setIsLoading(true);
       setIsMatchLoading(false);
+      setIsCreatingIntent(false);
+      createIntentRequestRef.current += 1;
 
       if (!bidId) {
         setIsLoading(false);
@@ -144,20 +147,41 @@ export default function BidDetailsPage() {
   const handleCreateIntent = async () => {
     if (!bidId || isCreatingIntent) return;
 
+    const requestedBidId = bidId;
+    const requestId = createIntentRequestRef.current + 1;
+    createIntentRequestRef.current = requestId;
+
     setIsCreatingIntent(true);
     setPursuitError(null);
 
     try {
-      const response = await createIntent(bidId);
-      if (!mountedRef.current) return;
+      const response = await createIntent(requestedBidId);
+      if (
+        !mountedRef.current ||
+        createIntentRequestRef.current !== requestId ||
+        requestedBidId !== bidId
+      ) {
+        return;
+      }
 
       setIntent(response.intent);
       setMatch(response.intent.match);
     } catch (err) {
-      if (!mountedRef.current) return;
+      if (
+        !mountedRef.current ||
+        createIntentRequestRef.current !== requestId ||
+        requestedBidId !== bidId
+      ) {
+        return;
+      }
+
       setPursuitError(err instanceof Error ? err : new Error("Failed to create intent"));
     } finally {
-      if (mountedRef.current) {
+      if (
+        mountedRef.current &&
+        createIntentRequestRef.current === requestId &&
+        requestedBidId === bidId
+      ) {
         setIsCreatingIntent(false);
       }
     }
@@ -391,19 +415,21 @@ export default function BidDetailsPage() {
           )}
 
           {intent ? (
-            <div className="mt-6 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-              <div className="rounded-xl border border-slate-200 bg-white p-5">
+            <div className="mt-6 grid gap-5 border-t border-slate-200 pt-6 lg:grid-cols-[1.2fr_0.8fr]">
+              <section className="min-w-0">
                 <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-500">
                   <Sparkles size={16} className="text-slate-400" /> {t("intentsPage.brief")}
                 </h3>
-                <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700 break-words">{intent.generated.aiBidBrief}</p>
-              </div>
-              <div className="grid gap-4">
-                <div className="rounded-xl border border-slate-200 bg-white p-5">
+                <p className="mt-3 max-h-72 overflow-auto pr-2 whitespace-pre-wrap text-sm leading-6 text-slate-700 break-words">
+                  {intent.generated.aiBidBrief}
+                </p>
+              </section>
+              <div className="grid gap-5">
+                <section className="min-w-0">
                   <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-500">
                     <CheckCircle2 size={16} className="text-slate-400" /> {t("intentsPage.checklist")}
                   </h3>
-                  <ul className="mt-3 space-y-2">
+                  <ul className="mt-3 max-h-72 overflow-auto pr-2 space-y-2">
                     {intent.generated.initialChecklist.map((item) => (
                       <li key={item} className="flex gap-2 text-sm leading-6 text-slate-700">
                         <CheckCircle2 size={15} className="mt-1 shrink-0 text-emerald-600" />
@@ -411,13 +437,13 @@ export default function BidDetailsPage() {
                       </li>
                     ))}
                   </ul>
-                </div>
-                <div className="rounded-xl border border-slate-200 bg-white p-5">
+                </section>
+                <section className="min-w-0 border-t border-slate-200 pt-5">
                   <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-500">
                     <ShieldAlert size={16} className="text-slate-400" /> {t("intentsPage.riskFlags")}
                   </h3>
                   {intent.generated.riskFlags.length > 0 ? (
-                    <ul className="mt-3 space-y-2">
+                    <ul className="mt-3 max-h-72 overflow-auto pr-2 space-y-2">
                       {intent.generated.riskFlags.map((item) => (
                         <li key={item} className="flex gap-2 text-sm leading-6 text-slate-700">
                           <ShieldAlert size={15} className="mt-1 shrink-0 text-amber-600" />
@@ -428,7 +454,7 @@ export default function BidDetailsPage() {
                   ) : (
                     <p className="mt-3 text-sm text-slate-500">{t("detail.noGeneratedRiskFlags")}</p>
                   )}
-                </div>
+                </section>
               </div>
             </div>
           ) : null}

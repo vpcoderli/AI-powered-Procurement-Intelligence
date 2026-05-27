@@ -9,5 +9,9 @@ describe("bid detail pursuit panel", () => {
     expect(page).toContain("createIntent");
     expect(page).toContain("Add to Intent");
     expect(page).toContain("match.score");
+    expect(page).toContain("createIntentRequestRef");
+    expect(page).toContain("requestedBidId");
+    expect(page).toContain("max-h-72");
+    expect(page).not.toContain("rounded-xl border border-slate-200 bg-white p-5");
   });
 });
