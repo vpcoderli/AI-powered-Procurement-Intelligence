@@ -26,6 +26,14 @@ function jsonWithPrincipalCookie(
   return response;
 }
 
+function internalError(principal: RequestPrincipal) {
+  return jsonWithPrincipalCookie(
+    { error: { code: "INTERNAL_ERROR", message: "Internal server error" } },
+    principal,
+    { status: 500 },
+  );
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
@@ -70,9 +78,14 @@ function parseSupplierProfileInput(body: unknown): SupplierProfileInput | null {
 
 export async function GET(request: Request) {
   const principal = await resolvePrincipal(db, request);
-  const profile = await getSupplierProfile(db, principal.userId);
 
-  return jsonWithPrincipalCookie({ profile }, principal);
+  try {
+    const profile = await getSupplierProfile(db, principal.userId);
+
+    return jsonWithPrincipalCookie({ profile }, principal);
+  } catch {
+    return internalError(principal);
+  }
 }
 
 export async function PUT(request: Request) {
@@ -84,7 +97,12 @@ export async function PUT(request: Request) {
   }
 
   const principal = await resolvePrincipal(db, request);
-  const profile = await upsertSupplierProfile(db, principal.userId, input);
 
-  return jsonWithPrincipalCookie({ profile }, principal);
+  try {
+    const profile = await upsertSupplierProfile(db, principal.userId, input);
+
+    return jsonWithPrincipalCookie({ profile }, principal);
+  } catch {
+    return internalError(principal);
+  }
 }

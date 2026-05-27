@@ -6,11 +6,18 @@ import type { SupplierProfile } from "./types";
 
 type SupplierProfileRecord = Omit<SupplierProfile, "completionScore">;
 
+export class CorruptSupplierProfileError extends Error {
+  constructor(field: string) {
+    super(`Supplier profile field "${field}" contains invalid JSON.`);
+    this.name = "CorruptSupplierProfileError";
+  }
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
 
-function parseStringArray(value: string | null): string[] {
+function parseStringArray(value: string | null, field: string): string[] {
   if (!value) return [];
 
   try {
@@ -20,10 +27,10 @@ function parseStringArray(value: string | null): string[] {
       return parsed;
     }
   } catch {
-    return [];
+    throw new CorruptSupplierProfileError(field);
   }
 
-  return [];
+  throw new CorruptSupplierProfileError(field);
 }
 
 function emptyProfile(userId: string): SupplierProfileRecord {
@@ -47,14 +54,14 @@ function toSupplierProfileRecord(row: typeof supplierProfiles.$inferSelect): Sup
   return {
     userId: row.userId,
     companyName: row.companyName,
-    businessTypes: parseStringArray(row.businessTypes),
-    categories: parseStringArray(row.categories),
-    keywords: parseStringArray(row.keywords),
-    certifications: parseStringArray(row.certifications),
-    serviceStates: parseStringArray(row.serviceStates),
+    businessTypes: parseStringArray(row.businessTypes, "businessTypes"),
+    categories: parseStringArray(row.categories, "categories"),
+    keywords: parseStringArray(row.keywords, "keywords"),
+    certifications: parseStringArray(row.certifications, "certifications"),
+    serviceStates: parseStringArray(row.serviceStates, "serviceStates"),
     minContractValue: row.minContractValue,
     maxContractValue: row.maxContractValue,
-    riskPreferences: parseStringArray(row.riskPreferences),
+    riskPreferences: parseStringArray(row.riskPreferences, "riskPreferences"),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
