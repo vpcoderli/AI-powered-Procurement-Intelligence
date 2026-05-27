@@ -56,15 +56,15 @@ function scoreGeography(bid: Bid, profile: SupplierProfile) {
 }
 
 function parseContractAmount(amount: string) {
-  const matches = amount.match(/\$?\s*([\d.]+)\s*([KMB])?/gi);
+  const matches = amount.match(/\$?\s*([\d][\d,.]*)\s*([KMB])?/gi);
   if (!matches) return null;
 
   const values = matches
     .map((match) => {
-      const parsed = match.match(/([\d.]+)\s*([KMB])?/i);
+      const parsed = match.match(/([\d][\d,.]*)\s*([KMB])?/i);
       if (!parsed) return null;
 
-      const value = Number.parseFloat(parsed[1]);
+      const value = Number.parseFloat(parsed[1].replaceAll(",", ""));
       if (!Number.isFinite(value)) return null;
 
       const suffix = parsed[2]?.toUpperCase();
@@ -117,6 +117,10 @@ function missingProfileHints(profile: SupplierProfile) {
     hints.push("Add categories to improve bid matching.");
   }
 
+  if (profile.certifications.length === 0) {
+    hints.push("Add certifications to improve bid matching.");
+  }
+
   if (profile.minContractValue === null && profile.maxContractValue === null) {
     hints.push("Add contract value preferences to improve bid matching.");
   }
@@ -137,6 +141,10 @@ function buildExplanation(components: BidMatchResult["components"]) {
 
   if (components.category > 0) {
     reasons.push("aligns with your categories");
+  }
+
+  if (components.certifications > 0) {
+    reasons.push("matches your certifications");
   }
 
   if (components.contractValue > 0) {
