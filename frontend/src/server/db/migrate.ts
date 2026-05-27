@@ -72,6 +72,35 @@ export function runMigrations(db: AppDatabase) {
       PRIMARY KEY (user_id, bid_id)
     );
 
+    CREATE TABLE IF NOT EXISTS supplier_profiles (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      company_name TEXT NOT NULL DEFAULT '',
+      business_types TEXT NOT NULL DEFAULT '[]',
+      categories TEXT NOT NULL DEFAULT '[]',
+      keywords TEXT NOT NULL DEFAULT '[]',
+      certifications TEXT NOT NULL DEFAULT '[]',
+      service_states TEXT NOT NULL DEFAULT '[]',
+      min_contract_value INTEGER,
+      max_contract_value INTEGER,
+      risk_preferences TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS intent_to_bid (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'intent_added',
+      ai_bid_brief TEXT NOT NULL DEFAULT '',
+      key_dates_json TEXT NOT NULL DEFAULT '{}',
+      initial_checklist_json TEXT NOT NULL DEFAULT '[]',
+      risk_flags_json TEXT NOT NULL DEFAULT '[]',
+      match_score_snapshot_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS alerts (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -161,6 +190,9 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_bids_source ON bids(source);
     CREATE INDEX IF NOT EXISTS idx_bid_attachments_bid_id ON bid_attachments(bid_id);
     CREATE INDEX IF NOT EXISTS idx_saved_bids_bid_id ON saved_bids(bid_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_intent_to_bid_user_bid ON intent_to_bid(user_id, bid_id);
+    CREATE INDEX IF NOT EXISTS idx_intent_to_bid_user_id ON intent_to_bid(user_id);
+    CREATE INDEX IF NOT EXISTS idx_intent_to_bid_bid_id ON intent_to_bid(bid_id);
     CREATE INDEX IF NOT EXISTS idx_alerts_user_id ON alerts(user_id);
     CREATE INDEX IF NOT EXISTS idx_crawler_logs_source_started ON crawler_logs(source, started_at);
     CREATE INDEX IF NOT EXISTS idx_crawler_logs_run_id ON crawler_logs(run_id);
