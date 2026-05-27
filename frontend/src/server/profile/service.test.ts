@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { ensureUser } from "@/server/bids/repository";
+import { supplierProfiles } from "@/server/db/schema";
 import { createTestDatabase } from "@/server/db/test-utils";
 import { getSupplierProfile, upsertSupplierProfile } from "./service";
 
@@ -14,7 +16,7 @@ describe("supplier profile service", () => {
       expect(profile.keywords).toEqual([]);
       expect(profile.completionScore).toBe(0);
     } finally {
-      testDb.cleanup();
+      await testDb.cleanup();
     }
   });
 
@@ -37,7 +39,39 @@ describe("supplier profile service", () => {
       expect(profile.companyName).toBe("Acme Supply");
       expect(profile.completionScore).toBeGreaterThanOrEqual(80);
     } finally {
-      testDb.cleanup();
+      await testDb.cleanup();
+    }
+  });
+
+  it("rejects corrupt profile JSON instead of silently erasing it", async () => {
+    const testDb = await createTestDatabase({ seed: false });
+
+    try {
+      await ensureUser(testDb.db, "user_profile_corrupt");
+
+      testDb.db
+        .insert(supplierProfiles)
+        .values({
+          userId: "user_profile_corrupt",
+          companyName: "Broken Profile",
+          businessTypes: "{",
+          categories: JSON.stringify([]),
+          keywords: JSON.stringify([]),
+          certifications: JSON.stringify([]),
+          serviceStates: JSON.stringify([]),
+          minContractValue: null,
+          maxContractValue: null,
+          riskPreferences: JSON.stringify([]),
+          createdAt: "2026-05-27T00:00:00.000Z",
+          updatedAt: "2026-05-27T00:00:00.000Z",
+        })
+        .run();
+
+      await expect(getSupplierProfile(testDb.db, "user_profile_corrupt")).rejects.toThrow(
+        "businessTypes",
+      );
+    } finally {
+      await testDb.cleanup();
     }
   });
 });

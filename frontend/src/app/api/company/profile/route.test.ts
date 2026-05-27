@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as principal from "@/server/auth/principal";
 import { ANONYMOUS_USER_COOKIE_NAME } from "@/server/bids/user";
 import * as profileService from "@/server/profile/service";
+import type { SupplierProfile } from "@/server/profile/types";
 import { GET, PUT } from "./route";
 
 vi.mock("@/server/db/client", () => ({ db: {} }));
@@ -17,7 +18,7 @@ const resolvePrincipal = vi.mocked(principal.resolvePrincipal);
 const getSupplierProfile = vi.mocked(profileService.getSupplierProfile);
 const upsertSupplierProfile = vi.mocked(profileService.upsertSupplierProfile);
 
-const emptyProfile = {
+const emptyProfile: SupplierProfile = {
   userId: "anon_profile",
   companyName: "",
   businessTypes: [],
@@ -31,7 +32,7 @@ const emptyProfile = {
   completionScore: 0,
   createdAt: null,
   updatedAt: null,
-} as const;
+};
 
 describe("GET /api/company/profile", () => {
   beforeEach(() => {
@@ -55,6 +56,24 @@ describe("GET /api/company/profile", () => {
       `${ANONYMOUS_USER_COOKIE_NAME}=anon_profile`,
     );
     expect(getSupplierProfile).toHaveBeenCalledWith(expect.anything(), "anon_profile");
+  });
+
+  it("returns JSON internal error when profile loading fails", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "anonymous",
+      userId: "anon_profile",
+      anonymousCookie: `${ANONYMOUS_USER_COOKIE_NAME}=anon_profile; Path=/`,
+    });
+    getSupplierProfile.mockRejectedValueOnce(new Error("database failed"));
+
+    const response = await GET(new Request("http://localhost/api/company/profile"));
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body.error.code).toBe("INTERNAL_ERROR");
+    expect(response.headers.get("set-cookie")).toContain(
+      `${ANONYMOUS_USER_COOKIE_NAME}=anon_profile`,
+    );
   });
 });
 
@@ -103,5 +122,20 @@ describe("PUT /api/company/profile", () => {
     expect(response.status).toBe(400);
     expect(body.error.code).toBe("INVALID_REQUEST");
     expect(upsertSupplierProfile).not.toHaveBeenCalled();
+  });
+
+  it("returns JSON internal error when profile update fails", async () => {
+    upsertSupplierProfile.mockRejectedValueOnce(new Error("database failed"));
+
+    const response = await PUT(
+      new Request("http://localhost/api/company/profile", {
+        method: "PUT",
+        body: JSON.stringify({ companyName: "Acme Supply" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body.error.code).toBe("INTERNAL_ERROR");
   });
 });
