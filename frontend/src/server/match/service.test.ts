@@ -45,5 +45,69 @@ describe("match score service", () => {
 
     expect(result.score).toBeLessThan(50);
     expect(result.missingProfileHints).toContain("Add keywords to improve bid matching.");
+    expect(result.missingProfileHints).toContain(
+      "Add certifications to improve bid matching.",
+    );
+  });
+
+  it("matches contract values when the amount contains comma separators", () => {
+    const result = calculateBidMatch(
+      {
+        ...MOCK_BIDS[0],
+        amount: "$1,000,000",
+      },
+      {
+        userId: "user_contract",
+        companyName: "Capital Supply",
+        businessTypes: [],
+        categories: [],
+        keywords: [],
+        certifications: [],
+        serviceStates: [],
+        minContractValue: 500_000,
+        maxContractValue: 2_000_000,
+        riskPreferences: [],
+        completionScore: 30,
+        createdAt: null,
+        updatedAt: null,
+      },
+    );
+
+    expect(result.components.contractValue).toBe(10);
+  });
+
+  it("explains certification matches", () => {
+    const result = calculateBidMatch(
+      {
+        ...MOCK_BIDS[0],
+        title: "SBE supplier opportunity",
+        description: "",
+        fullDescription: "",
+        originalCategory: "",
+        issuerName: "",
+        stateCode: "WA",
+        tags: [],
+        amount: "",
+        deadlineDate: "",
+      },
+      {
+        userId: "user_cert",
+        companyName: "Certified Supply",
+        businessTypes: [],
+        categories: [],
+        keywords: [],
+        certifications: ["SBE"],
+        serviceStates: [],
+        minContractValue: null,
+        maxContractValue: null,
+        riskPreferences: [],
+        completionScore: 25,
+        createdAt: null,
+        updatedAt: null,
+      },
+    );
+
+    expect(result.components.certifications).toBe(10);
+    expect(result.explanation).toContain("matches your certifications");
   });
 });

@@ -67,4 +67,30 @@ describe("bid match API client", () => {
       message: "Bid not found",
     });
   });
+
+  it("throws ApiError when the API returns non-JSON error content", async () => {
+    mockFetch.mockResolvedValueOnce(new Response("failed", { status: 500 }));
+
+    const promise = fetchBidMatch("broken");
+
+    await expect(promise).rejects.toBeInstanceOf(ApiError);
+    await expect(promise).rejects.toMatchObject({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: "Request failed",
+    });
+  });
+
+  it("throws ApiError when the API error payload is null", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse(null, { status: 500 }));
+
+    const promise = fetchBidMatch("broken");
+
+    await expect(promise).rejects.toBeInstanceOf(ApiError);
+    await expect(promise).rejects.toMatchObject({
+      status: 500,
+      code: "INTERNAL_ERROR",
+      message: "Request failed",
+    });
+  });
 });
