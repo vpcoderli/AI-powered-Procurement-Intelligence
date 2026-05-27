@@ -10,7 +10,11 @@ describe("profile page", () => {
     expect(page).toContain("fetchSupplierProfile");
     expect(page).toContain("updateSupplierProfile");
     expect(page).toContain("companyName");
+    expect(page).toContain("businessTypes");
     expect(page).toContain("serviceStates");
     expect(page).toContain("completionScore");
+    expect(page).toContain("mountedRef");
+    expect(page).toContain("invalidContractValue");
+    expect(page).toContain("return null");
   });
 });
