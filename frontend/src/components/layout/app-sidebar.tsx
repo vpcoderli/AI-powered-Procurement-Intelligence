@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link"
-import { Home, Bookmark, Settings, Search, ShieldCheck } from "lucide-react"
+import { Home, Bookmark, Settings, Search, ShieldCheck, ClipboardList, UserRound } from "lucide-react"
 import { useLanguage } from "@/lib/i18n/LanguageContext"
 import {
   Sidebar,
@@ -34,6 +34,16 @@ export function AppSidebar() {
       title: t('common.saved'),
       url: "/saved",
       icon: Bookmark,
+    },
+    {
+      title: t("common.profile"),
+      url: "/profile",
+      icon: UserRound,
+    },
+    {
+      title: t("common.intents"),
+      url: "/intents",
+      icon: ClipboardList,
     },
     {
       title: t('common.settings'),
