@@ -120,14 +120,16 @@ describe("database schema", () => {
   it("creates supplier profile and intent tables", async () => {
     const testDb = await createTestDatabase({ seed: false });
 
-    const tables = testDb.db.$client
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
-      .all()
-      .map((row) => (row as { name: string }).name);
+    try {
+      const tables = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+        .all()
+        .map((row) => (row as { name: string }).name);
 
-    expect(tables).toContain("supplier_profiles");
-    expect(tables).toContain("intent_to_bid");
-
-    await testDb.cleanup();
+      expect(tables).toContain("supplier_profiles");
+      expect(tables).toContain("intent_to_bid");
+    } finally {
+      await testDb.cleanup();
+    }
   });
 });
