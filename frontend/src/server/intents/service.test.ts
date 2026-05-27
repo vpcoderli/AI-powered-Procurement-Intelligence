@@ -2,11 +2,38 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { intentToBid } from "@/server/db/schema";
 import { createTestDatabase } from "@/server/db/test-utils";
+import type { BidMatchResult } from "@/server/match/types";
+import { createIntentRow } from "./repository";
 import {
   createIntentForBid,
   listUserIntents,
   updateIntentStatus,
 } from "./service";
+import type { GeneratedIntentContent } from "./types";
+
+const generated: GeneratedIntentContent = {
+  aiBidBrief: "Brief",
+  keyDates: { publishedDate: "2026-05-01", deadlineDate: "2026-06-01" },
+  initialChecklist: ["Read the full solicitation and all attachments."],
+  riskFlags: [],
+};
+
+const match: BidMatchResult = {
+  bidId: "1",
+  score: 70,
+  confidence: "medium",
+  components: {
+    geography: 20,
+    keywords: 20,
+    category: 10,
+    certifications: 0,
+    contractValue: 5,
+    deadline: 15,
+  },
+  explanation: "Good fit.",
+  riskNotes: [],
+  missingProfileHints: [],
+};
 
 describe("intent service", () => {
   it("creates an intent and stores generated fields", async () => {
@@ -46,6 +73,42 @@ describe("intent service", () => {
         .all();
 
       expect(second.id).toBe(first.id);
+      expect(rows).toHaveLength(1);
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("returns the existing intent row when a duplicate user and bid insert races", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      const first = createIntentRow(testDb.db, {
+        id: "intent_first",
+        userId: "anon_seed",
+        bidId: "1",
+        status: "intent_added",
+        generated,
+        match,
+        timestamp: "2026-05-27T00:00:00.000Z",
+      });
+      const second = createIntentRow(testDb.db, {
+        id: "intent_second",
+        userId: "anon_seed",
+        bidId: "1",
+        status: "intent_added",
+        generated,
+        match,
+        timestamp: "2026-05-27T00:00:01.000Z",
+      });
+      const rows = testDb.db
+        .select()
+        .from(intentToBid)
+        .where(eq(intentToBid.bidId, "1"))
+        .all();
+
+      expect(first?.id).toBe("intent_first");
+      expect(second?.id).toBe("intent_first");
       expect(rows).toHaveLength(1);
     } finally {
       await testDb.cleanup();

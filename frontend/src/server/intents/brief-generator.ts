@@ -28,7 +28,7 @@ function riskFlagsForBid(bid: Bid, match: BidMatchResult) {
   const responseWindowDays = daysBetween(bid.publishedDate, bid.deadlineDate);
 
   if (responseWindowDays !== null && responseWindowDays >= 0 && responseWindowDays <= 7) {
-    flags.push("Deadline is within 7 days.");
+    flags.push("Response window is 7 days or less.");
   }
 
   if (bid.attachments.length === 0) {

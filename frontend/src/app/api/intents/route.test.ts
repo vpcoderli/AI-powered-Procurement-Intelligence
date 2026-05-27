@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as principal from "@/server/auth/principal";
+import { MOCK_BIDS } from "@/lib/mock-data";
 import * as intentService from "@/server/intents/service";
+import type { IntentSummary } from "@/server/intents/types";
 import { GET } from "./route";
 
 vi.mock("@/server/db/client", () => ({ db: {} }));
@@ -21,7 +23,38 @@ describe("GET /api/intents", () => {
   });
 
   it("lists intents for the current principal", async () => {
-    const intents = [{ id: "intent_1", userId: "user_1", status: "intent_added" }];
+    const intents: IntentSummary[] = [
+      {
+        id: "intent_1",
+        userId: "user_1",
+        status: "intent_added",
+        bid: MOCK_BIDS[0],
+        generated: {
+          aiBidBrief: "Brief",
+          keyDates: { publishedDate: "2026-05-01", deadlineDate: "2026-06-01" },
+          initialChecklist: [],
+          riskFlags: [],
+        },
+        match: {
+          bidId: "1",
+          score: 70,
+          confidence: "medium",
+          components: {
+            geography: 20,
+            keywords: 20,
+            category: 10,
+            certifications: 0,
+            contractValue: 5,
+            deadline: 15,
+          },
+          explanation: "Good fit.",
+          riskNotes: [],
+          missingProfileHints: [],
+        },
+        createdAt: "2026-05-27T00:00:00.000Z",
+        updatedAt: "2026-05-27T00:00:00.000Z",
+      },
+    ];
     listUserIntents.mockResolvedValueOnce(intents);
 
     const response = await GET(new Request("http://localhost/api/intents"));
