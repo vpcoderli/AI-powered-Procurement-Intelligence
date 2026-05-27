@@ -1,6 +1,7 @@
 "use client";
 
-import { cloneElement, isValidElement, useEffect, useState, type ComponentProps, type ReactElement } from "react";
+import { cloneElement, isValidElement, useEffect, useRef, useState, type ComponentProps, type ReactElement } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useSavedBids } from "@/context/SavedBidsContext";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
@@ -9,9 +10,30 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, fetchBid } from "@/lib/api/bids";
+import { createIntent } from "@/lib/api/intents";
+import { fetchBidMatch } from "@/lib/api/match";
 import type { Bid } from "@/lib/mock-data";
+import type { IntentDetail } from "@/server/intents/types";
+import type { BidMatchResult } from "@/server/match/types";
 import { cn } from "@/lib/utils";
-import { ArrowLeft, Star, ExternalLink, Building2, Calendar, Clock, FileText, Paperclip, Download } from "lucide-react";
+import {
+  ArrowLeft,
+  Star,
+  ExternalLink,
+  Building2,
+  Calendar,
+  Clock,
+  FileText,
+  Paperclip,
+  Download,
+  Target,
+  ShieldAlert,
+  CheckCircle2,
+  Loader2,
+  Sparkles,
+} from "lucide-react";
+
+const ADD_TO_INTENT_FALLBACK = "Add to Intent";
 
 type ButtonProps = ComponentProps<typeof BaseButton> & {
   asChild?: boolean;
@@ -34,55 +56,112 @@ function Button({ asChild, children, className, variant, size, ...props }: Butto
   );
 }
 
+function scoreTone(score: number) {
+  if (score >= 75) return "text-emerald-700 bg-emerald-50 border-emerald-200";
+  if (score >= 50) return "text-amber-700 bg-amber-50 border-amber-200";
+  return "text-slate-600 bg-slate-50 border-slate-200";
+}
+
+function fallbackLabel(label: string, key: string, fallback: string) {
+  return label === key ? fallback : label;
+}
+
 export default function BidDetailsPage() {
   const params = useParams();
   const router = useRouter();
   const { isSaved, toggleSaveBid } = useSavedBids();
   const { t } = useLanguage();
+  const mountedRef = useRef(true);
   const [bid, setBid] = useState<Bid | null>(null);
+  const [match, setMatch] = useState<BidMatchResult | null>(null);
+  const [intent, setIntent] = useState<IntentDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isMatchLoading, setIsMatchLoading] = useState(false);
+  const [isCreatingIntent, setIsCreatingIntent] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [pursuitError, setPursuitError] = useState<Error | null>(null);
   
   // Handling the id parameter unwrapping per Next.js 15+ patterns if needed,
   // but for simple client components useParams() is fine.
   const bidId = typeof params?.id === 'string' ? params.id : Array.isArray(params?.id) ? params.id[0] : '';
   
   const saved = isSaved(bidId);
+  const addToIntentLabel = fallbackLabel(t("detail.pursuitAddToIntent"), "detail.pursuitAddToIntent", ADD_TO_INTENT_FALLBACK);
 
   useEffect(() => {
+    mountedRef.current = true;
     let cancelled = false;
 
-    queueMicrotask(() => {
+    queueMicrotask(async () => {
       if (cancelled) return;
 
       setBid(null);
+      setMatch(null);
+      setIntent(null);
       setError(null);
+      setPursuitError(null);
       setIsLoading(true);
+      setIsMatchLoading(false);
 
       if (!bidId) {
         setIsLoading(false);
         return;
       }
 
-      fetchBid(bidId)
-        .then((response) => {
-          if (cancelled) return;
-          setBid(response.bid);
-        })
-        .catch((err) => {
-          if (cancelled) return;
-          setError(err instanceof Error ? err : new Error("Failed to load bid"));
-        })
-        .finally(() => {
-          if (cancelled) return;
-          setIsLoading(false);
-        });
+      try {
+        const response = await fetchBid(bidId);
+        if (cancelled || !mountedRef.current) return;
+
+        setBid(response.bid);
+        setIsLoading(false);
+        setIsMatchLoading(true);
+
+        try {
+          const matchResponse = await fetchBidMatch(bidId);
+          if (cancelled || !mountedRef.current) return;
+
+          setMatch(matchResponse.match);
+        } catch (err) {
+          if (cancelled || !mountedRef.current) return;
+          setPursuitError(err instanceof Error ? err : new Error("Failed to load pursuit match"));
+        } finally {
+          if (cancelled || !mountedRef.current) return;
+          setIsMatchLoading(false);
+        }
+      } catch (err) {
+        if (cancelled || !mountedRef.current) return;
+        setError(err instanceof Error ? err : new Error("Failed to load bid"));
+        setIsLoading(false);
+      }
     });
 
     return () => {
       cancelled = true;
+      mountedRef.current = false;
     };
   }, [bidId]);
+
+  const handleCreateIntent = async () => {
+    if (!bidId || isCreatingIntent) return;
+
+    setIsCreatingIntent(true);
+    setPursuitError(null);
+
+    try {
+      const response = await createIntent(bidId);
+      if (!mountedRef.current) return;
+
+      setIntent(response.intent);
+      setMatch(response.intent.match);
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setPursuitError(err instanceof Error ? err : new Error("Failed to create intent"));
+    } finally {
+      if (mountedRef.current) {
+        setIsCreatingIntent(false);
+      }
+    }
+  };
 
   if (isLoading) {
     return (
@@ -212,6 +291,149 @@ export default function BidDetailsPage() {
           <span className="font-semibold text-slate-900 text-lg">{bid.amount || '—'}</span>
         </div>
       </div>
+
+      {/* Pursuit Panel */}
+      <Card className="shadow-sm border-slate-200 rounded-xl overflow-hidden bg-white">
+        <CardHeader className="bg-white border-b border-slate-100 pb-4 pt-6 px-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <CardTitle className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <Target size={18} className="shrink-0 text-slate-400" /> {t("detail.pursuitTitle")}
+              </CardTitle>
+              <p className="mt-1 text-sm text-slate-500 break-words">{t("detail.pursuitDescription")}</p>
+            </div>
+            {match ? (
+              <Badge variant="outline" className={`w-fit rounded-md ${scoreTone(match.score)}`}>
+                {t(`intentsPage.confidence.${match.confidence}`)}
+              </Badge>
+            ) : null}
+          </div>
+        </CardHeader>
+        <CardContent className="p-6 bg-slate-50/50">
+          {isMatchLoading ? (
+            <div className="grid gap-4 md:grid-cols-[0.7fr_1.3fr]">
+              <Skeleton className="h-32 rounded-xl" />
+              <div className="space-y-3">
+                <Skeleton className="h-5 w-40" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-5/6" />
+              </div>
+            </div>
+          ) : match ? (
+            <div className="grid gap-5 lg:grid-cols-[0.55fr_1.45fr]">
+              <div className={`rounded-xl border p-5 ${scoreTone(match.score)}`}>
+                <p className="text-xs font-semibold uppercase">{t("detail.pursuitScore")}</p>
+                <p className="mt-2 text-5xl font-bold tracking-tight">{match.score}%</p>
+                <p className="mt-2 text-sm font-semibold">{t(`intentsPage.confidence.${match.confidence}`)}</p>
+              </div>
+              <div className="min-w-0 space-y-5">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">{t("detail.pursuitExplanation")}</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-700 break-words">{match.explanation}</p>
+                </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">{t("detail.pursuitRiskNotes")}</p>
+                    {match.riskNotes.length > 0 ? (
+                      <ul className="mt-2 space-y-2">
+                        {match.riskNotes.map((note) => (
+                          <li key={note} className="flex gap-2 text-sm leading-6 text-slate-700">
+                            <ShieldAlert size={16} className="mt-1 shrink-0 text-amber-600" />
+                            <span className="break-words">{note}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-2 text-sm text-slate-500">{t("detail.pursuitNoRiskNotes")}</p>
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">{t("detail.pursuitMissingProfile")}</p>
+                    {match.missingProfileHints.length > 0 ? (
+                      <ul className="mt-2 space-y-2">
+                        {match.missingProfileHints.map((hint) => (
+                          <li key={hint} className="text-sm leading-6 text-slate-700 break-words">
+                            {hint}{" "}
+                            <Link href="/profile" className="font-semibold text-slate-900 underline underline-offset-4 hover:text-slate-600">
+                              {t("detail.pursuitUpdateProfile")}
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-2 text-sm text-slate-500">{t("detail.pursuitProfileComplete")}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-col gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-h-5 text-sm font-medium text-slate-500">
+                    {pursuitError ? t("detail.pursuitError") : intent ? t("detail.intentCreated") : ""}
+                  </div>
+                  {intent ? (
+                    <Button asChild className="bg-slate-900 hover:bg-slate-800 text-white shadow-sm">
+                      <Link href={`/intents/${intent.id}`}>
+                        <ExternalLink className="mr-2 h-4 w-4" /> {t("detail.openIntent")}
+                      </Link>
+                    </Button>
+                  ) : (
+                    <Button onClick={() => void handleCreateIntent()} disabled={isCreatingIntent} className="bg-slate-900 hover:bg-slate-800 text-white shadow-sm">
+                      {isCreatingIntent ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Target className="mr-2 h-4 w-4" />}
+                      {isCreatingIntent ? t("detail.creatingIntent") : addToIntentLabel}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed border-slate-300 bg-white p-5 text-sm text-slate-600">
+              {pursuitError ? t("detail.pursuitError") : t("detail.pursuitUnavailable")}
+            </div>
+          )}
+
+          {intent ? (
+            <div className="mt-6 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+              <div className="rounded-xl border border-slate-200 bg-white p-5">
+                <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-500">
+                  <Sparkles size={16} className="text-slate-400" /> {t("intentsPage.brief")}
+                </h3>
+                <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-700 break-words">{intent.generated.aiBidBrief}</p>
+              </div>
+              <div className="grid gap-4">
+                <div className="rounded-xl border border-slate-200 bg-white p-5">
+                  <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-500">
+                    <CheckCircle2 size={16} className="text-slate-400" /> {t("intentsPage.checklist")}
+                  </h3>
+                  <ul className="mt-3 space-y-2">
+                    {intent.generated.initialChecklist.map((item) => (
+                      <li key={item} className="flex gap-2 text-sm leading-6 text-slate-700">
+                        <CheckCircle2 size={15} className="mt-1 shrink-0 text-emerald-600" />
+                        <span className="break-words">{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="rounded-xl border border-slate-200 bg-white p-5">
+                  <h3 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wider text-slate-500">
+                    <ShieldAlert size={16} className="text-slate-400" /> {t("intentsPage.riskFlags")}
+                  </h3>
+                  {intent.generated.riskFlags.length > 0 ? (
+                    <ul className="mt-3 space-y-2">
+                      {intent.generated.riskFlags.map((item) => (
+                        <li key={item} className="flex gap-2 text-sm leading-6 text-slate-700">
+                          <ShieldAlert size={15} className="mt-1 shrink-0 text-amber-600" />
+                          <span className="break-words">{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-3 text-sm text-slate-500">{t("detail.noGeneratedRiskFlags")}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
       {/* Description */}
       <Card className="shadow-sm border-slate-200 rounded-xl overflow-hidden">
