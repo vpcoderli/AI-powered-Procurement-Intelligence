@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as principal from "@/server/auth/principal";
+import { MOCK_BIDS } from "@/lib/mock-data";
 import * as intentService from "@/server/intents/service";
-import { IntentNotFoundError } from "@/server/intents/types";
+import { IntentNotFoundError, type IntentDetail } from "@/server/intents/types";
 import { GET, PATCH } from "./route";
 
 vi.mock("@/server/db/client", () => ({ db: {} }));
@@ -22,21 +23,36 @@ const resolvePrincipal = vi.mocked(principal.resolvePrincipal);
 const getUserIntent = vi.mocked(intentService.getUserIntent);
 const updateIntentStatus = vi.mocked(intentService.updateIntentStatus);
 
-const intent = {
+const intent: IntentDetail = {
   id: "intent_1",
   userId: "user_1",
   status: "intent_added",
-  bid: { id: "bid_1", title: "Cloud" },
+  bid: { ...MOCK_BIDS[0], id: "bid_1", title: "Cloud" },
   generated: {
     aiBidBrief: "Brief",
     keyDates: { publishedDate: "2026-05-01", deadlineDate: "2026-06-01" },
     initialChecklist: [],
     riskFlags: [],
   },
-  match: { bidId: "bid_1", score: 70 },
+  match: {
+    bidId: "bid_1",
+    score: 70,
+    confidence: "medium",
+    components: {
+      geography: 20,
+      keywords: 20,
+      category: 10,
+      certifications: 0,
+      contractValue: 5,
+      deadline: 15,
+    },
+    explanation: "Good fit.",
+    riskNotes: [],
+    missingProfileHints: [],
+  },
   createdAt: "2026-05-27T00:00:00.000Z",
   updatedAt: "2026-05-27T00:00:00.000Z",
-} as const;
+};
 
 describe("GET /api/intents/[id]", () => {
   beforeEach(() => {
@@ -77,7 +93,7 @@ describe("PATCH /api/intents/[id]", () => {
   });
 
   it("updates intent status", async () => {
-    const updated = { ...intent, status: "needs_review" } as const;
+    const updated: IntentDetail = { ...intent, status: "needs_review" };
     updateIntentStatus.mockResolvedValueOnce(updated);
 
     const response = await PATCH(

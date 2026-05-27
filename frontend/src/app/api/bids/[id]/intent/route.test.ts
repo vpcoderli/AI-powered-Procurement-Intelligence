@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as principal from "@/server/auth/principal";
 import { ANONYMOUS_USER_COOKIE_NAME } from "@/server/bids/user";
+import { MOCK_BIDS } from "@/lib/mock-data";
 import * as intentService from "@/server/intents/service";
-import { IntentBidNotFoundError } from "@/server/intents/types";
+import { IntentBidNotFoundError, type IntentDetail } from "@/server/intents/types";
 import { POST } from "./route";
 
 vi.mock("@/server/db/client", () => ({ db: {} }));
@@ -21,10 +22,10 @@ vi.mock("@/server/intents/service", async (importOriginal) => {
 const resolvePrincipal = vi.mocked(principal.resolvePrincipal);
 const createIntentForBid = vi.mocked(intentService.createIntentForBid);
 
-const intent = {
+const intent: IntentDetail = {
   id: "intent_1",
   userId: "anon_intent",
-  bid: { id: "bid_1", title: "Cloud" },
+  bid: { ...MOCK_BIDS[0], id: "bid_1", title: "Cloud" },
   status: "intent_added",
   generated: {
     aiBidBrief: "Brief",
@@ -32,10 +33,25 @@ const intent = {
     initialChecklist: [],
     riskFlags: [],
   },
-  match: { bidId: "bid_1", score: 70 },
+  match: {
+    bidId: "bid_1",
+    score: 70,
+    confidence: "medium",
+    components: {
+      geography: 20,
+      keywords: 20,
+      category: 10,
+      certifications: 0,
+      contractValue: 5,
+      deadline: 15,
+    },
+    explanation: "Good fit.",
+    riskNotes: [],
+    missingProfileHints: [],
+  },
   createdAt: "2026-05-27T00:00:00.000Z",
   updatedAt: "2026-05-27T00:00:00.000Z",
-} as const;
+};
 
 describe("POST /api/bids/[id]/intent", () => {
   beforeEach(() => {

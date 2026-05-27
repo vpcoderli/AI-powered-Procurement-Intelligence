@@ -58,9 +58,10 @@ export function createIntentRow(db: AppDatabase, input: CreateIntentRowInput) {
       createdAt: input.timestamp,
       updatedAt: input.timestamp,
     })
+    .onConflictDoNothing({ target: [intentToBid.userId, intentToBid.bidId] })
     .run();
 
-  return findIntentByUserAndId(db, input.userId, input.id);
+  return findIntentByUserAndBid(db, input.userId, input.bidId);
 }
 
 export function updateIntentRowStatus(
