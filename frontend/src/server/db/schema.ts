@@ -113,6 +113,49 @@ export const savedBids = sqliteTable(
   }),
 );
 
+export const supplierProfiles = sqliteTable("supplier_profiles", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  companyName: text("company_name").notNull().default(""),
+  businessTypes: text("business_types").notNull().default("[]"),
+  categories: text("categories").notNull().default("[]"),
+  keywords: text("keywords").notNull().default("[]"),
+  certifications: text("certifications").notNull().default("[]"),
+  serviceStates: text("service_states").notNull().default("[]"),
+  minContractValue: integer("min_contract_value"),
+  maxContractValue: integer("max_contract_value"),
+  riskPreferences: text("risk_preferences").notNull().default("[]"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const intentToBid = sqliteTable(
+  "intent_to_bid",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    bidId: text("bid_id")
+      .notNull()
+      .references(() => bids.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("intent_added"),
+    aiBidBrief: text("ai_bid_brief").notNull().default(""),
+    keyDatesJson: text("key_dates_json").notNull().default("{}"),
+    initialChecklistJson: text("initial_checklist_json").notNull().default("[]"),
+    riskFlagsJson: text("risk_flags_json").notNull().default("[]"),
+    matchScoreSnapshotJson: text("match_score_snapshot_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    userBidIdx: uniqueIndex("idx_intent_to_bid_user_bid").on(table.userId, table.bidId),
+    userIdx: index("idx_intent_to_bid_user_id").on(table.userId),
+    bidIdx: index("idx_intent_to_bid_bid_id").on(table.bidId),
+  }),
+);
+
 export const alerts = sqliteTable(
   "alerts",
   {

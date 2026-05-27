@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { MOCK_BIDS } from "../../lib/mock-data";
 import type { AppDatabase } from "./client";
-import { bidAttachments, bids, dataSources, users } from "./schema";
+import { bidAttachments, bids, dataSources, supplierProfiles, users } from "./schema";
 
 const SEED_TIMESTAMP = "2026-05-19T00:00:00.000Z";
 
@@ -33,6 +33,38 @@ export async function seedDatabase(db: AppDatabase) {
       updatedAt: SEED_TIMESTAMP,
     })
     .onConflictDoNothing()
+    .run();
+
+  db.insert(supplierProfiles)
+    .values({
+      userId: "anon_seed",
+      companyName: "Demo Supply Co.",
+      businessTypes: JSON.stringify(["distributor", "service provider"]),
+      categories: JSON.stringify(["cloud", "cybersecurity", "logistics", "medical supplies"]),
+      keywords: JSON.stringify(["cloud", "security", "logistics", "analytics", "emergency"]),
+      certifications: JSON.stringify(["SBE"]),
+      serviceStates: JSON.stringify(["US", "CA", "TX", "NY", "FL", "IL"]),
+      minContractValue: 25_000,
+      maxContractValue: 5_000_000,
+      riskPreferences: JSON.stringify(["avoid missing attachments", "watch short deadlines"]),
+      createdAt: SEED_TIMESTAMP,
+      updatedAt: SEED_TIMESTAMP,
+    })
+    .onConflictDoUpdate({
+      target: supplierProfiles.userId,
+      set: {
+        companyName: "Demo Supply Co.",
+        businessTypes: JSON.stringify(["distributor", "service provider"]),
+        categories: JSON.stringify(["cloud", "cybersecurity", "logistics", "medical supplies"]),
+        keywords: JSON.stringify(["cloud", "security", "logistics", "analytics", "emergency"]),
+        certifications: JSON.stringify(["SBE"]),
+        serviceStates: JSON.stringify(["US", "CA", "TX", "NY", "FL", "IL"]),
+        minContractValue: 25_000,
+        maxContractValue: 5_000_000,
+        riskPreferences: JSON.stringify(["avoid missing attachments", "watch short deadlines"]),
+        updatedAt: SEED_TIMESTAMP,
+      },
+    })
     .run();
 
   const sourceRows = new Map(

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDatabase } from "./client";
 import { runMigrations } from "./migrate";
 import { bids, crawlerLocks, notificationOutbox, users } from "./schema";
+import { createTestDatabase } from "./test-utils";
 
 describe("database schema", () => {
   let directory: string | undefined;
@@ -114,5 +115,19 @@ describe("database schema", () => {
         })
         .run(),
     ).toThrow();
+  });
+
+  it("creates supplier profile and intent tables", async () => {
+    const testDb = await createTestDatabase({ seed: false });
+
+    const tables = testDb.db.$client
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+      .all()
+      .map((row) => (row as { name: string }).name);
+
+    expect(tables).toContain("supplier_profiles");
+    expect(tables).toContain("intent_to_bid");
+
+    await testDb.cleanup();
   });
 });
