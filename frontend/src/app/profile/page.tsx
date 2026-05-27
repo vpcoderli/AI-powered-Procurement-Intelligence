@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,6 +13,7 @@ import type { SupplierProfile, SupplierProfileInput } from "@/server/profile/typ
 
 interface ProfileFormState {
   companyName: string;
+  businessTypes: string;
   keywords: string;
   categories: string;
   certifications: string;
@@ -24,6 +25,7 @@ interface ProfileFormState {
 
 const emptyForm: ProfileFormState = {
   companyName: "",
+  businessTypes: "",
   keywords: "",
   categories: "",
   certifications: "",
@@ -52,12 +54,17 @@ function currencyValue(value: string) {
   }
 
   const parsed = Number(trimmed);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return undefined;
+  }
+
+  return parsed;
 }
 
 function profileToForm(profile: SupplierProfile): ProfileFormState {
   return {
     companyName: profile.companyName,
+    businessTypes: joinValues(profile.businessTypes),
     keywords: joinValues(profile.keywords),
     categories: joinValues(profile.categories),
     certifications: joinValues(profile.certifications),
@@ -68,31 +75,41 @@ function profileToForm(profile: SupplierProfile): ProfileFormState {
   };
 }
 
-function formToInput(form: ProfileFormState): SupplierProfileInput {
+function formToInput(form: ProfileFormState): SupplierProfileInput | null {
+  const minContractValue = currencyValue(form.minContractValue);
+  const maxContractValue = currencyValue(form.maxContractValue);
+
+  if (minContractValue === undefined || maxContractValue === undefined) {
+    return null;
+  }
+
   return {
     companyName: form.companyName.trim(),
+    businessTypes: splitValues(form.businessTypes),
     keywords: splitValues(form.keywords),
     categories: splitValues(form.categories),
     certifications: splitValues(form.certifications),
     serviceStates: splitValues(form.serviceStates),
-    minContractValue: currencyValue(form.minContractValue),
-    maxContractValue: currencyValue(form.maxContractValue),
+    minContractValue,
+    maxContractValue,
     riskPreferences: splitValues(form.riskPreferences),
   };
 }
 
 export default function ProfilePage() {
   const { t } = useLanguage();
+  const mountedRef = useRef(true);
   const [form, setForm] = useState<ProfileFormState>(emptyForm);
   const [completionScore, setCompletionScore] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [validationError, setValidationError] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
 
   useEffect(() => {
-    let isMounted = true;
+    mountedRef.current = true;
 
     async function loadProfile() {
       setIsLoading(true);
@@ -101,18 +118,18 @@ export default function ProfilePage() {
       try {
         const response = await fetchSupplierProfile();
 
-        if (!isMounted) {
+        if (!mountedRef.current) {
           return;
         }
 
         setForm(profileToForm(response.profile));
         setCompletionScore(response.profile.completionScore);
       } catch {
-        if (isMounted) {
+        if (mountedRef.current) {
           setLoadError(true);
         }
       } finally {
-        if (isMounted) {
+        if (mountedRef.current) {
           setIsLoading(false);
         }
       }
@@ -121,7 +138,7 @@ export default function ProfilePage() {
     loadProfile();
 
     return () => {
-      isMounted = false;
+      mountedRef.current = false;
     };
   }, []);
 
@@ -129,24 +146,43 @@ export default function ProfilePage() {
     setForm((current) => ({ ...current, [field]: value }));
     setIsSaved(false);
     setSaveError(false);
+    setValidationError(false);
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const input = formToInput(form);
+
+    if (!input) {
+      setValidationError(true);
+      setSaveError(false);
+      setIsSaved(false);
+      return null;
+    }
+
     setIsSaving(true);
     setSaveError(false);
+    setValidationError(false);
     setIsSaved(false);
 
     try {
-      const response = await updateSupplierProfile(formToInput(form));
+      const response = await updateSupplierProfile(input);
+      if (!mountedRef.current) return null;
+
       setForm(profileToForm(response.profile));
       setCompletionScore(response.profile.completionScore);
       setIsSaved(true);
     } catch {
-      setSaveError(true);
+      if (mountedRef.current) {
+        setSaveError(true);
+      }
     } finally {
-      setIsSaving(false);
+      if (mountedRef.current) {
+        setIsSaving(false);
+      }
     }
+
+    return null;
   };
 
   return (
@@ -200,6 +236,16 @@ export default function ProfilePage() {
                   id="companyName"
                   value={form.companyName}
                   onChange={(event) => updateField("companyName", event.target.value)}
+                  className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="businessTypes" className="text-slate-700 font-medium">{t("profilePage.businessTypes")}</Label>
+                <Input
+                  id="businessTypes"
+                  value={form.businessTypes}
+                  onChange={(event) => updateField("businessTypes", event.target.value)}
+                  placeholder={t("profilePage.businessTypesPlaceholder")}
                   className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg"
                 />
               </div>
@@ -281,6 +327,11 @@ export default function ProfilePage() {
                   className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg"
                 />
               </div>
+              {validationError && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-700">
+                  {t("profilePage.invalidContractValue")}
+                </div>
+              )}
               {saveError && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
                   {t("profilePage.saveError")}
