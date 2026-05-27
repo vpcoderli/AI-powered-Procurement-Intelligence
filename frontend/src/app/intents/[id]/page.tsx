@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +37,8 @@ export default function IntentWorkspacePage() {
   const params = useParams();
   const router = useRouter();
   const { t } = useLanguage();
+  const mountedRef = useRef(true);
+  const saveRequestRef = useRef(0);
   const [intent, setIntent] = useState<IntentDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<Error | null>(null);
@@ -47,10 +49,11 @@ export default function IntentWorkspacePage() {
   const intentId = typeof params?.id === "string" ? params.id : Array.isArray(params?.id) ? params.id[0] : "";
 
   useEffect(() => {
+    mountedRef.current = true;
     let cancelled = false;
 
     queueMicrotask(() => {
-      if (cancelled) return;
+      if (cancelled || !mountedRef.current) return;
 
       setIntent(null);
       setLoadError(null);
@@ -63,21 +66,22 @@ export default function IntentWorkspacePage() {
 
       fetchIntent(intentId)
         .then((response) => {
-          if (cancelled) return;
+          if (cancelled || !mountedRef.current) return;
           setIntent(response.intent);
         })
         .catch((err) => {
-          if (cancelled) return;
+          if (cancelled || !mountedRef.current) return;
           setLoadError(err instanceof Error ? err : new Error("Failed to load intent"));
         })
         .finally(() => {
-          if (cancelled) return;
+          if (cancelled || !mountedRef.current) return;
           setIsLoading(false);
         });
     });
 
     return () => {
       cancelled = true;
+      mountedRef.current = false;
     };
   }, [intentId]);
 
@@ -86,11 +90,13 @@ export default function IntentWorkspacePage() {
     return Object.entries(intent.match.components);
   }, [intent]);
 
-  const handleStatusChange = async (status: string) => {
-    if (!intent || status === intent.status) return;
+  const handleStatusChange = async (status: IntentStatus | null) => {
+    if (!intent || !status || status === intent.status || isSaving) return;
 
-    const nextStatus = status as IntentStatus;
+    const nextStatus = status;
     const previousIntent = intent;
+    const requestId = saveRequestRef.current + 1;
+    saveRequestRef.current = requestId;
 
     setIntent({ ...intent, status: nextStatus });
     setIsSaving(true);
@@ -99,13 +105,19 @@ export default function IntentWorkspacePage() {
 
     try {
       const response = await updateIntentStatus(intent.id, nextStatus);
+      if (!mountedRef.current || saveRequestRef.current !== requestId) return;
+
       setIntent(response.intent);
       setIsSaved(true);
     } catch (err) {
+      if (!mountedRef.current || saveRequestRef.current !== requestId) return;
+
       setIntent(previousIntent);
       setSaveError(err instanceof Error ? err : new Error("Failed to save intent status"));
     } finally {
-      setIsSaving(false);
+      if (mountedRef.current && saveRequestRef.current === requestId) {
+        setIsSaving(false);
+      }
     }
   };
 
@@ -188,7 +200,11 @@ export default function IntentWorkspacePage() {
         <div className="flex flex-col sm:flex-row sm:items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold text-slate-500">{t("intentsPage.status")}</span>
-            <Select value={intent.status} onValueChange={handleStatusChange} disabled={isSaving}>
+            <Select
+              value={intent.status}
+              onValueChange={(value) => void handleStatusChange(value)}
+              disabled={isSaving}
+            >
               <SelectTrigger className="h-9 min-w-56 bg-white border-slate-200 rounded-lg shadow-sm focus:ring-slate-900">
                 <SelectValue />
               </SelectTrigger>

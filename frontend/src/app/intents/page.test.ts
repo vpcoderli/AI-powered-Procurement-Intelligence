@@ -9,4 +9,14 @@ describe("intent pages", () => {
     expect(page).toContain("/intents/");
     expect(page).toContain("Intent to Bid");
   });
+
+  it("loads intent workspace details and guards status updates", () => {
+    const detailPage = readFileSync(new URL("[id]/page.tsx", import.meta.url), "utf8");
+
+    expect(detailPage).toContain("fetchIntent");
+    expect(detailPage).toContain("updateIntentStatus");
+    expect(detailPage).toContain("mountedRef");
+    expect(detailPage).toContain("saveRequestRef");
+    expect(detailPage).toContain("onValueChange={(value)");
+  });
 });
