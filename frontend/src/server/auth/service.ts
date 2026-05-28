@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { ensureUserWorkspace, type PublicWorkspace } from "@/server/account/workspace";
+import { reconcileUserSubscriptionLifecycle } from "@/server/billing/subscriptions";
 import type { AppDatabase } from "@/server/db/client";
 import { sessions, users } from "@/server/db/schema";
 import {
@@ -208,6 +209,7 @@ export async function loginUser(db: AppDatabase, emailInput: string, password: s
     throw new AccountDisabledError();
   }
 
+  reconcileUserSubscriptionLifecycle(db, user.id);
   db.update(users)
     .set({
       lastLoginAt: nowIso(),
@@ -215,9 +217,14 @@ export async function loginUser(db: AppDatabase, emailInput: string, password: s
     })
     .where(eq(users.id, user.id))
     .run();
+  const refreshedUser = db.select().from(users).where(eq(users.id, user.id)).limit(1).get();
+
+  if (!refreshedUser) {
+    throw new InvalidAuthInputError("User not found");
+  }
 
   return {
-    user: toPublicUser(user, ensureUserWorkspace(db, user.id)),
+    user: toPublicUser(refreshedUser, ensureUserWorkspace(db, refreshedUser.id)),
     sessionToken: await createSession(db, user.id),
   };
 }
@@ -323,16 +330,24 @@ export async function getSessionUser(db: AppDatabase, sessionToken: string) {
     return null;
   }
 
+  reconcileUserSubscriptionLifecycle(db, row.userId);
+  const user = db.select().from(users).where(eq(users.id, row.userId)).limit(1).get();
+
+  if (!user?.email || user.isDisabled === 1) {
+    db.delete(sessions).where(eq(sessions.id, row.sessionId)).run();
+    return null;
+  }
+
   return toPublicUser(
     {
-      id: row.userId,
-      email: row.email,
-      displayName: row.displayName,
-      role: row.role,
-      accountTier: row.accountTier,
-      isDisabled: row.isDisabled,
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      role: user.role,
+      accountTier: user.accountTier,
+      isDisabled: user.isDisabled,
     },
-    ensureUserWorkspace(db, row.userId),
+    ensureUserWorkspace(db, user.id),
   );
 }
 

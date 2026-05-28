@@ -15,6 +15,7 @@ import type {
   UpdateAdminUserInput,
 } from "@/server/admin/users-repository";
 import type { NotificationOutboxRow, NotificationStatus } from "@/server/notifications/types";
+import type { SubscriptionLifecycleReconcileResult } from "@/server/billing/subscriptions";
 
 export type {
   AdminCrawlerLog,
@@ -61,6 +62,8 @@ export interface AdminNotificationDeliveryResponse {
   failed: number;
   skipped: number;
 }
+
+export type AdminSubscriptionReconcileResponse = SubscriptionLifecycleReconcileResult;
 
 export class AdminApiError extends Error {
   status: number;
@@ -205,6 +208,16 @@ export async function deliverAdminNotifications(input: { limit?: number; maxAtte
   });
 
   return parseResponse<AdminNotificationDeliveryResponse>(response);
+}
+
+export async function reconcileAdminSubscriptions(input: { pastDueGraceDays?: number } = {}) {
+  const response = await fetch("/api/admin/subscriptions/reconcile", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<AdminSubscriptionReconcileResponse>(response);
 }
 
 export async function runSamGovCrawlerNow() {

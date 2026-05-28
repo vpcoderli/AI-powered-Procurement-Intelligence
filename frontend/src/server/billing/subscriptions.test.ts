@@ -12,6 +12,8 @@ import {
   getAccountSubscription,
   listAccountInvoices,
   listSubscriptionPlans,
+  reconcileSubscriptionLifecycle,
+  reconcileUserSubscriptionLifecycle,
   upsertAccountSubscription,
 } from "./subscriptions";
 
@@ -359,6 +361,124 @@ describe("billing subscriptions service", () => {
         }),
       ]),
     );
+  });
+
+  it("cancels subscriptions scheduled to end after the paid period expires", () => {
+    upsertAccountSubscription(testDb.db, "user_buyer", {
+      tier: "pro",
+      status: "active",
+      source: "local_checkout",
+      currentPeriodEnd: "2026-05-20T00:00:00.000Z",
+      cancelAtPeriodEnd: true,
+    });
+
+    const result = reconcileSubscriptionLifecycle(testDb.db, {
+      now: "2026-05-28T00:00:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      checked: 1,
+      canceledAtPeriodEnd: 1,
+      markedPastDue: 0,
+      downgradedPastDue: 0,
+      expiredTrials: 0,
+    });
+    expect(getAccountSubscription(testDb.db, "user_buyer").subscription).toMatchObject({
+      tier: "free",
+      status: "canceled",
+      cancelAtPeriodEnd: false,
+    });
+    expect(testDb.db.select().from(users).where(eq(users.id, "user_buyer")).get()?.accountTier).toBe("free");
+    expect(testDb.db.select().from(subscriptionEvents).all()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: "subscription_canceled_at_period_end",
+          fromTier: "pro",
+          toTier: "free",
+          fromStatus: "active",
+          toStatus: "canceled",
+        }),
+      ]),
+    );
+  });
+
+  it("marks expired active subscriptions past due while keeping paid access during grace", () => {
+    upsertAccountSubscription(testDb.db, "user_buyer", {
+      tier: "business",
+      status: "active",
+      source: "billing_provider",
+      currentPeriodEnd: "2026-05-27T00:00:00.000Z",
+      provider: "stripe",
+      providerCustomerId: "cus_123",
+      providerSubscriptionId: "sub_123",
+    });
+
+    const result = reconcileUserSubscriptionLifecycle(testDb.db, "user_buyer", {
+      now: "2026-05-28T00:00:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      checked: 1,
+      markedPastDue: 1,
+      downgradedPastDue: 0,
+    });
+    expect(getAccountSubscription(testDb.db, "user_buyer").subscription).toMatchObject({
+      tier: "business",
+      status: "past_due",
+    });
+    expect(testDb.db.select().from(users).where(eq(users.id, "user_buyer")).get()?.accountTier).toBe("business");
+  });
+
+  it("downgrades past due subscriptions after the grace period", () => {
+    upsertAccountSubscription(testDb.db, "user_buyer", {
+      tier: "business",
+      status: "past_due",
+      source: "billing_provider",
+      currentPeriodEnd: "2026-05-20T00:00:00.000Z",
+      provider: "stripe",
+      providerCustomerId: "cus_123",
+      providerSubscriptionId: "sub_123",
+    });
+
+    const result = reconcileSubscriptionLifecycle(testDb.db, {
+      now: "2026-05-28T00:00:00.000Z",
+      pastDueGraceDays: 7,
+    });
+
+    expect(result).toMatchObject({
+      checked: 1,
+      downgradedPastDue: 1,
+    });
+    expect(getAccountSubscription(testDb.db, "user_buyer").subscription).toMatchObject({
+      tier: "free",
+      status: "canceled",
+    });
+    expect(testDb.db.select().from(users).where(eq(users.id, "user_buyer")).get()?.accountTier).toBe("free");
+  });
+
+  it("expires trialing subscriptions and removes paid access", () => {
+    upsertAccountSubscription(testDb.db, "user_buyer", {
+      tier: "pro",
+      status: "trialing",
+      source: "billing_provider",
+      currentPeriodEnd: "2026-05-20T00:00:00.000Z",
+      provider: "stripe",
+      providerCustomerId: "cus_123",
+      providerSubscriptionId: "sub_123",
+    });
+
+    const result = reconcileSubscriptionLifecycle(testDb.db, {
+      now: "2026-05-28T00:00:00.000Z",
+    });
+
+    expect(result).toMatchObject({
+      checked: 1,
+      expiredTrials: 1,
+    });
+    expect(getAccountSubscription(testDb.db, "user_buyer").subscription).toMatchObject({
+      tier: "free",
+      status: "canceled",
+    });
   });
 
   it("exposes the product plan catalog", () => {

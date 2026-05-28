@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AppDatabase } from "@/server/db/client";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
+  upsertAccountSubscription,
+} from "@/server/billing/subscriptions";
+import {
   AccountDisabledError,
   DuplicateEmailError,
   InvalidCredentialsError,
@@ -148,6 +151,47 @@ describe("auth service", () => {
       AccountDisabledError,
     );
     await expect(getSessionUser(testDb.db, result.sessionToken)).resolves.toBeNull();
+  });
+
+  it("reconciles expired paid subscriptions before returning session entitlements", async () => {
+    const result = await registerUser(testDb.db, {
+      email: "paid@example.com",
+      password: "strong-password",
+    });
+    upsertAccountSubscription(testDb.db, result.user.id, {
+      tier: "pro",
+      status: "active",
+      source: "local_checkout",
+      currentPeriodEnd: "2000-01-01T00:00:00.000Z",
+      cancelAtPeriodEnd: true,
+    });
+
+    await expect(getSessionUser(testDb.db, result.sessionToken)).resolves.toMatchObject({
+      id: result.user.id,
+      tier: "free",
+      features: expect.not.arrayContaining(["submission_guidance"]),
+    });
+  });
+
+  it("reconciles expired paid subscriptions before returning login entitlements", async () => {
+    const registered = await registerUser(testDb.db, {
+      email: "paid-login@example.com",
+      password: "strong-password",
+    });
+    upsertAccountSubscription(testDb.db, registered.user.id, {
+      tier: "business",
+      status: "trialing",
+      source: "billing_provider",
+      currentPeriodEnd: "2000-01-01T00:00:00.000Z",
+    });
+
+    await expect(loginUser(testDb.db, "paid-login@example.com", "strong-password")).resolves.toMatchObject({
+      user: {
+        id: registered.user.id,
+        tier: "free",
+        features: expect.not.arrayContaining(["compliance_manifest"]),
+      },
+    });
   });
 
   it("updates a user's display name and returns the refreshed public user", async () => {

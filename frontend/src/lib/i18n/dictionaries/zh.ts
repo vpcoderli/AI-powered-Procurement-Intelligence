@@ -609,5 +609,9 @@ export const zh: Dictionary = {
     notificationStatus_pending: "待投递",
     notificationStatus_sent: "已发送",
     notificationStatus_failed: "失败",
+    reconcileSubscriptions: "同步订阅权限",
+    reconcilingSubscriptions: "同步中...",
+    subscriptionReconcileResult: "订阅权限已同步：检查 {checked} 个，标记逾期 {pastDue} 个，降级/取消 {downgraded} 个。",
+    subscriptionReconcileFailed: "无法同步订阅权限。",
   }
 };
