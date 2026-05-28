@@ -38,6 +38,7 @@ import {
   fetchAccountWorkspace,
   inviteWorkspaceMember,
   removeWorkspaceMember,
+  setWorkspaceMemberStatus,
   transferWorkspaceOwnership,
   updateAccountWorkspace,
   updateAccountProfile,
@@ -91,7 +92,7 @@ export default function SettingsPage() {
   const [inviteDraft, setInviteDraft] = useState({ email: "", displayName: "" });
   const [inviteMessage, setInviteMessage] = useState("");
   const [inviteError, setInviteError] = useState("");
-  const [temporaryPassword, setTemporaryPassword] = useState("");
+  const [inviteUrl, setInviteUrl] = useState("");
   const [isInvitingMember, setIsInvitingMember] = useState(false);
   const [teamActionMessage, setTeamActionMessage] = useState("");
   const [teamActionError, setTeamActionError] = useState("");
@@ -294,7 +295,7 @@ export default function SettingsPage() {
   async function handleInviteMember() {
     setInviteMessage("");
     setInviteError("");
-    setTemporaryPassword("");
+    setInviteUrl("");
     setIsInvitingMember(true);
 
     try {
@@ -306,7 +307,7 @@ export default function SettingsPage() {
       const data = await fetchAccountWorkspace();
       setWorkspaceData(data);
       setInviteDraft({ email: "", displayName: "" });
-      setTemporaryPassword(invite.temporaryPassword);
+      setInviteUrl(invite.inviteUrl);
       setInviteMessage(t("settings.memberInvited"));
     } catch (error) {
       setInviteError(error instanceof Error ? error.message : t("settings.memberInviteError"));
@@ -380,6 +381,26 @@ export default function SettingsPage() {
       setWorkspaceData(data);
       await refreshSession();
       setTeamActionMessage(t("settings.ownershipTransferred"));
+    } catch (error) {
+      setTeamActionError(teamErrorMessage(error));
+    } finally {
+      setMemberActionUserId(null);
+    }
+  }
+
+  async function handleMemberStatusChange(member: AccountWorkspaceMember) {
+    const nextStatus = member.status === "disabled" ? "active" : "disabled";
+    setTeamActionMessage("");
+    setTeamActionError("");
+    setMemberActionUserId(member.userId);
+
+    try {
+      const data = await setWorkspaceMemberStatus(member.userId, { status: nextStatus });
+      setWorkspaceData(data);
+      await refreshSession();
+      setTeamActionMessage(
+        nextStatus === "disabled" ? t("settings.memberDisabled") : t("settings.memberRestored"),
+      );
     } catch (error) {
       setTeamActionError(teamErrorMessage(error));
     } finally {
@@ -645,10 +666,10 @@ export default function SettingsPage() {
                       {isInvitingMember ? t("settings.inviting") : t("settings.inviteMember")}
                     </Button>
                     {inviteMessage && <p className="mt-3 text-sm font-medium text-emerald-700">{inviteMessage}</p>}
-                    {temporaryPassword && (
+                    {inviteUrl && (
                       <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-                        <span className="font-semibold">{t("settings.temporaryPassword")}:</span>{" "}
-                        <span className="break-all font-mono">{temporaryPassword}</span>
+                        <span className="font-semibold">{t("settings.inviteUrl")}:</span>{" "}
+                        <span className="break-all font-mono">{inviteUrl}</span>
                       </div>
                     )}
                     {inviteError && <p className="mt-3 text-sm font-medium text-red-600">{inviteError}</p>}
@@ -668,6 +689,9 @@ export default function SettingsPage() {
                           {member.displayName || member.email || member.userId}
                         </p>
                         <p className="mt-1 text-xs font-medium text-slate-500">{member.email}</p>
+                        <Badge variant="outline" className="mt-2 w-fit border-slate-200 bg-slate-50 text-slate-700">
+                          {t(`settings.memberStatus_${member.status}`)}
+                        </Badge>
                       </div>
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         {canManageWorkspace ? (
@@ -705,11 +729,26 @@ export default function SettingsPage() {
                             disabled={
                               memberActionUserId === member.userId ||
                               member.userId === user?.id ||
-                              member.workspaceRole === "owner"
+                              member.workspaceRole === "owner" ||
+                              member.status !== "active"
                             }
                             className="h-9 border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
                           >
                             {t("settings.transferOwnership")}
+                          </Button>
+                        )}
+                        {canManageWorkspace && (
+                          <Button
+                            variant="outline"
+                            onClick={() => handleMemberStatusChange(member)}
+                            disabled={
+                              memberActionUserId === member.userId ||
+                              member.userId === user?.id ||
+                              member.status === "invited"
+                            }
+                            className="h-9 border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          >
+                            {member.status === "disabled" ? t("settings.restoreMember") : t("settings.disableMember")}
                           </Button>
                         )}
                         {canManageWorkspace && (

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  acceptWorkspaceInvitation,
   changePassword,
   confirmPasswordReset,
   cancelAccountSubscription,
@@ -13,6 +14,7 @@ import {
   inviteWorkspaceMember,
   removeWorkspaceMember,
   requestPasswordReset,
+  setWorkspaceMemberStatus,
   transferWorkspaceOwnership,
   updateAccountWorkspace,
   updateAccountProfile,
@@ -312,13 +314,14 @@ describe("auth API client", () => {
       member: {
         userId: "user_2",
         email: "member@example.com",
-        displayName: "Member One",
-        workspaceRole: "member",
-        status: "active",
-        createdAt: "2026-05-28T00:00:00.000Z",
-        updatedAt: "2026-05-28T00:00:00.000Z",
-      },
-      temporaryPassword: "Temp-secret",
+          displayName: "Member One",
+          workspaceRole: "member",
+          status: "invited",
+          createdAt: "2026-05-28T00:00:00.000Z",
+          updatedAt: "2026-05-28T00:00:00.000Z",
+        },
+      inviteToken: "invite_secret",
+      inviteUrl: "/accept-invite?token=invite_secret",
     };
     mockFetch.mockResolvedValueOnce(jsonResponse(body, { status: 201 }));
 
@@ -336,6 +339,37 @@ describe("auth API client", () => {
         email: "member@example.com",
         displayName: "Member One",
         role: "member",
+      }),
+    });
+  });
+
+  it("accepts a workspace invitation", async () => {
+    const body = {
+      user: {
+        id: "user_2",
+        email: "member@example.com",
+        displayName: "Member One",
+        role: "user",
+        tier: "free",
+        features: ["bid_search"],
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(
+      acceptWorkspaceInvitation({
+        token: "invite_secret",
+        password: "member-strong-password",
+        displayName: "Member One",
+      }),
+    ).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/workspace/invitations/accept", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token: "invite_secret",
+        password: "member-strong-password",
+        displayName: "Member One",
       }),
     });
   });
@@ -368,6 +402,37 @@ describe("auth API client", () => {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ role: "owner" }),
+    });
+  });
+
+  it("sets a workspace member status", async () => {
+    const body = {
+      organization: {
+        id: "org_1",
+        name: "Acme Federal Team",
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      },
+      currentUserRole: "owner",
+      members: [
+        {
+          userId: "user_2",
+          email: "member@example.com",
+          displayName: "Member One",
+          workspaceRole: "member",
+          status: "disabled",
+          createdAt: "2026-05-28T00:00:00.000Z",
+          updatedAt: "2026-05-28T00:00:00.000Z",
+        },
+      ],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(setWorkspaceMemberStatus("user_2", { status: "disabled" })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/workspace/members/user_2", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "disabled" }),
     });
   });
 

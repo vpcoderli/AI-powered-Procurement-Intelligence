@@ -178,6 +178,34 @@ export const passwordResetTokens = sqliteTable(
   }),
 );
 
+export const workspaceInvitations = sqliteTable(
+  "workspace_invitations",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    invitedUserId: text("invited_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    invitedByUserId: text("invited_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    acceptedAt: text("accepted_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    tokenHashIdx: uniqueIndex("idx_workspace_invitations_token_hash").on(table.tokenHash),
+    organizationIdx: index("idx_workspace_invitations_organization_id").on(table.organizationId),
+    invitedUserIdx: index("idx_workspace_invitations_invited_user_id").on(table.invitedUserId),
+    emailIdx: index("idx_workspace_invitations_email").on(table.email),
+  }),
+);
+
 export const organizations = sqliteTable("organizations", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),

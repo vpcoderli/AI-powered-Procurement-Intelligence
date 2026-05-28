@@ -12,6 +12,7 @@ import {
   organizations,
   passwordResetTokens,
   users,
+  workspaceInvitations,
 } from "./schema";
 import { createTestDatabase } from "./test-utils";
 
@@ -200,6 +201,7 @@ describe("database schema", () => {
       expect(tables).toContain("billing_checkout_sessions");
       expect(tables).toContain("billing_invoices");
       expect(tables).toContain("password_reset_tokens");
+      expect(tables).toContain("workspace_invitations");
       expect(tables).toContain("organizations");
       expect(tables).toContain("organization_memberships");
 
@@ -252,6 +254,21 @@ describe("database schema", () => {
           updatedAt: "2026-05-19T00:00:00.000Z",
         }).run();
       }).not.toThrow();
+
+      expect(() =>
+        testDb.db.insert(workspaceInvitations).values({
+          id: "invite_1",
+          organizationId: "org_1",
+          invitedUserId: "user_1",
+          invitedByUserId: "user_1",
+          email: "buyer@example.com",
+          tokenHash: "hashed-invite-token",
+          expiresAt: "2026-05-29T00:00:00.000Z",
+          acceptedAt: null,
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
     } finally {
       await testDb.cleanup();
     }

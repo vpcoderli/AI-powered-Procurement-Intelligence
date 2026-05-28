@@ -112,7 +112,7 @@ export interface AccountWorkspaceMember {
   email: string | null;
   displayName: string | null;
   workspaceRole: WorkspaceRole;
-  status: "active";
+  status: "active" | "invited" | "disabled";
   createdAt: string;
   updatedAt: string;
 }
@@ -130,7 +130,8 @@ export interface AccountWorkspaceResponse {
 
 export interface InviteWorkspaceMemberResponse {
   member: AccountWorkspaceMember;
-  temporaryPassword: string;
+  inviteToken: string;
+  inviteUrl: string;
 }
 
 type AuthErrorCode =
@@ -139,6 +140,7 @@ type AuthErrorCode =
   | "EMAIL_ALREADY_REGISTERED"
   | "FORBIDDEN"
   | "INVALID_CREDENTIALS"
+  | "INVALID_INVITATION_TOKEN"
   | "INVALID_REQUEST"
   | "INVALID_RESET_TOKEN"
   | "INTERNAL_ERROR"
@@ -184,6 +186,7 @@ function isApiErrorResponse(body: unknown): body is ApiErrorResponse {
       code === "EMAIL_ALREADY_REGISTERED" ||
       code === "FORBIDDEN" ||
       code === "INVALID_CREDENTIALS" ||
+      code === "INVALID_INVITATION_TOKEN" ||
       code === "INVALID_REQUEST" ||
       code === "INVALID_RESET_TOKEN" ||
       code === "INTERNAL_ERROR" ||
@@ -352,6 +355,20 @@ export async function confirmPasswordReset(input: {
   return parseResponse<{ ok: true }>(response);
 }
 
+export async function acceptWorkspaceInvitation(input: {
+  token: string;
+  password: string;
+  displayName?: string;
+}): Promise<AuthResponse> {
+  const response = await fetch("/api/account/workspace/invitations/accept", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<AuthResponse>(response);
+}
+
 export async function fetchAccountWorkspace(): Promise<AccountWorkspaceResponse> {
   const response = await fetch("/api/account/workspace");
 
@@ -387,6 +404,19 @@ export async function inviteWorkspaceMember(input: {
 export async function updateWorkspaceMemberRole(
   userId: string,
   input: { role: WorkspaceRole },
+): Promise<AccountWorkspaceResponse> {
+  const response = await fetch(`/api/account/workspace/members/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<AccountWorkspaceResponse>(response);
+}
+
+export async function setWorkspaceMemberStatus(
+  userId: string,
+  input: { status: "active" | "disabled" },
 ): Promise<AccountWorkspaceResponse> {
   const response = await fetch(`/api/account/workspace/members/${userId}`, {
     method: "PATCH",
