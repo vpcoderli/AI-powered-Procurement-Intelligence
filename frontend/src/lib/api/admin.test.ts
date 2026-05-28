@@ -10,6 +10,7 @@ import {
   listAdminUsers,
   runSamGovCrawlerNow,
   runStateCrawlersNow,
+  scheduleAdminBillingDunning,
   reconcileAdminSubscriptions,
   updateAdminDataSource,
   updateAdminUser,
@@ -186,6 +187,25 @@ describe("admin API client", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ limit: 25, maxAttempts: 3 }),
+    });
+  });
+
+  it("schedules billing dunning reminders from the admin console", async () => {
+    const body = {
+      checkedInvoices: 2,
+      queued: 1,
+      skippedAlreadyQueued: 0,
+      skippedNotDue: 1,
+      skippedResolved: 0,
+      skippedNoRecipient: 0,
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(scheduleAdminBillingDunning({ limit: 50 })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/billing/dunning", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limit: 50 }),
     });
   });
 
