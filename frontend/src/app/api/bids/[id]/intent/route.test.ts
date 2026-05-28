@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as principal from "@/server/auth/principal";
+import * as usageLimits from "@/server/auth/usage-limits";
 import { ANONYMOUS_USER_COOKIE_NAME } from "@/server/bids/user";
 import { MOCK_BIDS } from "@/lib/mock-data";
 import * as intentService from "@/server/intents/service";
@@ -10,6 +11,14 @@ vi.mock("@/server/db/client", () => ({ db: {} }));
 vi.mock("@/server/auth/principal", () => ({
   resolvePrincipal: vi.fn(),
 }));
+vi.mock("@/server/auth/usage-limits", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/auth/usage-limits")>();
+
+  return {
+    ...actual,
+    enforceUsageLimit: vi.fn(),
+  };
+});
 vi.mock("@/server/intents/service", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/server/intents/service")>();
 
@@ -20,6 +29,7 @@ vi.mock("@/server/intents/service", async (importOriginal) => {
 });
 
 const resolvePrincipal = vi.mocked(principal.resolvePrincipal);
+const enforceUsageLimit = vi.mocked(usageLimits.enforceUsageLimit);
 const createIntentForBid = vi.mocked(intentService.createIntentForBid);
 
 const intent: IntentDetail = {
@@ -73,10 +83,42 @@ describe("POST /api/bids/[id]/intent", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({ intent });
+    expect(enforceUsageLimit).toHaveBeenCalledWith(expect.anything(), {
+      userId: "anon_intent",
+      tier: "free",
+      feature: "intent_workspace",
+      resourceId: "bid_1",
+    });
     expect(createIntentForBid).toHaveBeenCalledWith(expect.anything(), "anon_intent", "bid_1");
     expect(response.headers.get("set-cookie")).toContain(
       `${ANONYMOUS_USER_COOKIE_NAME}=anon_intent`,
     );
+  });
+
+  it("returns USAGE_LIMIT_REACHED when the current plan cannot create more intents", async () => {
+    enforceUsageLimit.mockImplementationOnce(() => {
+      throw new usageLimits.UsageLimitError({
+        feature: "intent_workspace",
+        tier: "free",
+        used: 2,
+        limit: 2,
+      });
+    });
+
+    const response = await POST(new Request("http://localhost/api/bids/bid_1/intent"), {
+      params: Promise.resolve({ id: "bid_1" }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(402);
+    expect(body.error).toMatchObject({
+      code: "USAGE_LIMIT_REACHED",
+      limit: 2,
+      used: 2,
+      feature: "intent_workspace",
+      requiredTier: "pro",
+    });
+    expect(createIntentForBid).not.toHaveBeenCalled();
   });
 
   it("returns BID_NOT_FOUND when the bid is missing", async () => {

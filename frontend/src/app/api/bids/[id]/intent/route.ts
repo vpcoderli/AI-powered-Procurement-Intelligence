@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
+import { UsageLimitError, enforceUsageLimit } from "@/server/auth/usage-limits";
 import { db } from "@/server/db/client";
 import { createIntentForBid } from "@/server/intents/service";
 import { IntentBidNotFoundError } from "@/server/intents/types";
@@ -38,15 +39,43 @@ function internalError(principal: RequestPrincipal) {
   );
 }
 
+function usageLimitError(error: UsageLimitError, principal: RequestPrincipal) {
+  return jsonWithPrincipalCookie(
+    {
+      error: {
+        code: error.code,
+        message: "Upgrade your plan to create more intent workspaces.",
+        feature: error.feature,
+        limit: error.limit,
+        used: error.used,
+        requiredTier: error.requiredTier,
+      },
+    },
+    principal,
+    { status: 402 },
+  );
+}
+
 export async function POST(request: Request, context: RouteContext) {
   const principal = await resolvePrincipal(db, request);
 
   try {
     const { id } = await context.params;
+    enforceUsageLimit(db, {
+      userId: principal.userId,
+      tier: principal.tier ?? "free",
+      feature: "intent_workspace",
+      resourceId: id,
+    });
+
     const intent = await createIntentForBid(db, principal.userId, id);
 
     return jsonWithPrincipalCookie({ intent }, principal);
   } catch (error) {
+    if (error instanceof UsageLimitError) {
+      return usageLimitError(error, principal);
+    }
+
     if (error instanceof IntentBidNotFoundError) {
       return bidNotFound(principal);
     }

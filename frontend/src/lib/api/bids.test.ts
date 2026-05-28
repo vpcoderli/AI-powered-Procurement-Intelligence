@@ -81,6 +81,25 @@ describe("bid API client", () => {
     });
   });
 
+  it("parses usage limit errors when saving a bid", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      error: {
+        code: "USAGE_LIMIT_REACHED",
+        message: "Pro plan is required to save more bids.",
+        feature: "saved_bids",
+        limit: 5,
+        used: 5,
+        requiredTier: "pro",
+      },
+    }, { status: 402 }));
+
+    await expect(saveBid("6")).rejects.toMatchObject({
+      code: "USAGE_LIMIT_REACHED",
+      status: 402,
+      message: "Pro plan is required to save more bids.",
+    });
+  });
+
   it("removes a saved bid", async () => {
     const body = { savedBidIds: [], bids: [] };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));

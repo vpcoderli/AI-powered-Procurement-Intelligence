@@ -11,6 +11,8 @@ describe("bid detail pursuit panel", () => {
     expect(page).toContain("match.score");
     expect(page).toContain("createIntentRequestRef");
     expect(page).toContain("requestedBidId");
+    expect(page).toContain("USAGE_LIMIT_REACHED");
+    expect(page).toContain("detail.intentLimitReached");
     expect(page).toContain("max-h-72");
     expect(page).toContain("winbids-detail-workspace");
     expect(page).toContain("winbids-hero-panel");

@@ -66,6 +66,10 @@ function fallbackLabel(label: string, key: string, fallback: string) {
   return label === key ? fallback : label;
 }
 
+function isUsageLimitError(error: Error | null) {
+  return error instanceof ApiError && error.code === "USAGE_LIMIT_REACHED";
+}
+
 export default function BidDetailsPage() {
   const params = useParams();
   const router = useRouter();
@@ -88,6 +92,13 @@ export default function BidDetailsPage() {
   
   const saved = isSaved(bidId);
   const addToIntentLabel = fallbackLabel(t("detail.pursuitAddToIntent"), "detail.pursuitAddToIntent", ADD_TO_INTENT_FALLBACK);
+  const pursuitMessage = pursuitError
+    ? isUsageLimitError(pursuitError)
+      ? t("detail.intentLimitReached")
+      : t("detail.pursuitError")
+    : intent
+      ? t("detail.intentCreated")
+      : "";
 
   useEffect(() => {
     mountedRef.current = true;
@@ -391,7 +402,7 @@ export default function BidDetailsPage() {
                 </div>
                 <div className="flex flex-col gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-h-5 text-sm font-medium text-slate-500">
-                    {pursuitError ? t("detail.pursuitError") : intent ? t("detail.intentCreated") : ""}
+                    {pursuitMessage}
                   </div>
                   {intent ? (
                     <Button asChild className="bg-slate-900 hover:bg-slate-800 text-white shadow-sm">

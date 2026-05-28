@@ -48,6 +48,25 @@ describe("intent API client", () => {
     });
   });
 
+  it("parses usage limit errors when creating an intent", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      error: {
+        code: "USAGE_LIMIT_REACHED",
+        message: "Pro plan is required to create more intent workspaces.",
+        feature: "intent_workspace",
+        limit: 2,
+        used: 2,
+        requiredTier: "pro",
+      },
+    }, { status: 402 }));
+
+    await expect(createIntent("bid_3")).rejects.toMatchObject({
+      code: "USAGE_LIMIT_REACHED",
+      status: 402,
+      message: "Pro plan is required to create more intent workspaces.",
+    });
+  });
+
   it("fetches intents", async () => {
     const body = { intents: [intent] };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));

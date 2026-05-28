@@ -174,6 +174,7 @@ export const zh: Dictionary = {
     intentCreated: "投标意向工作台已创建。",
     openIntent: "打开投标意向工作台",
     pursuitError: "无法更新投标流程，请重试。",
+    intentLimitReached: "免费套餐额度已用完。升级到 Pro 后可创建更多投标意向工作台。",
     pursuitUnavailable: "该机会暂无匹配详情。",
     noGeneratedRiskFlags: "暂无生成的风险提示。",
   },
