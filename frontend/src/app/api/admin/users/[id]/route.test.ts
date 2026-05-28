@@ -51,6 +51,7 @@ describe("PATCH /api/admin/users/[id]", () => {
       expect.anything(),
       "user_1",
       { role: "admin", tier: "business", isDisabled: true },
+      { actorKind: "admin", actorUserId: "admin_1" },
     );
   });
 

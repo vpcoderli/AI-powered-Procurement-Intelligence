@@ -4,8 +4,12 @@ import type {
   AdminDataSourcesResponse,
 } from "@/server/admin/data-sources-repository";
 import type {
+  AdminUserAuditLog,
+  AdminUserAuditLogsResponse,
+  AdminUserFilterStatus,
   AdminUser,
   AdminUsersResponse,
+  ListAdminUsersFilters,
   UpdateAdminUserInput,
 } from "@/server/admin/users-repository";
 
@@ -13,8 +17,12 @@ export type {
   AdminCrawlerLog,
   AdminDataSource,
   AdminDataSourcesResponse,
+  AdminUserAuditLog,
+  AdminUserAuditLogsResponse,
+  AdminUserFilterStatus,
   AdminUser,
   AdminUsersResponse,
+  ListAdminUsersFilters,
   UpdateAdminUserInput,
 };
 
@@ -97,10 +105,36 @@ export async function listAdminDataSources() {
   return parseResponse<AdminDataSourcesResponse>(response);
 }
 
-export async function listAdminUsers() {
-  const response = await fetch("/api/admin/users");
+function buildQueryString(params: Record<string, string | number | undefined>) {
+  const searchParams = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") {
+      searchParams.set(key, String(value));
+    }
+  }
+
+  const query = searchParams.toString();
+  return query ? `?${query}` : "";
+}
+
+export async function listAdminUsers(filters: ListAdminUsersFilters = {}) {
+  const response = await fetch(
+    `/api/admin/users${buildQueryString({
+      q: filters.q,
+      role: filters.role,
+      tier: filters.tier,
+      status: filters.status,
+    })}`,
+  );
 
   return parseResponse<AdminUsersResponse>(response);
+}
+
+export async function listAdminUserAuditLogs(input: { limit?: number } = {}) {
+  const response = await fetch(`/api/admin/users/audit-logs${buildQueryString(input)}`);
+
+  return parseResponse<AdminUserAuditLogsResponse>(response);
 }
 
 export async function updateAdminUser(id: string, input: UpdateAdminUserInput) {

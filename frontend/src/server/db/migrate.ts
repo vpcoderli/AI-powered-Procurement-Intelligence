@@ -26,6 +26,16 @@ export function runMigrations(db: AppDatabase) {
       last_seen_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS admin_user_audit_logs (
+      id TEXT PRIMARY KEY,
+      actor_kind TEXT NOT NULL,
+      actor_user_id TEXT,
+      target_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      action TEXT NOT NULL,
+      changes_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS bids (
       id TEXT PRIMARY KEY,
       source TEXT NOT NULL,
@@ -212,6 +222,9 @@ export function runMigrations(db: AppDatabase) {
     );
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_admin_user_audit_actor ON admin_user_audit_logs(actor_user_id);
+    CREATE INDEX IF NOT EXISTS idx_admin_user_audit_target ON admin_user_audit_logs(target_user_id);
+    CREATE INDEX IF NOT EXISTS idx_admin_user_audit_created ON admin_user_audit_logs(created_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_bids_dedupe_key ON bids(dedupe_key);
