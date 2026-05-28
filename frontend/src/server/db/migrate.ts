@@ -65,6 +65,26 @@ export function runMigrations(db: AppDatabase) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS billing_invoices (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL DEFAULT 'billing_provider',
+      provider_customer_id TEXT,
+      provider_subscription_id TEXT,
+      provider_invoice_id TEXT NOT NULL,
+      invoice_number TEXT,
+      status TEXT NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'USD',
+      amount_due_cents INTEGER NOT NULL DEFAULT 0,
+      amount_paid_cents INTEGER NOT NULL DEFAULT 0,
+      invoice_url TEXT,
+      invoice_pdf_url TEXT,
+      due_at TEXT,
+      paid_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS subscription_events (
       id TEXT PRIMARY KEY,
       provider_event_id TEXT,
@@ -326,6 +346,9 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_account_subscriptions_provider_subscription ON account_subscriptions(provider_subscription_id);
     CREATE INDEX IF NOT EXISTS idx_billing_checkout_sessions_user_id ON billing_checkout_sessions(user_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_checkout_sessions_provider_session_id ON billing_checkout_sessions(provider_session_id);
+    CREATE INDEX IF NOT EXISTS idx_billing_invoices_user_id ON billing_invoices(user_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_invoices_provider_invoice_id ON billing_invoices(provider_invoice_id);
+    CREATE INDEX IF NOT EXISTS idx_billing_invoices_provider_subscription_id ON billing_invoices(provider_subscription_id);
     CREATE INDEX IF NOT EXISTS idx_subscription_events_user_id ON subscription_events(user_id);
     CREATE INDEX IF NOT EXISTS idx_subscription_events_subscription_id ON subscription_events(subscription_id);
     CREATE INDEX IF NOT EXISTS idx_subscription_events_created ON subscription_events(created_at);

@@ -14,6 +14,7 @@ describe("settings page", () => {
     expect(page).toContain("updateAccountProfile");
     expect(page).toContain("changePassword");
     expect(page).toContain("fetchAccountSubscription");
+    expect(page).toContain("fetchBillingInvoices");
     expect(page).toContain("createCheckoutSession");
     expect(page).toContain("cancelAccountSubscription");
     expect(page).toContain("fetchAccountWorkspace");
@@ -37,5 +38,8 @@ describe("settings page", () => {
     expect(page).toContain("settings.startCheckout");
     expect(page).toContain("settings.checkoutStarted");
     expect(page).toContain("settings.cancelSubscription");
+    expect(page).toContain("settings.invoiceHistory");
+    expect(page).toContain("settings.noInvoices");
+    expect(page).toContain("settings.viewInvoice");
   });
 });

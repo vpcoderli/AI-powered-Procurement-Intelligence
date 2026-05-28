@@ -86,6 +86,36 @@ export const billingCheckoutSessions = sqliteTable(
   }),
 );
 
+export const billingInvoices = sqliteTable(
+  "billing_invoices",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull().default("billing_provider"),
+    providerCustomerId: text("provider_customer_id"),
+    providerSubscriptionId: text("provider_subscription_id"),
+    providerInvoiceId: text("provider_invoice_id").notNull(),
+    invoiceNumber: text("invoice_number"),
+    status: text("status").notNull(),
+    currency: text("currency").notNull().default("USD"),
+    amountDueCents: integer("amount_due_cents").notNull().default(0),
+    amountPaidCents: integer("amount_paid_cents").notNull().default(0),
+    invoiceUrl: text("invoice_url"),
+    invoicePdfUrl: text("invoice_pdf_url"),
+    dueAt: text("due_at"),
+    paidAt: text("paid_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    userIdx: index("idx_billing_invoices_user_id").on(table.userId),
+    providerInvoiceIdx: uniqueIndex("idx_billing_invoices_provider_invoice_id").on(table.providerInvoiceId),
+    subscriptionIdx: index("idx_billing_invoices_provider_subscription_id").on(table.providerSubscriptionId),
+  }),
+);
+
 export const subscriptionEvents = sqliteTable(
   "subscription_events",
   {

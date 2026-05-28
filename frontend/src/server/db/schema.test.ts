@@ -198,6 +198,7 @@ describe("database schema", () => {
       expect(tables).toContain("account_subscriptions");
       expect(tables).toContain("subscription_events");
       expect(tables).toContain("billing_checkout_sessions");
+      expect(tables).toContain("billing_invoices");
       expect(tables).toContain("password_reset_tokens");
       expect(tables).toContain("organizations");
       expect(tables).toContain("organization_memberships");

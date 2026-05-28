@@ -4,6 +4,7 @@ import {
   confirmPasswordReset,
   cancelAccountSubscription,
   createCheckoutSession,
+  fetchBillingInvoices,
   fetchAccountSubscription,
   fetchAccountWorkspace,
   inviteWorkspaceMember,
@@ -138,6 +139,34 @@ describe("auth API client", () => {
     expect(mockFetch).toHaveBeenCalledWith("/api/account/subscription/cancel", {
       method: "POST",
     });
+  });
+
+  it("fetches account billing invoice history", async () => {
+    const body = {
+      invoices: [
+        {
+          id: "invoice_1",
+          userId: "user_1",
+          provider: "stripe",
+          providerInvoiceId: "in_1",
+          invoiceNumber: "WIN-1001",
+          status: "paid",
+          currency: "USD",
+          amountDueCents: 7900,
+          amountPaidCents: 7900,
+          invoiceUrl: "https://billing.example.test/invoices/in_1",
+          invoicePdfUrl: null,
+          dueAt: "2026-05-28T00:00:00.000Z",
+          paidAt: "2026-05-28T00:00:00.000Z",
+          createdAt: "2026-05-28T00:00:00.000Z",
+          updatedAt: "2026-05-28T00:00:00.000Z",
+        },
+      ],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(fetchBillingInvoices()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/billing/invoices");
   });
 
   it("requests a password reset token", async () => {

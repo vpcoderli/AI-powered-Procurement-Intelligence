@@ -29,6 +29,7 @@ import {
   cancelAccountSubscription,
   createCheckoutSession,
   fetchAccountSubscription,
+  fetchBillingInvoices,
   fetchAccountWorkspace,
   inviteWorkspaceMember,
   removeWorkspaceMember,
@@ -38,6 +39,7 @@ import {
   type AccountWorkspaceMember,
   type AccountSubscriptionResponse,
   type AccountWorkspaceResponse,
+  type BillingInvoicesResponse,
 } from "@/lib/api/auth";
 import { canUseFeature, lockedFeatureMessage } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
@@ -73,6 +75,8 @@ export default function SettingsPage() {
   const [subscriptionError, setSubscriptionError] = useState("");
   const [billingMessage, setBillingMessage] = useState("");
   const [billingActionTier, setBillingActionTier] = useState<AccountTier | "cancel" | null>(null);
+  const [billingInvoicesData, setBillingInvoicesData] = useState<BillingInvoicesResponse | null>(null);
+  const [billingInvoicesError, setBillingInvoicesError] = useState("");
   const [workspaceData, setWorkspaceData] = useState<AccountWorkspaceResponse | null>(null);
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
   const [workspaceMessage, setWorkspaceMessage] = useState("");
@@ -106,6 +110,17 @@ export default function SettingsPage() {
       .catch((error) => {
         if (isCancelled) return;
         setSubscriptionError(error instanceof Error ? error.message : t("settings.subscriptionLoadError"));
+      });
+
+    fetchBillingInvoices()
+      .then((data) => {
+        if (isCancelled) return;
+        setBillingInvoicesData(data);
+        setBillingInvoicesError("");
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        setBillingInvoicesError(error instanceof Error ? error.message : t("settings.invoiceLoadError"));
       });
 
     return () => {
@@ -150,6 +165,10 @@ export default function SettingsPage() {
      return t("settings.priceMonthly").replace("{price}", String(priceMonthlyUsd));
   }
 
+  function invoiceAmountLabel(amountCents: number, currency: string) {
+    return `${currency} ${(amountCents / 100).toFixed(2)}`;
+  }
+
   async function refreshSubscription() {
     const data = await fetchAccountSubscription();
     setSubscriptionData(data);
@@ -182,6 +201,7 @@ export default function SettingsPage() {
       const data = await cancelAccountSubscription();
       setSubscriptionData(data);
       setBillingMessage(t("settings.subscriptionCancelScheduled"));
+      setBillingInvoicesData(await fetchBillingInvoices());
     } catch (error) {
       setSubscriptionError(error instanceof Error ? error.message : t("settings.cancelSubscriptionError"));
     } finally {
@@ -767,6 +787,55 @@ export default function SettingsPage() {
                   {currentSubscription?.cancelAtPeriodEnd && (
                     <p className="text-sm font-medium text-amber-700">{t("settings.subscriptionCancelPending")}</p>
                   )}
+                </div>
+
+                <div className="space-y-3 border-t border-slate-100 pt-5">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">{t("settings.invoiceHistory")}</h3>
+                    <p className="text-sm font-medium text-slate-500">{t("settings.invoiceHistoryDesc")}</p>
+                  </div>
+                  {billingInvoicesError && <p className="text-sm font-medium text-red-600">{billingInvoicesError}</p>}
+                  {!billingInvoicesData && !billingInvoicesError && (
+                    <p className="text-sm font-medium text-slate-500">{t("settings.loadingInvoices")}</p>
+                  )}
+                  {billingInvoicesData?.invoices.length === 0 && (
+                    <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm font-medium text-slate-500">
+                      {t("settings.noInvoices")}
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    {(billingInvoicesData?.invoices ?? []).map((invoice) => (
+                      <div
+                        key={invoice.id}
+                        className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-3 sm:flex-row sm:items-center sm:justify-between"
+                      >
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-semibold text-slate-900">
+                              {invoice.invoiceNumber ?? invoice.providerInvoiceId}
+                            </p>
+                            <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-700">
+                              {t(`settings.invoiceStatus_${invoice.status}`)}
+                            </Badge>
+                          </div>
+                          <p className="mt-1 text-xs font-medium text-slate-500">
+                            {invoiceAmountLabel(invoice.amountPaidCents || invoice.amountDueCents, invoice.currency)}
+                            {invoice.paidAt ? ` · ${invoice.paidAt}` : invoice.dueAt ? ` · ${invoice.dueAt}` : ""}
+                          </p>
+                        </div>
+                        {invoice.invoiceUrl && (
+                          <a
+                            href={invoice.invoiceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-8 w-full items-center justify-center rounded-lg border border-slate-200 px-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 sm:w-auto"
+                          >
+                            {t("settings.viewInvoice")}
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </CardContent>
             </Card>

@@ -2,13 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { accountSubscriptions, billingCheckoutSessions, subscriptionEvents } from "@/server/db/schema";
+import { accountSubscriptions, billingCheckoutSessions, billingInvoices, subscriptionEvents } from "@/server/db/schema";
 import {
   applyBillingProviderEvent,
   cancelAccountSubscription,
   createCheckoutSession,
   InvalidSubscriptionInputError,
   getAccountSubscription,
+  listAccountInvoices,
   listSubscriptionPlans,
   upsertAccountSubscription,
 } from "./subscriptions";
@@ -189,6 +190,95 @@ describe("billing subscriptions service", () => {
         .where(eq(subscriptionEvents.providerEventId, "evt_subscription_updated_1"))
         .all(),
     ).toHaveLength(1);
+  });
+
+  it("stores paid provider invoices and exposes them in billing history", () => {
+    upsertAccountSubscription(testDb.db, "user_buyer", {
+      tier: "pro",
+      status: "active",
+      source: "local_checkout",
+      provider: "stripe",
+      providerCustomerId: "cus_123",
+      providerSubscriptionId: "sub_123",
+      currentPeriodEnd: "2026-06-28T00:00:00.000Z",
+    });
+
+    applyBillingProviderEvent(testDb.db, {
+      id: "evt_invoice_paid_1",
+      type: "invoice.paid",
+      provider: "stripe",
+      providerCustomerId: "cus_123",
+      providerSubscriptionId: "sub_123",
+      providerInvoiceId: "in_123",
+      invoiceNumber: "WIN-1001",
+      invoiceUrl: "https://billing.example.test/invoices/in_123",
+      invoicePdfUrl: "https://billing.example.test/invoices/in_123.pdf",
+      amountDueCents: 7900,
+      amountPaidCents: 7900,
+      currency: "USD",
+      status: "active",
+      paidAt: "2026-05-28T00:00:00.000Z",
+      dueAt: "2026-05-28T00:00:00.000Z",
+    });
+
+    expect(testDb.db.select().from(billingInvoices).all()).toEqual([
+      expect.objectContaining({
+        userId: "user_buyer",
+        providerInvoiceId: "in_123",
+        invoiceNumber: "WIN-1001",
+        status: "paid",
+        amountPaidCents: 7900,
+      }),
+    ]);
+    expect(listAccountInvoices(testDb.db, "user_buyer")).toEqual({
+      invoices: [
+        expect.objectContaining({
+          invoiceNumber: "WIN-1001",
+          status: "paid",
+          amountPaidCents: 7900,
+          invoiceUrl: "https://billing.example.test/invoices/in_123",
+        }),
+      ],
+    });
+  });
+
+  it("updates invoice history and subscription state for failed invoice payments", () => {
+    upsertAccountSubscription(testDb.db, "user_buyer", {
+      tier: "business",
+      status: "active",
+      source: "local_checkout",
+      provider: "stripe",
+      providerCustomerId: "cus_123",
+      providerSubscriptionId: "sub_123",
+      currentPeriodEnd: "2026-06-28T00:00:00.000Z",
+    });
+
+    const result = applyBillingProviderEvent(testDb.db, {
+      id: "evt_invoice_failed_1",
+      type: "invoice.payment_failed",
+      provider: "stripe",
+      providerCustomerId: "cus_123",
+      providerSubscriptionId: "sub_123",
+      providerInvoiceId: "in_failed",
+      invoiceNumber: "WIN-1002",
+      amountDueCents: 24900,
+      amountPaidCents: 0,
+      currency: "USD",
+      status: "past_due",
+      dueAt: "2026-05-28T00:00:00.000Z",
+    });
+
+    expect(result.subscription).toMatchObject({
+      tier: "business",
+      status: "past_due",
+    });
+    expect(listAccountInvoices(testDb.db, "user_buyer").invoices).toEqual([
+      expect.objectContaining({
+        invoiceNumber: "WIN-1002",
+        status: "payment_failed",
+        amountDueCents: 24900,
+      }),
+    ]);
   });
 
   it("marks a subscription to cancel at period end", () => {
