@@ -1,4 +1,15 @@
-export const STATE_CRAWLER_SOURCES = [
+type StateCrawlerSourceDefinition = {
+  stateCode: string;
+  id: string;
+  label: string;
+  baseUrl: string;
+};
+
+export type CrawlerAdapterKind = "dedicated" | "generic" | "none";
+export type CrawlerMaturity = "verified" | "beta" | "generic" | "none";
+export type CrawlerCapability = "query" | "attachments" | "detail_pages" | "pagination";
+
+const STATE_CRAWLER_SOURCE_DEFINITIONS = [
   { stateCode: "AL", id: "al_state_procurement", label: "Alabama State Procurement", baseUrl: "https://purchasing.alabama.gov" },
   { stateCode: "AK", id: "ak_state_procurement", label: "Alaska State Procurement", baseUrl: "https://aws.state.ak.us/OnlinePublicNotices" },
   { stateCode: "AZ", id: "az_state_procurement", label: "Arizona State Procurement", baseUrl: "https://app.az.gov" },
@@ -49,9 +60,76 @@ export const STATE_CRAWLER_SOURCES = [
   { stateCode: "WV", id: "wv_state_procurement", label: "West Virginia State Procurement", baseUrl: "https://www.state.wv.us/admin/purchase" },
   { stateCode: "WI", id: "wi_state_procurement", label: "Wisconsin State Procurement", baseUrl: "https://vendornet.wi.gov" },
   { stateCode: "WY", id: "wy_state_procurement", label: "Wyoming State Procurement", baseUrl: "https://ai.wyo.gov/divisions/procurement" },
-] as const;
+] as const satisfies readonly StateCrawlerSourceDefinition[];
 
-export type StateCrawlerSourceId = (typeof STATE_CRAWLER_SOURCES)[number]["id"];
+type StateCrawlerSourceDefinitionId = (typeof STATE_CRAWLER_SOURCE_DEFINITIONS)[number]["id"];
+
+type CrawlerMetadata = {
+  adapterKind: Exclude<CrawlerAdapterKind, "none">;
+  maturity: Exclude<CrawlerMaturity, "none">;
+  capabilities: readonly CrawlerCapability[];
+};
+
+const GENERIC_CRAWLER_METADATA = {
+  adapterKind: "generic",
+  maturity: "generic",
+  capabilities: ["query"],
+} as const satisfies CrawlerMetadata;
+
+const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinitionId, CrawlerMetadata>> = {
+  ca_caleprocure: {
+    adapterKind: "dedicated",
+    maturity: "verified",
+    capabilities: ["query", "pagination"],
+  },
+  fl_mfmp: {
+    adapterKind: "dedicated",
+    maturity: "verified",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
+  il_bidbuy: {
+    adapterKind: "dedicated",
+    maturity: "verified",
+    capabilities: ["query", "attachments", "detail_pages", "pagination"],
+  },
+  ny_contract_reporter: {
+    adapterKind: "dedicated",
+    maturity: "verified",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
+  or_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "attachments"],
+  },
+  pa_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "attachments"],
+  },
+  sc_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "attachments"],
+  },
+  tx_esbd: {
+    adapterKind: "dedicated",
+    maturity: "verified",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
+};
+
+function metadataForSourceId(id: StateCrawlerSourceDefinitionId): CrawlerMetadata {
+  return DEDICATED_CRAWLER_METADATA_BY_ID[id] ?? GENERIC_CRAWLER_METADATA;
+}
+
+export const STATE_CRAWLER_SOURCES = STATE_CRAWLER_SOURCE_DEFINITIONS.map((source) => ({
+  ...source,
+  ...metadataForSourceId(source.id),
+})) as readonly ((typeof STATE_CRAWLER_SOURCE_DEFINITIONS)[number] & CrawlerMetadata)[];
+
+export type StateCrawlerSourceId = StateCrawlerSourceDefinitionId;
+export type StateCrawlerSourceMetadata = (typeof STATE_CRAWLER_SOURCES)[number];
 
 export const STATE_CRAWLER_SOURCE_IDS_BY_STATE: Record<string, StateCrawlerSourceId> =
   Object.fromEntries(STATE_CRAWLER_SOURCES.map((source) => [source.stateCode, source.id])) as Record<
@@ -59,8 +137,18 @@ export const STATE_CRAWLER_SOURCE_IDS_BY_STATE: Record<string, StateCrawlerSourc
     StateCrawlerSourceId
   >;
 
+export const STATE_CRAWLER_SOURCES_BY_STATE: Record<string, StateCrawlerSourceMetadata> =
+  Object.fromEntries(STATE_CRAWLER_SOURCES.map((source) => [source.stateCode, source])) as Record<
+    string,
+    StateCrawlerSourceMetadata
+  >;
+
 export function stateCrawlerSourceIdForAdminSource(source: { issuerType: string; stateCode: string }) {
   if (source.issuerType !== "state") return null;
 
   return STATE_CRAWLER_SOURCE_IDS_BY_STATE[source.stateCode] ?? null;
+}
+
+export function getStateCrawlerSourceMetadata(stateCode: string) {
+  return STATE_CRAWLER_SOURCES_BY_STATE[stateCode] ?? null;
 }

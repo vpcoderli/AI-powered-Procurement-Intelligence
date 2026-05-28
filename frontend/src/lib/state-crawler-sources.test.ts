@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getStateCrawlerSourceMetadata,
   STATE_CRAWLER_SOURCE_IDS_BY_STATE,
   STATE_CRAWLER_SOURCES,
   stateCrawlerSourceIdForAdminSource,
@@ -20,9 +21,52 @@ describe("state crawler source mapping", () => {
     expect(Object.keys(STATE_CRAWLER_SOURCE_IDS_BY_STATE)).toHaveLength(50);
     expect(new Set(STATE_CRAWLER_SOURCES.map((source) => source.stateCode)).size).toBe(50);
     expect(new Set(STATE_CRAWLER_SOURCES.map((source) => source.id)).size).toBe(50);
+    expect(STATE_CRAWLER_SOURCES.every((source) => source.adapterKind)).toBe(true);
+    expect(STATE_CRAWLER_SOURCES.every((source) => source.maturity)).toBe(true);
+    expect(STATE_CRAWLER_SOURCES.every((source) => source.capabilities.length > 0)).toBe(true);
   });
 
   it("does not map federal sources", () => {
     expect(stateCrawlerSourceIdForAdminSource({ issuerType: "federal", stateCode: "US" })).toBeNull();
+  });
+
+  it("marks dedicated adapters separately from generic state crawlers", () => {
+    expect(getStateCrawlerSourceMetadata("CA")).toMatchObject({
+      id: "ca_caleprocure",
+      adapterKind: "dedicated",
+      maturity: "verified",
+      capabilities: expect.arrayContaining(["query", "pagination"]),
+    });
+    expect(getStateCrawlerSourceMetadata("IL")).toMatchObject({
+      id: "il_bidbuy",
+      adapterKind: "dedicated",
+      maturity: "verified",
+      capabilities: expect.arrayContaining(["query", "attachments", "detail_pages"]),
+    });
+    expect(getStateCrawlerSourceMetadata("OR")).toMatchObject({
+      id: "or_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "attachments"]),
+    });
+    expect(getStateCrawlerSourceMetadata("PA")).toMatchObject({
+      id: "pa_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "attachments"]),
+    });
+    expect(getStateCrawlerSourceMetadata("SC")).toMatchObject({
+      id: "sc_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "attachments"]),
+    });
+    expect(getStateCrawlerSourceMetadata("WA")).toMatchObject({
+      id: "wa_state_procurement",
+      adapterKind: "generic",
+      maturity: "generic",
+      capabilities: ["query"],
+    });
+    expect(getStateCrawlerSourceMetadata("US")).toBeNull();
   });
 });

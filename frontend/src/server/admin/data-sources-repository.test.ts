@@ -191,6 +191,13 @@ describe("admin data sources repository", () => {
       status: "failure",
       errorMessage: "Texas ESBD response was not valid JSON",
     });
+    expect(source).toMatchObject({
+      crawlerSourceId: "tx_esbd",
+      crawlerAdapterKind: "dedicated",
+      crawlerMaturity: "verified",
+      crawlerCapabilities: expect.arrayContaining(["query", "detail_pages"]),
+      crawlerBaseUrl: "https://www.txsmartbuy.gov/esbd",
+    });
     expect(result.summary.failingSources).toBe(1);
   });
 
@@ -221,6 +228,13 @@ describe("admin data sources repository", () => {
     expect(source?.latestLog).toMatchObject({
       source: "SAM.gov",
       status: "success",
+    });
+    expect(source).toMatchObject({
+      crawlerSourceId: null,
+      crawlerAdapterKind: "none",
+      crawlerMaturity: "none",
+      crawlerCapabilities: [],
+      crawlerBaseUrl: null,
     });
     expect(result.summary.healthySources).toBe(1);
   });

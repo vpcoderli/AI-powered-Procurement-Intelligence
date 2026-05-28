@@ -24,6 +24,11 @@ describe("admin page", () => {
     expect(page).toContain('t("admin.forbiddenTitle")');
     expect(page).toContain("if (!canAccessAdminConsole) return");
     expect(page).toContain('t("admin.users")');
+    expect(page).toContain('t("admin.crawler")');
+    expect(page).toContain('t("admin.crawlerAdapter_dedicated")');
+    expect(page).toContain('t("admin.crawlerMaturity_verified")');
+    expect(page).toContain("source.crawlerCapabilities");
+    expect(page).toContain("source.crawlerBaseUrl");
     expect(page).toContain('t("admin.inviteUser")');
     expect(page).toContain('t("admin.temporaryPassword")');
     expect(page).toContain("invitationDraft");
