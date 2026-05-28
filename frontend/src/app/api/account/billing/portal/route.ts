@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json(
-      createCustomerPortalSession(db, sessionUser.id, {
+      await createCustomerPortalSession(db, sessionUser.id, {
         origin: new URL(request.url).origin,
       }),
     );

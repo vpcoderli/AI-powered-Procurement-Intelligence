@@ -25,7 +25,7 @@ export async function POST(request: Request) {
       return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
     }
 
-    return NextResponse.json(cancelAccountSubscription(db, sessionUser.id));
+    return NextResponse.json(await cancelAccountSubscription(db, sessionUser.id));
   } catch (error) {
     if (error instanceof InvalidSubscriptionInputError) {
       return errorResponse("INVALID_REQUEST", error.message, 400);

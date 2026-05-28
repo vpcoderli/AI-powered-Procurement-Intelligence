@@ -8,6 +8,14 @@ import {
   normalizeAccountTier,
   type AccountTier,
 } from "@/server/auth/entitlements";
+import { InvalidSubscriptionInputError } from "./errors";
+import {
+  createConfiguredBillingProvider,
+  stripePriceIdForTier,
+  type BillingProviderAdapter,
+} from "./providers";
+
+export { InvalidSubscriptionInputError } from "./errors";
 
 export const SUBSCRIPTION_STATUSES = ["none", "trialing", "active", "past_due", "canceled"] as const;
 export const SUBSCRIPTION_SOURCES = ["admin_override", "local_checkout", "billing_provider"] as const;
@@ -117,10 +125,12 @@ export interface UpsertAccountSubscriptionInput {
 export interface CreateCheckoutSessionInput {
   tier: AccountTier;
   origin?: string;
+  providerAdapter?: BillingProviderAdapter | null;
 }
 
 export interface CreateCustomerPortalSessionInput {
   origin?: string;
+  providerAdapter?: BillingProviderAdapter | null;
 }
 
 export interface BillingProviderEvent {
@@ -151,13 +161,6 @@ export interface BillingProviderEvent {
   dueAt?: string | null;
   paidAt?: string | null;
   metadata?: Record<string, unknown>;
-}
-
-export class InvalidSubscriptionInputError extends Error {
-  constructor(message = "Invalid subscription input") {
-    super(message);
-    this.name = "InvalidSubscriptionInputError";
-  }
 }
 
 const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
@@ -236,6 +239,14 @@ function hostedCheckoutUrl(input: {
     successUrl: `${returnUrl}?checkoutSession=${input.checkoutSessionId}&checkout=success`,
     cancelUrl: `${returnUrl}?checkout=cancel`,
   });
+}
+
+function checkoutSuccessUrl(input: { checkoutSessionId: string; origin?: string }) {
+  return `${settingsReturnUrl(input.origin)}?checkoutSession=${input.checkoutSessionId}&checkout=success`;
+}
+
+function checkoutCancelUrl(origin?: string) {
+  return `${settingsReturnUrl(origin)}?checkout=cancel`;
 }
 
 function hostedCustomerPortalUrl(input: {
@@ -744,8 +755,8 @@ export function createCheckoutSession(
   db: AppDatabase,
   userId: string,
   input: CreateCheckoutSessionInput,
-): CheckoutSessionResponse {
-  getUserOrThrow(db, userId);
+): Promise<CheckoutSessionResponse> | CheckoutSessionResponse {
+  const user = getUserOrThrow(db, userId);
 
   if (input.tier === "free" || input.tier === "enterprise") {
     throw new InvalidSubscriptionInputError("Only Pro and Business plans support self-service checkout");
@@ -753,68 +764,127 @@ export function createCheckoutSession(
 
   const timestamp = nowIso();
   const checkoutId = `checkout_${randomUUID()}`;
-  const isHostedProvider = Boolean(process.env.BILLING_CHECKOUT_URL_TEMPLATE?.trim());
-  const providerSessionId = `${isHostedProvider ? billingProviderName() : "local"}_cs_${randomUUID()}`;
-  const checkoutUrl = hostedCheckoutUrl({
-    checkoutSessionId: checkoutId,
-    providerSessionId,
-    tier: input.tier,
-    userId,
-    origin: input.origin,
-  });
+  const providerAdapter = input.providerAdapter ?? createConfiguredBillingProvider();
 
-  db.insert(billingCheckoutSessions)
-    .values({
-      id: checkoutId,
+  const persistCheckoutSession = (session: {
+    providerSessionId: string;
+    checkoutUrl: string;
+    expiresAt?: string | null;
+    provider: "local_checkout" | "billing_provider";
+    eventSource: SubscriptionSource;
+  }) => {
+    db.insert(billingCheckoutSessions)
+      .values({
+        id: checkoutId,
+        userId,
+        tier: input.tier,
+        status: "open",
+        provider: session.provider,
+        providerSessionId: session.providerSessionId,
+        checkoutUrl: session.checkoutUrl,
+        expiresAt: session.expiresAt ?? addHoursIso(timestamp, 1),
+        completedAt: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .run();
+
+    writeSubscriptionEvent(db, {
       userId,
-      tier: input.tier,
-      status: "open",
-      provider: isHostedProvider ? "billing_provider" : "local_checkout",
-      providerSessionId,
-      checkoutUrl,
-      expiresAt: addHoursIso(timestamp, 1),
-      completedAt: null,
+      eventType: "checkout_started",
+      fromTier: null,
+      toTier: input.tier,
+      fromStatus: null,
+      toStatus: "none",
+      source: session.eventSource,
+      metadata: { checkoutSessionId: checkoutId, providerSessionId: session.providerSessionId },
       createdAt: timestamp,
-      updatedAt: timestamp,
-    })
-    .run();
+    });
 
-  writeSubscriptionEvent(db, {
-    userId,
-    eventType: "checkout_started",
-    fromTier: null,
-    toTier: input.tier,
-    fromStatus: null,
-    toStatus: "none",
-    source: "local_checkout",
-    metadata: { checkoutSessionId: checkoutId, providerSessionId },
-    createdAt: timestamp,
-  });
+    const row = db
+      .select()
+      .from(billingCheckoutSessions)
+      .where(eq(billingCheckoutSessions.id, checkoutId))
+      .limit(1)
+      .get();
 
-  const row = db
-    .select()
-    .from(billingCheckoutSessions)
-    .where(eq(billingCheckoutSessions.id, checkoutId))
-    .limit(1)
-    .get();
+    if (!row) {
+      throw new InvalidSubscriptionInputError("Checkout session could not be created");
+    }
 
-  if (!row) {
-    throw new InvalidSubscriptionInputError("Checkout session could not be created");
+    return { checkoutSession: checkoutSessionFromRow(row) };
+  };
+
+  if (providerAdapter) {
+    if (!user.email) {
+      throw new InvalidSubscriptionInputError("User email is required for provider checkout");
+    }
+
+    return providerAdapter.createCheckoutSession({
+      userId,
+      email: user.email,
+      tier: input.tier,
+      priceId: stripePriceIdForTier(input.tier),
+      successUrl: checkoutSuccessUrl({ checkoutSessionId: checkoutId, origin: input.origin }),
+      cancelUrl: checkoutCancelUrl(input.origin),
+    }).then((providerSession) =>
+      persistCheckoutSession({
+        provider: "billing_provider",
+        eventSource: "billing_provider",
+        ...providerSession,
+      }),
+    );
   }
 
-  return { checkoutSession: checkoutSessionFromRow(row) };
+  const isHostedProvider = Boolean(process.env.BILLING_CHECKOUT_URL_TEMPLATE?.trim());
+  const providerSessionId = `${isHostedProvider ? billingProviderName() : "local"}_cs_${randomUUID()}`;
+
+  return persistCheckoutSession({
+    provider: isHostedProvider ? "billing_provider" : "local_checkout",
+    eventSource: isHostedProvider ? "billing_provider" : "local_checkout",
+    providerSessionId,
+    checkoutUrl: hostedCheckoutUrl({
+      checkoutSessionId: checkoutId,
+      providerSessionId,
+      tier: input.tier,
+      userId,
+      origin: input.origin,
+    }),
+    expiresAt: addHoursIso(timestamp, 1),
+  });
 }
 
 export function createCustomerPortalSession(
   db: AppDatabase,
   userId: string,
   input: CreateCustomerPortalSessionInput = {},
-): CustomerPortalSessionResponse {
+): Promise<CustomerPortalSessionResponse> | CustomerPortalSessionResponse {
   getUserOrThrow(db, userId);
 
   const subscription = existingSubscriptionForUser(db, userId);
+  const providerAdapter = input.providerAdapter ?? createConfiguredBillingProvider();
   const isHostedProvider = Boolean(process.env.BILLING_CUSTOMER_PORTAL_URL_TEMPLATE?.trim());
   const returnUrl = settingsReturnUrl(input.origin);
+
+  if (providerAdapter) {
+    if (!subscription?.providerCustomerId) {
+      throw new InvalidSubscriptionInputError("Provider customer id is required for billing portal");
+    }
+
+    return providerAdapter.createCustomerPortalSession({
+      userId,
+      providerCustomerId: subscription.providerCustomerId,
+      returnUrl,
+    }).then((providerSession) => ({
+      portalSession: {
+        userId,
+        provider: "billing_provider",
+        portalUrl: providerSession.portalUrl,
+        returnUrl,
+        createdAt: nowIso(),
+      },
+    }));
+  }
 
   return {
     portalSession: {
@@ -969,7 +1039,11 @@ export function applyBillingProviderEvent(
   return result;
 }
 
-export function cancelAccountSubscription(db: AppDatabase, userId: string): AccountSubscriptionResponse {
+export function cancelAccountSubscription(
+  db: AppDatabase,
+  userId: string,
+  options: { providerAdapter?: BillingProviderAdapter | null } = {},
+): Promise<AccountSubscriptionResponse> | AccountSubscriptionResponse {
   getUserOrThrow(db, userId);
   const row = db
     .select()
@@ -985,27 +1059,47 @@ export function cancelAccountSubscription(db: AppDatabase, userId: string): Acco
   const timestamp = nowIso();
   const status = normalizeSubscriptionStatus(row.status);
   const tier = normalizeAccountTier(row.tier);
+  const providerAdapter = options.providerAdapter ?? createConfiguredBillingProvider();
 
-  db.update(accountSubscriptions)
-    .set({
-      cancelAtPeriodEnd: 1,
-      updatedAt: timestamp,
-    })
-    .where(eq(accountSubscriptions.id, row.id))
-    .run();
+  const markLocalCancellation = (providerResult?: { currentPeriodEnd?: string | null; status?: SubscriptionStatus }) => {
+    const nextStatus = providerResult?.status ?? status;
 
-  writeSubscriptionEvent(db, {
-    userId,
-    subscriptionId: row.id,
-    eventType: "subscription_cancel_scheduled",
-    fromTier: tier,
-    toTier: tier,
-    fromStatus: status,
-    toStatus: status,
-    source: normalizeSubscriptionSource(row.source),
-    metadata: { providerSubscriptionId: row.providerSubscriptionId },
-    createdAt: timestamp,
-  });
+    db.update(accountSubscriptions)
+      .set({
+        status: nextStatus,
+        currentPeriodEnd: providerResult?.currentPeriodEnd ?? row.currentPeriodEnd,
+        cancelAtPeriodEnd: 1,
+        updatedAt: timestamp,
+      })
+      .where(eq(accountSubscriptions.id, row.id))
+      .run();
 
-  return getAccountSubscription(db, userId);
+    writeSubscriptionEvent(db, {
+      userId,
+      subscriptionId: row.id,
+      eventType: "subscription_cancel_scheduled",
+      fromTier: tier,
+      toTier: tier,
+      fromStatus: status,
+      toStatus: nextStatus,
+      source: normalizeSubscriptionSource(row.source),
+      metadata: { providerSubscriptionId: row.providerSubscriptionId },
+      createdAt: timestamp,
+    });
+
+    return getAccountSubscription(db, userId);
+  };
+
+  if (providerAdapter && normalizeSubscriptionSource(row.source) === "billing_provider") {
+    if (!row.providerSubscriptionId) {
+      throw new InvalidSubscriptionInputError("Provider subscription id is required to cancel subscription");
+    }
+
+    return providerAdapter.scheduleSubscriptionCancel({
+      userId,
+      providerSubscriptionId: row.providerSubscriptionId,
+    }).then((providerResult) => markLocalCancellation(providerResult));
+  }
+
+  return markLocalCancellation();
 }
