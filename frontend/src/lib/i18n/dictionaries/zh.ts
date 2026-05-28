@@ -331,6 +331,34 @@ export const zh: Dictionary = {
       submission: "提交",
       risk: "风险",
     },
+    pursuitDecision: "投标 / 放弃决策",
+    pursuitDecisionLoading: "正在加载决策建议...",
+    pursuitDecisionSaved: "投标决策已保存。",
+    pursuitDecisionSaveError: "无法保存投标决策。",
+    recommendation: "推荐",
+    decision: "决策",
+    savePursuitDecision: "保存决策",
+    decisionReasons: "原因",
+    decisionReasonsPlaceholder: "每行一个原因...",
+    decisionNotes: "决策备注",
+    decisionNotesPlaceholder: "添加背景、假设或下一步...",
+    decisionHistory: "决策历史",
+    noDecisionHistory: "暂无决策记录。",
+    pursuitRecommendations: {
+      pursue: "继续投标",
+      no_bid: "放弃投标",
+      review: "需要复核",
+    },
+    pursuitConfidence: {
+      low: "低置信度",
+      medium: "中等置信度",
+      high: "高置信度",
+    },
+    pursuitDecisions: {
+      pursue: "继续投标",
+      no_bid: "放弃投标",
+      defer: "暂缓",
+    },
     submissionMethods: {
       external_portal: "外部门户",
       email: "邮件",
@@ -354,6 +382,10 @@ export const zh: Dictionary = {
       compliance: {
         title: "合规清单",
         description: "跟踪要求、完成状态、备注和证据准备情况。",
+      },
+      decision: {
+        title: "投标 / 放弃",
+        description: "记录推荐、决策原因、备注和历史。",
       },
       award: {
         title: "状态追踪",

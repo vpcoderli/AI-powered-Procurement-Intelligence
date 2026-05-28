@@ -13,9 +13,11 @@ import {
   confirmSubmission,
   fetchComplianceManifest,
   fetchIntent,
+  fetchPursuitDecisionBoard,
   fetchSubmissionGuidance,
   updateComplianceManifestItem,
   updateIntentStatus,
+  updatePursuitDecision,
   updateSubmissionGuidance,
 } from "@/lib/api/intents";
 import { lockedFeatureMessage, useFeature } from "@/lib/features/useFeature";
@@ -33,6 +35,11 @@ import {
   COMPLIANCE_ITEM_STATUSES,
 } from "@/server/compliance/types";
 import type {
+  PursuitDecisionBoard,
+  PursuitDecisionValue,
+} from "@/server/pursuit/types";
+import { PURSUIT_DECISIONS } from "@/server/pursuit/types";
+import type {
   SubmissionConfirmation,
   SubmissionGuidance,
   SubmissionMethod,
@@ -43,6 +50,7 @@ import {
   Building2,
   CalendarClock,
   CheckCircle2,
+  ClipboardCheck,
   ExternalLink,
   FileCheck2,
   Gauge,
@@ -79,6 +87,7 @@ const submissionMethods: SubmissionMethod[] = [
 
 const complianceStatuses: ComplianceItemStatus[] = [...COMPLIANCE_ITEM_STATUSES];
 const complianceEvidenceStatuses: ComplianceEvidenceStatus[] = [...COMPLIANCE_EVIDENCE_STATUSES];
+const pursuitDecisionOptions: PursuitDecisionValue[] = [...PURSUIT_DECISIONS];
 
 type SubmissionDraft = Pick<
   SubmissionGuidance,
@@ -97,6 +106,12 @@ interface ConfirmationDraft {
   confirmationNotes: string;
 }
 
+interface PursuitDecisionDraft {
+  decision: PursuitDecisionValue;
+  reasons: string;
+  notes: string;
+}
+
 const defaultSubmissionDraft: SubmissionDraft = {
   method: "unknown",
   portalUrl: "",
@@ -104,6 +119,12 @@ const defaultSubmissionDraft: SubmissionDraft = {
   requiresRegistration: false,
   requiresPhysicalDelivery: false,
   requiresAddendaAcknowledgement: false,
+};
+
+const defaultPursuitDecisionDraft: PursuitDecisionDraft = {
+  decision: "defer",
+  reasons: "",
+  notes: "",
 };
 
 function currentDatetimeLocal() {
@@ -168,8 +189,15 @@ export default function IntentWorkspacePage() {
   const [complianceSavingItemId, setComplianceSavingItemId] = useState<string | null>(null);
   const [complianceError, setComplianceError] = useState<Error | null>(null);
   const [complianceNotice, setComplianceNotice] = useState("");
+  const [pursuitDecisionBoard, setPursuitDecisionBoard] = useState<PursuitDecisionBoard | null>(null);
+  const [pursuitDecisionDraft, setPursuitDecisionDraft] = useState<PursuitDecisionDraft>(defaultPursuitDecisionDraft);
+  const [isPursuitDecisionLoading, setIsPursuitDecisionLoading] = useState(false);
+  const [isPursuitDecisionSaving, setIsPursuitDecisionSaving] = useState(false);
+  const [pursuitDecisionError, setPursuitDecisionError] = useState<Error | null>(null);
+  const [pursuitDecisionNotice, setPursuitDecisionNotice] = useState("");
   const submissionGuidanceFeature = useFeature("submission_guidance");
   const complianceManifestFeature = useFeature("compliance_manifest");
+  const pursuitDecisionFeature = useFeature("pursue_no_bid");
 
   const intentId = typeof params?.id === "string" ? params.id : Array.isArray(params?.id) ? params.id[0] : "";
 
@@ -293,6 +321,52 @@ export default function IntentWorkspacePage() {
       cancelled = true;
     };
   }, [intentId, complianceManifestFeature.enabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled || !mountedRef.current) return;
+
+      setPursuitDecisionBoard(null);
+      setPursuitDecisionDraft(defaultPursuitDecisionDraft);
+      setPursuitDecisionNotice("");
+      setPursuitDecisionError(null);
+
+      if (!intentId || !pursuitDecisionFeature.enabled) {
+        setIsPursuitDecisionLoading(false);
+        return;
+      }
+
+      setIsPursuitDecisionLoading(true);
+
+      fetchPursuitDecisionBoard(intentId)
+        .then((response) => {
+          if (cancelled || !mountedRef.current) return;
+
+          setPursuitDecisionBoard(response.decisionBoard);
+          if (response.decisionBoard.currentDecision) {
+            setPursuitDecisionDraft({
+              decision: response.decisionBoard.currentDecision.decision,
+              reasons: response.decisionBoard.currentDecision.reasons.join("\n"),
+              notes: response.decisionBoard.currentDecision.notes,
+            });
+          }
+        })
+        .catch((err) => {
+          if (cancelled || !mountedRef.current) return;
+          setPursuitDecisionError(err instanceof Error ? err : new Error("Failed to load pursuit decision"));
+        })
+        .finally(() => {
+          if (cancelled || !mountedRef.current) return;
+          setIsPursuitDecisionLoading(false);
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [intentId, pursuitDecisionFeature.enabled]);
 
   const matchComponents = useMemo(() => {
     if (!intent) return [];
@@ -426,6 +500,36 @@ export default function IntentWorkspacePage() {
     } finally {
       if (mountedRef.current) {
         setComplianceSavingItemId(null);
+      }
+    }
+  };
+
+  const handleSavePursuitDecision = async () => {
+    if (!intent || !pursuitDecisionFeature.enabled || isPursuitDecisionSaving) return;
+
+    setIsPursuitDecisionSaving(true);
+    setPursuitDecisionNotice("");
+    setPursuitDecisionError(null);
+
+    try {
+      const response = await updatePursuitDecision(intent.id, {
+        decision: pursuitDecisionDraft.decision,
+        reasons: pursuitDecisionDraft.reasons
+          .split("\n")
+          .map((reason) => reason.trim())
+          .filter(Boolean),
+        notes: pursuitDecisionDraft.notes.trim(),
+      });
+      if (!mountedRef.current) return;
+
+      setPursuitDecisionBoard(response.decisionBoard);
+      setPursuitDecisionNotice(t("intentsPage.pursuitDecisionSaved"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setPursuitDecisionError(err instanceof Error ? err : new Error("Failed to save pursuit decision"));
+    } finally {
+      if (mountedRef.current) {
+        setIsPursuitDecisionSaving(false);
       }
     }
   };
@@ -611,18 +715,24 @@ export default function IntentWorkspacePage() {
               ["brief", Sparkles],
               ["submission", Route],
               ["compliance", FileCheck2],
+              ["decision", ClipboardCheck],
               ["award", PackageCheck],
             ].map(([key, Icon]) => {
               const ModuleIcon = Icon as typeof Target;
               const isSubmissionLocked = key === "submission" && !submissionGuidanceFeature.enabled;
               const isComplianceLocked = key === "compliance" && !complianceManifestFeature.enabled;
-              const isLocked = isSubmissionLocked || isComplianceLocked;
+              const isDecisionLocked = key === "decision" && !pursuitDecisionFeature.enabled;
+              const isLocked = isSubmissionLocked || isComplianceLocked || isDecisionLocked;
               const requiredTier = isComplianceLocked
                 ? complianceManifestFeature.requiredTier
-                : submissionGuidanceFeature.requiredTier;
+                : isDecisionLocked
+                  ? pursuitDecisionFeature.requiredTier
+                  : submissionGuidanceFeature.requiredTier;
               const lockedMessage = isComplianceLocked
                 ? lockedFeatureMessage("compliance_manifest")
-                : lockedFeatureMessage("submission_guidance");
+                : isDecisionLocked
+                  ? lockedFeatureMessage("pursue_no_bid")
+                  : lockedFeatureMessage("submission_guidance");
               return (
                 <div
                   key={key as string}
@@ -690,6 +800,162 @@ export default function IntentWorkspacePage() {
           </div>
           <p className="mt-4 break-words text-sm leading-6 text-slate-600">{intent.match.explanation}</p>
         </article>
+      </section>
+
+      <section
+        className={`winbids-panel pursuitDecision rounded-lg border p-5 shadow-sm ${
+          pursuitDecisionFeature.enabled ? "border-slate-200 bg-white" : "border-amber-200 bg-amber-50/60"
+        }`}
+      >
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-700">
+              {pursuitDecisionFeature.enabled
+                ? t("intentsPage.pursuitDecision")
+                : t("intentsPage.nextPhasePreview")}
+            </p>
+            <h2 className="mt-1 flex items-center gap-2 text-2xl font-black text-slate-950">
+              <ClipboardCheck size={21} className="text-blue-700" aria-hidden="true" />
+              {t("intentsPage.pursuitDecision")}
+            </h2>
+          </div>
+          <span className="w-fit rounded-full border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-700">
+            {pursuitDecisionFeature.enabled
+              ? pursuitDecisionBoard
+                ? t(`intentsPage.pursuitRecommendations.${pursuitDecisionBoard.recommendation.recommendation}`)
+                : t("intentsPage.pursuitDecisionLoading")
+              : lockedFeatureMessage("pursue_no_bid")}
+          </span>
+        </div>
+
+        {!pursuitDecisionFeature.enabled ? (
+          <p className="mt-4 text-sm font-semibold leading-6 text-amber-800">
+            {lockedFeatureMessage("pursue_no_bid")}
+          </p>
+        ) : (
+          <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(300px,1.05fr)]">
+            <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
+              <p className="text-sm font-black text-slate-950">{t("intentsPage.recommendation")}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Badge variant="outline" className="border-blue-100 bg-blue-50 text-blue-700">
+                  {pursuitDecisionBoard
+                    ? t(`intentsPage.pursuitRecommendations.${pursuitDecisionBoard.recommendation.recommendation}`)
+                    : t("intentsPage.pursuitDecisionLoading")}
+                </Badge>
+                {pursuitDecisionBoard && (
+                  <Badge variant="outline" className="border-slate-200 bg-white text-slate-700">
+                    {t(`intentsPage.pursuitConfidence.${pursuitDecisionBoard.recommendation.confidence}`)}
+                  </Badge>
+                )}
+              </div>
+              <ul className="mt-4 space-y-2">
+                {(pursuitDecisionBoard?.recommendation.reasons ?? [t("intentsPage.pursuitDecisionLoading")]).map((reason) => (
+                  <li key={reason} className="flex gap-2 text-sm font-semibold leading-6 text-slate-700">
+                    <ShieldAlert size={16} className="mt-1 shrink-0 text-amber-600" aria-hidden="true" />
+                    <span className="break-words">{reason}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                  {t("intentsPage.decision")}
+                  <Select
+                    value={pursuitDecisionDraft.decision}
+                    onValueChange={(value) =>
+                      setPursuitDecisionDraft((current) => ({
+                        ...current,
+                        decision: value as PursuitDecisionValue,
+                      }))
+                    }
+                    disabled={isPursuitDecisionLoading || isPursuitDecisionSaving}
+                  >
+                    <SelectTrigger className="h-9 rounded-lg border-slate-200 bg-white shadow-sm focus:ring-slate-900">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-lg border-slate-200 shadow-lg">
+                      {pursuitDecisionOptions.map((decision) => (
+                        <SelectItem key={decision} value={decision}>
+                          {t(`intentsPage.pursuitDecisions.${decision}`)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+
+                <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                  {t("intentsPage.decisionReasons")}
+                  <textarea
+                    value={pursuitDecisionDraft.reasons}
+                    onChange={(event) =>
+                      setPursuitDecisionDraft((current) => ({ ...current, reasons: event.target.value }))
+                    }
+                    disabled={isPursuitDecisionLoading || isPursuitDecisionSaving}
+                    placeholder={t("intentsPage.decisionReasonsPlaceholder")}
+                    className="min-h-20 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                  />
+                </label>
+              </div>
+
+              <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                {t("intentsPage.decisionNotes")}
+                <textarea
+                  value={pursuitDecisionDraft.notes}
+                  onChange={(event) =>
+                    setPursuitDecisionDraft((current) => ({ ...current, notes: event.target.value }))
+                  }
+                  disabled={isPursuitDecisionLoading || isPursuitDecisionSaving}
+                  placeholder={t("intentsPage.decisionNotesPlaceholder")}
+                  className="min-h-20 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                />
+              </label>
+
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Button
+                  onClick={() => void handleSavePursuitDecision()}
+                  disabled={isPursuitDecisionLoading || isPursuitDecisionSaving}
+                  className="w-fit rounded-lg bg-slate-950 text-white hover:bg-slate-800"
+                >
+                  {isPursuitDecisionSaving ? t("intentsPage.submissionSaving") : t("intentsPage.savePursuitDecision")}
+                </Button>
+                <p className="min-h-5 text-sm font-semibold text-slate-500">
+                  {pursuitDecisionError
+                    ? t("intentsPage.pursuitDecisionSaveError")
+                    : pursuitDecisionNotice}
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <p className="text-sm font-black text-slate-950">{t("intentsPage.decisionHistory")}</p>
+                <div className="mt-3 space-y-2">
+                  {(pursuitDecisionBoard?.history.length ? pursuitDecisionBoard.history : []).map((decision) => (
+                    <div key={decision.id} className="rounded-lg border border-slate-100 bg-slate-50/70 p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className="border-slate-200 bg-white text-slate-700">
+                          {t(`intentsPage.pursuitDecisions.${decision.decision}`)}
+                        </Badge>
+                        <span className="text-xs font-bold text-slate-400">{decision.createdAt}</span>
+                      </div>
+                      {decision.reasons.length > 0 && (
+                        <p className="mt-2 text-sm font-semibold leading-6 text-slate-600">
+                          {decision.reasons.join(" / ")}
+                        </p>
+                      )}
+                      {decision.notes && (
+                        <p className="mt-1 text-sm leading-6 text-slate-500">{decision.notes}</p>
+                      )}
+                    </div>
+                  ))}
+                  {!pursuitDecisionBoard?.history.length && (
+                    <p className="text-sm font-semibold text-slate-500">{t("intentsPage.noDecisionHistory")}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
 
       <section

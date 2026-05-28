@@ -30,6 +30,7 @@ This document is the working checklist for local development. Update it after ea
 | AI-like bid brief | Deterministic brief, key dates, initial checklist, risk flags. |
 | Submission Guidance | `submission_paths`, `submission_confirmations`, generator, service, Pro-gated API routes, API client, Intent workspace UI for generated guidance, editable submission fields, readiness/risk lists, and manual submission confirmation. |
 | Compliance Manifest Lite | `compliance_manifest_items`, generator, service, Business-gated API route, API client, and Intent workspace UI for requirement status, evidence status, and notes. |
+| Pursue / No-Bid Decision Lite | `pursuit_decisions`, recommendation generator, Pro-gated API route, API client, and Intent workspace UI for decision capture, reasons, notes, and history. |
 | Static product demo | `/winbids-demo` isolated prototype page from Drive frontend references. |
 
 ### Partially Implemented
@@ -41,7 +42,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab | Billing provider sync, real checkout, invoices, cancellation |
-| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits; Submission Guidance is Pro-gated and Compliance Manifest is Business-gated | Apply guards/limits to every future gated API and add richer usage dashboards |
+| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated | Apply guards/limits to every future gated API and add richer usage dashboards |
 | Search alerts | API/service foundation exists | Full alert management UI, digest configuration, real email delivery |
 | Notifications | Notification outbox foundation exists | Provider configuration, delivery retries, user notification preferences |
 | Admin data QA | Source status and logs exist | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
@@ -52,7 +53,6 @@ This document is the working checklist for local development. Update it after ea
 |---|---|
 | Billing integration | Checkout, subscription status sync, invoices, cancellation, trial expiration. |
 | Organization team lifecycle | Ownership transfer flow, member disable/reactivation, pending invitation acceptance. |
-| Pursue / No-Bid Decision Lite | Recommendation, decision capture, reasons, decision history. |
 | Response Workspace | Tasks, artifacts, internal checkpoints, reusable documents. |
 | Sourcing / quote workflow | Partner database, quote requests, quote comparison, attachment storage. |
 | Award / tabulation tracking | Award notices, bid status monitoring, tabulation records. |
@@ -62,11 +62,11 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Pursue / No-Bid Decision Lite** next, then choose between **Billing Provider Sync** and **Account Lifecycle** depending on whether the following sprint should deepen bid execution workflow or connect real monetization.
+Prioritize **Billing Provider Sync** next, then choose between **Account Lifecycle** and **Response Workspace** depending on whether the following sprint should connect real monetization or deepen bid execution workflow.
 
 Reason:
 
-- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, and Business-gated Compliance Manifest now exist.
+- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Business-gated Compliance Manifest, and Pro-gated Pursue / No-Bid Decision now exist.
 - The remaining account gap is not basic self-service; it is owner transfer/member reactivation, real billing provider sync, broader usage dashboards, and account deletion/export.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
@@ -123,17 +123,17 @@ Current local limits:
 
 ## Suggested Implementation Order
 
-1. **Product workflow depth**
-   - Build Pursue / No-Bid Decision Lite.
-
-2. **Billing provider sync**
+1. **Billing provider sync**
    - Connect checkout/customer/subscription webhooks.
    - Reconcile provider subscription state to `account_subscriptions`.
    - Add invoice/cancel/trial UI.
 
-3. **Account lifecycle**
+2. **Account lifecycle**
    - Add account deletion/export.
    - Add ownership transfer and member reactivation.
+
+3. **Product workflow depth**
+   - Build Response Workspace.
 
 ## Completed Phase: Account / Role / Tier Foundation
 
@@ -441,6 +441,36 @@ Current local limits:
 
 建议下一步：
 - 开发 Pursue / No-Bid Decision Lite，让 Pro+ 用户能基于匹配、风险、合规清单进度记录是否继续投标及原因。
+
+## Completed Phase: Pursue / No-Bid Decision Lite
+
+本阶段完成：
+- 新增 `pursuit_decisions` 表与迁移，用于保存 Intent 维度的投标/放弃决策历史。
+- 新增 Pursuit recommendation generator，基于匹配分数、风险提示、资料缺口和截止日期生成 `pursue` / `no_bid` / `review` 推荐。
+- 新增 Pursuit service/repository，支持读取推荐、读取当前决策、保存新决策记录、返回历史记录。
+- 新增 `/api/intents/[id]/decision` GET/PATCH，并使用 `pursue_no_bid` feature gate；Pro/Business/Enterprise 可访问，Free 会返回 `FEATURE_NOT_AVAILABLE`。
+- 前端 API client 新增 `fetchPursuitDecisionBoard()` 与 `updatePursuitDecision()`。
+- Intent 工作台新增 Pursue / No-Bid Decision 面板：低套餐显示锁定说明；Pro+ 显示推荐、置信度、决策选择、原因、备注和历史记录。
+- 补齐中英文文案和静态页面检查。
+
+验证：
+- `npm test -- src/server/pursuit/service.test.ts 'src/app/api/intents/[id]/decision/route.test.ts' src/lib/api/intents.test.ts src/server/db/schema.test.ts src/app/intents/page.test.ts`
+- `npm test`
+- `npm run lint`
+- `npm run db:migrate`
+- `npm run build`
+- 浏览器烟测：打开 Intent 工作台，确认 Pursue / No-Bid Decision 面板、推荐区、保存决策按钮和决策历史渲染。
+
+当前还剩：
+1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
+2. Account deletion/export 账号数据导出与删除。
+3. Organization team lifecycle：owner 转移流程、成员禁用/恢复、邀请接受/邮件投递。
+4. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
+5. Response Workspace：任务、文档、内部检查点和附件/证据管理。
+6. Production AI layer：LLM-backed extraction、引用、置信度和不确定性处理。
+
+建议下一步：
+- 优先做 Billing Provider Sync，把当前本地套餐/权限基础接到真实 checkout、webhook 和订阅状态同步上。
 
 ## Status Update Template
 

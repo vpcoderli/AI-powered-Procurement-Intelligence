@@ -214,6 +214,18 @@ export function runMigrations(db: AppDatabase) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS pursuit_decisions (
+      id TEXT PRIMARY KEY,
+      intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
+      bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      decision TEXT NOT NULL,
+      reasons_json TEXT NOT NULL DEFAULT '[]',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS alerts (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -326,6 +338,9 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_compliance_manifest_items_intent_id ON compliance_manifest_items(intent_id);
     CREATE INDEX IF NOT EXISTS idx_compliance_manifest_items_user_id ON compliance_manifest_items(user_id);
     CREATE INDEX IF NOT EXISTS idx_compliance_manifest_items_status ON compliance_manifest_items(status);
+    CREATE INDEX IF NOT EXISTS idx_pursuit_decisions_intent_id ON pursuit_decisions(intent_id);
+    CREATE INDEX IF NOT EXISTS idx_pursuit_decisions_user_id ON pursuit_decisions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_pursuit_decisions_decision ON pursuit_decisions(decision);
     CREATE INDEX IF NOT EXISTS idx_alerts_user_id ON alerts(user_id);
     CREATE INDEX IF NOT EXISTS idx_crawler_logs_source_started ON crawler_logs(source, started_at);
     CREATE INDEX IF NOT EXISTS idx_crawler_logs_run_id ON crawler_logs(run_id);

@@ -6,9 +6,11 @@ import {
   fetchComplianceManifest,
   fetchIntent,
   fetchIntents,
+  fetchPursuitDecisionBoard,
   updateComplianceManifestItem,
   fetchSubmissionGuidance,
   updateIntentStatus,
+  updatePursuitDecision,
   updateSubmissionGuidance,
 } from "./intents";
 
@@ -172,6 +174,35 @@ describe("intent API client", () => {
 
     expect(result).toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/compliance", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  });
+
+  it("fetches pursuit decision board with an encoded intent id", async () => {
+    const body = { decisionBoard: { intentId: "intent/with space", history: [] } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await fetchPursuitDecisionBoard("intent/with space");
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/decision");
+  });
+
+  it("updates a pursuit decision", async () => {
+    const payload = {
+      decision: "no_bid" as const,
+      reasons: ["Poor fit"],
+      notes: "Do not pursue this one.",
+    };
+    const body = { decisionBoard: { intentId: "intent/with space", currentDecision: payload } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await updatePursuitDecision("intent/with space", payload);
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/decision", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
