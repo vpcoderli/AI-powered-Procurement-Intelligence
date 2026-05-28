@@ -42,6 +42,7 @@ describe("principal resolution", () => {
         organizationId: expect.stringMatching(/^org_/),
         organizationName: "buyer's Workspace",
         role: "owner",
+        tier: "free",
       },
     });
     expect(

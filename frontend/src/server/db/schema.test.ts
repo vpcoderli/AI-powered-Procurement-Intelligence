@@ -215,6 +215,13 @@ describe("database schema", () => {
       expect(userColumns).toContain("account_tier");
       expect(userColumns).toContain("is_disabled");
 
+      const organizationColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(organizations)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(organizationColumns).toContain("account_tier");
+
       const subscriptionEventColumns = testDb.db.$client
         .prepare("PRAGMA table_info(subscription_events)")
         .all()

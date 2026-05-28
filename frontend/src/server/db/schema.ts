@@ -222,6 +222,7 @@ export const workspaceInvitations = sqliteTable(
 export const organizations = sqliteTable("organizations", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
+  accountTier: text("account_tier").notNull().default("free"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

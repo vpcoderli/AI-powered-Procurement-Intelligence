@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { and, asc, desc, eq, isNotNull, like, or } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { hashPassword } from "@/server/auth/password";
+import { syncOwnedWorkspaceTier } from "@/server/account/workspace";
 import type { AppDatabase } from "@/server/db/client";
 import { adminUserAuditLogs, users } from "@/server/db/schema";
 import {
@@ -307,6 +308,9 @@ export function updateAdminUser(
   }
 
   db.update(users).set(values).where(eq(users.id, userId)).run();
+  if (input.tier !== undefined) {
+    syncOwnedWorkspaceTier(db, userId, input.tier, values.updatedAt);
+  }
 
   const row = db.select().from(users).where(eq(users.id, userId)).limit(1).get();
 

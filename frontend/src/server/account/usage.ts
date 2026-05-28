@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { listWorkspaceMemberUserIds } from "@/server/account/workspace";
+import { listWorkspaceMemberUserIds, workspaceTierForUser } from "@/server/account/workspace";
 import { normalizeAccountTier, type AccountTier } from "@/server/auth/entitlements";
 import {
   getUsageLimitStatus,
@@ -44,7 +44,7 @@ function toAccountUsageItem(status: UsageLimitStatus): AccountUsageItem {
 
 export function getAccountUsage(db: AppDatabase, userId: string): AccountUsageResponse {
   const user = db.select().from(users).where(eq(users.id, userId)).limit(1).get();
-  const tier = normalizeAccountTier(user?.accountTier);
+  const tier = user?.email ? workspaceTierForUser(db, userId) : normalizeAccountTier(user?.accountTier);
   const workspaceUserIds = listWorkspaceMemberUserIds(db, userId).sort((left, right) => {
     if (left === userId) return -1;
     if (right === userId) return 1;

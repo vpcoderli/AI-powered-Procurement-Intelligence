@@ -121,6 +121,7 @@ export function runMigrations(db: AppDatabase) {
     CREATE TABLE IF NOT EXISTS organizations (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      account_tier TEXT NOT NULL DEFAULT 'free',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -431,6 +432,36 @@ export function runMigrations(db: AppDatabase) {
 
   if (!userColumns.has("is_disabled")) {
     sqlite.exec("ALTER TABLE users ADD COLUMN is_disabled INTEGER NOT NULL DEFAULT 0");
+  }
+
+  const organizationColumns = new Set(
+    sqlite
+      .prepare("PRAGMA table_info(organizations)")
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+
+  if (!organizationColumns.has("account_tier")) {
+    sqlite.exec("ALTER TABLE organizations ADD COLUMN account_tier TEXT NOT NULL DEFAULT 'free'");
+    sqlite.exec(`
+      UPDATE organizations
+      SET account_tier = COALESCE((
+        SELECT users.account_tier
+        FROM organization_memberships
+        INNER JOIN users ON users.id = organization_memberships.user_id
+        WHERE organization_memberships.organization_id = organizations.id
+          AND organization_memberships.role = 'owner'
+          AND organization_memberships.status = 'active'
+        ORDER BY
+          CASE users.account_tier
+            WHEN 'enterprise' THEN 4
+            WHEN 'business' THEN 3
+            WHEN 'pro' THEN 2
+            ELSE 1
+          END DESC
+        LIMIT 1
+      ), 'free')
+    `);
   }
 
   const subscriptionEventColumns = new Set(

@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
+import {
+  acceptWorkspaceInvitation,
+  inviteWorkspaceMember,
+} from "@/server/account/workspace";
+import { organizations, users } from "@/server/db/schema";
 import {
   upsertAccountSubscription,
 } from "@/server/billing/subscriptions";
@@ -47,6 +53,7 @@ describe("auth service", () => {
         organizationId: expect.stringMatching(/^org_/),
         organizationName: "Buyer One's Workspace",
         role: "owner",
+        tier: "free",
       },
     });
     expect(result.sessionToken).toMatch(/^sess_/);
@@ -56,6 +63,41 @@ describe("auth service", () => {
       role: "user",
       tier: "free",
       features: expect.arrayContaining(["bid_search"]),
+    });
+  });
+
+  it("uses the workspace organization tier for member session entitlements", async () => {
+    const owner = await registerUser(testDb.db, {
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+    testDb.db.update(organizations)
+      .set({ accountTier: "business" })
+      .where(eq(organizations.id, owner.user.workspace.organizationId))
+      .run();
+    testDb.db.update(users)
+      .set({ accountTier: "free" })
+      .where(eq(users.id, owner.user.id))
+      .run();
+    const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "member@example.com",
+      role: "member",
+    });
+    const accepted = await acceptWorkspaceInvitation(testDb.db, {
+      token: invite.inviteToken,
+      password: "member-strong-password",
+    });
+
+    const sessionUser = await getSessionUser(testDb.db, accepted.sessionToken);
+
+    expect(sessionUser).toMatchObject({
+      email: "member@example.com",
+      tier: "business",
+      features: expect.arrayContaining(["compliance_manifest"]),
+      workspace: {
+        organizationId: owner.user.workspace.organizationId,
+        tier: "business",
+      },
     });
   });
 
