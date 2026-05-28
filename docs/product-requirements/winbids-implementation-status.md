@@ -15,6 +15,7 @@ This document is the working checklist for local development. Update it after ea
 | Saved bids | Anonymous and authenticated saved bids, merge anonymous saved bids on register/login. |
 | Supplier profile | `/profile`, profile API, completion score, deterministic matching inputs. |
 | Auth basics | Register, login, logout, session cookie, session lookup, login/register pages, session payload with role/tier/features. |
+| Account self-service | `/settings` shows authenticated email/display name, updates display name, changes password after validating current password. |
 | User data model basics | `users` table, `sessions` table, `role`, `account_tier`, and `is_disabled` account state. |
 | Admin auth helper | `requireAdmin()` checks authenticated non-disabled admin sessions; local bypass for development. |
 | Admin user access console | `/admin` lists registered users, filters/searches accounts, changes role/tier/enabled state, and shows access audit logs. |
@@ -32,7 +33,7 @@ This document is the working checklist for local development. Update it after ea
 
 | Area | What exists | Missing to be useful |
 |---|---|---|
-| Account management | Register/login/logout/session APIs and pages; admin can enable/disable users, search/filter users, and review access audit logs | Account settings, password change/reset, admin-created accounts |
+| Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; admin can enable/disable users, search/filter users, and review access audit logs | Password reset, admin-created accounts, account deletion/export |
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users | Route-level friendly forbidden UI, admin page redirect/empty state for non-admin users |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map | Billing provider sync, usage limits, paywall/upgrade UI, subscription history |
@@ -46,7 +47,7 @@ This document is the working checklist for local development. Update it after ea
 
 | Area | Needed capability |
 |---|---|
-| User tiers / paid plans | Free, Pro, Business/Team, Enterprise tier model with feature and usage limits. |
+| Paid plan lifecycle | Checkout, trial, cancellation, renewal, invoices, and subscription status sync. |
 | Billing integration | Checkout, subscription status sync, invoices, cancellation, trial expiration. |
 | Organization/workspace model | Company account, multiple users under one company, shared bids/intents, team roles. |
 | Password reset | Email token flow, reset page, expiry and invalidation. |
@@ -61,12 +62,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Account Settings Foundation** before continuing advanced bid features.
+Prioritize **Billing / Subscription Foundation** or **Submission Guidance UI** depending on whether the next sprint should improve monetization infrastructure or bid workflow depth.
 
 Reason:
 
-- The data model, session payload, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
-- The next gap is making account management usable by the end user: real profile fields, password change, and account state messaging.
+- The data model, session payload, account settings, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
+- The remaining account gap is not basic self-service; it is paid-plan lifecycle, usage limits, password reset, and organization/team support.
 - Advanced features such as Compliance Manifest, Submission Guidance editing, and Knowledge Station can now rely on the same feature gate.
 
 ## Account / Role / Tier Direction
@@ -113,16 +114,20 @@ Start with a central feature map:
 
 ## Suggested Implementation Order
 
-1. **Account settings foundation**
-   - Show authenticated email/display name instead of placeholder profile values.
-   - Add password change flow.
-   - Add disabled/account-state messaging where needed.
-   - Add admin-created account flow when needed.
+1. **Billing / subscription foundation**
+   - Add subscription status fields and plan history.
+   - Add upgrade/paywall UI for locked features.
+   - Keep admin tier override for local/manual operations.
 
-2. **Then resume product features**
+2. **Product workflow depth**
    - Connect real Submission Guidance UI.
    - Build Compliance Manifest Lite.
    - Build Pursue / No-Bid Decision Lite.
+
+3. **Account lifecycle**
+   - Add password reset.
+   - Add admin-created accounts and invite flow.
+   - Add organization/workspace model.
 
 ## Completed Phase: Account / Role / Tier Foundation
 
@@ -134,8 +139,9 @@ Start with a central feature map:
 - `/admin` 接入用户权限表，普通用户侧边栏不再显示 Admin 入口。
 
 当前还剩：
-1. 账户设置页完善、密码修改/重置、billing 集成。
-2. Submission Guidance 真实编辑 UI。
+1. Billing/订阅同步与真实付费状态接入。
+2. Password reset 邮件 token 流程。
+3. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Feature Guards / Tier-Aware UI
 
@@ -148,8 +154,8 @@ Start with a central feature map:
 - Settings/Profile 区域显示当前套餐和功能可用/锁定状态。
 
 当前还剩：
-1. 账户设置从静态表单升级为真实资料与密码修改。
-2. Billing/订阅同步与真实付费状态接入。
+1. Billing/订阅同步与真实付费状态接入。
+2. Password reset 邮件 token 流程。
 3. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Admin User Management Polish
@@ -162,9 +168,25 @@ Start with a central feature map:
 - `/admin` 用户权限区增加搜索/筛选控件与“用户权限审计”视图。
 
 当前还剩：
-1. 账户设置从静态表单升级为真实资料与密码修改。
-2. Billing/订阅同步与真实付费状态接入。
+1. Billing/订阅同步与真实付费状态接入。
+2. Password reset 邮件 token 流程。
 3. Submission Guidance 真实编辑与确认 UI。
+
+## Completed Phase: Account Settings Foundation
+
+本阶段完成：
+- 新增当前用户资料更新服务与 `/api/account/profile`。
+- 新增当前用户密码修改服务与 `/api/account/password`，会校验当前密码与新密码强度。
+- `/settings` 个人资料从静态占位数据改为真实登录用户邮箱/显示名称。
+- `/settings` 安全页接入真实密码修改流程，并补齐中英文状态文案。
+- 新增服务、API route、前端 API client、Settings 静态检查测试。
+
+当前还剩：
+1. Billing/订阅同步、付费状态、套餐变更历史、发票/取消订阅。
+2. Password reset 邮件 token 流程。
+3. Admin 创建账号 / 邀请用户流程。
+4. Organization/workspace 多用户公司账户模型。
+5. Submission Guidance 真实编辑与确认 UI。
 
 ## Status Update Template
 

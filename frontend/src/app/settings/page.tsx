@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { Bell, CheckCircle2, Key, LockKeyhole, PaintBucket, Settings, Shield, User } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/context/AuthContext";
+import { updateAccountProfile, changePassword } from "@/lib/api/auth";
 import { canUseFeature, lockedFeatureMessage } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { ACCOUNT_TIER_LABELS, type FeatureKey } from "@/server/auth/entitlements";
@@ -27,22 +29,74 @@ const FEATURE_ACCESS_ITEMS: Array<{ key: FeatureKey; label: string }> = [
 
 export default function SettingsPage() {
   const { t } = useLanguage();
-  const { user } = useAuth();
+  const { user, isLoading, refreshSession } = useAuth();
+  const [profileDraft, setProfileDraft] = useState<{ userId: string | null; displayName: string }>({
+    userId: null,
+    displayName: "",
+  });
+  const [profileMessage, setProfileMessage] = useState("");
+  const [profileError, setProfileError] = useState("");
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
   const currentTier = user ? ACCOUNT_TIER_LABELS[user.tier] : ACCOUNT_TIER_LABELS.free;
+  const displayName =
+    profileDraft.userId === user?.id ? profileDraft.displayName : (user?.displayName ?? "");
+
+  async function handleProfileSave() {
+    setProfileMessage("");
+    setProfileError("");
+    setIsSavingProfile(true);
+
+    try {
+      await updateAccountProfile({ displayName });
+      await refreshSession();
+      setProfileMessage(t("settings.profileSaved"));
+    } catch (error) {
+      setProfileError(error instanceof Error ? error.message : t("settings.profileSaveError"));
+    } finally {
+      setIsSavingProfile(false);
+    }
+  }
+
+  async function handlePasswordChange() {
+    setPasswordMessage("");
+    setPasswordError("");
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError(t("settings.passwordMismatch"));
+      return;
+    }
+
+    setIsChangingPassword(true);
+
+    try {
+      await changePassword({ currentPassword, newPassword });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setPasswordMessage(t("settings.passwordSaved"));
+    } catch (error) {
+      setPasswordError(error instanceof Error ? error.message : t("settings.passwordSaveError"));
+    } finally {
+      setIsChangingPassword(false);
+    }
+  }
 
   return (
     <div className="flex flex-col h-full gap-8 max-w-4xl mx-auto pb-12">
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div className="flex items-center gap-3">
           <div className="p-2.5 bg-slate-100 text-slate-700 rounded-lg border border-slate-200 shadow-sm">
             <Settings size={22} strokeWidth={2.5} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{t('settings.title')}</h1>
-            <p className="text-sm text-slate-500 font-medium mt-0.5">
-              {t('settings.description')}
-            </p>
+            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{t("settings.title")}</h1>
+            <p className="text-sm text-slate-500 font-medium mt-0.5">{t("settings.description")}</p>
           </div>
         </div>
       </div>
@@ -50,21 +104,20 @@ export default function SettingsPage() {
       <Tabs defaultValue="profile" className="flex flex-col md:flex-row gap-6 md:gap-8 mt-2" orientation="vertical">
         <TabsList className="flex flex-col w-full md:w-64 h-auto justify-start items-stretch p-1.5 bg-slate-50 border border-slate-200 rounded-xl shadow-sm gap-1">
           <TabsTrigger value="profile" className="w-full justify-start text-left data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded-lg text-slate-500 font-medium py-2.5 px-3">
-            <User className="mr-2.5 h-4 w-4" /> {t('settings.profile')}
+            <User className="mr-2.5 h-4 w-4" /> {t("settings.profile")}
           </TabsTrigger>
           <TabsTrigger value="notifications" className="w-full justify-start text-left data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded-lg text-slate-500 font-medium py-2.5 px-3">
-            <Bell className="mr-2.5 h-4 w-4" /> {t('settings.notifications')}
+            <Bell className="mr-2.5 h-4 w-4" /> {t("settings.notifications")}
           </TabsTrigger>
           <TabsTrigger value="security" className="w-full justify-start text-left data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded-lg text-slate-500 font-medium py-2.5 px-3">
-            <Shield className="mr-2.5 h-4 w-4" /> {t('settings.security')}
+            <Shield className="mr-2.5 h-4 w-4" /> {t("settings.security")}
           </TabsTrigger>
           <TabsTrigger value="appearance" className="w-full justify-start text-left data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded-lg text-slate-500 font-medium py-2.5 px-3">
-            <PaintBucket className="mr-2.5 h-4 w-4" /> {t('settings.appearance')}
+            <PaintBucket className="mr-2.5 h-4 w-4" /> {t("settings.appearance")}
           </TabsTrigger>
         </TabsList>
 
         <div className="flex-1">
-          {/* Profile Settings */}
           <TabsContent value="profile" className="m-0 space-y-6">
             <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
               <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
@@ -110,74 +163,87 @@ export default function SettingsPage() {
 
             <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
               <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
-                <CardTitle className="text-lg font-semibold text-slate-900">{t('settings.personalInfo')}</CardTitle>
-                <CardDescription className="text-slate-500 font-medium">{t('settings.personalInfoDesc')}</CardDescription>
+                <CardTitle className="text-lg font-semibold text-slate-900">{t("settings.personalInfo")}</CardTitle>
+                <CardDescription className="text-slate-500 font-medium">{t("settings.personalInfoDesc")}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-5 p-6">
-                <div className="grid grid-cols-2 gap-5">
-                  <div className="space-y-2">
-                    <Label htmlFor="firstName" className="text-slate-700 font-medium">{t('settings.firstName')}</Label>
-                    <Input id="firstName" defaultValue="John" className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg" />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="lastName" className="text-slate-700 font-medium">{t('settings.lastName')}</Label>
-                    <Input id="lastName" defaultValue="Doe" className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg" />
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="displayName" className="text-slate-700 font-medium">
+                    {t("settings.displayName")}
+                  </Label>
+                  <Input
+                    id="displayName"
+                    value={displayName}
+                    onChange={(event) =>
+                      setProfileDraft({
+                        userId: user?.id ?? null,
+                        displayName: event.target.value,
+                      })
+                    }
+                    disabled={isLoading || isSavingProfile || !user}
+                    className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg"
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="email" className="text-slate-700 font-medium">{t('settings.email')}</Label>
-                  <div className="flex gap-2">
-                    <Input id="email" defaultValue="john.doe@example.com" disabled className="bg-slate-50 border-slate-200 h-10 rounded-lg text-slate-500" />
-                  </div>
+                  <Label htmlFor="email" className="text-slate-700 font-medium">{t("settings.email")}</Label>
+                  <Input
+                    id="email"
+                    value={user?.email ?? ""}
+                    disabled
+                    className="bg-slate-50 border-slate-200 h-10 rounded-lg text-slate-500"
+                  />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="company" className="text-slate-700 font-medium">{t('settings.company')}</Label>
-                  <Input id="company" defaultValue="Acme Corp LLC" className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg" />
-                </div>
+                {profileMessage && <p className="text-sm font-medium text-emerald-700">{profileMessage}</p>}
+                {profileError && <p className="text-sm font-medium text-red-600">{profileError}</p>}
               </CardContent>
               <CardFooter className="border-t border-slate-100 bg-slate-50/50 px-6 py-4">
-                <Button className="bg-slate-900 hover:bg-slate-800 text-white font-medium shadow-sm rounded-lg px-6 h-10">{t('common.save')}</Button>
+                <Button
+                  onClick={handleProfileSave}
+                  disabled={isLoading || isSavingProfile || !user}
+                  className="bg-slate-900 hover:bg-slate-800 text-white font-medium shadow-sm rounded-lg px-6 h-10"
+                >
+                  {isSavingProfile ? t("settings.saving") : t("common.save")}
+                </Button>
               </CardFooter>
             </Card>
           </TabsContent>
 
-          {/* Notifications Settings */}
           <TabsContent value="notifications" className="m-0 space-y-6">
             <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
               <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
-                <CardTitle className="text-lg font-semibold text-slate-900">{t('settings.emailPreferences')}</CardTitle>
-                <CardDescription className="text-slate-500 font-medium">{t('settings.emailPreferencesDesc')}</CardDescription>
+                <CardTitle className="text-lg font-semibold text-slate-900">{t("settings.emailPreferences")}</CardTitle>
+                <CardDescription className="text-slate-500 font-medium">{t("settings.emailPreferencesDesc")}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6 p-6">
                 <div className="flex flex-row items-center justify-between gap-4">
                   <div className="flex flex-col space-y-1">
-                    <Label className="text-slate-900 font-medium text-base">{t('settings.savedSearchAlerts')}</Label>
-                    <span className="text-sm text-slate-500">{t('settings.savedSearchAlertsDesc')}</span>
+                    <Label className="text-slate-900 font-medium text-base">{t("settings.savedSearchAlerts")}</Label>
+                    <span className="text-sm text-slate-500">{t("settings.savedSearchAlertsDesc")}</span>
                   </div>
                   <Switch defaultChecked className="data-[state=checked]:bg-slate-900 shrink-0" />
                 </div>
                 <Separator className="bg-slate-100" />
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div className="flex flex-col space-y-1">
-                    <Label className="text-slate-900 font-medium text-base">{t('settings.alertFrequency')}</Label>
-                    <span className="text-sm text-slate-500">{t('settings.alertFrequencyDesc')}</span>
+                    <Label className="text-slate-900 font-medium text-base">{t("settings.alertFrequency")}</Label>
+                    <span className="text-sm text-slate-500">{t("settings.alertFrequencyDesc")}</span>
                   </div>
                   <Select defaultValue="daily">
                     <SelectTrigger className="w-full sm:w-[180px] shrink-0 border-slate-200 focus:ring-slate-900 rounded-lg h-10">
-                      <SelectValue placeholder="Select frequency" />
+                      <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="rounded-lg border-slate-200 shadow-md">
-                      <SelectItem value="realtime" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">As they arrive</SelectItem>
-                      <SelectItem value="daily" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">Daily Digest</SelectItem>
-                      <SelectItem value="weekly" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">Weekly Summary</SelectItem>
+                      <SelectItem value="realtime" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">{t("settings.asTheyArrive")}</SelectItem>
+                      <SelectItem value="daily" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">{t("settings.dailyDigest")}</SelectItem>
+                      <SelectItem value="weekly" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">{t("settings.weeklySummary")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <Separator className="bg-slate-100" />
                 <div className="flex flex-row items-center justify-between gap-4">
                   <div className="flex flex-col space-y-1">
-                    <Label className="text-slate-900 font-medium text-base">Marketing Updates</Label>
-                    <span className="text-sm text-slate-500">Receive news about new features and updates.</span>
+                    <Label className="text-slate-900 font-medium text-base">{t("settings.marketingUpdates")}</Label>
+                    <span className="text-sm text-slate-500">{t("settings.marketingUpdatesDesc")}</span>
                   </div>
                   <Switch className="data-[state=checked]:bg-slate-900 shrink-0" />
                 </div>
@@ -185,55 +251,84 @@ export default function SettingsPage() {
             </Card>
           </TabsContent>
 
-          {/* Security Settings */}
           <TabsContent value="security" className="m-0 space-y-6">
             <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
               <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
-                <CardTitle className="text-lg font-semibold text-slate-900">Password & Security</CardTitle>
-                <CardDescription className="text-slate-500 font-medium">Manage your password and secure your account.</CardDescription>
+                <CardTitle className="text-lg font-semibold text-slate-900">{t("settings.passwordSecurity")}</CardTitle>
+                <CardDescription className="text-slate-500 font-medium">{t("settings.passwordSecurityDesc")}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-5 p-6">
                 <div className="space-y-2">
-                  <Label htmlFor="current" className="text-slate-700 font-medium">Current password</Label>
-                  <Input id="current" type="password" className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg" />
+                  <Label htmlFor="current" className="text-slate-700 font-medium">{t("settings.currentPassword")}</Label>
+                  <Input
+                    id="current"
+                    type="password"
+                    value={currentPassword}
+                    onChange={(event) => setCurrentPassword(event.target.value)}
+                    disabled={isChangingPassword || !user}
+                    className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg"
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="new" className="text-slate-700 font-medium">New password</Label>
-                  <Input id="new" type="password" className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg" />
+                  <Label htmlFor="new" className="text-slate-700 font-medium">{t("settings.newPassword")}</Label>
+                  <Input
+                    id="new"
+                    type="password"
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    disabled={isChangingPassword || !user}
+                    className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg"
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="confirm" className="text-slate-700 font-medium">Confirm new password</Label>
-                  <Input id="confirm" type="password" className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg" />
+                  <Label htmlFor="confirm" className="text-slate-700 font-medium">{t("settings.confirmPassword")}</Label>
+                  <Input
+                    id="confirm"
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(event) => setConfirmPassword(event.target.value)}
+                    disabled={isChangingPassword || !user}
+                    className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg"
+                  />
                 </div>
+                {passwordMessage && <p className="text-sm font-medium text-emerald-700">{passwordMessage}</p>}
+                {passwordError && <p className="text-sm font-medium text-red-600">{passwordError}</p>}
               </CardContent>
-              <CardFooter className="border-t border-slate-100 bg-slate-50/50 px-6 py-4 flex justify-between items-center">
-                <Button variant="outline" className="border-slate-200 text-slate-700 hover:bg-slate-50 font-medium rounded-lg h-10"><Key className="mr-2 h-4 w-4" /> Enable 2FA</Button>
-                <Button className="bg-slate-900 hover:bg-slate-800 text-white font-medium shadow-sm rounded-lg px-6 h-10">Update Password</Button>
+              <CardFooter className="border-t border-slate-100 bg-slate-50/50 px-6 py-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <Button variant="outline" disabled className="border-slate-200 text-slate-700 hover:bg-slate-50 font-medium rounded-lg h-10">
+                  <Key className="mr-2 h-4 w-4" /> {t("settings.enable2fa")}
+                </Button>
+                <Button
+                  onClick={handlePasswordChange}
+                  disabled={isChangingPassword || !user || !currentPassword || !newPassword || !confirmPassword}
+                  className="bg-slate-900 hover:bg-slate-800 text-white font-medium shadow-sm rounded-lg px-6 h-10"
+                >
+                  {isChangingPassword ? t("settings.updating") : t("settings.updatePassword")}
+                </Button>
               </CardFooter>
             </Card>
           </TabsContent>
 
-          {/* Appearance Settings */}
           <TabsContent value="appearance" className="m-0 space-y-6">
             <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
               <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
-                <CardTitle className="text-lg font-semibold text-slate-900">Appearance</CardTitle>
-                <CardDescription className="text-slate-500 font-medium">Customize how APSi looks on your device.</CardDescription>
+                <CardTitle className="text-lg font-semibold text-slate-900">{t("settings.appearance")}</CardTitle>
+                <CardDescription className="text-slate-500 font-medium">{t("settings.appearanceDesc")}</CardDescription>
               </CardHeader>
               <CardContent className="p-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div className="flex flex-col space-y-1">
-                    <Label className="text-slate-900 font-medium text-base">Theme</Label>
-                    <span className="text-sm text-slate-500">Select your preferred color theme.</span>
+                    <Label className="text-slate-900 font-medium text-base">{t("settings.theme")}</Label>
+                    <span className="text-sm text-slate-500">{t("settings.themeDesc")}</span>
                   </div>
                   <Select defaultValue="light">
                     <SelectTrigger className="w-full sm:w-[180px] shrink-0 border-slate-200 focus:ring-slate-900 rounded-lg h-10">
-                      <SelectValue placeholder="Select theme" />
+                      <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="rounded-lg border-slate-200 shadow-md">
-                      <SelectItem value="light" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">Light (Slate)</SelectItem>
-                      <SelectItem value="dark" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">Dark (Coming soon)</SelectItem>
-                      <SelectItem value="system" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">System</SelectItem>
+                      <SelectItem value="light" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">{t("settings.light")}</SelectItem>
+                      <SelectItem value="dark" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">{t("settings.dark")}</SelectItem>
+                      <SelectItem value="system" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">{t("settings.system")}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

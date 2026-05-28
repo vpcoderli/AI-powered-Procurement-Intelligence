@@ -11,5 +11,10 @@ describe("settings page", () => {
     expect(page).toContain("lockedFeatureMessage");
     expect(page).toContain("settings.currentPlan");
     expect(page).toContain("settings.featureAccess");
+    expect(page).toContain("updateAccountProfile");
+    expect(page).toContain("changePassword");
+    expect(page).toContain("user?.email");
+    expect(page).toContain("displayName");
+    expect(page).toContain("refreshSession");
   });
 });

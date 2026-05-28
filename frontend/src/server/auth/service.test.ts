@@ -5,11 +5,14 @@ import {
   AccountDisabledError,
   DuplicateEmailError,
   InvalidCredentialsError,
+  InvalidAuthInputError,
   WeakPasswordError,
+  changeUserPassword,
   getSessionUser,
   loginUser,
   logoutSession,
   registerUser,
+  updateUserProfile,
 } from "./service";
 
 describe("auth service", () => {
@@ -140,5 +143,72 @@ describe("auth service", () => {
       AccountDisabledError,
     );
     await expect(getSessionUser(testDb.db, result.sessionToken)).resolves.toBeNull();
+  });
+
+  it("updates a user's display name and returns the refreshed public user", async () => {
+    const result = await registerUser(testDb.db, {
+      email: "buyer@example.com",
+      password: "strong-password",
+      displayName: "Buyer One",
+    });
+
+    await expect(
+      updateUserProfile(testDb.db, result.user.id, { displayName: "  Buyer Two  " }),
+    ).resolves.toMatchObject({
+      id: result.user.id,
+      email: "buyer@example.com",
+      displayName: "Buyer Two",
+      role: "user",
+      tier: "free",
+    });
+  });
+
+  it("rejects missing users when updating a profile", async () => {
+    await expect(
+      updateUserProfile(testDb.db, "missing_user", { displayName: "Buyer" }),
+    ).rejects.toBeInstanceOf(InvalidAuthInputError);
+  });
+
+  it("changes a password after validating the current password", async () => {
+    await registerUser(testDb.db, {
+      email: "buyer@example.com",
+      password: "strong-password",
+    });
+    const login = await loginUser(testDb.db, "buyer@example.com", "strong-password");
+
+    await expect(
+      changeUserPassword(testDb.db, login.user.id, {
+        currentPassword: "wrong-password",
+        newPassword: "new-strong-password",
+      }),
+    ).rejects.toBeInstanceOf(InvalidCredentialsError);
+
+    await expect(
+      changeUserPassword(testDb.db, login.user.id, {
+        currentPassword: "strong-password",
+        newPassword: "new-strong-password",
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    await expect(loginUser(testDb.db, "buyer@example.com", "strong-password")).rejects.toBeInstanceOf(
+      InvalidCredentialsError,
+    );
+    await expect(loginUser(testDb.db, "buyer@example.com", "new-strong-password")).resolves.toMatchObject({
+      user: { email: "buyer@example.com" },
+    });
+  });
+
+  it("rejects weak new passwords", async () => {
+    const result = await registerUser(testDb.db, {
+      email: "buyer@example.com",
+      password: "strong-password",
+    });
+
+    await expect(
+      changeUserPassword(testDb.db, result.user.id, {
+        currentPassword: "strong-password",
+        newPassword: "short",
+      }),
+    ).rejects.toBeInstanceOf(WeakPasswordError);
   });
 });
