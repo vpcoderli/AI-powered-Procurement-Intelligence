@@ -195,6 +195,8 @@ export const workspaceInvitations = sqliteTable(
     tokenHash: text("token_hash").notNull(),
     expiresAt: text("expires_at").notNull(),
     acceptedAt: text("accepted_at"),
+    revokedAt: text("revoked_at"),
+    lastSentAt: text("last_sent_at"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },

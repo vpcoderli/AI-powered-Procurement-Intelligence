@@ -125,6 +125,8 @@ export function runMigrations(db: AppDatabase) {
       token_hash TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       accepted_at TEXT,
+      revoked_at TEXT,
+      last_sent_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -434,4 +436,19 @@ export function runMigrations(db: AppDatabase) {
   }
 
   sqlite.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_subscription_events_provider_event_id ON subscription_events(provider_event_id)");
+
+  const workspaceInvitationColumns = new Set(
+    sqlite
+      .prepare("PRAGMA table_info(workspace_invitations)")
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+
+  if (!workspaceInvitationColumns.has("revoked_at")) {
+    sqlite.exec("ALTER TABLE workspace_invitations ADD COLUMN revoked_at TEXT");
+  }
+
+  if (!workspaceInvitationColumns.has("last_sent_at")) {
+    sqlite.exec("ALTER TABLE workspace_invitations ADD COLUMN last_sent_at TEXT");
+  }
 }

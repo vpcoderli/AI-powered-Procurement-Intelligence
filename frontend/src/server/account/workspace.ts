@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { hashPassword } from "@/server/auth/password";
 import {
   SESSION_MAX_AGE_SECONDS,
@@ -15,6 +15,7 @@ import {
 } from "@/server/auth/entitlements";
 import type { AppDatabase } from "@/server/db/client";
 import { organizationMemberships, organizations, sessions, users, workspaceInvitations } from "@/server/db/schema";
+import { enqueueNotification } from "@/server/notifications/outbox-repository";
 
 export const WORKSPACE_ROLES = ["owner", "member"] as const;
 export type WorkspaceRole = (typeof WORKSPACE_ROLES)[number];
@@ -124,6 +125,14 @@ export class InvalidWorkspaceInvitationTokenError extends Error {
   }
 }
 
+export class WorkspaceInvitationNotFoundError extends InvalidWorkspaceInvitationTokenError {
+  constructor() {
+    super();
+    this.name = "WorkspaceInvitationNotFoundError";
+    this.message = "Pending invitation not found";
+  }
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -152,6 +161,38 @@ function hashInviteToken(token: string) {
 
 function inviteUrl(token: string) {
   return `/accept-invite?token=${encodeURIComponent(token)}`;
+}
+
+function enqueueWorkspaceInvitationNotification(
+  db: AppDatabase,
+  input: {
+    invitationId: string;
+    invitedUserId: string;
+    email: string;
+    organizationName: string;
+    token: string;
+    createdAt: string;
+  },
+) {
+  const url = inviteUrl(input.token);
+
+  enqueueNotification(db, {
+    id: `notification_${crypto.randomUUID()}`,
+    alertId: `workspace_invite:${input.invitationId}`,
+    userId: input.invitedUserId,
+    channel: "email",
+    recipient: input.email,
+    frequency: "daily",
+    dedupeKey: `workspace_invite:${input.invitationId}:${hashInviteToken(input.token)}`,
+    subject: `You're invited to ${input.organizationName} on WinBids`,
+    bodyText: [
+      `You have been invited to join ${input.organizationName} on WinBids.`,
+      `Accept the invitation here: ${url}`,
+      "This invitation expires in 7 days.",
+    ].join("\n\n"),
+    matchedBidIds: [],
+    createdAt: input.createdAt,
+  });
 }
 
 function isUniqueEmailConflict(error: unknown) {
@@ -391,6 +432,32 @@ function requireManageableMember(db: AppDatabase, organizationId: string, target
   return membership;
 }
 
+function requirePendingInvitation(db: AppDatabase, organizationId: string, targetUserId: string) {
+  const membership = getWorkspaceMembership(db, organizationId, targetUserId);
+  if (!membership || membership.status !== "invited") {
+    throw new WorkspaceInvitationNotFoundError();
+  }
+
+  const invitation = db
+    .select()
+    .from(workspaceInvitations)
+    .where(and(
+      eq(workspaceInvitations.organizationId, organizationId),
+      eq(workspaceInvitations.invitedUserId, targetUserId),
+      isNull(workspaceInvitations.acceptedAt),
+      isNull(workspaceInvitations.revokedAt),
+    ))
+    .orderBy(desc(workspaceInvitations.createdAt))
+    .limit(1)
+    .get();
+
+  if (!invitation) {
+    throw new WorkspaceInvitationNotFoundError();
+  }
+
+  return { membership, invitation };
+}
+
 async function createSession(db: AppDatabase, userId: string) {
   const sessionToken = createSessionToken();
   const timestamp = nowIso();
@@ -493,10 +560,30 @@ export async function inviteWorkspaceMember(
       tokenHash: hashInviteToken(token),
       expiresAt,
       acceptedAt: null,
+      revokedAt: null,
+      lastSentAt: timestamp,
       createdAt: timestamp,
       updatedAt: timestamp,
     })
     .run();
+
+  const invitation = db
+    .select()
+    .from(workspaceInvitations)
+    .where(eq(workspaceInvitations.tokenHash, hashInviteToken(token)))
+    .limit(1)
+    .get();
+
+  if (invitation) {
+    enqueueWorkspaceInvitationNotification(db, {
+      invitationId: invitation.id,
+      invitedUserId: user.id,
+      email,
+      organizationName: workspace.organizationName,
+      token,
+      createdAt: timestamp,
+    });
+  }
 
   return {
     member: {
@@ -528,14 +615,15 @@ export async function acceptWorkspaceInvitation(db: AppDatabase, input: AcceptWo
   if (
     !invitation ||
     invitation.acceptedAt ||
+    invitation.revokedAt ||
     new Date(invitation.expiresAt).getTime() <= Date.now()
   ) {
-    throw new InvalidWorkspaceInvitationTokenError();
+    throw new WorkspaceInvitationNotFoundError();
   }
 
   const membership = getWorkspaceMembership(db, invitation.organizationId, invitation.invitedUserId);
   if (!membership || membership.status !== "invited") {
-    throw new InvalidWorkspaceInvitationTokenError();
+    throw new WorkspaceInvitationNotFoundError();
   }
 
   const timestamp = nowIso();
@@ -580,6 +668,98 @@ export async function acceptWorkspaceInvitation(db: AppDatabase, input: AcceptWo
     },
     sessionToken: await createSession(db, user.id),
   };
+}
+
+export function resendWorkspaceInvitation(
+  db: AppDatabase,
+  actorUserId: string,
+  targetUserId: string,
+): InviteWorkspaceMemberResponse {
+  const workspace = requireOwner(db, actorUserId);
+  const { membership, invitation } = requirePendingInvitation(db, workspace.organizationId, targetUserId);
+  const user = db.select().from(users).where(eq(users.id, targetUserId)).limit(1).get();
+
+  if (!user?.email) {
+    throw new WorkspaceInvitationNotFoundError();
+  }
+
+  const timestamp = nowIso();
+  const token = createInviteToken();
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString();
+
+  db.update(workspaceInvitations)
+    .set({
+      tokenHash: hashInviteToken(token),
+      expiresAt,
+      lastSentAt: timestamp,
+      updatedAt: timestamp,
+    })
+    .where(eq(workspaceInvitations.id, invitation.id))
+    .run();
+  db.update(organizationMemberships)
+    .set({ updatedAt: timestamp })
+    .where(and(
+      eq(organizationMemberships.organizationId, workspace.organizationId),
+      eq(organizationMemberships.userId, targetUserId),
+    ))
+    .run();
+
+  enqueueWorkspaceInvitationNotification(db, {
+    invitationId: invitation.id,
+    invitedUserId: targetUserId,
+    email: user.email,
+    organizationName: workspace.organizationName,
+    token,
+    createdAt: timestamp,
+  });
+
+  return {
+    member: toWorkspaceMember({
+      userId: targetUserId,
+      email: user.email,
+      displayName: user.displayName,
+      role: membership.role,
+      status: "invited",
+      createdAt: membership.createdAt,
+      updatedAt: timestamp,
+    }),
+    inviteToken: token,
+    inviteUrl: inviteUrl(token),
+  };
+}
+
+export function revokeWorkspaceInvitation(
+  db: AppDatabase,
+  actorUserId: string,
+  targetUserId: string,
+): AccountWorkspaceResponse {
+  const workspace = requireOwner(db, actorUserId);
+  const { invitation } = requirePendingInvitation(db, workspace.organizationId, targetUserId);
+  const timestamp = nowIso();
+
+  db.update(workspaceInvitations)
+    .set({ revokedAt: timestamp, updatedAt: timestamp })
+    .where(eq(workspaceInvitations.id, invitation.id))
+    .run();
+  db.delete(organizationMemberships)
+    .where(and(
+      eq(organizationMemberships.organizationId, workspace.organizationId),
+      eq(organizationMemberships.userId, targetUserId),
+    ))
+    .run();
+  db.update(users)
+    .set({
+      email: null,
+      passwordHash: null,
+      displayName: null,
+      isDisabled: 1,
+      updatedAt: timestamp,
+    })
+    .where(eq(users.id, targetUserId))
+    .run();
+  db.delete(sessions).where(eq(sessions.userId, targetUserId)).run();
+
+  return getAccountWorkspace(db, actorUserId);
 }
 
 export function updateWorkspaceMemberRole(

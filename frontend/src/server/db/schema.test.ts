@@ -265,10 +265,20 @@ describe("database schema", () => {
           tokenHash: "hashed-invite-token",
           expiresAt: "2026-05-29T00:00:00.000Z",
           acceptedAt: null,
+          revokedAt: null,
+          lastSentAt: "2026-05-19T00:00:00.000Z",
           createdAt: "2026-05-19T00:00:00.000Z",
           updatedAt: "2026-05-19T00:00:00.000Z",
         }).run(),
       ).not.toThrow();
+
+      const workspaceInvitationColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(workspace_invitations)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(workspaceInvitationColumns).toContain("revoked_at");
+      expect(workspaceInvitationColumns).toContain("last_sent_at");
     } finally {
       await testDb.cleanup();
     }

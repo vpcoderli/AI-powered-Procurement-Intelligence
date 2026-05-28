@@ -1,11 +1,12 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerUser } from "@/server/auth/service";
-import { organizationMemberships, organizations, users, workspaceInvitations } from "@/server/db/schema";
+import { notificationOutbox, organizationMemberships, organizations, users, workspaceInvitations } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
   WorkspaceLastOwnerError,
   WorkspaceEmailExistsError,
+  WorkspaceInvitationNotFoundError,
   WorkspacePermissionError,
   acceptWorkspaceInvitation,
   disableWorkspaceMember,
@@ -14,7 +15,9 @@ import {
   inviteWorkspaceMember,
   listWorkspaceMemberUserIds,
   removeWorkspaceMember,
+  resendWorkspaceInvitation,
   restoreWorkspaceMember,
+  revokeWorkspaceInvitation,
   updateOrganizationName,
   updateWorkspaceMemberRole,
 } from "./workspace";
@@ -108,6 +111,14 @@ describe("workspace account service", () => {
       status: "invited",
     });
     expect(getAccountWorkspace(testDb.db, owner.user.id).members.map((member) => member.status)).toContain("invited");
+    expect(testDb.db.select().from(notificationOutbox).all()[0]).toMatchObject({
+      alertId: expect.stringMatching(/^workspace_invite:/),
+      userId: invite.member.userId,
+      channel: "email",
+      recipient: "member@example.com",
+      status: "pending",
+    });
+    expect(testDb.db.select().from(notificationOutbox).all()[0]?.bodyText).toContain(invite.inviteUrl);
 
     await expect(
       inviteWorkspaceMember(testDb.db, invite.member.userId, {
@@ -115,6 +126,62 @@ describe("workspace account service", () => {
         role: "member",
       }),
     ).rejects.toBeInstanceOf(WorkspacePermissionError);
+  });
+
+  it("lets owners resend pending invitations with a rotated token and notification", async () => {
+    const owner = await registerUser(testDb.db, {
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+    const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "member@example.com",
+      role: "member",
+    });
+
+    const resent = resendWorkspaceInvitation(testDb.db, owner.user.id, invite.member.userId);
+
+    expect(resent.member).toMatchObject({
+      userId: invite.member.userId,
+      status: "invited",
+    });
+    expect(resent.inviteToken).toMatch(/^invite_/);
+    expect(resent.inviteToken).not.toBe(invite.inviteToken);
+    expect(resent.inviteUrl).toContain(encodeURIComponent(resent.inviteToken));
+    expect(testDb.db.select().from(notificationOutbox).all()).toHaveLength(2);
+    await expect(
+      acceptWorkspaceInvitation(testDb.db, {
+        token: invite.inviteToken,
+        password: "member-strong-password",
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceInvitationNotFoundError);
+  });
+
+  it("lets owners revoke pending invitations and blocks later acceptance", async () => {
+    const owner = await registerUser(testDb.db, {
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+    const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "member@example.com",
+      role: "member",
+    });
+
+    const workspace = revokeWorkspaceInvitation(testDb.db, owner.user.id, invite.member.userId);
+
+    expect(workspace.members.map((member) => member.userId)).not.toContain(invite.member.userId);
+    expect(testDb.db.select().from(workspaceInvitations).all()[0]).toMatchObject({
+      revokedAt: expect.any(String),
+    });
+    expect(testDb.db.select().from(users).where(eq(users.id, invite.member.userId)).get()).toMatchObject({
+      email: null,
+      isDisabled: 1,
+    });
+    await expect(
+      acceptWorkspaceInvitation(testDb.db, {
+        token: invite.inviteToken,
+        password: "member-strong-password",
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceInvitationNotFoundError);
   });
 
   it("activates an invited member after accepting the invitation and setting a password", async () => {
