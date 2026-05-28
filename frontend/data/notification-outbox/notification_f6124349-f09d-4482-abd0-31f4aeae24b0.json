@@ -1,0 +1,13 @@
+{
+  "id": "notification_f6124349-f09d-4482-abd0-31f4aeae24b0",
+  "channel": "email",
+  "recipient": "admin@example.com",
+  "subject": "APSi daily alert: software (3 matches)",
+  "bodyText": "Alert: software\nFrequency: daily\nMatches: 3\n\n1. Healthcare Data Analytics Platform\n   Issuer: New York Department of Health\n   Deadline: 2026-07-10\n   Link: https://nyscr.ny.gov/opportunity/445566\n\n2. Emergency Response Logistics Modernization\n   Issuer: Florida Division of Emergency Management\n   Deadline: 2026-06-22\n   Link: https://vendor.myfloridamarketplace.com/bids/998877\n\n3. EMA - Sole Source - WebEOC Software Maintenance and Migration to Cloud\n   Issuer: EMA - Emergency Management Agency\n   Deadline: 05/28/2026 14:00:00\n   Link: https://www.bidbuy.illinois.gov/bso/external/bidDetail.sda?docId=26-588IEMA-MGMTA-B-52523&external=true&parentUrl=close",
+  "dedupeKey": "alert_f3d643d7-0dc4-4906-b231-2e2588305499:2026-05-27:email",
+  "matchedBidIds": [
+    "4",
+    "5",
+    "il_bidbuy:26-588IEMA-MGMTA-B-52523"
+  ]
+}
