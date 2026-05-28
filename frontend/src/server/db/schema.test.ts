@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDatabase } from "./client";
 import { runMigrations } from "./migrate";
-import { bids, crawlerLocks, notificationOutbox, users } from "./schema";
+import { bids, crawlerLocks, notificationOutbox, passwordResetTokens, users } from "./schema";
 import { createTestDatabase } from "./test-utils";
 
 describe("database schema", () => {
@@ -133,6 +133,7 @@ describe("database schema", () => {
       expect(tables).toContain("admin_user_audit_logs");
       expect(tables).toContain("account_subscriptions");
       expect(tables).toContain("subscription_events");
+      expect(tables).toContain("password_reset_tokens");
 
       const userColumns = testDb.db.$client
         .prepare("PRAGMA table_info(users)")
@@ -141,6 +142,24 @@ describe("database schema", () => {
 
       expect(userColumns).toContain("account_tier");
       expect(userColumns).toContain("is_disabled");
+
+      testDb.db.insert(users).values({
+        id: "user_1",
+        email: "buyer@example.com",
+        createdAt: "2026-05-19T00:00:00.000Z",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+      }).run();
+
+      expect(() =>
+        testDb.db.insert(passwordResetTokens).values({
+          id: "reset_1",
+          userId: "user_1",
+          tokenHash: "hashed-token",
+          expiresAt: "2026-05-19T01:00:00.000Z",
+          usedAt: null,
+          createdAt: "2026-05-19T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
     } finally {
       await testDb.cleanup();
     }

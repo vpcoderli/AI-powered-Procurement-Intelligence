@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { changePassword, fetchAccountSubscription, updateAccountProfile } from "./auth";
+import {
+  changePassword,
+  confirmPasswordReset,
+  fetchAccountSubscription,
+  requestPasswordReset,
+  updateAccountProfile,
+} from "./auth";
 
 const mockFetch = vi.fn<typeof fetch>();
 
@@ -80,5 +86,40 @@ describe("auth API client", () => {
 
     await expect(fetchAccountSubscription()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/account/subscription");
+  });
+
+  it("requests a password reset token", async () => {
+    const body = {
+      ok: true,
+      resetToken: "reset_local",
+      expiresAt: "2026-05-28T12:00:00.000Z",
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(requestPasswordReset({ email: "buyer@example.com" })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/auth/password-reset/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "buyer@example.com" }),
+    });
+  });
+
+  it("confirms a password reset token", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    await expect(
+      confirmPasswordReset({
+        token: "reset_local",
+        password: "new-strong-password",
+      }),
+    ).resolves.toEqual({ ok: true });
+    expect(mockFetch).toHaveBeenCalledWith("/api/auth/password-reset/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token: "reset_local",
+        password: "new-strong-password",
+      }),
+    });
   });
 });
