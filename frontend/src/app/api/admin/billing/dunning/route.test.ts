@@ -7,7 +7,7 @@ import { POST } from "./route";
 vi.mock("@/server/db/client", () => ({ db: {} }));
 vi.mock("@/server/admin/auth", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/server/admin/auth")>();
-  return { ...actual, requireAdmin: vi.fn() };
+  return { ...actual, requireAdminAccess: vi.fn() };
 });
 vi.mock("@/server/billing/dunning", () => ({
   scheduleDunningReminders: vi.fn(),
@@ -19,7 +19,7 @@ describe("POST /api/admin/billing/dunning", () => {
   });
 
   it("allows admins to schedule due dunning reminders", async () => {
-    vi.mocked(adminAuth.requireAdmin).mockResolvedValueOnce({ kind: "admin", userId: "admin_1" });
+    vi.mocked(adminAuth.requireAdminAccess).mockResolvedValueOnce({ kind: "admin", role: "admin", userId: "admin_1" });
     vi.mocked(dunningService.scheduleDunningReminders).mockReturnValueOnce({
       checkedInvoices: 3,
       queued: 2,
@@ -50,7 +50,7 @@ describe("POST /api/admin/billing/dunning", () => {
   });
 
   it("denies non-admin requests", async () => {
-    vi.mocked(adminAuth.requireAdmin).mockRejectedValueOnce(new AdminAuthError());
+    vi.mocked(adminAuth.requireAdminAccess).mockRejectedValueOnce(new AdminAuthError());
 
     const response = await POST(new Request("http://localhost/api/admin/billing/dunning", { method: "POST" }));
     const body = await response.json();

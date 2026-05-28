@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin, AdminAuthError } from "@/server/admin/auth";
+import { requireAdminAccess, AdminAuthError } from "@/server/admin/auth";
 import { listAdminCrawlerLogs } from "@/server/admin/data-sources-repository";
 import type { AppDatabase } from "@/server/db/client";
 
@@ -34,7 +34,7 @@ export function createAdminCrawlerLogsGet(database?: AppDatabase) {
   return async function GET(request: Request) {
     try {
       const resolvedDb = await resolveDatabase(database);
-      await requireAdmin(resolvedDb, request);
+      await requireAdminAccess(resolvedDb, request);
       const logs = await listAdminCrawlerLogs(resolvedDb, { limit: limitFromUrl(request) });
 
       return NextResponse.json({ logs });

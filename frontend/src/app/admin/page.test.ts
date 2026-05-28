@@ -14,10 +14,13 @@ describe("admin page", () => {
     expect(page).toContain("updateAdminUserAccess");
     expect(page).toContain("useAuth");
     expect(page).toContain("isAdmin");
+    expect(page).toContain("isOperator");
+    expect(page).toContain("canAccessAdminConsole");
+    expect(page).toContain("canRunOperations");
     expect(page).toContain('t("admin.authLoading")');
     expect(page).toContain('t("admin.loginRequiredTitle")');
     expect(page).toContain('t("admin.forbiddenTitle")');
-    expect(page).toContain('if (!isAdmin) return');
+    expect(page).toContain("if (!canAccessAdminConsole) return");
     expect(page).toContain('t("admin.users")');
     expect(page).toContain('t("admin.inviteUser")');
     expect(page).toContain('t("admin.temporaryPassword")');

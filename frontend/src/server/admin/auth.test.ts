@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SESSION_COOKIE_NAME, hashSessionToken } from "@/server/auth/session";
 import { sessions, users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { requireAdmin } from "./auth";
+import { requireAdmin, requireAdminAccess } from "./auth";
 
 const NOW = "2026-05-19T00:00:00.000Z";
 
@@ -10,6 +10,30 @@ function requestWithSession(token: string) {
   return new Request("http://localhost/api/admin/data-sources", {
     headers: { cookie: `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}` },
   });
+}
+
+function createSessionUser(testDb: TestDatabase, options: { id: string; email: string; role: string; token: string }) {
+  testDb.db
+    .insert(users)
+    .values({
+      id: options.id,
+      email: options.email,
+      role: options.role,
+      createdAt: NOW,
+      updatedAt: NOW,
+    })
+    .run();
+  testDb.db
+    .insert(sessions)
+    .values({
+      id: `session_${options.id}`,
+      userId: options.id,
+      tokenHash: hashSessionToken(options.token),
+      expiresAt: "2099-05-20T00:00:00.000Z",
+      createdAt: NOW,
+      lastSeenAt: NOW,
+    })
+    .run();
 }
 
 describe("requireAdmin", () => {
@@ -105,6 +129,64 @@ describe("requireAdmin", () => {
       .run();
 
     await expect(requireAdmin(testDb.db, requestWithSession(token))).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+  });
+
+  it("keeps account administration limited to admin users", async () => {
+    const token = "operator_session_token";
+    createSessionUser(testDb, {
+      id: "user_operator",
+      email: "operator@example.com",
+      role: "operator",
+      token,
+    });
+
+    await expect(requireAdmin(testDb.db, requestWithSession(token))).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+  });
+
+  it("allows operator and support users into the admin console", async () => {
+    const operatorToken = "operator_session_token";
+    const supportToken = "support_session_token";
+    createSessionUser(testDb, {
+      id: "user_operator",
+      email: "operator@example.com",
+      role: "operator",
+      token: operatorToken,
+    });
+    createSessionUser(testDb, {
+      id: "user_support",
+      email: "support@example.com",
+      role: "support",
+      token: supportToken,
+    });
+
+    await expect(requireAdminAccess(testDb.db, requestWithSession(operatorToken))).resolves.toEqual({
+      kind: "admin",
+      role: "operator",
+      userId: "user_operator",
+    });
+    await expect(requireAdminAccess(testDb.db, requestWithSession(supportToken))).resolves.toEqual({
+      kind: "admin",
+      role: "support",
+      userId: "user_support",
+    });
+  });
+
+  it("supports restricting admin console access to operational roles", async () => {
+    const supportToken = "support_session_token";
+    createSessionUser(testDb, {
+      id: "user_support",
+      email: "support@example.com",
+      role: "support",
+      token: supportToken,
+    });
+
+    await expect(
+      requireAdminAccess(testDb.db, requestWithSession(supportToken), { roles: ["admin", "operator"] }),
+    ).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
   });

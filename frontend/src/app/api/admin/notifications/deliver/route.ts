@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AdminAuthError, requireAdmin } from "@/server/admin/auth";
+import { AdminAuthError, requireAdminAccess } from "@/server/admin/auth";
 import type { AppDatabase } from "@/server/db/client";
 import { deliverPendingNotifications } from "@/server/notifications/delivery";
 
@@ -38,7 +38,7 @@ export function createAdminNotificationsDeliverPost(database?: AppDatabase) {
   return async function POST(request: Request) {
     try {
       const resolvedDb = await resolveDatabase(database);
-      await requireAdmin(resolvedDb, request);
+      await requireAdminAccess(resolvedDb, request, { roles: ["admin", "operator"] });
       const body = await readBody(request);
 
       return NextResponse.json(await deliverPendingNotifications(resolvedDb, undefined, {

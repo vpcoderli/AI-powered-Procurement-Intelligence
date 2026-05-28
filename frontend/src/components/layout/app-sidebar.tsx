@@ -17,6 +17,8 @@ import {
   SidebarHeader,
 } from "@/components/ui/sidebar"
 
+const adminConsoleRoles = ["admin", "operator", "support"];
+
 export function AppSidebar() {
   const { t } = useLanguage();
   const { user } = useAuth();
@@ -59,7 +61,7 @@ export function AppSidebar() {
       url: "/settings",
       icon: Settings,
     },
-    ...(user?.role === "admin"
+    ...(user && adminConsoleRoles.includes(user.role)
       ? [
           {
             title: t('common.admin'),

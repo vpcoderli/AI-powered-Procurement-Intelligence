@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AdminAuthError, requireAdmin } from "@/server/admin/auth";
+import { AdminAuthError, requireAdminAccess } from "@/server/admin/auth";
 import {
   runCrawlerSourceOnce,
   type CrawlerNotifier,
@@ -48,7 +48,7 @@ async function isAuthorized(database: AppDatabase, request: Request) {
   if (tokenFromRequest(request) === requiredToken) return true;
 
   try {
-    await requireAdmin(database, request);
+    await requireAdminAccess(database, request, { roles: ["admin", "operator"] });
     return true;
   } catch (error) {
     if (error instanceof AdminAuthError) return false;

@@ -7,7 +7,7 @@ import { POST } from "./route";
 vi.mock("@/server/db/client", () => ({ db: {} }));
 vi.mock("@/server/admin/auth", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/server/admin/auth")>();
-  return { ...actual, requireAdmin: vi.fn() };
+  return { ...actual, requireAdminAccess: vi.fn() };
 });
 vi.mock("@/server/notifications/delivery", () => ({
   deliverPendingNotifications: vi.fn(),
@@ -19,7 +19,7 @@ describe("POST /api/admin/notifications/deliver", () => {
   });
 
   it("allows admins to deliver pending notifications", async () => {
-    vi.mocked(adminAuth.requireAdmin).mockResolvedValueOnce({ kind: "admin", userId: "admin_1" });
+    vi.mocked(adminAuth.requireAdminAccess).mockResolvedValueOnce({ kind: "admin", role: "admin", userId: "admin_1" });
     vi.mocked(deliveryService.deliverPendingNotifications).mockResolvedValueOnce({
       attempted: 2,
       sent: 1,
@@ -44,7 +44,7 @@ describe("POST /api/admin/notifications/deliver", () => {
   });
 
   it("denies non-admin requests", async () => {
-    vi.mocked(adminAuth.requireAdmin).mockRejectedValueOnce(new AdminAuthError());
+    vi.mocked(adminAuth.requireAdminAccess).mockRejectedValueOnce(new AdminAuthError());
 
     const response = await POST(new Request("http://localhost/api/admin/notifications/deliver", { method: "POST" }));
     const body = await response.json();

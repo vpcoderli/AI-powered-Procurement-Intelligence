@@ -1,4 +1,4 @@
-export const USER_ROLES = ["user", "admin"] as const;
+export const USER_ROLES = ["user", "admin", "operator", "support"] as const;
 export const ACCOUNT_TIERS = ["free", "pro", "business", "enterprise"] as const;
 
 export const FEATURE_KEYS = [
@@ -18,6 +18,7 @@ export const FEATURE_KEYS = [
 export type UserRole = (typeof USER_ROLES)[number];
 export type AccountTier = (typeof ACCOUNT_TIERS)[number];
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
+export type AdminConsoleRole = Exclude<UserRole, "user">;
 
 interface EntitlementSubject {
   role: UserRole;
@@ -30,6 +31,8 @@ const tierRank: Record<AccountTier, number> = {
   business: 2,
   enterprise: 3,
 };
+
+export const ADMIN_CONSOLE_ROLES: AdminConsoleRole[] = ["admin", "operator", "support"];
 
 const minimumTierByFeature: Record<Exclude<FeatureKey, "admin_console">, AccountTier> = {
   bid_search: "free",
@@ -69,7 +72,7 @@ export function normalizeAccountTier(value: unknown): AccountTier {
 
 export function hasFeature(subject: EntitlementSubject, feature: FeatureKey): boolean {
   if (feature === "admin_console") {
-    return subject.role === "admin";
+    return ADMIN_CONSOLE_ROLES.includes(subject.role as AdminConsoleRole);
   }
 
   return tierRank[subject.tier] >= tierRank[minimumTierByFeature[feature]];
