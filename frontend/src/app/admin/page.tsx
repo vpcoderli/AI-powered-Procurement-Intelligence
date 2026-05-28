@@ -36,22 +36,25 @@ import {
   listAdminCrawlerLogs,
   listAdminDataSources,
   listAdminNotifications,
+  listAdminUserFeatureOverrides,
   listAdminUserAuditLogs,
   listAdminUsers,
   reconcileAdminSubscriptions,
   runStateCrawlersNow,
   updateAdminDataSource,
+  updateAdminUserFeatureOverride,
   updateAdminUser as updateAdminUserAccess,
   type AdminCrawlerLog,
   type AdminDataSource,
   type AdminDataSourcesResponse,
+  type AdminUserFeatureOverridesResponse,
   type AdminNotificationsResponse,
   type AdminUserAuditLog,
   type AdminUserFilterStatus,
   type AdminUser,
   type UpdateAdminUserInput,
 } from "@/lib/api/admin";
-import type { AccountTier, UserRole } from "@/server/auth/entitlements";
+import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlements";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { stateCrawlerSourceIdForAdminSource } from "@/lib/state-crawler-sources";
 
@@ -84,6 +87,13 @@ type InvitationDraft = {
 const USER_ROLES: UserRole[] = ["user", "admin", "operator", "support"];
 const ADMIN_CONSOLE_USER_ROLES: UserRole[] = ["admin", "operator", "support"];
 const ACCOUNT_TIERS: AccountTier[] = ["free", "pro", "business", "enterprise"];
+const OVERRIDABLE_FEATURES: FeatureKey[] = [
+  "submission_guidance",
+  "compliance_manifest",
+  "pursue_no_bid",
+  "quote_workflow",
+  "knowledge_station",
+];
 const DEFAULT_INVITATION_DRAFT: InvitationDraft = {
   email: "",
   displayName: "",
@@ -208,6 +218,11 @@ export default function AdminPage() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [isDeliveringNotifications, setIsDeliveringNotifications] = useState(false);
   const [isReconcilingSubscriptions, setIsReconcilingSubscriptions] = useState(false);
+  const [featureOverrideUser, setFeatureOverrideUser] = useState<AdminUser | null>(null);
+  const [featureOverrideData, setFeatureOverrideData] = useState<AdminUserFeatureOverridesResponse | null>(null);
+  const [featureOverrideFeature, setFeatureOverrideFeature] = useState<FeatureKey>("submission_guidance");
+  const [isLoadingFeatureOverrides, setIsLoadingFeatureOverrides] = useState(false);
+  const [isUpdatingFeatureOverride, setIsUpdatingFeatureOverride] = useState(false);
   const isAdmin = user?.role === "admin";
   const isOperator = user?.role === "operator";
   const canAccessAdminConsole = Boolean(user && ADMIN_CONSOLE_USER_ROLES.includes(user.role));
@@ -351,6 +366,57 @@ export default function AdminPage() {
       })
       .finally(() => {
         setPendingUserId(null);
+      });
+  };
+
+  const openFeatureOverrides = (targetUser: AdminUser) => {
+    setFeatureOverrideUser(targetUser);
+    setFeatureOverrideData(null);
+    setIsLoadingFeatureOverrides(true);
+    listAdminUserFeatureOverrides(targetUser.id)
+      .then((response) => {
+        setFeatureOverrideData(response);
+      })
+      .catch(() => {
+        setRunMessage(t("admin.featureOverrideLoadFailed"));
+      })
+      .finally(() => {
+        setIsLoadingFeatureOverrides(false);
+      });
+  };
+
+  const selectedFeatureOverride = featureOverrideData?.overrides.find(
+    (override) => override.featureKey === featureOverrideFeature,
+  );
+
+  const saveFeatureOverride = (isEnabled: boolean | null) => {
+    if (!featureOverrideUser) return;
+
+    setIsUpdatingFeatureOverride(true);
+    updateAdminUserFeatureOverride(featureOverrideUser.id, {
+      featureKey: featureOverrideFeature,
+      isEnabled,
+    })
+      .then((response) => {
+        setFeatureOverrideData(response);
+        setRunMessage(t("admin.featureOverrideUpdated"));
+        return listAdminUserAuditLogs({ limit: 10 });
+      })
+      .then((response) => {
+        setState((current) => {
+          if (current.status !== "ready") return current;
+
+          return {
+            ...current,
+            userAuditLogs: response.logs,
+          };
+        });
+      })
+      .catch(() => {
+        setRunMessage(t("admin.featureOverrideUpdateFailed"));
+      })
+      .finally(() => {
+        setIsUpdatingFeatureOverride(false);
       });
   };
 
@@ -743,13 +809,14 @@ export default function AdminPage() {
                 <TableHead>{t("admin.role")}</TableHead>
                 <TableHead>{t("admin.tier")}</TableHead>
                 <TableHead>{t("admin.lastLogin")}</TableHead>
+                <TableHead>{t("admin.featureOverrides")}</TableHead>
                 <TableHead className="text-right">{t("admin.enabled")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {users.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="py-6 text-center text-sm text-slate-500">
+                  <TableCell colSpan={6} className="py-6 text-center text-sm text-slate-500">
                     {t("admin.noUsers")}
                   </TableCell>
                 </TableRow>
@@ -794,6 +861,18 @@ export default function AdminPage() {
                       </select>
                     </TableCell>
                     <TableCell>{formatDate(user.lastLoginAt)}</TableCell>
+                    <TableCell>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openFeatureOverrides(user)}
+                        disabled={isLoadingFeatureOverrides || isUpdatingFeatureOverride}
+                        className="h-8 rounded-lg border-slate-200 px-2"
+                      >
+                        {t("admin.manageFeatureOverrides")}
+                      </Button>
+                    </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-3">
                         <Label htmlFor={`user-${user.id}`} className="text-xs font-medium text-slate-500">
@@ -813,6 +892,74 @@ export default function AdminPage() {
               })}
             </TableBody>
           </Table>
+          {featureOverrideUser && (
+            <div className="grid gap-3 border-t border-slate-100 bg-slate-50/60 px-4 py-4 lg:grid-cols-[minmax(220px,1fr)_220px_auto] lg:items-end">
+              <div>
+                <p className="text-sm font-semibold text-slate-950">{t("admin.featureOverrides")}</p>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  {t("admin.featureOverrideDescription").replace(
+                    "{account}",
+                    featureOverrideUser.email ?? featureOverrideUser.id,
+                  )}
+                </p>
+                {featureOverrideData && (
+                  <p className="mt-1 text-xs font-medium text-slate-500">
+                    {t("admin.organization")}: {featureOverrideData.organizationName}
+                  </p>
+                )}
+              </div>
+              <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
+                {t("admin.feature")}
+                <select
+                  value={featureOverrideFeature}
+                  onChange={(event) => setFeatureOverrideFeature(event.target.value as FeatureKey)}
+                  className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
+                >
+                  {OVERRIDABLE_FEATURES.map((feature) => (
+                    <option key={feature} value={feature}>
+                      {t(`admin.feature_${feature}`)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline" className="border-slate-200 bg-white text-slate-600">
+                  {selectedFeatureOverride
+                    ? selectedFeatureOverride.isEnabled
+                      ? t("admin.overrideEnabled")
+                      : t("admin.overrideDisabled")
+                    : t("admin.overrideDefault")}
+                </Badge>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => saveFeatureOverride(true)}
+                  disabled={isLoadingFeatureOverrides || isUpdatingFeatureOverride}
+                  className="h-9 rounded-lg border-slate-200 px-3"
+                >
+                  {t("admin.enableOverride")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => saveFeatureOverride(false)}
+                  disabled={isLoadingFeatureOverrides || isUpdatingFeatureOverride}
+                  className="h-9 rounded-lg border-slate-200 px-3"
+                >
+                  {t("admin.disableOverride")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => saveFeatureOverride(null)}
+                  disabled={isLoadingFeatureOverrides || isUpdatingFeatureOverride}
+                  className="h-9 rounded-lg px-3 text-slate-600"
+                >
+                  {t("admin.clearOverride")}
+                </Button>
+              </div>
+            </div>
+          )}
         </section>
       )}
 

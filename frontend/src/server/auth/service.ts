@@ -3,8 +3,9 @@ import { eq } from "drizzle-orm";
 import { ensureUserWorkspace, type PublicWorkspace } from "@/server/account/workspace";
 import { reconcileUserSubscriptionLifecycle } from "@/server/billing/subscriptions";
 import type { AppDatabase } from "@/server/db/client";
-import { sessions, users } from "@/server/db/schema";
+import { organizationFeatureOverrides, sessions, users } from "@/server/db/schema";
 import {
+  applyFeatureOverrides,
   featuresForUser,
   normalizeAccountTier,
   normalizeUserRole,
@@ -93,7 +94,20 @@ function normalizeDisplayName(displayName: string | undefined) {
   return normalized ? normalized : null;
 }
 
-function toPublicUser(row: {
+function organizationOverridesForWorkspace(db: AppDatabase, workspace?: PublicWorkspace) {
+  if (!workspace) return [];
+
+  return db
+    .select({
+      featureKey: organizationFeatureOverrides.featureKey,
+      isEnabled: organizationFeatureOverrides.isEnabled,
+    })
+    .from(organizationFeatureOverrides)
+    .where(eq(organizationFeatureOverrides.organizationId, workspace.organizationId))
+    .all();
+}
+
+function toPublicUser(db: AppDatabase, row: {
   id: string;
   email: string | null;
   displayName: string | null;
@@ -111,6 +125,7 @@ function toPublicUser(row: {
 
   const role = normalizeUserRole(row.role);
   const tier = workspace?.tier ?? normalizeAccountTier(row.accountTier);
+  const baseFeatures = featuresForUser({ role, tier });
 
   return {
     id: row.id,
@@ -118,7 +133,7 @@ function toPublicUser(row: {
     displayName: row.displayName,
     role,
     tier,
-    features: featuresForUser({ role, tier }),
+    features: applyFeatureOverrides(baseFeatures, organizationOverridesForWorkspace(db, workspace)),
     ...(workspace ? { workspace } : {}),
   };
 }
@@ -192,7 +207,7 @@ export async function registerUser(db: AppDatabase, input: RegisterUserInput) {
   }
 
   return {
-    user: toPublicUser(user, ensureUserWorkspace(db, user.id)),
+    user: toPublicUser(db, user, ensureUserWorkspace(db, user.id)),
     sessionToken: await createSession(db, user.id),
   };
 }
@@ -224,7 +239,7 @@ export async function loginUser(db: AppDatabase, emailInput: string, password: s
   }
 
   return {
-    user: toPublicUser(refreshedUser, ensureUserWorkspace(db, refreshedUser.id)),
+    user: toPublicUser(db, refreshedUser, ensureUserWorkspace(db, refreshedUser.id)),
     sessionToken: await createSession(db, user.id),
   };
 }
@@ -256,7 +271,7 @@ export async function updateUserProfile(
     throw new InvalidAuthInputError("User not found");
   }
 
-  return toPublicUser(updatedUser, ensureUserWorkspace(db, updatedUser.id));
+  return toPublicUser(db, updatedUser, ensureUserWorkspace(db, updatedUser.id));
 }
 
 export async function changeUserPassword(
@@ -339,6 +354,7 @@ export async function getSessionUser(db: AppDatabase, sessionToken: string) {
   }
 
   return toPublicUser(
+    db,
     {
       id: user.id,
       email: user.email,

@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { organizationMemberships, organizations, users } from "@/server/db/schema";
+import { organizationFeatureOverrides, organizationMemberships, organizations, users } from "@/server/db/schema";
 import { createTestDatabase } from "@/server/db/test-utils";
 import { verifyPassword } from "@/server/auth/password";
 import {
   AdminUserEmailExistsError,
   createAdminUserInvite,
+  listAdminUserFeatureOverrides,
   listAdminUserAuditLogs,
   listAdminUsers,
   updateAdminUser,
+  updateAdminUserFeatureOverride,
 } from "./users-repository";
 
 const NOW = "2026-05-28T00:00:00.000Z";
@@ -73,6 +75,15 @@ describe("admin users repository", () => {
         createdAt: NOW,
         updatedAt: NOW,
       }).run();
+      testDb.db.insert(users).values({
+        id: "admin_1",
+        email: "admin@example.com",
+        role: "admin",
+        accountTier: "free",
+        isDisabled: 0,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }).run();
       testDb.db.insert(organizations).values({
         id: "org_1",
         name: "Buyer Workspace",
@@ -124,6 +135,94 @@ describe("admin users repository", () => {
           ]),
         }),
       ]);
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("manages organization feature overrides for a user's workspace", async () => {
+    const testDb = await createTestDatabase();
+
+    try {
+      testDb.db.insert(users).values({
+        id: "user_1",
+        email: "buyer@example.com",
+        role: "user",
+        accountTier: "free",
+        isDisabled: 0,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }).run();
+      testDb.db.insert(users).values({
+        id: "admin_1",
+        email: "admin@example.com",
+        role: "admin",
+        accountTier: "free",
+        isDisabled: 0,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }).run();
+      testDb.db.insert(organizations).values({
+        id: "org_1",
+        name: "Buyer Workspace",
+        accountTier: "free",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }).run();
+      testDb.db.insert(organizationMemberships).values({
+        organizationId: "org_1",
+        userId: "user_1",
+        role: "owner",
+        status: "active",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }).run();
+
+      const enabled = updateAdminUserFeatureOverride(
+        testDb.db,
+        "user_1",
+        { featureKey: "compliance_manifest", isEnabled: true },
+        { actorKind: "admin", actorUserId: "admin_1" },
+      );
+
+      expect(enabled).toEqual({
+        organizationId: "org_1",
+        organizationName: "Buyer Workspace",
+        overrides: [{ featureKey: "compliance_manifest", isEnabled: true }],
+      });
+      expect(testDb.db.select().from(organizationFeatureOverrides).all()).toEqual([
+        expect.objectContaining({
+          organizationId: "org_1",
+          featureKey: "compliance_manifest",
+          isEnabled: 1,
+          createdByUserId: "admin_1",
+        }),
+      ]);
+
+      const disabled = updateAdminUserFeatureOverride(
+        testDb.db,
+        "user_1",
+        { featureKey: "compliance_manifest", isEnabled: false },
+        { actorKind: "admin", actorUserId: "admin_1" },
+      );
+
+      expect(disabled.overrides).toEqual([{ featureKey: "compliance_manifest", isEnabled: false }]);
+
+      const cleared = updateAdminUserFeatureOverride(
+        testDb.db,
+        "user_1",
+        { featureKey: "compliance_manifest", isEnabled: null },
+        { actorKind: "admin", actorUserId: "admin_1" },
+      );
+
+      expect(cleared.overrides).toEqual([]);
+      expect(listAdminUserFeatureOverrides(testDb.db, "user_1").overrides).toEqual([]);
+      expect(listAdminUserAuditLogs(testDb.db, { limit: 5 }).logs[0].changes[0]).toEqual({
+        field: "featureOverride",
+        featureKey: "compliance_manifest",
+        before: false,
+        after: null,
+      });
     } finally {
       await testDb.cleanup();
     }

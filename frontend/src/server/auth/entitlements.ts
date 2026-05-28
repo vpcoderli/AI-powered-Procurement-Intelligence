@@ -58,6 +58,10 @@ export function isUserRole(value: unknown): value is UserRole {
   return typeof value === "string" && USER_ROLES.includes(value as UserRole);
 }
 
+export function isFeatureKey(value: unknown): value is FeatureKey {
+  return typeof value === "string" && FEATURE_KEYS.includes(value as FeatureKey);
+}
+
 export function isAccountTier(value: unknown): value is AccountTier {
   return typeof value === "string" && ACCOUNT_TIERS.includes(value as AccountTier);
 }
@@ -80,6 +84,27 @@ export function hasFeature(subject: EntitlementSubject, feature: FeatureKey): bo
 
 export function featuresForUser(subject: EntitlementSubject): FeatureKey[] {
   return FEATURE_KEYS.filter((feature) => hasFeature(subject, feature));
+}
+
+export function applyFeatureOverrides(
+  baseFeatures: readonly FeatureKey[],
+  overrides: Iterable<{ featureKey: unknown; isEnabled: unknown }>,
+): FeatureKey[] {
+  const enabled = new Set(baseFeatures);
+
+  for (const override of overrides) {
+    if (!isFeatureKey(override.featureKey) || override.featureKey === "admin_console") {
+      continue;
+    }
+
+    if (override.isEnabled === 1 || override.isEnabled === true) {
+      enabled.add(override.featureKey);
+    } else {
+      enabled.delete(override.featureKey);
+    }
+  }
+
+  return FEATURE_KEYS.filter((feature) => enabled.has(feature));
 }
 
 export function minimumTierForFeature(feature: FeatureKey): AccountTier | null {
