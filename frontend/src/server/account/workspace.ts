@@ -2,17 +2,23 @@ import crypto from "node:crypto";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { hashPassword } from "@/server/auth/password";
 import {
+  SESSION_MAX_AGE_SECONDS,
+  createSessionToken,
+  hashSessionToken,
+} from "@/server/auth/session";
+import {
   normalizeAccountTier,
   normalizeUserRole,
+  featuresForUser,
   type AccountTier,
   type UserRole,
 } from "@/server/auth/entitlements";
 import type { AppDatabase } from "@/server/db/client";
-import { organizationMemberships, organizations, users } from "@/server/db/schema";
+import { organizationMemberships, organizations, sessions, users, workspaceInvitations } from "@/server/db/schema";
 
 export const WORKSPACE_ROLES = ["owner", "member"] as const;
 export type WorkspaceRole = (typeof WORKSPACE_ROLES)[number];
-export type WorkspaceMemberStatus = "active";
+export type WorkspaceMemberStatus = "active" | "invited" | "disabled";
 
 export interface PublicWorkspace {
   organizationId: string;
@@ -59,7 +65,14 @@ export interface UpdateWorkspaceMemberRoleInput {
 
 export interface InviteWorkspaceMemberResponse {
   member: AccountWorkspaceMember;
-  temporaryPassword: string;
+  inviteToken: string;
+  inviteUrl: string;
+}
+
+export interface AcceptWorkspaceInvitationInput {
+  token: string;
+  password: string;
+  displayName?: string;
 }
 
 export class WorkspacePermissionError extends Error {
@@ -104,6 +117,13 @@ export class InvalidWorkspaceInputError extends Error {
   }
 }
 
+export class InvalidWorkspaceInvitationTokenError extends Error {
+  constructor() {
+    super("Invalid or expired invitation token");
+    this.name = "InvalidWorkspaceInvitationTokenError";
+  }
+}
+
 function nowIso() {
   return new Date().toISOString();
 }
@@ -122,8 +142,16 @@ function normalizeWorkspaceRole(role: unknown): WorkspaceRole {
   return role === "owner" ? "owner" : "member";
 }
 
-function temporaryPassword() {
-  return `Temp-${crypto.randomBytes(12).toString("base64url")}`;
+function createInviteToken() {
+  return `invite_${crypto.randomBytes(24).toString("base64url")}`;
+}
+
+function hashInviteToken(token: string) {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function inviteUrl(token: string) {
+  return `/accept-invite?token=${encodeURIComponent(token)}`;
 }
 
 function isUniqueEmailConflict(error: unknown) {
@@ -174,10 +202,18 @@ function toWorkspaceMember(row: {
     email: row.email,
     displayName: row.displayName,
     workspaceRole: normalizeWorkspaceRole(row.role),
-    status: "active",
+    status: normalizeWorkspaceMemberStatus(row.status),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+function normalizeWorkspaceMemberStatus(status: unknown): WorkspaceMemberStatus {
+  if (status === "invited" || status === "disabled") {
+    return status;
+  }
+
+  return "active";
 }
 
 function getCurrentWorkspace(db: AppDatabase, userId: string) {
@@ -300,7 +336,6 @@ export function getAccountWorkspace(db: AppDatabase, userId: string): AccountWor
       .innerJoin(users, eq(organizationMemberships.userId, users.id))
       .where(and(
         eq(organizationMemberships.organizationId, organization.id),
-        eq(organizationMemberships.status, "active"),
       ))
       .orderBy(desc(organizationMemberships.role), asc(organizationMemberships.createdAt), asc(users.email))
       .all()
@@ -309,6 +344,11 @@ export function getAccountWorkspace(db: AppDatabase, userId: string): AccountWor
 }
 
 function requireOwner(db: AppDatabase, userId: string) {
+  const user = db.select().from(users).where(eq(users.id, userId)).limit(1).get();
+  if (user?.isDisabled === 1) {
+    throw new WorkspacePermissionError();
+  }
+
   const workspace = ensureUserWorkspace(db, userId);
   if (workspace.role !== "owner") {
     throw new WorkspacePermissionError();
@@ -317,14 +357,13 @@ function requireOwner(db: AppDatabase, userId: string) {
   return workspace;
 }
 
-function getActiveWorkspaceMembership(db: AppDatabase, organizationId: string, userId: string) {
+function getWorkspaceMembership(db: AppDatabase, organizationId: string, userId: string) {
   return db
     .select()
     .from(organizationMemberships)
     .where(and(
       eq(organizationMemberships.organizationId, organizationId),
       eq(organizationMemberships.userId, userId),
-      eq(organizationMemberships.status, "active"),
     ))
     .limit(1)
     .get();
@@ -343,13 +382,32 @@ function countActiveWorkspaceOwners(db: AppDatabase, organizationId: string) {
 }
 
 function requireManageableMember(db: AppDatabase, organizationId: string, targetUserId: string) {
-  const membership = getActiveWorkspaceMembership(db, organizationId, targetUserId);
+  const membership = getWorkspaceMembership(db, organizationId, targetUserId);
 
   if (!membership) {
     throw new WorkspaceMemberNotFoundError();
   }
 
   return membership;
+}
+
+async function createSession(db: AppDatabase, userId: string) {
+  const sessionToken = createSessionToken();
+  const timestamp = nowIso();
+  const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000).toISOString();
+
+  db.insert(sessions)
+    .values({
+      id: `session_${crypto.randomUUID()}`,
+      userId,
+      tokenHash: hashSessionToken(sessionToken),
+      expiresAt,
+      createdAt: timestamp,
+      lastSeenAt: timestamp,
+    })
+    .run();
+
+  return sessionToken;
 }
 
 export function updateOrganizationName(
@@ -390,15 +448,16 @@ export async function inviteWorkspaceMember(
   }
 
   const timestamp = nowIso();
-  const password = temporaryPassword();
+  const token = createInviteToken();
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString();
   const user = {
     id: `user_${crypto.randomUUID()}`,
     email,
-    passwordHash: await hashPassword(password),
+    passwordHash: null,
     displayName: normalizeDisplayName(input.displayName),
     role: "user" as UserRole,
     accountTier: "free" as AccountTier,
-    isDisabled: 0,
+    isDisabled: 1,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -418,7 +477,22 @@ export async function inviteWorkspaceMember(
       organizationId: workspace.organizationId,
       userId: user.id,
       role,
-      status: "active",
+      status: "invited",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    })
+    .run();
+
+  db.insert(workspaceInvitations)
+    .values({
+      id: `workspace_invite_${crypto.randomUUID()}`,
+      organizationId: workspace.organizationId,
+      invitedUserId: user.id,
+      invitedByUserId: inviterUserId,
+      email,
+      tokenHash: hashInviteToken(token),
+      expiresAt,
+      acceptedAt: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     })
@@ -430,11 +504,81 @@ export async function inviteWorkspaceMember(
       email,
       displayName: user.displayName,
       workspaceRole: role,
-      status: "active",
+      status: "invited",
       createdAt: timestamp,
       updatedAt: timestamp,
     },
-    temporaryPassword: password,
+    inviteToken: token,
+    inviteUrl: inviteUrl(token),
+  };
+}
+
+export async function acceptWorkspaceInvitation(db: AppDatabase, input: AcceptWorkspaceInvitationInput) {
+  if (input.password.length < 8) {
+    throw new InvalidWorkspaceInputError("Password must be at least 8 characters");
+  }
+
+  const invitation = db
+    .select()
+    .from(workspaceInvitations)
+    .where(eq(workspaceInvitations.tokenHash, hashInviteToken(input.token)))
+    .limit(1)
+    .get();
+
+  if (
+    !invitation ||
+    invitation.acceptedAt ||
+    new Date(invitation.expiresAt).getTime() <= Date.now()
+  ) {
+    throw new InvalidWorkspaceInvitationTokenError();
+  }
+
+  const membership = getWorkspaceMembership(db, invitation.organizationId, invitation.invitedUserId);
+  if (!membership || membership.status !== "invited") {
+    throw new InvalidWorkspaceInvitationTokenError();
+  }
+
+  const timestamp = nowIso();
+  db.update(users)
+    .set({
+      passwordHash: await hashPassword(input.password),
+      displayName: normalizeDisplayName(input.displayName) ?? undefined,
+      isDisabled: 0,
+      updatedAt: timestamp,
+    })
+    .where(eq(users.id, invitation.invitedUserId))
+    .run();
+  db.update(organizationMemberships)
+    .set({ status: "active", updatedAt: timestamp })
+    .where(and(
+      eq(organizationMemberships.organizationId, invitation.organizationId),
+      eq(organizationMemberships.userId, invitation.invitedUserId),
+    ))
+    .run();
+  db.update(workspaceInvitations)
+    .set({ acceptedAt: timestamp, updatedAt: timestamp })
+    .where(eq(workspaceInvitations.id, invitation.id))
+    .run();
+
+  const user = db.select().from(users).where(eq(users.id, invitation.invitedUserId)).limit(1).get();
+  if (!user?.email) {
+    throw new InvalidWorkspaceInvitationTokenError();
+  }
+
+  const role = normalizeUserRole(user.role);
+  const tier = normalizeAccountTier(user.accountTier);
+
+  return {
+    user: {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      role,
+      tier,
+      features: featuresForUser({ role, tier }),
+      workspace: ensureUserWorkspace(db, user.id),
+    },
+    sessionToken: await createSession(db, user.id),
   };
 }
 
@@ -462,6 +606,63 @@ export function updateWorkspaceMemberRole(
       eq(organizationMemberships.organizationId, workspace.organizationId),
       eq(organizationMemberships.userId, targetUserId),
     ))
+    .run();
+
+  return getAccountWorkspace(db, actorUserId);
+}
+
+export function disableWorkspaceMember(
+  db: AppDatabase,
+  actorUserId: string,
+  targetUserId: string,
+): AccountWorkspaceResponse {
+  const workspace = requireOwner(db, actorUserId);
+  const membership = requireManageableMember(db, workspace.organizationId, targetUserId);
+
+  if (membership.role === "owner" && countActiveWorkspaceOwners(db, workspace.organizationId) <= 1) {
+    throw new WorkspaceLastOwnerError();
+  }
+
+  const timestamp = nowIso();
+  db.update(organizationMemberships)
+    .set({ status: "disabled", updatedAt: timestamp })
+    .where(and(
+      eq(organizationMemberships.organizationId, workspace.organizationId),
+      eq(organizationMemberships.userId, targetUserId),
+    ))
+    .run();
+  db.update(users)
+    .set({ isDisabled: 1, updatedAt: timestamp })
+    .where(eq(users.id, targetUserId))
+    .run();
+  db.delete(sessions).where(eq(sessions.userId, targetUserId)).run();
+
+  return getAccountWorkspace(db, actorUserId);
+}
+
+export function restoreWorkspaceMember(
+  db: AppDatabase,
+  actorUserId: string,
+  targetUserId: string,
+): AccountWorkspaceResponse {
+  const workspace = requireOwner(db, actorUserId);
+  const membership = requireManageableMember(db, workspace.organizationId, targetUserId);
+
+  if (membership.status !== "disabled") {
+    throw new InvalidWorkspaceInputError("Only disabled members can be restored");
+  }
+
+  const timestamp = nowIso();
+  db.update(organizationMemberships)
+    .set({ status: "active", updatedAt: timestamp })
+    .where(and(
+      eq(organizationMemberships.organizationId, workspace.organizationId),
+      eq(organizationMemberships.userId, targetUserId),
+    ))
+    .run();
+  db.update(users)
+    .set({ isDisabled: 0, updatedAt: timestamp })
+    .where(eq(users.id, targetUserId))
     .run();
 
   return getAccountWorkspace(db, actorUserId);

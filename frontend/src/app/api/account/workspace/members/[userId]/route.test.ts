@@ -18,7 +18,9 @@ vi.mock("@/server/account/workspace", async (importOriginal) => {
 
   return {
     ...actual,
+    disableWorkspaceMember: vi.fn(),
     removeWorkspaceMember: vi.fn(),
+    restoreWorkspaceMember: vi.fn(),
     updateWorkspaceMemberRole: vi.fn(),
   };
 });
@@ -74,6 +76,70 @@ describe("/api/account/workspace/members/[userId]", () => {
     expect(workspaceService.updateWorkspaceMemberRole).toHaveBeenCalledWith({}, "user_1", "user_2", {
       role: "owner",
     });
+  });
+
+  it("disables a workspace member", async () => {
+    mockOwnerSession();
+    vi.mocked(workspaceService.disableWorkspaceMember).mockReturnValueOnce({
+      ...workspaceBody,
+      members: [
+        {
+          userId: "user_2",
+          email: "member@example.com",
+          displayName: "Member",
+          workspaceRole: "member",
+          status: "disabled",
+          createdAt: "2026-05-28T00:00:00.000Z",
+          updatedAt: "2026-05-28T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const response = await PATCH(
+      new Request("http://localhost/api/account/workspace/members/user_2", {
+        method: "PATCH",
+        headers: { cookie: `${SESSION_COOKIE_NAME}=sess_valid` },
+        body: JSON.stringify({ status: "disabled" }),
+      }),
+      { params: Promise.resolve({ userId: "user_2" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.members[0].status).toBe("disabled");
+    expect(workspaceService.disableWorkspaceMember).toHaveBeenCalledWith({}, "user_1", "user_2");
+  });
+
+  it("restores a disabled workspace member", async () => {
+    mockOwnerSession();
+    vi.mocked(workspaceService.restoreWorkspaceMember).mockReturnValueOnce({
+      ...workspaceBody,
+      members: [
+        {
+          userId: "user_2",
+          email: "member@example.com",
+          displayName: "Member",
+          workspaceRole: "member",
+          status: "active",
+          createdAt: "2026-05-28T00:00:00.000Z",
+          updatedAt: "2026-05-28T00:00:00.000Z",
+        },
+      ],
+    });
+
+    const response = await PATCH(
+      new Request("http://localhost/api/account/workspace/members/user_2", {
+        method: "PATCH",
+        headers: { cookie: `${SESSION_COOKIE_NAME}=sess_valid` },
+        body: JSON.stringify({ status: "active" }),
+      }),
+      { params: Promise.resolve({ userId: "user_2" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.members[0].status).toBe("active");
+    expect(workspaceService.restoreWorkspaceMember).toHaveBeenCalledWith({}, "user_1", "user_2");
   });
 
   it("removes a workspace member", async () => {

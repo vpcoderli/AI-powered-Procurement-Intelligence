@@ -1,7 +1,11 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { inviteWorkspaceMember, updateWorkspaceMemberRole } from "@/server/account/workspace";
-import { getSessionUser, loginUser, registerUser } from "@/server/auth/service";
+import {
+  acceptWorkspaceInvitation,
+  inviteWorkspaceMember,
+  updateWorkspaceMemberRole,
+} from "@/server/account/workspace";
+import { getSessionUser, registerUser } from "@/server/auth/service";
 import { alerts, organizationMemberships, savedBids, sessions, supplierProfiles, users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
@@ -75,7 +79,10 @@ describe("account lifecycle service", () => {
       email: "member@example.com",
       role: "member",
     });
-    const memberLogin = await loginUser(testDb.db, "member@example.com", invite.temporaryPassword);
+    const memberLogin = await acceptWorkspaceInvitation(testDb.db, {
+      token: invite.inviteToken,
+      password: "member-password",
+    });
 
     const result = softDeleteAccount(testDb.db, invite.member.userId);
 
@@ -95,9 +102,13 @@ describe("account lifecycle service", () => {
       email: "owner@example.com",
       password: "strong-password",
     });
-    await inviteWorkspaceMember(testDb.db, owner.user.id, {
+    const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "member@example.com",
       role: "member",
+    });
+    await acceptWorkspaceInvitation(testDb.db, {
+      token: invite.inviteToken,
+      password: "member-password",
     });
 
     expect(() => softDeleteAccount(testDb.db, owner.user.id)).toThrow(AccountDeletionRequiresOwnerTransferError);
@@ -111,6 +122,10 @@ describe("account lifecycle service", () => {
     const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "member@example.com",
       role: "member",
+    });
+    await acceptWorkspaceInvitation(testDb.db, {
+      token: invite.inviteToken,
+      password: "member-password",
     });
     updateWorkspaceMemberRole(testDb.db, owner.user.id, owner.user.id, { role: "owner" });
 

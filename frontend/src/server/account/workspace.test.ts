@@ -1,17 +1,20 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerUser } from "@/server/auth/service";
-import { organizationMemberships, organizations, users } from "@/server/db/schema";
+import { organizationMemberships, organizations, users, workspaceInvitations } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
   WorkspaceLastOwnerError,
   WorkspaceEmailExistsError,
   WorkspacePermissionError,
+  acceptWorkspaceInvitation,
+  disableWorkspaceMember,
   ensureUserWorkspace,
   getAccountWorkspace,
   inviteWorkspaceMember,
   listWorkspaceMemberUserIds,
   removeWorkspaceMember,
+  restoreWorkspaceMember,
   updateOrganizationName,
   updateWorkspaceMemberRole,
 } from "./workspace";
@@ -85,7 +88,7 @@ describe("workspace account service", () => {
     expect(workspace.currentUserRole).toBe("owner");
   });
 
-  it("lets owners invite members but blocks ordinary members", async () => {
+  it("lets owners invite pending members but blocks ordinary members", async () => {
     const owner = await registerUser(testDb.db, {
       email: "owner@example.com",
       password: "strong-password",
@@ -97,13 +100,14 @@ describe("workspace account service", () => {
       role: "member",
     });
 
-    expect(invite.temporaryPassword).toMatch(/^Temp-/);
+    expect(invite.inviteToken).toMatch(/^invite_/);
     expect(invite.member).toMatchObject({
       email: "member@example.com",
       displayName: "Member One",
       workspaceRole: "member",
-      status: "active",
+      status: "invited",
     });
+    expect(getAccountWorkspace(testDb.db, owner.user.id).members.map((member) => member.status)).toContain("invited");
 
     await expect(
       inviteWorkspaceMember(testDb.db, invite.member.userId, {
@@ -113,14 +117,45 @@ describe("workspace account service", () => {
     ).rejects.toBeInstanceOf(WorkspacePermissionError);
   });
 
+  it("activates an invited member after accepting the invitation and setting a password", async () => {
+    const owner = await registerUser(testDb.db, {
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+    const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "member@example.com",
+      role: "member",
+    });
+
+    const result = await acceptWorkspaceInvitation(testDb.db, {
+      token: invite.inviteToken,
+      password: "member-strong-password",
+      displayName: "Member Accepted",
+    });
+
+    expect(result.user.email).toBe("member@example.com");
+    expect(result.user.displayName).toBe("Member Accepted");
+    expect(result.user.workspace).toMatchObject({
+      organizationId: owner.user.workspace.organizationId,
+      role: "member",
+    });
+    expect(testDb.db.select().from(workspaceInvitations).all()[0]).toMatchObject({
+      acceptedAt: expect.any(String),
+    });
+  });
+
   it("returns a workspace summary with members", async () => {
     const owner = await registerUser(testDb.db, {
       email: "owner@example.com",
       password: "strong-password",
     });
-    await inviteWorkspaceMember(testDb.db, owner.user.id, {
+    const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "member@example.com",
       role: "member",
+    });
+    await acceptWorkspaceInvitation(testDb.db, {
+      token: invite.inviteToken,
+      password: "member-strong-password",
     });
 
     const workspace = getAccountWorkspace(testDb.db, owner.user.id);
@@ -164,6 +199,10 @@ describe("workspace account service", () => {
       email: "member@example.com",
       role: "member",
     });
+    await acceptWorkspaceInvitation(testDb.db, {
+      token: invite.inviteToken,
+      password: "member-strong-password",
+    });
 
     const workspace = updateWorkspaceMemberRole(testDb.db, owner.user.id, invite.member.userId, {
       role: "owner",
@@ -182,6 +221,10 @@ describe("workspace account service", () => {
     const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "member@example.com",
       role: "member",
+    });
+    await acceptWorkspaceInvitation(testDb.db, {
+      token: invite.inviteToken,
+      password: "member-strong-password",
     });
 
     expect(() =>
@@ -215,6 +258,10 @@ describe("workspace account service", () => {
       email: "member@example.com",
       role: "member",
     });
+    await acceptWorkspaceInvitation(testDb.db, {
+      token: invite.inviteToken,
+      password: "member-strong-password",
+    });
 
     const workspace = removeWorkspaceMember(testDb.db, owner.user.id, invite.member.userId);
 
@@ -223,5 +270,34 @@ describe("workspace account service", () => {
     expect(ensureUserWorkspace(testDb.db, invite.member.userId).organizationId).not.toBe(
       owner.user.workspace.organizationId,
     );
+  });
+
+  it("lets owners disable and restore active members without deleting the membership", async () => {
+    const owner = await registerUser(testDb.db, {
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+    const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "member@example.com",
+      role: "member",
+    });
+    await acceptWorkspaceInvitation(testDb.db, {
+      token: invite.inviteToken,
+      password: "member-strong-password",
+    });
+
+    const disabled = disableWorkspaceMember(testDb.db, owner.user.id, invite.member.userId);
+
+    expect(disabled.members.find((member) => member.userId === invite.member.userId)).toMatchObject({
+      status: "disabled",
+    });
+    expect(listWorkspaceMemberUserIds(testDb.db, owner.user.id)).toEqual([owner.user.id]);
+
+    const restored = restoreWorkspaceMember(testDb.db, owner.user.id, invite.member.userId);
+
+    expect(restored.members.find((member) => member.userId === invite.member.userId)).toMatchObject({
+      status: "active",
+    });
+    expect(listWorkspaceMemberUserIds(testDb.db, owner.user.id)).toContain(invite.member.userId);
   });
 });

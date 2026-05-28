@@ -6,7 +6,9 @@ import {
   WorkspaceLastOwnerError,
   WorkspaceMemberNotFoundError,
   WorkspacePermissionError,
+  disableWorkspaceMember,
   removeWorkspaceMember,
+  restoreWorkspaceMember,
   updateWorkspaceMemberRole,
 } from "@/server/account/workspace";
 import { db } from "@/server/db/client";
@@ -64,16 +66,26 @@ export async function PATCH(request: Request, context: RouteContext) {
   const { userId } = await context.params;
   const body = await readBody(request);
 
-  if (
-    typeof body !== "object" ||
-    body === null ||
-    (body.role !== "owner" && body.role !== "member")
-  ) {
-    return errorResponse("INVALID_REQUEST", "Request body must include role", 400);
+  if (typeof body !== "object" || body === null) {
+    return errorResponse("INVALID_REQUEST", "Request body must include role or status", 400);
   }
 
   try {
-    return NextResponse.json(updateWorkspaceMemberRole(db, user.id, userId, { role: body.role }));
+    if ("status" in body) {
+      if (body.status === "disabled") {
+        return NextResponse.json(disableWorkspaceMember(db, user.id, userId));
+      }
+
+      if (body.status === "active") {
+        return NextResponse.json(restoreWorkspaceMember(db, user.id, userId));
+      }
+    }
+
+    if (body.role === "owner" || body.role === "member") {
+      return NextResponse.json(updateWorkspaceMemberRole(db, user.id, userId, { role: body.role }));
+    }
+
+    return errorResponse("INVALID_REQUEST", "Request body must include role or status", 400);
   } catch (error) {
     return workspaceErrorResponse(error);
   }

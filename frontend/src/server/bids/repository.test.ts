@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
+  acceptWorkspaceInvitation,
   inviteWorkspaceMember,
   ensureUserWorkspace,
   listWorkspaceMemberUserIds,
@@ -67,6 +68,10 @@ describe("bid repository", () => {
     const member = await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "member@example.com",
       role: "member",
+    });
+    await acceptWorkspaceInvitation(testDb.db, {
+      token: member.inviteToken,
+      password: "member-password",
     });
     const memberUserId = member.member.userId;
     const scopeUserIds = listWorkspaceMemberUserIds(testDb.db, owner.user.id);

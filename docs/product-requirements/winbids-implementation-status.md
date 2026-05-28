@@ -23,7 +23,7 @@ This document is the working checklist for local development. Update it after ea
 | Saved bids | Anonymous saved bids and authenticated workspace-shared saved bids, merge anonymous saved bids on register/login. |
 | Supplier profile | `/profile`, profile API, completion score, deterministic matching inputs. |
 | Auth basics | Register, login, logout, session cookie, session lookup, login/register pages, session payload with role/tier/features. |
-| Account self-service | `/settings` shows authenticated email/display name, updates display name, changes password after validating current password, exports account data, and soft-deletes accounts; `/forgot-password` and `/reset-password` support local token-based password recovery; Settings Team tab manages workspace name, member invites, owner transfer, member role changes, and member removal. |
+| Account self-service | `/settings` shows authenticated email/display name, updates display name, changes password after validating current password, exports account data, and soft-deletes accounts; `/forgot-password` and `/reset-password` support local token-based password recovery; `/accept-invite` supports workspace invitation acceptance; Settings Team tab manages workspace name, member invites, owner transfer, member role changes, member disable/restore, and member removal. |
 | User data model basics | `users` table, `sessions` table, `organizations`, `organization_memberships`, `role`, `account_tier`, `is_disabled`, and workspace owner/member state. |
 | Admin auth helper | `requireAdmin()` checks authenticated non-disabled admin sessions; local bypass for development. |
 | Admin user access console | `/admin` lists registered users, creates invited accounts with temporary passwords, filters/searches accounts, changes role/tier/enabled state, shows access audit logs, and presents login/forbidden states for non-admin access. |
@@ -55,7 +55,7 @@ This document is the working checklist for local development. Update it after ea
 | 普通账户注册 | Done | `/register` and `/api/auth/register` create local user accounts, default `role=user`, default `account_tier=free`, and create sessions. |
 | 普通账户登录/退出/session | Done | `/login`, logout API, session cookie, `/api/auth/session`, disabled account rejection. |
 | 普通账户基础管理 | Done | `/settings` supports display name update, password change, password reset request/confirm, account data export, and soft account deletion/deactivation. |
-| 普通账户团队空间 | Partial | Default organization/workspace exists; Team tab can rename workspace, invite local members, transfer owner, update member role, and remove members. |
+| 普通账户团队空间 | Partial | Default organization/workspace exists; Team tab can rename workspace, invite local members, accept invitations, transfer owner, update member role, disable/restore members, and remove members. |
 | Admin 账户基础分离 | Done | `role=admin` is distinct from `role=user`; `requireAdmin()` protects admin APIs; `/admin` is hidden/blocked for ordinary users. |
 | Admin 用户管理 | Done | Admin can list/search/filter users, create invited accounts with temporary passwords, update role/tier/enabled state, and view audit logs. |
 | 用户等级模型 | Done | `account_tier` supports `free`, `pro`, `business`, `enterprise`. |
@@ -76,7 +76,7 @@ This document is the working checklist for local development. Update it after ea
 | P1 | Invoice / Payment History Polish | Add PDF/download affordances, invoice filters, customer-facing payment retry links, and richer invoice detail. | Paid users need a complete billing record experience. |
 | P1 | Trial / Dunning Lifecycle | Add trial expiration, past-due reminders, payment failure states, and downgrade rules. | Prevents stale paid access when payment state changes. |
 | P1 | Account Deletion / Export Polish | Add admin-facing deletion audit review and richer export format/version metadata. | Required for serious account management and compliance readiness. |
-| P1 | Team Lifecycle Completion | Add member disable/reactivation, pending invitation acceptance, and email delivery later. | Business/Enterprise accounts need real team administration. |
+| P1 | Team Lifecycle Completion | Add email delivery for invitations and richer invitation resend/revoke controls. | Business/Enterprise accounts need real team administration. |
 | P1 | Entitlement Coverage Audit | Ensure every gated future API and UI action uses the central feature map and consistent locked states. | Prevents paid features from leaking to lower tiers. |
 | P1 | Usage Dashboard | Show current usage vs tier limits for saved bids, intents, and future quote/workspace limits. | Users need to understand why an upgrade is required. |
 | P2 | Granular Operator Roles | Add support/operator roles separate from full admin. | Useful once support operations grow. |
@@ -97,7 +97,7 @@ This document is the working checklist for local development. Update it after ea
 | Area | What exists | Missing to be useful |
 |---|---|---|
 | Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; password reset token flow; users can export account data and soft-delete/deactivate their account; admin can create invited accounts, enable/disable users, search/filter users, and review access audit logs | Admin-facing deletion audit review and richer export format/version metadata |
-| Organization/workspace model | Registered users get a default organization, session payload includes current workspace and owner/member role, Settings Team tab can rename workspace, invite local members, transfer owner, change member roles, remove members, and saved bids/intents are shared across organization members | Member disable/reactivation, invitation acceptance/email delivery |
+| Organization/workspace model | Registered users get a default organization, session payload includes current workspace and owner/member role, Settings Team tab can rename workspace, invite local members, accept invitations, transfer owner, change member roles, disable/restore members, remove members, and saved bids/intents are shared across organization members | Email delivery plus invitation resend/revoke controls |
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, provider-compatible webhook sync, cancellation scheduling, invoice history, and optional webhook signature verification | Real payment provider SDK/API calls, provider-specific event mapping, sandbox credentials, trial/dunning lifecycle |
@@ -111,7 +111,7 @@ This document is the working checklist for local development. Update it after ea
 | Area | Needed capability |
 |---|---|
 | Production billing polish | Real provider SDK/API calls, provider-specific event mapping, sandbox credentials, trial expiration, and dunning. |
-| Organization team lifecycle | Member disable/reactivation, pending invitation acceptance. |
+| Organization team lifecycle | Email delivery plus invitation resend/revoke controls. |
 | Response Workspace | Tasks, artifacts, internal checkpoints, reusable documents. |
 | Sourcing / quote workflow | Partner database, quote requests, quote comparison, attachment storage. |
 | Award / tabulation tracking | Award notices, bid status monitoring, tabulation records. |
@@ -121,12 +121,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Production Billing Provider SDK/API Adapter** next if the next sprint stays on monetization. If the next sprint shifts back to account lifecycle, prioritize member disable/reactivation and pending invitation acceptance.
+Prioritize **Production Billing Provider SDK/API Adapter** next if the next sprint stays on monetization. If the next sprint shifts back to account lifecycle, prioritize invitation email delivery plus invitation resend/revoke controls.
 
 Reason:
 
 - The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Business-gated Compliance Manifest, and Pro-gated Pursue / No-Bid Decision now exist.
-- The remaining account gap is not basic registration; it is real payment provider SDK/API integration, provider-specific event mapping, trial/dunning lifecycle, member reactivation, pending invitation acceptance, broader usage dashboards, and account export/deletion polish.
+- The remaining account gap is not basic registration; it is real payment provider SDK/API integration, provider-specific event mapping, trial/dunning lifecycle, invitation email delivery, broader usage dashboards, and account export/deletion polish.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
@@ -188,8 +188,8 @@ Current local limits:
    - Add sandbox credential docs and end-to-end sandbox verification.
 
 2. **Account lifecycle**
-   - Add member disable/reactivation.
-   - Add pending invitation acceptance and email delivery.
+   - Add invitation email delivery.
+   - Add invitation resend/revoke controls.
 
 3. **Product workflow depth**
    - Build Response Workspace.
@@ -638,6 +638,36 @@ Current local limits:
 
 建议下一步：
 - 如果继续权限/账户主线，做成员禁用/恢复 + 邀请接受；如果继续商业化主线，做真实 provider SDK/API adapter。
+
+## Completed Phase: Workspace Member Disable / Restore + Invitation Acceptance
+
+本阶段完成：
+- `organization_memberships.status` 现在支持 `active`、`invited`、`disabled`，Team 列表会展示成员状态。
+- 新增 `workspace_invitations` 表，保存邀请 token hash、邀请人、被邀请用户、过期时间和接受时间。
+- 邀请成员时不再直接给临时密码，而是创建 pending invited 用户、invited membership 和本地 invite URL。
+- 新增 `acceptWorkspaceInvitation()`，被邀请用户可通过 token 设置密码并激活 membership，同时创建 session。
+- 新增成员 `disableWorkspaceMember()` / `restoreWorkspaceMember()`，Owner 可暂停/恢复成员访问；停用会清理该成员 session 并排除在 workspace usage scope 之外。
+- 新增 `/api/account/workspace/invitations/accept`，并扩展 `/api/account/workspace/members/[userId]` 支持 status PATCH。
+- 前端 API client 新增 `acceptWorkspaceInvitation()` 与 `setWorkspaceMemberStatus()`。
+- 新增 `/accept-invite` 页面，支持输入 token、显示名称、密码并接受邀请。
+- `/settings` Team 标签显示 invited/disabled 状态、邀请链接、停用/恢复按钮。
+- 补齐中英文邀请接受、成员状态、停用/恢复文案。
+
+验证：
+- `npm test -- src/server/account/workspace.test.ts src/server/db/schema.test.ts src/app/api/account/workspace/members/route.test.ts src/app/api/account/workspace/members/[userId]/route.test.ts src/app/api/account/workspace/invitations/accept/route.test.ts src/lib/api/auth.test.ts src/app/settings/page.test.ts src/app/accept-invite/page.test.ts`
+- `npm run lint`
+- `npm run build`
+
+当前还剩：
+1. Production Billing Provider SDK/API：接真实 Stripe/其他 provider SDK、真实 hosted checkout/customer portal session 创建、sandbox credentials。
+2. Provider-specific event mapping：把真实 provider payload 转换为当前内部 `BillingProviderEvent`。
+3. Trial / Dunning Lifecycle：试用到期、扣款失败重试、逾期提醒、自动降级规则。
+4. Invoice / Payment History Polish：PDF 下载体验、筛选、支付重试链接、更完整的发票详情。
+5. Invitation Email Delivery：邀请邮件发送、重发、撤销和过期提示。
+6. Usage Dashboard：展示当前使用量与套餐额度。
+
+建议下一步：
+- 如果继续权限/账户主线，做 Usage Dashboard；如果继续团队生命周期，做邀请邮件发送/重发/撤销；如果继续商业化主线，做真实 provider SDK/API adapter。
 
 ## Status Update Template
 

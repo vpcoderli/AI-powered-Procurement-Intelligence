@@ -47,11 +47,12 @@ describe("POST /api/account/workspace/members", () => {
         email: "member@example.com",
         displayName: "Member One",
         workspaceRole: "member",
-        status: "active",
+        status: "invited",
         createdAt: "2026-05-28T00:00:00.000Z",
         updatedAt: "2026-05-28T00:00:00.000Z",
       },
-      temporaryPassword: "Temp-secret",
+      inviteToken: "invite_secret",
+      inviteUrl: "/accept-invite?token=invite_secret",
     });
 
     const response = await POST(
@@ -69,7 +70,8 @@ describe("POST /api/account/workspace/members", () => {
 
     expect(response.status).toBe(201);
     expect(body.member.email).toBe("member@example.com");
-    expect(body.temporaryPassword).toBe("Temp-secret");
+    expect(body.inviteToken).toBe("invite_secret");
+    expect(body.inviteUrl).toBe("/accept-invite?token=invite_secret");
     expect(workspaceService.inviteWorkspaceMember).toHaveBeenCalledWith({}, "user_1", {
       email: "member@example.com",
       displayName: "Member One",
