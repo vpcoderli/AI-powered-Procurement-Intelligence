@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { intentToBid } from "@/server/db/schema";
 import type { BidMatchResult } from "@/server/match/types";
@@ -25,6 +25,16 @@ export function findIntentByUserAndBid(db: AppDatabase, userId: string, bidId: s
     .get();
 }
 
+export function findIntentByUsersAndBid(db: AppDatabase, userIds: string[], bidId: string) {
+  return db
+    .select()
+    .from(intentToBid)
+    .where(and(inArray(intentToBid.userId, userIds), eq(intentToBid.bidId, bidId)))
+    .orderBy(asc(intentToBid.createdAt), asc(intentToBid.id))
+    .limit(1)
+    .get();
+}
+
 export function findIntentByUserAndId(db: AppDatabase, userId: string, intentId: string) {
   return db
     .select()
@@ -34,11 +44,29 @@ export function findIntentByUserAndId(db: AppDatabase, userId: string, intentId:
     .get();
 }
 
+export function findIntentByUsersAndId(db: AppDatabase, userIds: string[], intentId: string) {
+  return db
+    .select()
+    .from(intentToBid)
+    .where(and(inArray(intentToBid.userId, userIds), eq(intentToBid.id, intentId)))
+    .limit(1)
+    .get();
+}
+
 export function listIntentRowsForUser(db: AppDatabase, userId: string) {
   return db
     .select()
     .from(intentToBid)
     .where(eq(intentToBid.userId, userId))
+    .orderBy(asc(intentToBid.createdAt), asc(intentToBid.id))
+    .all();
+}
+
+export function listIntentRowsForUsers(db: AppDatabase, userIds: string[]) {
+  return db
+    .select()
+    .from(intentToBid)
+    .where(inArray(intentToBid.userId, userIds))
     .orderBy(asc(intentToBid.createdAt), asc(intentToBid.id))
     .all();
 }
@@ -77,4 +105,19 @@ export function updateIntentRowStatus(
     .run();
 
   return findIntentByUserAndId(db, userId, intentId);
+}
+
+export function updateIntentRowStatusForUsers(
+  db: AppDatabase,
+  userIds: string[],
+  intentId: string,
+  status: IntentStatus,
+  timestamp: string,
+) {
+  db.update(intentToBid)
+    .set({ status, updatedAt: timestamp })
+    .where(and(inArray(intentToBid.userId, userIds), eq(intentToBid.id, intentId)))
+    .run();
+
+  return findIntentByUsersAndId(db, userIds, intentId);
 }

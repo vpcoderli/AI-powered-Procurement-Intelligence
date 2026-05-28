@@ -188,6 +188,14 @@ export function ensureUserWorkspace(db: AppDatabase, userId: string): PublicWork
     throw new WorkspaceNotFoundError();
   }
 
+  if (!user.email) {
+    return {
+      organizationId: "",
+      organizationName: "Personal Workspace",
+      role: "owner",
+    };
+  }
+
   const timestamp = nowIso();
   const organization = {
     id: `org_${crypto.randomUUID()}`,
@@ -213,6 +221,30 @@ export function ensureUserWorkspace(db: AppDatabase, userId: string): PublicWork
     organizationName: organization.name,
     role: "owner",
   };
+}
+
+export function listWorkspaceMemberUserIds(db: AppDatabase, userId: string): string[] {
+  const user = db.select().from(users).where(eq(users.id, userId)).limit(1).get();
+
+  if (!user?.email) {
+    return [userId];
+  }
+
+  const workspace = ensureUserWorkspace(db, userId);
+  if (!workspace.organizationId) {
+    return [userId];
+  }
+
+  return db
+    .select({ userId: organizationMemberships.userId })
+    .from(organizationMemberships)
+    .where(and(
+      eq(organizationMemberships.organizationId, workspace.organizationId),
+      eq(organizationMemberships.status, "active"),
+    ))
+    .orderBy(asc(organizationMemberships.createdAt), asc(organizationMemberships.userId))
+    .all()
+    .map((row) => row.userId);
 }
 
 export function getAccountWorkspace(db: AppDatabase, userId: string): AccountWorkspaceResponse {

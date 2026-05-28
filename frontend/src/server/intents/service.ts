@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { AppDatabase } from "@/server/db/client";
+import { listWorkspaceMemberUserIds } from "@/server/account/workspace";
 import { ensureUser, getBidByIdFromRepository } from "@/server/bids/repository";
 import { calculateBidMatch } from "@/server/match/service";
 import type { BidMatchResult } from "@/server/match/types";
@@ -7,11 +8,11 @@ import { getSupplierProfile } from "@/server/profile/service";
 import { generateIntentBrief } from "./brief-generator";
 import {
   createIntentRow,
-  findIntentByUserAndBid,
-  findIntentByUserAndId,
-  listIntentRowsForUser,
+  findIntentByUsersAndBid,
+  findIntentByUsersAndId,
+  listIntentRowsForUsers,
   type IntentRow,
-  updateIntentRowStatus,
+  updateIntentRowStatusForUsers,
 } from "./repository";
 import {
   InvalidIntentStatusError,
@@ -26,6 +27,16 @@ import {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+interface WorkspaceScopeOptions {
+  scopeUserIds?: string[];
+}
+
+function scopedUserIds(database: AppDatabase, userId: string, options: WorkspaceScopeOptions = {}) {
+  return options.scopeUserIds && options.scopeUserIds.length > 0
+    ? options.scopeUserIds
+    : listWorkspaceMemberUserIds(database, userId);
 }
 
 function parseJsonField<T>(value: string, field: string): T {
@@ -70,8 +81,10 @@ export async function createIntentForBid(
   database: AppDatabase,
   userId: string,
   bidId: string,
+  options: WorkspaceScopeOptions = {},
 ): Promise<IntentDetail> {
-  const existing = findIntentByUserAndBid(database, userId, bidId);
+  const scopeUserIds = scopedUserIds(database, userId, options);
+  const existing = findIntentByUsersAndBid(database, scopeUserIds, bidId);
 
   if (existing) {
     return hydrateIntent(database, existing);
@@ -109,16 +122,21 @@ export async function createIntentForBid(
 export async function listUserIntents(
   database: AppDatabase,
   userId: string,
+  options: WorkspaceScopeOptions = {},
 ): Promise<IntentSummary[]> {
-  return Promise.all(listIntentRowsForUser(database, userId).map((row) => hydrateIntent(database, row)));
+  const scopeUserIds = scopedUserIds(database, userId, options);
+
+  return Promise.all(listIntentRowsForUsers(database, scopeUserIds).map((row) => hydrateIntent(database, row)));
 }
 
 export async function getUserIntent(
   database: AppDatabase,
   userId: string,
   intentId: string,
+  options: WorkspaceScopeOptions = {},
 ): Promise<IntentDetail | undefined> {
-  const row = findIntentByUserAndId(database, userId, intentId);
+  const scopeUserIds = scopedUserIds(database, userId, options);
+  const row = findIntentByUsersAndId(database, scopeUserIds, intentId);
 
   return row ? hydrateIntent(database, row) : undefined;
 }
@@ -128,12 +146,14 @@ export async function updateIntentStatus(
   userId: string,
   intentId: string,
   status: IntentStatus | string,
+  options: WorkspaceScopeOptions = {},
 ): Promise<IntentDetail> {
   if (!isIntentStatus(status)) {
     throw new InvalidIntentStatusError();
   }
 
-  const row = updateIntentRowStatus(database, userId, intentId, status, nowIso());
+  const scopeUserIds = scopedUserIds(database, userId, options);
+  const row = updateIntentRowStatusForUsers(database, scopeUserIds, intentId, status, nowIso());
 
   if (!row) {
     throw new IntentNotFoundError();

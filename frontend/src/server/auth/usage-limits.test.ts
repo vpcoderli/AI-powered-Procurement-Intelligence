@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { bids, intentToBid, savedBids, users } from "@/server/db/schema";
+import { bids, intentToBid, organizationMemberships, organizations, savedBids, users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
   UsageLimitError,
@@ -112,6 +112,64 @@ describe("usage limits", () => {
         tier: "free",
         feature: "intent_workspace",
         resourceId: "bid_1",
+      }),
+    ).not.toThrow();
+  });
+
+  it("counts existing resources across a workspace scope", () => {
+    testDb.db.insert(users).values({
+      id: "user_member",
+      email: "member@example.com",
+      role: "user",
+      accountTier: "free",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+    }).run();
+    testDb.db.insert(organizations).values({
+      id: "org_1",
+      name: "Workspace",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+    }).run();
+    for (const userId of ["user_free", "user_member"]) {
+      testDb.db.insert(organizationMemberships).values({
+        organizationId: "org_1",
+        userId,
+        role: userId === "user_free" ? "owner" : "member",
+        status: "active",
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      }).run();
+    }
+    for (let index = 1; index <= 5; index += 1) {
+      testDb.db.insert(savedBids).values({
+        userId: index % 2 === 0 ? "user_member" : "user_free",
+        bidId: `bid_${index}`,
+        createdAt: `2026-05-28T00:00:0${index}.000Z`,
+      }).run();
+    }
+
+    expect(
+      getUsageLimitStatus(testDb.db, "user_member", "free", "saved_bids", {
+        scopeUserIds: ["user_free", "user_member"],
+      }),
+    ).toMatchObject({ used: 5, limit: 5, isLimited: true });
+    expect(() =>
+      enforceUsageLimit(testDb.db, {
+        userId: "user_member",
+        tier: "free",
+        feature: "saved_bids",
+        resourceId: "bid_6",
+        scopeUserIds: ["user_free", "user_member"],
+      }),
+    ).toThrow(UsageLimitError);
+    expect(() =>
+      enforceUsageLimit(testDb.db, {
+        userId: "user_member",
+        tier: "free",
+        feature: "saved_bids",
+        resourceId: "bid_1",
+        scopeUserIds: ["user_free", "user_member"],
       }),
     ).not.toThrow();
   });

@@ -12,7 +12,7 @@ This document is the working checklist for local development. Update it after ea
 |---|---|
 | Product shell | Real app shell, sidebar, bilingual UI, WinBids demo visual style applied to main pages. |
 | Bid discovery | `/search`, filters, sort, bid cards, bid detail page, source links, attachments. |
-| Saved bids | Anonymous and authenticated saved bids, merge anonymous saved bids on register/login. |
+| Saved bids | Anonymous saved bids and authenticated workspace-shared saved bids, merge anonymous saved bids on register/login. |
 | Supplier profile | `/profile`, profile API, completion score, deterministic matching inputs. |
 | Auth basics | Register, login, logout, session cookie, session lookup, login/register pages, session payload with role/tier/features. |
 | Account self-service | `/settings` shows authenticated email/display name, updates display name, changes password after validating current password; `/forgot-password` and `/reset-password` support local token-based password recovery; Settings Team tab manages workspace name and member invites. |
@@ -22,11 +22,11 @@ This document is the working checklist for local development. Update it after ea
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs. |
 | Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin-only console access. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, and tier-aware locked states for gated features. |
-| Usage limits | Central saved bid and intent workspace quota checks by tier; APIs return `USAGE_LIMIT_REACHED` before creating over-limit resources. |
+| Usage limits | Central saved bid and intent workspace quota checks by tier; authenticated users are counted at workspace scope; APIs return `USAGE_LIMIT_REACHED` before creating over-limit resources. |
 | Subscription foundation | `account_subscriptions`, `subscription_events`, plan catalog, account subscription API, Settings Billing tab. |
 | Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, CA/TX/NY/FL/IL runner wiring. |
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
-| Intent to Bid | Add intent from bid detail, idempotent intent creation, intent list, intent detail workspace, status update. |
+| Intent to Bid | Add intent from bid detail, idempotent workspace-scoped intent creation, shared intent list/detail for organization members, status update. |
 | AI-like bid brief | Deterministic brief, key dates, initial checklist, risk flags. |
 | Submission Guidance | `submission_paths`, `submission_confirmations`, generator, service, Pro-gated API routes, API client, Intent workspace UI for generated guidance, editable submission fields, readiness/risk lists, and manual submission confirmation. |
 | Static product demo | `/winbids-demo` isolated prototype page from Drive frontend references. |
@@ -36,7 +36,7 @@ This document is the working checklist for local development. Update it after ea
 | Area | What exists | Missing to be useful |
 |---|---|---|
 | Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; password reset token flow; admin can create invited accounts, enable/disable users, search/filter users, and review access audit logs | Account deletion/export |
-| Organization/workspace model | Registered users get a default organization, session payload includes current workspace and owner/member role, Settings Team tab can rename workspace and invite local members | Shared saved bids/intents across organization members, team role management beyond invite-only member creation |
+| Organization/workspace model | Registered users get a default organization, session payload includes current workspace and owner/member role, Settings Team tab can rename workspace and invite local members, saved bids/intents are shared across organization members | Team role management beyond invite-only member creation, member removal/disable |
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab | Billing provider sync, real checkout, invoices, cancellation |
@@ -50,7 +50,7 @@ This document is the working checklist for local development. Update it after ea
 | Area | Needed capability |
 |---|---|
 | Billing integration | Checkout, subscription status sync, invoices, cancellation, trial expiration. |
-| Organization shared workspace data | Shared bids/intents across company members, workspace-scoped ownership, team role changes/removal. |
+| Organization team management | Team role changes/removal, ownership transfer, member disable/reactivation. |
 | Compliance Manifest Lite | Structured bid requirements, manual completion, notes, evidence status. |
 | Pursue / No-Bid Decision Lite | Recommendation, decision capture, reasons, decision history. |
 | Response Workspace | Tasks, artifacts, internal checkpoints, reusable documents. |
@@ -62,12 +62,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Organization Shared Workspace Data** next, then choose between **Compliance Manifest Lite** and **Billing Provider Sync** depending on whether the following sprint should deepen bid execution workflow or connect real monetization.
+Prioritize **Organization Team Management** next, then choose between **Compliance Manifest Lite** and **Billing Provider Sync** depending on whether the following sprint should deepen bid execution workflow or connect real monetization.
 
 Reason:
 
-- The data model, session payload, account settings, password reset flow, organization/member foundation, subscription foundation, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
-- The remaining account gap is not basic self-service; it is real billing provider sync, broader usage dashboards, account deletion/export, and organization-scoped shared data.
+- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, subscription foundation, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
+- The remaining account gap is not basic self-service; it is team role management/removal, real billing provider sync, broader usage dashboards, and account deletion/export.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
@@ -134,7 +134,7 @@ Current local limits:
 
 3. **Account lifecycle**
    - Add account deletion/export.
-   - Add organization-scoped shared bids/intents.
+   - Add team role changes/removal.
 
 ## Completed Phase: Account / Role / Tier Foundation
 
@@ -147,7 +147,7 @@ Current local limits:
 
 当前还剩：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
-2. Organization shared workspace data：公司成员共享 saved bids / intents。
+2. Organization team management：成员角色调整、移除、owner 转移。
 3. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Feature Guards / Tier-Aware UI
@@ -162,7 +162,7 @@ Current local limits:
 
 当前还剩：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
-2. Organization shared workspace data：公司成员共享 saved bids / intents。
+2. Organization team management：成员角色调整、移除、owner 转移。
 3. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Admin User Management Polish
@@ -176,7 +176,7 @@ Current local limits:
 
 当前还剩：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
-2. Organization shared workspace data：公司成员共享 saved bids / intents。
+2. Organization team management：成员角色调整、移除、owner 转移。
 3. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Account Settings Foundation
@@ -190,7 +190,7 @@ Current local limits:
 
 当前还剩：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
-2. Organization shared workspace data：公司成员共享 saved bids / intents。
+2. Organization team management：成员角色调整、移除、owner 转移。
 3. Account deletion/export 账号数据导出与删除。
 4. Submission Guidance 真实编辑与确认 UI。
 
@@ -206,7 +206,7 @@ Current local limits:
 当前还剩：
 1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 2. Usage limits：继续覆盖 alerts、AI/高级功能调用次数，并增加使用量仪表盘。
-3. Organization shared workspace data：公司成员共享 saved bids / intents。
+3. Organization team management：成员角色调整、移除、owner 转移。
 4. Account deletion/export 账号数据导出与删除。
 5. Submission Guidance 真实编辑与确认 UI。
 
@@ -222,7 +222,7 @@ Current local limits:
 当前还剩：
 1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 2. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
-3. Organization shared workspace data：公司成员共享 saved bids / intents。
+3. Organization team management：成员角色调整、移除、owner 转移。
 4. Account deletion/export 账号数据导出与删除。
 
 ## Completed Phase: Submission Guidance UI
@@ -246,7 +246,7 @@ Current local limits:
 2. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 4. Account deletion/export 账号数据导出与删除。
-5. Organization shared workspace data：公司成员共享 saved bids / intents。
+5. Organization team management：成员角色调整、移除、owner 转移。
 6. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
 
 建议下一步：
@@ -274,11 +274,11 @@ Current local limits:
 2. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 4. Account deletion/export 账号数据导出与删除。
-5. Organization shared workspace data：公司成员共享 saved bids / intents。
+5. Organization team management：成员角色调整、移除、owner 转移。
 6. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
 
 建议下一步：
-- 继续做 Organization shared workspace data，让公司成员共享 saved bids / intents。
+- 继续做 Organization team management，补齐成员角色调整、移除、owner 转移。
 
 ## Completed Phase: Admin User Invite Flow
 
@@ -298,7 +298,7 @@ Current local limits:
 - 浏览器烟测：打开 `/admin`，确认“邀请用户”表单、角色/套餐选择和“创建邀请”按钮已渲染。
 
 当前还剩：
-1. Organization shared workspace data：公司成员共享 saved bids / intents。
+1. Organization team management：成员角色调整、移除、owner 转移。
 2. Account deletion/export 账号数据导出与删除。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 4. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
@@ -306,7 +306,7 @@ Current local limits:
 6. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 
 建议下一步：
-- 优先做 Organization shared workspace data，因为账号、角色、套餐、恢复闭环和团队基础已经具备，下一块应把 saved bids / intents 切到公司协作维度。
+- 优先做 Organization team management，因为账号、角色、套餐、恢复闭环和团队共享数据已经具备，下一块应补齐成员生命周期。
 
 ## Completed Phase: Password Reset Flow
 
@@ -322,7 +322,7 @@ Current local limits:
 - `npm test -- src/server/auth/password-reset.test.ts src/server/db/schema.test.ts src/app/api/auth/password-reset/request/route.test.ts src/app/api/auth/password-reset/confirm/route.test.ts src/lib/api/auth.test.ts src/app/login/page.test.ts src/app/forgot-password/page.test.ts src/app/reset-password/page.test.ts`
 
 当前还剩：
-1. Organization shared workspace data：公司成员共享 saved bids / intents。
+1. Organization team management：成员角色调整、移除、owner 转移。
 2. Account deletion/export 账号数据导出与删除。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 4. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
@@ -330,7 +330,7 @@ Current local limits:
 6. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 
 建议下一步：
-- 优先开发 Organization shared workspace data，让普通账号、admin、套餐等级和未来高级功能真正落到“公司/团队”的共享业务数据上。
+- 优先开发 Organization team management，让普通账号、admin、套餐等级和未来高级功能真正落到可管理的公司团队上。
 
 ## Completed Phase: Organization / Workspace Foundation
 
@@ -348,7 +348,7 @@ Current local limits:
 - `npm test -- src/server/account/workspace.test.ts src/server/db/schema.test.ts src/app/api/auth/session/route.test.ts src/app/api/account/workspace/route.test.ts src/app/api/account/workspace/members/route.test.ts src/lib/api/auth.test.ts src/app/settings/page.test.ts src/server/auth/service.test.ts`
 
 当前还剩：
-1. Organization shared workspace data：公司成员共享 saved bids / intents。
+1. Organization team management：成员角色调整、移除、owner 转移。
 2. Account deletion/export 账号数据导出与删除。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 4. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
@@ -356,7 +356,35 @@ Current local limits:
 6. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 
 建议下一步：
-- 继续做 Organization shared workspace data，把 saved bids 与 intent workspace 从单用户视角升级为组织成员共享视图。
+- 继续做 Organization team management，补齐成员角色调整、移除、owner 转移。
+
+## Completed Phase: Organization Shared Workspace Data
+
+本阶段完成：
+- 新增 workspace scope 工具：认证用户按所属 organization 的 active members 解析数据范围，匿名用户保持单用户 cookie 范围。
+- Saved bids 支持组织共享：owner/member 任一方保存后，同 workspace 成员都能在 `/api/saved-bids` 看到；重复保存同一 bid 会复用已有记录；删除会从 workspace 视图移除。
+- Intent workspace 支持组织共享：owner/member 任一方创建后，同 workspace 成员可在 `/api/intents` 与 `/api/intents/[id]` 读取同一 intent。
+- Intent 创建按 workspace 维度幂等：同一 workspace 内同一 bid 只复用一个 intent，不会因为不同成员重复创建而分裂。
+- Intent 状态更新按 workspace 授权：同 workspace 成员可更新共享 intent；其他 workspace 用户不可读取或更新。
+- Saved bids 与 intent usage limits 改为 workspace 范围计数，避免免费/付费额度被成员拆分绕过。
+
+验证：
+- `npm test -- src/server/bids/repository.test.ts src/server/intents/service.test.ts src/server/auth/usage-limits.test.ts`
+- `npm test`
+- `npm run lint`
+- `npm run build`
+- API 烟测：owner 注册并邀请 member；owner 保存 bid 与创建 intent；member 登录后能读取同一 saved bid 和 intent。
+
+当前还剩：
+1. Organization team management：成员角色调整、移除、owner 转移。
+2. Account deletion/export 账号数据导出与删除。
+3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
+4. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
+5. Compliance Manifest Lite：结构化需求、人工完成状态、备注和证据状态。
+6. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
+
+建议下一步：
+- 继续做 Organization team management：先实现 owner 修改成员角色、移除成员、禁止移除最后一个 owner，再接 Settings Team UI。
 
 ## Status Update Template
 

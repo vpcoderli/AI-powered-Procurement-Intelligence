@@ -1,6 +1,7 @@
 import { STATE_FILTERS } from "@/lib/mock-data";
 import { db } from "@/server/db/client";
 import type { AppDatabase } from "@/server/db/client";
+import { listWorkspaceMemberUserIds } from "@/server/account/workspace";
 import type { Bid } from "./domain";
 import {
   getBidByIdFromRepository,
@@ -102,10 +103,15 @@ function sortBids(bids: Bid[], sort: NormalizedBidQuery["sort"]) {
   return bids;
 }
 
-async function savedBidsResponse(userId: string): Promise<SavedBidsResponse> {
-  const savedIds = await listSavedBidIds(db, userId);
+function savedBidScope(database: AppDatabase, userId: string) {
+  return listWorkspaceMemberUserIds(database, userId);
+}
+
+async function savedBidsResponse(database: AppDatabase, userId: string): Promise<SavedBidsResponse> {
+  const scopeUserIds = savedBidScope(database, userId);
+  const savedIds = await listSavedBidIds(database, userId, scopeUserIds);
   const savedIdSet = new Set(savedIds);
-  const bids = await listBids(db, savedIds);
+  const bids = await listBids(database, savedIds);
 
   return {
     savedBidIds: savedIds,
@@ -151,7 +157,7 @@ export async function getBidById(id: string): Promise<Bid | undefined> {
 }
 
 export async function getSavedBids(userId: string): Promise<SavedBidsResponse> {
-  return savedBidsResponse(userId);
+  return savedBidsResponse(db, userId);
 }
 
 export async function saveBid(userId: string, id: string): Promise<SavedBidsResponse> {
@@ -159,13 +165,15 @@ export async function saveBid(userId: string, id: string): Promise<SavedBidsResp
     throw new BidNotFoundError();
   }
 
-  await saveSavedBidId(db, userId, id);
+  const scopeUserIds = savedBidScope(db, userId);
+  await saveSavedBidId(db, userId, id, scopeUserIds);
 
-  return savedBidsResponse(userId);
+  return savedBidsResponse(db, userId);
 }
 
 export async function removeSavedBid(userId: string, id: string): Promise<SavedBidsResponse> {
-  await removeSavedBidId(db, userId, id);
+  const scopeUserIds = savedBidScope(db, userId);
+  await removeSavedBidId(db, userId, id, scopeUserIds);
 
-  return savedBidsResponse(userId);
+  return savedBidsResponse(db, userId);
 }
