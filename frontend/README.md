@@ -32,6 +32,32 @@ STRIPE_PRICE_BUSINESS_MONTHLY=price_...
 
 Stripe webhooks should POST to `/api/billing/webhook` with the standard `Stripe-Signature` header. The app maps Stripe checkout, subscription, and invoice events into the internal billing event format before updating user tiers and subscription state.
 
+## Notification Worker
+
+The notification worker schedules staged billing dunning reminders and delivers pending notification outbox rows.
+
+Run once:
+
+```bash
+NOTIFICATION_WORKER_RUN_ONCE=1 npm run worker:notifications
+```
+
+Run continuously:
+
+```bash
+npm run worker:notifications
+```
+
+Useful worker environment variables:
+
+```bash
+NOTIFICATION_WORKER_INTERVAL_MS=900000
+NOTIFICATION_WORKER_DUNNING_LIMIT=100
+NOTIFICATION_WORKER_DELIVERY_LIMIT=25
+NOTIFICATION_WORKER_MAX_ATTEMPTS=3
+NOTIFICATION_PROVIDER=file # file, console, or http
+```
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

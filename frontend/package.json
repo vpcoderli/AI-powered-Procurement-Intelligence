@@ -12,7 +12,8 @@
     "db:seed": "tsx scripts/seed-db.ts",
     "db:migrate-saved-bids": "tsx scripts/migrate-saved-bids.ts",
     "crawler:once": "tsx scripts/run-crawler-once.ts",
-    "worker:crawler": "tsx scripts/crawler-worker.ts"
+    "worker:crawler": "tsx scripts/crawler-worker.ts",
+    "worker:notifications": "tsx scripts/notification-worker.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
