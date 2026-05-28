@@ -110,7 +110,7 @@ function toPublicUser(row: {
   }
 
   const role = normalizeUserRole(row.role);
-  const tier = normalizeAccountTier(row.accountTier);
+  const tier = workspace?.tier ?? normalizeAccountTier(row.accountTier);
 
   return {
     id: row.id,

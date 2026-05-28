@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { users } from "@/server/db/schema";
+import { organizations, users } from "@/server/db/schema";
 import {
   acceptWorkspaceInvitation,
   inviteWorkspaceMember,
@@ -70,6 +70,10 @@ describe("bid repository", () => {
     testDb.db.update(users)
       .set({ accountTier: "business" })
       .where(eq(users.id, owner.user.id))
+      .run();
+    testDb.db.update(organizations)
+      .set({ accountTier: "business" })
+      .where(eq(organizations.id, owner.user.workspace.organizationId))
       .run();
     const member = await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "member@example.com",

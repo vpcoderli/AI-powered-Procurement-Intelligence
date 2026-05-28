@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { users } from "@/server/db/schema";
+import { organizationMemberships, organizations, users } from "@/server/db/schema";
 import { createTestDatabase } from "@/server/db/test-utils";
 import { verifyPassword } from "@/server/auth/password";
 import {
@@ -73,6 +73,21 @@ describe("admin users repository", () => {
         createdAt: NOW,
         updatedAt: NOW,
       }).run();
+      testDb.db.insert(organizations).values({
+        id: "org_1",
+        name: "Buyer Workspace",
+        accountTier: "free",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }).run();
+      testDb.db.insert(organizationMemberships).values({
+        organizationId: "org_1",
+        userId: "user_1",
+        role: "owner",
+        status: "active",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }).run();
 
       const updated = updateAdminUser(
         testDb.db,
@@ -91,6 +106,8 @@ describe("admin users repository", () => {
         tier: "business",
         isDisabled: true,
       }));
+      expect(testDb.db.select().from(organizations).where(eq(organizations.id, "org_1")).get())
+        .toMatchObject({ accountTier: "business" });
 
       const auditLogs = listAdminUserAuditLogs(testDb.db, { limit: 5 });
       expect(auditLogs.logs).toEqual([

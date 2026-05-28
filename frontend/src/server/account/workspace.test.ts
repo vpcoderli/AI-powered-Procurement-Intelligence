@@ -45,6 +45,10 @@ describe("workspace account service", () => {
       .set({ accountTier: "business" })
       .where(eq(users.id, registered.user.id))
       .run();
+    testDb.db.update(organizations)
+      .set({ accountTier: "business" })
+      .where(eq(organizations.id, registered.user.workspace.organizationId))
+      .run();
 
     return registered;
   }
@@ -60,6 +64,7 @@ describe("workspace account service", () => {
       organizationId: expect.stringMatching(/^org_/),
       organizationName: "Owner One's Workspace",
       role: "owner",
+      tier: "free",
     });
 
     const membership = testDb.db
@@ -74,6 +79,8 @@ describe("workspace account service", () => {
       role: "owner",
       status: "active",
     });
+    expect(testDb.db.select().from(organizations).where(eq(organizations.id, registered.user.workspace.organizationId)).get())
+      .toMatchObject({ accountTier: "free" });
   });
 
   it("ensures existing users get one owner workspace without duplicates", async () => {
@@ -168,6 +175,10 @@ describe("workspace account service", () => {
       .set({ accountTier: "pro" })
       .where(eq(users.id, owner.user.id))
       .run();
+    testDb.db.update(organizations)
+      .set({ accountTier: "pro" })
+      .where(eq(organizations.id, owner.user.workspace.organizationId))
+      .run();
 
     await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "first@example.com",
@@ -186,6 +197,24 @@ describe("workspace account service", () => {
     ).rejects.toBeInstanceOf(UsageLimitError);
   });
 
+  it("uses the organization tier for team seat limits even when owner user tier differs", async () => {
+    const owner = await registerUser(testDb.db, {
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+    testDb.db.update(organizations)
+      .set({ accountTier: "business" })
+      .where(eq(organizations.id, owner.user.workspace.organizationId))
+      .run();
+
+    await expect(
+      inviteWorkspaceMember(testDb.db, owner.user.id, {
+        email: "member@example.com",
+        role: "member",
+      }),
+    ).resolves.toMatchObject({ member: { email: "member@example.com" } });
+  });
+
   it("allows accepting an invitation that already reserved the final team seat", async () => {
     const owner = await registerUser(testDb.db, {
       email: "owner@example.com",
@@ -194,6 +223,10 @@ describe("workspace account service", () => {
     testDb.db.update(users)
       .set({ accountTier: "pro" })
       .where(eq(users.id, owner.user.id))
+      .run();
+    testDb.db.update(organizations)
+      .set({ accountTier: "pro" })
+      .where(eq(organizations.id, owner.user.workspace.organizationId))
       .run();
 
     const first = await inviteWorkspaceMember(testDb.db, owner.user.id, {
@@ -360,6 +393,10 @@ describe("workspace account service", () => {
     testDb.db.update(users)
       .set({ accountTier: "free" })
       .where(eq(users.id, owner.user.id))
+      .run();
+    testDb.db.update(organizations)
+      .set({ accountTier: "free" })
+      .where(eq(organizations.id, owner.user.workspace.organizationId))
       .run();
 
     await expect(

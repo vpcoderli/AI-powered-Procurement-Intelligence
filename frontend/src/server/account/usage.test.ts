@@ -29,6 +29,7 @@ describe("account usage service", () => {
     testDb.db.insert(organizations).values({
       id: "org_1",
       name: "Acme Federal Team",
+      accountTier: "business",
       createdAt: "2026-05-28T00:00:00.000Z",
       updatedAt: "2026-05-28T00:00:00.000Z",
     }).run();
@@ -100,40 +101,40 @@ describe("account usage service", () => {
     }).run();
 
     expect(getAccountUsage(testDb.db, "user_owner")).toEqual({
-      tier: "free",
+      tier: "business",
       workspaceUserIds: ["user_owner", "user_member"],
       items: [
         {
           feature: "saved_bids",
           used: 2,
-          limit: 5,
-          remaining: 3,
+          limit: 250,
+          remaining: 248,
           isLimited: false,
-          requiredTier: "pro",
+          requiredTier: "enterprise",
         },
         {
           feature: "intent_workspace",
           used: 1,
-          limit: 2,
-          remaining: 1,
+          limit: 100,
+          remaining: 99,
           isLimited: false,
-          requiredTier: "pro",
+          requiredTier: "enterprise",
         },
         {
           feature: "search_alerts",
           used: 1,
-          limit: 2,
-          remaining: 1,
+          limit: 50,
+          remaining: 49,
           isLimited: false,
-          requiredTier: "pro",
+          requiredTier: "enterprise",
         },
         {
           feature: "team_members",
           used: 2,
-          limit: 1,
-          remaining: 0,
-          isLimited: true,
-          requiredTier: "business",
+          limit: 10,
+          remaining: 8,
+          isLimited: false,
+          requiredTier: "enterprise",
         },
       ],
     });

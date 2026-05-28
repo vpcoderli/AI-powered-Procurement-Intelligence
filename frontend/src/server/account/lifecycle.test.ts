@@ -7,7 +7,7 @@ import {
 } from "@/server/account/workspace";
 import { listAdminUserAuditLogs } from "@/server/admin/users-repository";
 import { getSessionUser, registerUser } from "@/server/auth/service";
-import { alerts, organizationMemberships, savedBids, sessions, supplierProfiles, users } from "@/server/db/schema";
+import { alerts, organizationMemberships, organizations, savedBids, sessions, supplierProfiles, users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
   AccountDeletionRequiresOwnerTransferError,
@@ -104,6 +104,10 @@ describe("account lifecycle service", () => {
       .set({ accountTier: "business" })
       .where(eq(users.id, owner.user.id))
       .run();
+    testDb.db.update(organizations)
+      .set({ accountTier: "business" })
+      .where(eq(organizations.id, owner.user.workspace.organizationId))
+      .run();
     const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "member@example.com",
       role: "member",
@@ -152,6 +156,10 @@ describe("account lifecycle service", () => {
       .set({ accountTier: "business" })
       .where(eq(users.id, owner.user.id))
       .run();
+    testDb.db.update(organizations)
+      .set({ accountTier: "business" })
+      .where(eq(organizations.id, owner.user.workspace.organizationId))
+      .run();
     const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "member@example.com",
       role: "member",
@@ -172,6 +180,10 @@ describe("account lifecycle service", () => {
     testDb.db.update(users)
       .set({ accountTier: "business" })
       .where(eq(users.id, owner.user.id))
+      .run();
+    testDb.db.update(organizations)
+      .set({ accountTier: "business" })
+      .where(eq(organizations.id, owner.user.workspace.organizationId))
       .run();
     const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "member@example.com",

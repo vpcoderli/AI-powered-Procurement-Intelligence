@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { users } from "@/server/db/schema";
+import { organizationMemberships, organizations, users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
   accountSubscriptions,
@@ -60,6 +60,22 @@ describe("billing subscriptions service", () => {
   });
 
   it("updates effective tier and writes a subscription event", () => {
+    testDb.db.insert(organizations).values({
+      id: "org_buyer",
+      name: "Buyer Workspace",
+      accountTier: "free",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+    }).run();
+    testDb.db.insert(organizationMemberships).values({
+      organizationId: "org_buyer",
+      userId: "user_buyer",
+      role: "owner",
+      status: "active",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+    }).run();
+
     const result = upsertAccountSubscription(testDb.db, "user_buyer", {
       tier: "pro",
       status: "active",
@@ -76,6 +92,9 @@ describe("billing subscriptions service", () => {
     });
     expect(
       testDb.db.select().from(users).where(eq(users.id, "user_buyer")).limit(1).get()?.accountTier,
+    ).toBe("pro");
+    expect(
+      testDb.db.select().from(organizations).where(eq(organizations.id, "org_buyer")).limit(1).get()?.accountTier,
     ).toBe("pro");
     expect(testDb.db.select().from(accountSubscriptions).all()).toHaveLength(1);
     expect(testDb.db.select().from(subscriptionEvents).all()).toEqual([

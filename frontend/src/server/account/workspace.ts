@@ -33,11 +33,13 @@ export interface PublicWorkspace {
   organizationId: string;
   organizationName: string;
   role: WorkspaceRole;
+  tier: AccountTier;
 }
 
 export interface AccountWorkspaceOrganization {
   id: string;
   name: string;
+  tier: AccountTier;
   createdAt: string;
   updatedAt: string;
 }
@@ -150,13 +152,6 @@ export class WorkspaceInvitationNotFoundError extends InvalidWorkspaceInvitation
   }
 }
 
-const TIER_RANK: Record<AccountTier, number> = {
-  free: 0,
-  pro: 1,
-  business: 2,
-  enterprise: 3,
-};
-
 function nowIso() {
   return new Date().toISOString();
 }
@@ -245,11 +240,13 @@ function toPublicWorkspace(row: {
   organizationId: string;
   organizationName: string;
   role: string;
+  accountTier?: string | null;
 }): PublicWorkspace {
   return {
     organizationId: row.organizationId,
     organizationName: row.organizationName,
     role: normalizeWorkspaceRole(row.role),
+    tier: normalizeAccountTier(row.accountTier),
   };
 }
 
@@ -288,6 +285,7 @@ function getCurrentWorkspace(db: AppDatabase, userId: string) {
     .select({
       organizationId: organizations.id,
       organizationName: organizations.name,
+      accountTier: organizations.accountTier,
       role: organizationMemberships.role,
     })
     .from(organizationMemberships)
@@ -314,13 +312,16 @@ export function ensureUserWorkspace(db: AppDatabase, userId: string): PublicWork
       organizationId: "",
       organizationName: "Personal Workspace",
       role: "owner",
+      tier: normalizeAccountTier(user.accountTier),
     };
   }
 
   const timestamp = nowIso();
+  const tier = normalizeAccountTier(user.accountTier);
   const organization = {
     id: `org_${crypto.randomUUID()}`,
     name: defaultWorkspaceName(user),
+    accountTier: tier,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -341,6 +342,7 @@ export function ensureUserWorkspace(db: AppDatabase, userId: string): PublicWork
     organizationId: organization.id,
     organizationName: organization.name,
     role: "owner",
+    tier,
   };
 }
 
@@ -416,6 +418,7 @@ export function getAccountWorkspace(db: AppDatabase, userId: string): AccountWor
     organization: {
       id: organization.id,
       name: organization.name,
+      tier: normalizeAccountTier(organization.accountTier),
       createdAt: organization.createdAt,
       updatedAt: organization.updatedAt,
     },
@@ -497,32 +500,10 @@ function workspaceSeatUserIds(db: AppDatabase, organizationId: string) {
     .map((row) => row.userId);
 }
 
-function highestTier(tiers: AccountTier[]) {
-  return tiers.reduce<AccountTier>(
-    (highest, tier) => (TIER_RANK[tier] > TIER_RANK[highest] ? tier : highest),
-    "free",
-  );
-}
+function organizationBillingTier(db: AppDatabase, organizationId: string) {
+  const organization = db.select().from(organizations).where(eq(organizations.id, organizationId)).limit(1).get();
 
-function workspaceBillingTier(db: AppDatabase, organizationId: string, fallbackUserId: string) {
-  const ownerTiers = db
-    .select({ accountTier: users.accountTier })
-    .from(organizationMemberships)
-    .innerJoin(users, eq(organizationMemberships.userId, users.id))
-    .where(and(
-      eq(organizationMemberships.organizationId, organizationId),
-      eq(organizationMemberships.role, "owner"),
-      eq(organizationMemberships.status, "active"),
-    ))
-    .all()
-    .map((row) => normalizeAccountTier(row.accountTier));
-
-  if (ownerTiers.length > 0) {
-    return highestTier(ownerTiers);
-  }
-
-  const fallbackUser = db.select().from(users).where(eq(users.id, fallbackUserId)).limit(1).get();
-  return normalizeAccountTier(fallbackUser?.accountTier);
+  return normalizeAccountTier(organization?.accountTier);
 }
 
 function enforceWorkspaceSeatLimit(
@@ -535,7 +516,7 @@ function enforceWorkspaceSeatLimit(
   const status = getUsageLimitStatus(
     db,
     fallbackUserId,
-    workspaceBillingTier(db, organizationId, fallbackUserId),
+    organizationBillingTier(db, organizationId),
     "team_members",
     { scopeUserIds },
   );
@@ -549,6 +530,35 @@ function enforceWorkspaceSeatLimit(
       requiredTier: status.requiredTier,
     });
   }
+}
+
+export function workspaceTierForUser(db: AppDatabase, userId: string) {
+  return ensureUserWorkspace(db, userId).tier;
+}
+
+export function syncOwnedWorkspaceTier(
+  db: AppDatabase,
+  userId: string,
+  tier: AccountTier,
+  timestamp = nowIso(),
+) {
+  const organizationIds = db
+    .select({ organizationId: organizationMemberships.organizationId })
+    .from(organizationMemberships)
+    .where(and(
+      eq(organizationMemberships.userId, userId),
+      eq(organizationMemberships.role, "owner"),
+      eq(organizationMemberships.status, "active"),
+    ))
+    .all()
+    .map((row) => row.organizationId);
+
+  if (organizationIds.length === 0) return;
+
+  db.update(organizations)
+    .set({ accountTier: tier, updatedAt: timestamp })
+    .where(inArray(organizations.id, organizationIds))
+    .run();
 }
 
 function requireManageableMember(db: AppDatabase, organizationId: string, targetUserId: string) {

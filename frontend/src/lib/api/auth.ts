@@ -21,6 +21,7 @@ export interface PublicUser {
     organizationId: string;
     organizationName: string;
     role: WorkspaceRole;
+    tier: AccountTier;
   };
 }
 
@@ -147,6 +148,7 @@ export interface AccountWorkspaceResponse {
   organization: {
     id: string;
     name: string;
+    tier: AccountTier;
     createdAt: string;
     updatedAt: string;
   };

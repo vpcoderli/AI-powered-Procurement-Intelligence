@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, or } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { accountSubscriptions, billingCheckoutSessions, billingInvoices, subscriptionEvents, users } from "@/server/db/schema";
+import { syncOwnedWorkspaceTier } from "@/server/account/workspace";
 import {
   isAccountTier,
   ACCOUNT_TIER_LABELS,
@@ -477,6 +478,7 @@ function transitionSubscriptionLifecycle(
     })
     .where(eq(users.id, row.userId))
     .run();
+  syncOwnedWorkspaceTier(db, row.userId, input.tier, input.now);
   writeSubscriptionEvent(db, {
     userId: row.userId,
     subscriptionId: row.id,
@@ -822,6 +824,7 @@ export function upsertAccountSubscription(
     })
     .where(eq(users.id, userId))
     .run();
+  syncOwnedWorkspaceTier(db, userId, input.tier, timestamp);
 
   writeSubscriptionEvent(db, {
     userId,
