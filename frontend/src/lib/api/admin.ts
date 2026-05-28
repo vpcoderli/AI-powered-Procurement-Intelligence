@@ -9,6 +9,8 @@ import type {
   AdminUserFilterStatus,
   AdminUser,
   AdminUsersResponse,
+  CreateAdminUserInviteInput,
+  CreateAdminUserInviteResponse,
   ListAdminUsersFilters,
   UpdateAdminUserInput,
 } from "@/server/admin/users-repository";
@@ -22,12 +24,15 @@ export type {
   AdminUserFilterStatus,
   AdminUser,
   AdminUsersResponse,
+  CreateAdminUserInviteInput,
+  CreateAdminUserInviteResponse,
   ListAdminUsersFilters,
   UpdateAdminUserInput,
 };
 
 type AdminApiErrorCode =
   | "FORBIDDEN"
+  | "EMAIL_EXISTS"
   | "INVALID_REQUEST"
   | "DATA_SOURCE_NOT_FOUND"
   | "USER_NOT_FOUND"
@@ -71,6 +76,7 @@ function isAdminErrorResponse(body: unknown): body is { error: { code: AdminApiE
 
   return (
     (code === "FORBIDDEN" ||
+      code === "EMAIL_EXISTS" ||
       code === "INVALID_REQUEST" ||
       code === "DATA_SOURCE_NOT_FOUND" ||
       code === "USER_NOT_FOUND" ||
@@ -135,6 +141,16 @@ export async function listAdminUserAuditLogs(input: { limit?: number } = {}) {
   const response = await fetch(`/api/admin/users/audit-logs${buildQueryString(input)}`);
 
   return parseResponse<AdminUserAuditLogsResponse>(response);
+}
+
+export async function createAdminUser(input: CreateAdminUserInviteInput) {
+  const response = await fetch("/api/admin/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<CreateAdminUserInviteResponse>(response);
 }
 
 export async function updateAdminUser(id: string, input: UpdateAdminUserInput) {

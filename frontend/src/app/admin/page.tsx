@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Activity,
@@ -30,6 +30,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  createAdminUser,
   listAdminCrawlerLogs,
   listAdminDataSources,
   listAdminUserAuditLogs,
@@ -67,8 +68,21 @@ type UserFilters = {
   status?: AdminUserFilterStatus;
 };
 
+type InvitationDraft = {
+  email: string;
+  displayName: string;
+  role: UserRole;
+  tier: AccountTier;
+};
+
 const USER_ROLES: UserRole[] = ["user", "admin"];
 const ACCOUNT_TIERS: AccountTier[] = ["free", "pro", "business", "enterprise"];
+const DEFAULT_INVITATION_DRAFT: InvitationDraft = {
+  email: "",
+  displayName: "",
+  role: "user",
+  tier: "free",
+};
 
 function stateCrawlerSourceIdFor(source: AdminDataSource) {
   return stateCrawlerSourceIdForAdminSource(source);
@@ -181,6 +195,10 @@ export default function AdminPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [runningSourceId, setRunningSourceId] = useState<string | null>(null);
   const [runMessage, setRunMessage] = useState<string | null>(null);
+  const [invitationDraft, setInvitationDraft] = useState<InvitationDraft>(DEFAULT_INVITATION_DRAFT);
+  const [invitedTemporaryPassword, setInvitedTemporaryPassword] = useState<string | null>(null);
+  const [isInvitingUser, setIsInvitingUser] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
   const isAdmin = user?.role === "admin";
 
   const load = useCallback(() => {
@@ -320,6 +338,56 @@ export default function AdminPage() {
       });
   };
 
+  const handleCreateAdminUser = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    const email = invitationDraft.email.trim();
+    if (!email || isInvitingUser) return;
+
+    setIsInvitingUser(true);
+    setInviteError(null);
+    setInvitedTemporaryPassword(null);
+
+    createAdminUser({
+      email,
+      displayName: invitationDraft.displayName.trim() || undefined,
+      role: invitationDraft.role,
+      tier: invitationDraft.tier,
+    })
+      .then((response) => {
+        setInvitationDraft(DEFAULT_INVITATION_DRAFT);
+        setInvitedTemporaryPassword(response.temporaryPassword);
+        setRunMessage(t("admin.inviteCreated").replace("{email}", response.user.email ?? response.user.id));
+        setState((current) => {
+          if (current.status !== "ready") return current;
+
+          return {
+            ...current,
+            users: [...current.users, response.user],
+          };
+        });
+        return listAdminUserAuditLogs({ limit: 10 });
+      })
+      .then((response) => {
+        if (!response) return;
+
+        setState((current) => {
+          if (current.status !== "ready") return current;
+
+          return {
+            ...current,
+            userAuditLogs: response.logs,
+          };
+        });
+      })
+      .catch(() => {
+        setInviteError(t("admin.inviteError"));
+      })
+      .finally(() => {
+        setIsInvitingUser(false);
+      });
+  };
+
   if (isAuthLoading) {
     return (
       <AdminAccessState
@@ -427,6 +495,94 @@ export default function AdminPage() {
               {users.length}
             </Badge>
           </div>
+          <form
+            onSubmit={handleCreateAdminUser}
+            className="grid gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-4 lg:grid-cols-[minmax(180px,1.2fr)_minmax(160px,1fr)_140px_150px_auto]"
+          >
+            <div className="lg:col-span-5">
+              <p className="text-sm font-semibold text-slate-950">{t("admin.inviteUser")}</p>
+              <p className="mt-1 text-xs leading-5 text-slate-500">{t("admin.inviteDescription")}</p>
+            </div>
+            <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
+              {t("admin.email")}
+              <Input
+                type="email"
+                value={invitationDraft.email}
+                onChange={(event) =>
+                  setInvitationDraft((current) => ({ ...current, email: event.target.value }))
+                }
+                placeholder="buyer@example.com"
+                className="h-9 rounded-lg border-slate-200 bg-white"
+                required
+              />
+            </label>
+            <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
+              {t("admin.displayName")}
+              <Input
+                value={invitationDraft.displayName}
+                onChange={(event) =>
+                  setInvitationDraft((current) => ({ ...current, displayName: event.target.value }))
+                }
+                className="h-9 rounded-lg border-slate-200 bg-white"
+              />
+            </label>
+            <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
+              {t("admin.role")}
+              <select
+                value={invitationDraft.role}
+                onChange={(event) =>
+                  setInvitationDraft((current) => ({ ...current, role: event.target.value as UserRole }))
+                }
+                className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
+              >
+                {USER_ROLES.map((role) => (
+                  <option key={role} value={role}>
+                    {t(`admin.role_${role}`)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
+              {t("admin.tier")}
+              <select
+                value={invitationDraft.tier}
+                onChange={(event) =>
+                  setInvitationDraft((current) => ({ ...current, tier: event.target.value as AccountTier }))
+                }
+                className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
+              >
+                {ACCOUNT_TIERS.map((tier) => (
+                  <option key={tier} value={tier}>
+                    {t(`admin.tier_${tier}`)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="flex items-end">
+              <Button
+                type="submit"
+                disabled={isInvitingUser || invitationDraft.email.trim().length === 0}
+                className="h-9 rounded-lg bg-slate-900 px-3 text-white hover:bg-slate-800"
+              >
+                {isInvitingUser ? t("admin.creatingInvite") : t("admin.createInvite")}
+              </Button>
+            </div>
+            {(invitedTemporaryPassword || inviteError) && (
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm lg:col-span-5">
+                {invitedTemporaryPassword ? (
+                  <div>
+                    <span className="font-semibold text-slate-950">{t("admin.temporaryPassword")}:</span>{" "}
+                    <code className="rounded-md bg-slate-100 px-2 py-1 font-mono text-slate-800">
+                      {invitedTemporaryPassword}
+                    </code>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">{t("admin.temporaryPasswordHelp")}</p>
+                  </div>
+                ) : (
+                  <span className="font-medium text-rose-700">{inviteError}</span>
+                )}
+              </div>
+            )}
+          </form>
           <div className="grid gap-3 border-b border-slate-100 px-4 py-3 md:grid-cols-[minmax(220px,1fr)_160px_160px_160px]">
             <div className="relative">
               <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />

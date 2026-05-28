@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { AdminAuthError, requireAdmin } from "@/server/admin/auth";
-import { listAdminUsers, type AdminUserFilterStatus, type ListAdminUsersFilters } from "@/server/admin/users-repository";
+import {
+  AdminUserEmailExistsError,
+  createAdminUserInvite,
+  listAdminUsers,
+  type AdminUserFilterStatus,
+  type CreateAdminUserInviteInput,
+  type ListAdminUsersFilters,
+} from "@/server/admin/users-repository";
 import { isAccountTier, isUserRole } from "@/server/auth/entitlements";
 import { db } from "@/server/db/client";
 
@@ -11,6 +18,10 @@ function errorResponse(code: string, message: string, status: number) {
 function routeError(error: unknown) {
   if (error instanceof AdminAuthError) {
     return errorResponse(error.code, error.message, error.status);
+  }
+
+  if (error instanceof AdminUserEmailExistsError) {
+    return errorResponse("EMAIL_EXISTS", error.message, 409);
   }
 
   return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
@@ -45,6 +56,34 @@ function parseFilters(request: Request): ListAdminUsersFilters | null {
   return filters;
 }
 
+function parseCreateInput(body: unknown): CreateAdminUserInviteInput | null {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return null;
+  }
+
+  const source = body as Record<string, unknown>;
+
+  if (
+    typeof source.email !== "string" ||
+    source.email.trim().length === 0 ||
+    !isUserRole(source.role) ||
+    !isAccountTier(source.tier)
+  ) {
+    return null;
+  }
+
+  if ("displayName" in source && source.displayName !== undefined && typeof source.displayName !== "string") {
+    return null;
+  }
+
+  return {
+    email: source.email,
+    displayName: typeof source.displayName === "string" ? source.displayName : undefined,
+    role: source.role,
+    tier: source.tier,
+  };
+}
+
 export async function GET(request: Request) {
   const filters = parseFilters(request);
 
@@ -55,6 +94,27 @@ export async function GET(request: Request) {
   try {
     await requireAdmin(db, request);
     return NextResponse.json(listAdminUsers(db, filters));
+  } catch (error) {
+    return routeError(error);
+  }
+}
+
+export async function POST(request: Request) {
+  const body = await request.json().catch(() => null);
+  const input = parseCreateInput(body);
+
+  if (!input) {
+    return errorResponse("INVALID_REQUEST", "Invited user email, role, and tier are required.", 400);
+  }
+
+  try {
+    const principal = await requireAdmin(db, request);
+    const result = await createAdminUserInvite(db, input, {
+      actorKind: principal.kind,
+      actorUserId: principal.kind === "admin" ? principal.userId : null,
+    });
+
+    return NextResponse.json(result, { status: 201 });
   } catch (error) {
     return routeError(error);
   }

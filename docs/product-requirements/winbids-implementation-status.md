@@ -18,7 +18,7 @@ This document is the working checklist for local development. Update it after ea
 | Account self-service | `/settings` shows authenticated email/display name, updates display name, changes password after validating current password. |
 | User data model basics | `users` table, `sessions` table, `role`, `account_tier`, and `is_disabled` account state. |
 | Admin auth helper | `requireAdmin()` checks authenticated non-disabled admin sessions; local bypass for development. |
-| Admin user access console | `/admin` lists registered users, filters/searches accounts, changes role/tier/enabled state, shows access audit logs, and presents login/forbidden states for non-admin access. |
+| Admin user access console | `/admin` lists registered users, creates invited accounts with temporary passwords, filters/searches accounts, changes role/tier/enabled state, shows access audit logs, and presents login/forbidden states for non-admin access. |
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs. |
 | Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin-only console access. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, and tier-aware locked states for gated features. |
@@ -35,7 +35,7 @@ This document is the working checklist for local development. Update it after ea
 
 | Area | What exists | Missing to be useful |
 |---|---|---|
-| Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; admin can enable/disable users, search/filter users, and review access audit logs | Password reset, admin-created accounts, account deletion/export |
+| Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; admin can create invited accounts, enable/disable users, search/filter users, and review access audit logs | Password reset, account deletion/export |
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab | Billing provider sync, real checkout, invoices, cancellation |
@@ -134,7 +134,6 @@ Current local limits:
 
 3. **Account lifecycle**
    - Add password reset.
-   - Add admin-created accounts and invite flow.
    - Add organization/workspace model.
 
 ## Completed Phase: Account / Role / Tier Foundation
@@ -192,9 +191,8 @@ Current local limits:
 当前还剩：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
 2. Password reset 邮件 token 流程。
-3. Admin 创建账号 / 邀请用户流程。
-4. Organization/workspace 多用户公司账户模型。
-5. Submission Guidance 真实编辑与确认 UI。
+3. Organization/workspace 多用户公司账户模型。
+4. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Billing / Subscription Foundation
 
@@ -209,9 +207,8 @@ Current local limits:
 1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 2. Usage limits：继续覆盖 alerts、AI/高级功能调用次数，并增加使用量仪表盘。
 3. Password reset 邮件 token 流程。
-4. Admin 创建账号 / 邀请用户流程。
-5. Organization/workspace 多用户公司账户模型。
-6. Submission Guidance 真实编辑与确认 UI。
+4. Organization/workspace 多用户公司账户模型。
+5. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Usage Limits Foundation
 
@@ -226,8 +223,7 @@ Current local limits:
 1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 2. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
 3. Password reset 邮件 token 流程。
-4. Admin 创建账号 / 邀请用户流程。
-5. Organization/workspace 多用户公司账户模型。
+4. Organization/workspace 多用户公司账户模型。
 
 ## Completed Phase: Submission Guidance UI
 
@@ -250,9 +246,8 @@ Current local limits:
 2. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 4. Password reset 邮件 token 流程。
-5. Admin 创建账号 / 邀请用户流程。
-6. Organization/workspace 多用户公司账户模型。
-7. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
+5. Organization/workspace 多用户公司账户模型。
+6. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
 
 建议下一步：
 - 优先开发 Compliance Manifest Lite，因为它直接承接 Submission Guidance，让用户开始把投标要求转成可执行清单。
@@ -279,12 +274,39 @@ Current local limits:
 2. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 4. Password reset 邮件 token 流程。
-5. Admin 创建账号 / 邀请用户流程。
-6. Organization/workspace 多用户公司账户模型。
-7. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
+5. Organization/workspace 多用户公司账户模型。
+6. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
 
 建议下一步：
-- 继续做 Admin 创建账号 / 邀请用户流程，补齐管理员对普通账号生命周期的主动管理能力。
+- 继续做 Password reset 邮件 token 流程，补齐账号生命周期的自助恢复能力。
+
+## Completed Phase: Admin User Invite Flow
+
+本阶段完成：
+- 新增 admin repository `createAdminUserInvite()`，可创建本地邀请账号并生成临时密码。
+- 新增 `/api/admin/users` POST，管理员可创建账号并指定角色、套餐、显示名称。
+- 创建邀请账号时写入 `admin_user_audit_logs`，action 为 `user_invited`。
+- 前端 admin API client 新增 `createAdminUser()`。
+- `/admin` 用户权限区新增邀请表单：邮箱、显示名称、角色、套餐，并显示一次性临时密码。
+- 补齐中英文文案和 repository/route/client/page 测试。
+
+验证：
+- `npm test -- src/server/admin/users-repository.test.ts src/app/api/admin/users/route.test.ts src/lib/api/admin.test.ts src/app/admin/page.test.ts`
+- `npm test`
+- `npm run lint`
+- `npm run build`
+- 浏览器烟测：打开 `/admin`，确认“邀请用户”表单、角色/套餐选择和“创建邀请”按钮已渲染。
+
+当前还剩：
+1. Password reset 邮件 token 流程。
+2. Organization/workspace 多用户公司账户模型。
+3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
+4. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
+5. Compliance Manifest Lite：结构化需求、人工完成状态、备注和证据状态。
+6. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
+
+建议下一步：
+- 优先做 Password reset，因为管理员邀请和普通用户注册都已经存在，下一块应补齐用户忘记密码后的恢复闭环。
 
 ## Status Update Template
 

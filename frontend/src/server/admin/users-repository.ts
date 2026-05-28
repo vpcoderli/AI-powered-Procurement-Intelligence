@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { and, asc, desc, eq, isNotNull, like, or } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
+import { hashPassword } from "@/server/auth/password";
 import type { AppDatabase } from "@/server/db/client";
 import { adminUserAuditLogs, users } from "@/server/db/schema";
 import {
@@ -41,6 +42,18 @@ export interface UpdateAdminUserInput {
   isDisabled?: boolean;
 }
 
+export interface CreateAdminUserInviteInput {
+  email: string;
+  displayName?: string;
+  role: UserRole;
+  tier: AccountTier;
+}
+
+export interface CreateAdminUserInviteResponse {
+  user: AdminUser;
+  temporaryPassword: string;
+}
+
 export interface AdminUserAuditActor {
   actorKind: "admin" | "local-bypass";
   actorUserId: string | null;
@@ -49,7 +62,8 @@ export interface AdminUserAuditActor {
 export type AdminUserAuditChange =
   | { field: "role"; before: UserRole; after: UserRole }
   | { field: "tier"; before: AccountTier; after: AccountTier }
-  | { field: "isDisabled"; before: boolean; after: boolean };
+  | { field: "isDisabled"; before: boolean; after: boolean }
+  | { field: "created"; before: null; after: string };
 
 export interface AdminUserAuditLog {
   id: string;
@@ -57,7 +71,7 @@ export interface AdminUserAuditLog {
   actorUserId: string | null;
   targetUserId: string;
   targetEmail: string | null;
-  action: "user_access_updated";
+  action: "user_access_updated" | "user_invited";
   changes: AdminUserAuditChange[];
   createdAt: string;
 }
@@ -74,6 +88,13 @@ export class AdminUserNotFoundError extends Error {
   constructor() {
     super("User not found");
     this.name = "AdminUserNotFoundError";
+  }
+}
+
+export class AdminUserEmailExistsError extends Error {
+  constructor() {
+    super("Email is already registered");
+    this.name = "AdminUserEmailExistsError";
   }
 }
 
@@ -120,10 +141,34 @@ function toAuditLog(row: {
     actorUserId: row.actorUserId,
     targetUserId: row.targetUserId,
     targetEmail: row.targetEmail,
-    action: "user_access_updated",
+    action: row.action === "user_invited" ? "user_invited" : "user_access_updated",
     changes: parseAuditChanges(row.changesJson),
     createdAt: row.createdAt,
   };
+}
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function normalizeDisplayName(displayName: string | undefined) {
+  const normalized = displayName?.trim();
+
+  return normalized ? normalized : null;
+}
+
+function temporaryPassword() {
+  return `Temp-${crypto.randomBytes(12).toString("base64url")}`;
+}
+
+function isUniqueEmailConflict(error: unknown) {
+  if (!(error instanceof Error)) return false;
+
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  return (
+    code.includes("SQLITE_CONSTRAINT") ||
+    error.message.includes("UNIQUE constraint failed: users.email")
+  );
 }
 
 export function listAdminUsers(db: AppDatabase, filters: ListAdminUsersFilters = {}): AdminUsersResponse {
@@ -153,6 +198,62 @@ export function listAdminUsers(db: AppDatabase, filters: ListAdminUsersFilters =
       .orderBy(asc(users.createdAt), asc(users.id))
       .all()
       .map(toAdminUser),
+  };
+}
+
+export async function createAdminUserInvite(
+  db: AppDatabase,
+  input: CreateAdminUserInviteInput,
+  actor: AdminUserAuditActor = { actorKind: "local-bypass", actorUserId: null },
+): Promise<CreateAdminUserInviteResponse> {
+  const email = normalizeEmail(input.email);
+
+  if (!email) {
+    throw new AdminUserEmailExistsError();
+  }
+
+  const timestamp = nowIso();
+  const password = temporaryPassword();
+  const user = {
+    id: `user_${crypto.randomUUID()}`,
+    email,
+    passwordHash: await hashPassword(password),
+    displayName: normalizeDisplayName(input.displayName),
+    role: input.role,
+    accountTier: input.tier,
+    isDisabled: 0,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+
+  try {
+    db.insert(users).values(user).run();
+  } catch (error) {
+    if (isUniqueEmailConflict(error)) {
+      throw new AdminUserEmailExistsError();
+    }
+
+    throw error;
+  }
+
+  db.insert(adminUserAuditLogs)
+    .values({
+      id: `audit_${crypto.randomUUID()}`,
+      actorKind: actor.actorKind,
+      actorUserId: actor.actorUserId,
+      targetUserId: user.id,
+      action: "user_invited",
+      changesJson: JSON.stringify([{ field: "created", before: null, after: email }]),
+      createdAt: timestamp,
+    })
+    .run();
+
+  return {
+    user: toAdminUser({
+      ...user,
+      lastLoginAt: null,
+    }),
+    temporaryPassword: password,
   };
 }
 
