@@ -5,11 +5,13 @@ import {
   Bell,
   CheckCircle2,
   CreditCard,
+  Download,
   Key,
   LockKeyhole,
   PaintBucket,
   Settings,
   Shield,
+  Trash2,
   User,
   Users,
 } from "lucide-react";
@@ -29,11 +31,14 @@ import {
   cancelAccountSubscription,
   createBillingPortalSession,
   createCheckoutSession,
+  deleteAccount,
+  exportAccountData,
   fetchAccountSubscription,
   fetchBillingInvoices,
   fetchAccountWorkspace,
   inviteWorkspaceMember,
   removeWorkspaceMember,
+  transferWorkspaceOwnership,
   updateAccountWorkspace,
   updateAccountProfile,
   updateWorkspaceMemberRole,
@@ -91,6 +96,9 @@ export default function SettingsPage() {
   const [teamActionMessage, setTeamActionMessage] = useState("");
   const [teamActionError, setTeamActionError] = useState("");
   const [memberActionUserId, setMemberActionUserId] = useState<string | null>(null);
+  const [accountAction, setAccountAction] = useState<"export" | "delete" | null>(null);
+  const [accountActionMessage, setAccountActionMessage] = useState("");
+  const [accountActionError, setAccountActionError] = useState("");
   const currentTier = user ? ACCOUNT_TIER_LABELS[user.tier] : ACCOUNT_TIER_LABELS.free;
   const displayName =
     profileDraft.userId === user?.id ? profileDraft.displayName : (user?.displayName ?? "");
@@ -315,6 +323,14 @@ export default function SettingsPage() {
     return error instanceof Error ? error.message : t("settings.memberUpdateError");
   }
 
+  function ownerTransferErrorMessage(error: unknown) {
+    if (error instanceof AuthApiError && error.code === "OWNER_TRANSFER_REQUIRED") {
+      return t("settings.ownerTransferRequired");
+    }
+
+    return error instanceof Error ? error.message : t("settings.deleteAccountError");
+  }
+
   async function handleMemberRoleChange(
     member: AccountWorkspaceMember,
     role: AccountWorkspaceMember["workspaceRole"],
@@ -351,6 +367,69 @@ export default function SettingsPage() {
       setTeamActionError(teamErrorMessage(error));
     } finally {
       setMemberActionUserId(null);
+    }
+  }
+
+  async function handleTransferOwnership(member: AccountWorkspaceMember) {
+    setTeamActionMessage("");
+    setTeamActionError("");
+    setMemberActionUserId(member.userId);
+
+    try {
+      const data = await transferWorkspaceOwnership(member.userId);
+      setWorkspaceData(data);
+      await refreshSession();
+      setTeamActionMessage(t("settings.ownershipTransferred"));
+    } catch (error) {
+      setTeamActionError(teamErrorMessage(error));
+    } finally {
+      setMemberActionUserId(null);
+    }
+  }
+
+  async function handleExportAccountData() {
+    setAccountActionMessage("");
+    setAccountActionError("");
+    setAccountAction("export");
+
+    try {
+      const data = await exportAccountData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `winbids-account-export-${data.account.id}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setAccountActionMessage(t("settings.accountExportStarted"));
+    } catch (error) {
+      setAccountActionError(error instanceof Error ? error.message : t("settings.accountExportError"));
+    } finally {
+      setAccountAction(null);
+    }
+  }
+
+  async function handleDeleteAccount() {
+    setAccountActionMessage("");
+    setAccountActionError("");
+
+    if (!window.confirm(t("settings.deleteAccountConfirm"))) {
+      return;
+    }
+
+    setAccountAction("delete");
+
+    try {
+      await deleteAccount();
+      setAccountActionMessage(t("settings.accountDeleted"));
+      await refreshSession();
+      window.location.assign("/login");
+    } catch (error) {
+      setAccountActionError(ownerTransferErrorMessage(error));
+    } finally {
+      setAccountAction(null);
     }
   }
 
@@ -618,6 +697,20 @@ export default function SettingsPage() {
                           <Badge variant="outline" className="w-fit border-slate-200 bg-slate-50 text-slate-700">
                             {t(`settings.workspaceRole_${member.workspaceRole}`)}
                           </Badge>
+                        )}
+                        {canManageWorkspace && (
+                          <Button
+                            variant="outline"
+                            onClick={() => handleTransferOwnership(member)}
+                            disabled={
+                              memberActionUserId === member.userId ||
+                              member.userId === user?.id ||
+                              member.workspaceRole === "owner"
+                            }
+                            className="h-9 border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          >
+                            {t("settings.transferOwnership")}
+                          </Button>
                         )}
                         {canManageWorkspace && (
                           <Button
@@ -926,6 +1019,43 @@ export default function SettingsPage() {
                   {isChangingPassword ? t("settings.updating") : t("settings.updatePassword")}
                 </Button>
               </CardFooter>
+            </Card>
+
+            <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
+              <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
+                <CardTitle className="text-lg font-semibold text-slate-900">{t("settings.accountData")}</CardTitle>
+                <CardDescription className="text-slate-500 font-medium">{t("settings.accountDataDesc")}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 p-6">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <p className="text-sm font-semibold text-slate-900">{t("settings.exportAccountData")}</p>
+                  <p className="mt-1 text-sm font-medium text-slate-500">{t("settings.exportAccountDataDesc")}</p>
+                  <Button
+                    variant="outline"
+                    onClick={handleExportAccountData}
+                    disabled={accountAction === "export" || !user}
+                    className="mt-4 h-10 rounded-lg border-slate-200 text-slate-700"
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    {accountAction === "export" ? t("settings.exportingAccountData") : t("settings.exportAccountData")}
+                  </Button>
+                </div>
+                <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+                  <p className="text-sm font-semibold text-red-900">{t("settings.deleteAccount")}</p>
+                  <p className="mt-1 text-sm font-medium text-red-700">{t("settings.deleteAccountDesc")}</p>
+                  <Button
+                    variant="outline"
+                    onClick={handleDeleteAccount}
+                    disabled={accountAction === "delete" || !user}
+                    className="mt-4 h-10 rounded-lg border-red-200 text-red-700 hover:bg-red-100 hover:text-red-800"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    {accountAction === "delete" ? t("settings.deletingAccount") : t("settings.deleteAccount")}
+                  </Button>
+                </div>
+                {accountActionMessage && <p className="text-sm font-medium text-emerald-700">{accountActionMessage}</p>}
+                {accountActionError && <p className="text-sm font-medium text-red-600">{accountActionError}</p>}
+              </CardContent>
             </Card>
           </TabsContent>
 

@@ -13,6 +13,8 @@ describe("settings page", () => {
     expect(page).toContain("settings.featureAccess");
     expect(page).toContain("updateAccountProfile");
     expect(page).toContain("changePassword");
+    expect(page).toContain("exportAccountData");
+    expect(page).toContain("deleteAccount");
     expect(page).toContain("fetchAccountSubscription");
     expect(page).toContain("fetchBillingInvoices");
     expect(page).toContain("createBillingPortalSession");
@@ -22,6 +24,7 @@ describe("settings page", () => {
     expect(page).toContain("updateAccountWorkspace");
     expect(page).toContain("inviteWorkspaceMember");
     expect(page).toContain("updateWorkspaceMemberRole");
+    expect(page).toContain("transferWorkspaceOwnership");
     expect(page).toContain("removeWorkspaceMember");
     expect(page).toContain("user?.email");
     expect(page).toContain("workspaceData");
@@ -32,6 +35,10 @@ describe("settings page", () => {
     expect(page).toContain("settings.removeMember");
     expect(page).toContain("settings.memberUpdated");
     expect(page).toContain("settings.memberRemoved");
+    expect(page).toContain("settings.transferOwnership");
+    expect(page).toContain("settings.exportAccountData");
+    expect(page).toContain("settings.deleteAccount");
+    expect(page).toContain("settings.ownerTransferRequired");
     expect(page).toContain("displayName");
     expect(page).toContain("refreshSession");
     expect(page).toContain("settings.billing");
