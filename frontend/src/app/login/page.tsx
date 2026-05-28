@@ -22,6 +22,7 @@ const COPY = {
     submitting: "Signing in...",
     noAccount: "No account yet?",
     register: "Create one",
+    forgotPassword: "Forgot password?",
     weakPassword: "Password must be at least 8 characters.",
     invalidCredentials: "Invalid email or password.",
     genericError: "Unable to sign in. Please try again.",
@@ -35,6 +36,7 @@ const COPY = {
     submitting: "正在登录...",
     noAccount: "还没有账号？",
     register: "创建账号",
+    forgotPassword: "忘记密码？",
     weakPassword: "密码至少需要 8 个字符。",
     invalidCredentials: "邮箱或密码不正确。",
     genericError: "暂时无法登录，请稍后重试。",
@@ -147,6 +149,14 @@ export default function LoginPage() {
             {copy.noAccount}{" "}
             <Link className="font-medium text-slate-950 underline-offset-4 hover:underline" href="/register">
               {copy.register}
+            </Link>
+          </p>
+          <p className="mt-3 text-center text-sm">
+            <Link
+              className="font-medium text-slate-950 underline-offset-4 hover:underline"
+              href="/forgot-password"
+            >
+              {copy.forgotPassword}
             </Link>
           </p>
         </CardContent>

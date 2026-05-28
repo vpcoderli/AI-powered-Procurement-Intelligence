@@ -105,6 +105,24 @@ export const sessions = sqliteTable(
   }),
 );
 
+export const passwordResetTokens = sqliteTable(
+  "password_reset_tokens",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    usedAt: text("used_at"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    tokenHashIdx: uniqueIndex("idx_password_reset_tokens_token_hash").on(table.tokenHash),
+    userIdx: index("idx_password_reset_tokens_user_id").on(table.userId),
+  }),
+);
+
 export const bids = sqliteTable(
   "bids",
   {

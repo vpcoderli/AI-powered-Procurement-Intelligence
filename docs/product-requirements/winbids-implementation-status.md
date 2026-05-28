@@ -15,7 +15,7 @@ This document is the working checklist for local development. Update it after ea
 | Saved bids | Anonymous and authenticated saved bids, merge anonymous saved bids on register/login. |
 | Supplier profile | `/profile`, profile API, completion score, deterministic matching inputs. |
 | Auth basics | Register, login, logout, session cookie, session lookup, login/register pages, session payload with role/tier/features. |
-| Account self-service | `/settings` shows authenticated email/display name, updates display name, changes password after validating current password. |
+| Account self-service | `/settings` shows authenticated email/display name, updates display name, changes password after validating current password; `/forgot-password` and `/reset-password` support local token-based password recovery. |
 | User data model basics | `users` table, `sessions` table, `role`, `account_tier`, and `is_disabled` account state. |
 | Admin auth helper | `requireAdmin()` checks authenticated non-disabled admin sessions; local bypass for development. |
 | Admin user access console | `/admin` lists registered users, creates invited accounts with temporary passwords, filters/searches accounts, changes role/tier/enabled state, shows access audit logs, and presents login/forbidden states for non-admin access. |
@@ -35,7 +35,7 @@ This document is the working checklist for local development. Update it after ea
 
 | Area | What exists | Missing to be useful |
 |---|---|---|
-| Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; admin can create invited accounts, enable/disable users, search/filter users, and review access audit logs | Password reset, account deletion/export |
+| Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; password reset token flow; admin can create invited accounts, enable/disable users, search/filter users, and review access audit logs | Account deletion/export |
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab | Billing provider sync, real checkout, invoices, cancellation |
@@ -50,7 +50,6 @@ This document is the working checklist for local development. Update it after ea
 |---|---|
 | Billing integration | Checkout, subscription status sync, invoices, cancellation, trial expiration. |
 | Organization/workspace model | Company account, multiple users under one company, shared bids/intents, team roles. |
-| Password reset | Email token flow, reset page, expiry and invalidation. |
 | Compliance Manifest Lite | Structured bid requirements, manual completion, notes, evidence status. |
 | Pursue / No-Bid Decision Lite | Recommendation, decision capture, reasons, decision history. |
 | Response Workspace | Tasks, artifacts, internal checkpoints, reusable documents. |
@@ -62,12 +61,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Compliance Manifest Lite** or **Billing Provider Sync** depending on whether the next sprint should deepen bid execution workflow or connect real monetization.
+Prioritize **Organization / Workspace Model** next, then choose between **Compliance Manifest Lite** and **Billing Provider Sync** depending on whether the following sprint should deepen bid execution workflow or connect real monetization.
 
 Reason:
 
-- The data model, session payload, account settings, subscription foundation, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
-- The remaining account gap is not basic self-service; it is real billing provider sync, broader usage dashboards, password reset, and organization/team support.
+- The data model, session payload, account settings, password reset flow, subscription foundation, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
+- The remaining account gap is not basic self-service; it is real billing provider sync, broader usage dashboards, account deletion/export, and organization/team support.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
@@ -133,7 +132,7 @@ Current local limits:
    - Add invoice/cancel/trial UI.
 
 3. **Account lifecycle**
-   - Add password reset.
+   - Add account deletion/export.
    - Add organization/workspace model.
 
 ## Completed Phase: Account / Role / Tier Foundation
@@ -147,7 +146,7 @@ Current local limits:
 
 当前还剩：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
-2. Password reset 邮件 token 流程。
+2. Organization/workspace 多用户公司账户模型。
 3. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Feature Guards / Tier-Aware UI
@@ -162,7 +161,7 @@ Current local limits:
 
 当前还剩：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
-2. Password reset 邮件 token 流程。
+2. Organization/workspace 多用户公司账户模型。
 3. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Admin User Management Polish
@@ -176,7 +175,7 @@ Current local limits:
 
 当前还剩：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
-2. Password reset 邮件 token 流程。
+2. Organization/workspace 多用户公司账户模型。
 3. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Account Settings Foundation
@@ -190,8 +189,8 @@ Current local limits:
 
 当前还剩：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
-2. Password reset 邮件 token 流程。
-3. Organization/workspace 多用户公司账户模型。
+2. Organization/workspace 多用户公司账户模型。
+3. Account deletion/export 账号数据导出与删除。
 4. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Billing / Subscription Foundation
@@ -206,8 +205,8 @@ Current local limits:
 当前还剩：
 1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 2. Usage limits：继续覆盖 alerts、AI/高级功能调用次数，并增加使用量仪表盘。
-3. Password reset 邮件 token 流程。
-4. Organization/workspace 多用户公司账户模型。
+3. Organization/workspace 多用户公司账户模型。
+4. Account deletion/export 账号数据导出与删除。
 5. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Usage Limits Foundation
@@ -222,8 +221,8 @@ Current local limits:
 当前还剩：
 1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 2. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
-3. Password reset 邮件 token 流程。
-4. Organization/workspace 多用户公司账户模型。
+3. Organization/workspace 多用户公司账户模型。
+4. Account deletion/export 账号数据导出与删除。
 
 ## Completed Phase: Submission Guidance UI
 
@@ -245,7 +244,7 @@ Current local limits:
 1. Compliance Manifest Lite：结构化需求、人工完成状态、备注和证据状态。
 2. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
-4. Password reset 邮件 token 流程。
+4. Account deletion/export 账号数据导出与删除。
 5. Organization/workspace 多用户公司账户模型。
 6. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
 
@@ -273,12 +272,12 @@ Current local limits:
 1. Compliance Manifest Lite：结构化需求、人工完成状态、备注和证据状态。
 2. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
-4. Password reset 邮件 token 流程。
+4. Account deletion/export 账号数据导出与删除。
 5. Organization/workspace 多用户公司账户模型。
 6. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
 
 建议下一步：
-- 继续做 Password reset 邮件 token 流程，补齐账号生命周期的自助恢复能力。
+- 继续做 Organization/workspace 多用户公司账户模型，补齐公司团队协作能力。
 
 ## Completed Phase: Admin User Invite Flow
 
@@ -298,15 +297,39 @@ Current local limits:
 - 浏览器烟测：打开 `/admin`，确认“邀请用户”表单、角色/套餐选择和“创建邀请”按钮已渲染。
 
 当前还剩：
-1. Password reset 邮件 token 流程。
-2. Organization/workspace 多用户公司账户模型。
+1. Organization/workspace 多用户公司账户模型。
+2. Account deletion/export 账号数据导出与删除。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 4. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
 5. Compliance Manifest Lite：结构化需求、人工完成状态、备注和证据状态。
 6. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 
 建议下一步：
-- 优先做 Password reset，因为管理员邀请和普通用户注册都已经存在，下一块应补齐用户忘记密码后的恢复闭环。
+- 优先做 Organization/workspace 多用户公司账户模型，因为账号、角色、套餐和恢复闭环已经具备，下一块应支持公司账户下的团队协作。
+
+## Completed Phase: Password Reset Flow
+
+本阶段完成：
+- 新增 `password_reset_tokens` 表与迁移，保存一次性 token hash、过期时间、使用时间。
+- 新增密码重置服务：请求重置、生成本地 reset token、未知邮箱不泄露账号存在性、确认 token 后更新密码。
+- token 使用后会标记 `used_at`，过期/已使用/无效 token 都会拒绝；重置成功后清理该用户已有 session。
+- 新增 `/api/auth/password-reset/request` 与 `/api/auth/password-reset/confirm`。
+- 前端 API client 新增 `requestPasswordReset()` 与 `confirmPasswordReset()`。
+- 登录页新增“忘记密码”入口；新增 `/forgot-password` 和 `/reset-password` 双语页面。
+
+验证：
+- `npm test -- src/server/auth/password-reset.test.ts src/server/db/schema.test.ts src/app/api/auth/password-reset/request/route.test.ts src/app/api/auth/password-reset/confirm/route.test.ts src/lib/api/auth.test.ts src/app/login/page.test.ts src/app/forgot-password/page.test.ts src/app/reset-password/page.test.ts`
+
+当前还剩：
+1. Organization/workspace 多用户公司账户模型。
+2. Account deletion/export 账号数据导出与删除。
+3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
+4. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
+5. Compliance Manifest Lite：结构化需求、人工完成状态、备注和证据状态。
+6. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
+
+建议下一步：
+- 优先开发 Organization/workspace 多用户公司账户模型，让普通账号、admin、套餐等级和未来高级功能可以落到“公司/团队”维度管理。
 
 ## Status Update Template
 

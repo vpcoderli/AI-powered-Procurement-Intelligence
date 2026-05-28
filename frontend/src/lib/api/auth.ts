@@ -41,12 +41,19 @@ export interface AccountSubscriptionResponse {
   plans: SubscriptionPlan[];
 }
 
+export interface PasswordResetRequestResponse {
+  ok: true;
+  resetToken?: string;
+  expiresAt?: string;
+}
+
 type AuthErrorCode =
   | "ACCOUNT_DISABLED"
   | "AUTH_REQUIRED"
   | "EMAIL_ALREADY_REGISTERED"
   | "INVALID_CREDENTIALS"
   | "INVALID_REQUEST"
+  | "INVALID_RESET_TOKEN"
   | "INTERNAL_ERROR"
   | "WEAK_PASSWORD";
 
@@ -87,6 +94,7 @@ function isApiErrorResponse(body: unknown): body is ApiErrorResponse {
       code === "EMAIL_ALREADY_REGISTERED" ||
       code === "INVALID_CREDENTIALS" ||
       code === "INVALID_REQUEST" ||
+      code === "INVALID_RESET_TOKEN" ||
       code === "INTERNAL_ERROR" ||
       code === "WEAK_PASSWORD")
   );
@@ -177,4 +185,29 @@ export async function fetchAccountSubscription(): Promise<AccountSubscriptionRes
   const response = await fetch("/api/account/subscription");
 
   return parseResponse<AccountSubscriptionResponse>(response);
+}
+
+export async function requestPasswordReset(input: {
+  email: string;
+}): Promise<PasswordResetRequestResponse> {
+  const response = await fetch("/api/auth/password-reset/request", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<PasswordResetRequestResponse>(response);
+}
+
+export async function confirmPasswordReset(input: {
+  token: string;
+  password: string;
+}): Promise<{ ok: true }> {
+  const response = await fetch("/api/auth/password-reset/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<{ ok: true }>(response);
 }
