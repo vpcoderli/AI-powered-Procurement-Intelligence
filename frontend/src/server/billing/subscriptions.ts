@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { desc, eq, or } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { accountSubscriptions, billingCheckoutSessions, billingInvoices, subscriptionEvents, users } from "@/server/db/schema";
 import {
@@ -75,6 +75,13 @@ export interface CustomerPortalSessionResponse {
 }
 
 export type BillingInvoiceStatus = "open" | "paid" | "payment_failed" | "void" | "uncollectible";
+export const BILLING_INVOICE_STATUSES: BillingInvoiceStatus[] = [
+  "open",
+  "paid",
+  "payment_failed",
+  "void",
+  "uncollectible",
+];
 
 export interface BillingInvoiceView {
   id: string;
@@ -96,6 +103,19 @@ export interface BillingInvoiceView {
 
 export interface BillingInvoicesResponse {
   invoices: BillingInvoiceView[];
+  summary: {
+    totalInvoices: number;
+    paidCount: number;
+    failedCount: number;
+    openCount: number;
+    totalPaidCents: number;
+    totalDueCents: number;
+    downloadablePdfCount: number;
+  };
+}
+
+export interface ListAccountInvoicesOptions {
+  status?: BillingInvoiceStatus;
 }
 
 export interface SubscriptionLifecycleReconcileResult {
@@ -366,6 +386,10 @@ function normalizeInvoiceStatus(value: unknown): BillingInvoiceStatus {
     : "open";
 }
 
+export function isBillingInvoiceStatus(value: unknown): value is BillingInvoiceStatus {
+  return typeof value === "string" && BILLING_INVOICE_STATUSES.includes(value as BillingInvoiceStatus);
+}
+
 function invoiceFromRow(row: typeof billingInvoices.$inferSelect): BillingInvoiceView {
   return {
     id: row.id,
@@ -383,6 +407,20 @@ function invoiceFromRow(row: typeof billingInvoices.$inferSelect): BillingInvoic
     paidAt: row.paidAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+function invoiceSummary(invoices: BillingInvoiceView[]): BillingInvoicesResponse["summary"] {
+  return {
+    totalInvoices: invoices.length,
+    paidCount: invoices.filter((invoice) => invoice.status === "paid").length,
+    failedCount: invoices.filter((invoice) => invoice.status === "payment_failed").length,
+    openCount: invoices.filter((invoice) => invoice.status === "open").length,
+    totalPaidCents: invoices.reduce((total, invoice) => total + invoice.amountPaidCents, 0),
+    totalDueCents: invoices
+      .filter((invoice) => invoice.status === "open" || invoice.status === "payment_failed")
+      .reduce((total, invoice) => total + invoice.amountDueCents, 0),
+    downloadablePdfCount: invoices.filter((invoice) => Boolean(invoice.invoicePdfUrl)).length,
   };
 }
 
@@ -699,17 +737,26 @@ export function reconcileUserSubscriptionLifecycle(
   return reconcileSubscriptionRows(db, [row], { now, pastDueGraceDays });
 }
 
-export function listAccountInvoices(db: AppDatabase, userId: string): BillingInvoicesResponse {
+export function listAccountInvoices(
+  db: AppDatabase,
+  userId: string,
+  options: ListAccountInvoicesOptions = {},
+): BillingInvoicesResponse {
   getUserOrThrow(db, userId);
+  const where = options.status
+    ? and(eq(billingInvoices.userId, userId), eq(billingInvoices.status, options.status))
+    : eq(billingInvoices.userId, userId);
+  const invoices = db
+    .select()
+    .from(billingInvoices)
+    .where(where)
+    .orderBy(desc(billingInvoices.createdAt))
+    .all()
+    .map(invoiceFromRow);
 
   return {
-    invoices: db
-      .select()
-      .from(billingInvoices)
-      .where(eq(billingInvoices.userId, userId))
-      .orderBy(desc(billingInvoices.createdAt))
-      .all()
-      .map(invoiceFromRow),
+    invoices,
+    summary: invoiceSummary(invoices),
   };
 }
 

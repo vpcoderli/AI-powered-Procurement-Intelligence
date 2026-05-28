@@ -380,6 +380,15 @@ describe("billing subscriptions service", () => {
           invoiceUrl: "https://billing.example.test/invoices/in_123",
         }),
       ],
+      summary: {
+        totalInvoices: 1,
+        paidCount: 1,
+        failedCount: 0,
+        openCount: 0,
+        totalPaidCents: 7900,
+        totalDueCents: 0,
+        downloadablePdfCount: 1,
+      },
     });
   });
 
@@ -420,6 +429,75 @@ describe("billing subscriptions service", () => {
         amountDueCents: 24900,
       }),
     ]);
+  });
+
+  it("filters invoice history by status and returns invoice summary totals", () => {
+    testDb.db.insert(billingInvoices).values([
+      {
+        id: "invoice_paid",
+        userId: "user_buyer",
+        provider: "stripe",
+        providerInvoiceId: "in_paid",
+        invoiceNumber: "WIN-1001",
+        status: "paid",
+        currency: "USD",
+        amountDueCents: 7900,
+        amountPaidCents: 7900,
+        invoiceUrl: "https://billing.example.test/invoices/in_paid",
+        invoicePdfUrl: "https://billing.example.test/invoices/in_paid.pdf",
+        dueAt: "2026-05-28T00:00:00.000Z",
+        paidAt: "2026-05-28T00:00:00.000Z",
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      },
+      {
+        id: "invoice_failed",
+        userId: "user_buyer",
+        provider: "stripe",
+        providerInvoiceId: "in_failed",
+        invoiceNumber: "WIN-1002",
+        status: "payment_failed",
+        currency: "USD",
+        amountDueCents: 24900,
+        amountPaidCents: 0,
+        invoiceUrl: "https://billing.example.test/invoices/in_failed",
+        invoicePdfUrl: null,
+        dueAt: "2026-05-29T00:00:00.000Z",
+        paidAt: null,
+        createdAt: "2026-05-29T00:00:00.000Z",
+        updatedAt: "2026-05-29T00:00:00.000Z",
+      },
+    ]).run();
+
+    expect(listAccountInvoices(testDb.db, "user_buyer")).toEqual({
+      invoices: [
+        expect.objectContaining({ providerInvoiceId: "in_failed" }),
+        expect.objectContaining({ providerInvoiceId: "in_paid" }),
+      ],
+      summary: {
+        totalInvoices: 2,
+        paidCount: 1,
+        failedCount: 1,
+        openCount: 0,
+        totalPaidCents: 7900,
+        totalDueCents: 24900,
+        downloadablePdfCount: 1,
+      },
+    });
+    expect(listAccountInvoices(testDb.db, "user_buyer", { status: "paid" })).toEqual({
+      invoices: [
+        expect.objectContaining({ providerInvoiceId: "in_paid", status: "paid" }),
+      ],
+      summary: {
+        totalInvoices: 1,
+        paidCount: 1,
+        failedCount: 0,
+        openCount: 0,
+        totalPaidCents: 7900,
+        totalDueCents: 0,
+        downloadablePdfCount: 1,
+      },
+    });
   });
 
   it("queues a deduped payment retry notification for failed invoice payments", () => {

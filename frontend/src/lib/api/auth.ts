@@ -73,13 +73,15 @@ export interface CheckoutSessionResponse {
   checkoutSession: CheckoutSession;
 }
 
+export type BillingInvoiceStatus = "open" | "paid" | "payment_failed" | "void" | "uncollectible";
+
 export interface BillingInvoice {
   id: string;
   userId: string;
   provider: string;
   providerInvoiceId: string;
   invoiceNumber: string | null;
-  status: "open" | "paid" | "payment_failed" | "void" | "uncollectible";
+  status: BillingInvoiceStatus;
   currency: string;
   amountDueCents: number;
   amountPaidCents: number;
@@ -93,6 +95,15 @@ export interface BillingInvoice {
 
 export interface BillingInvoicesResponse {
   invoices: BillingInvoice[];
+  summary: {
+    totalInvoices: number;
+    paidCount: number;
+    failedCount: number;
+    openCount: number;
+    totalPaidCents: number;
+    totalDueCents: number;
+    downloadablePdfCount: number;
+  };
 }
 
 export interface BillingPortalSession {
@@ -357,8 +368,11 @@ export async function cancelAccountSubscription(): Promise<AccountSubscriptionRe
   return parseResponse<AccountSubscriptionResponse>(response);
 }
 
-export async function fetchBillingInvoices(): Promise<BillingInvoicesResponse> {
-  const response = await fetch("/api/account/billing/invoices");
+export async function fetchBillingInvoices(input: { status?: BillingInvoiceStatus } = {}): Promise<BillingInvoicesResponse> {
+  const searchParams = new URLSearchParams();
+  if (input.status) searchParams.set("status", input.status);
+  const query = searchParams.toString();
+  const response = await fetch(`/api/account/billing/invoices${query ? `?${query}` : ""}`);
 
   return parseResponse<BillingInvoicesResponse>(response);
 }

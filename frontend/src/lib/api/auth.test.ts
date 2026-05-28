@@ -281,11 +281,24 @@ describe("auth API client", () => {
           updatedAt: "2026-05-28T00:00:00.000Z",
         },
       ],
+      summary: {
+        totalInvoices: 1,
+        paidCount: 1,
+        failedCount: 0,
+        openCount: 0,
+        totalPaidCents: 7900,
+        totalDueCents: 0,
+        downloadablePdfCount: 0,
+      },
     };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));
 
     await expect(fetchBillingInvoices()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/account/billing/invoices");
+
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+    await expect(fetchBillingInvoices({ status: "paid" })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenLastCalledWith("/api/account/billing/invoices?status=paid");
   });
 
   it("creates a billing customer portal session", async () => {

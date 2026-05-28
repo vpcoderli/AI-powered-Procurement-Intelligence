@@ -53,6 +53,7 @@ import {
   type AccountSubscriptionResponse,
   type AccountUsageData,
   type AccountWorkspaceResponse,
+  type BillingInvoiceStatus,
   type BillingInvoicesResponse,
 } from "@/lib/api/auth";
 import { canUseFeature, lockedFeatureMessage } from "@/lib/features/useFeature";
@@ -67,6 +68,14 @@ const FEATURE_ACCESS_ITEMS: Array<{ key: FeatureKey; label: string }> = [
   { key: "compliance_manifest", label: "Compliance manifest" },
   { key: "quote_workflow", label: "Quote workflow" },
   { key: "knowledge_station", label: "Knowledge Station" },
+];
+const BILLING_INVOICE_STATUS_FILTERS: Array<"all" | BillingInvoiceStatus> = [
+  "all",
+  "open",
+  "paid",
+  "payment_failed",
+  "void",
+  "uncollectible",
 ];
 
 export default function SettingsPage() {
@@ -98,6 +107,8 @@ export default function SettingsPage() {
   const [billingActionTier, setBillingActionTier] = useState<AccountTier | "cancel" | "portal" | null>(null);
   const [billingInvoicesData, setBillingInvoicesData] = useState<BillingInvoicesResponse | null>(null);
   const [billingInvoicesError, setBillingInvoicesError] = useState("");
+  const [billingInvoiceStatusFilter, setBillingInvoiceStatusFilter] =
+    useState<"all" | BillingInvoiceStatus>("all");
   const [workspaceData, setWorkspaceData] = useState<AccountWorkspaceResponse | null>(null);
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
   const [workspaceMessage, setWorkspaceMessage] = useState("");
@@ -139,17 +150,6 @@ export default function SettingsPage() {
         setSubscriptionError(error instanceof Error ? error.message : t("settings.subscriptionLoadError"));
       });
 
-    fetchBillingInvoices()
-      .then((data) => {
-        if (isCancelled) return;
-        setBillingInvoicesData(data);
-        setBillingInvoicesError("");
-      })
-      .catch((error) => {
-        if (isCancelled) return;
-        setBillingInvoicesError(error instanceof Error ? error.message : t("settings.invoiceLoadError"));
-      });
-
     fetchAccountUsage()
       .then((data) => {
         if (isCancelled) return;
@@ -178,6 +178,29 @@ export default function SettingsPage() {
       isCancelled = true;
     };
   }, [t, user]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    let isCancelled = false;
+
+    fetchBillingInvoices({
+      status: billingInvoiceStatusFilter === "all" ? undefined : billingInvoiceStatusFilter,
+    })
+      .then((data) => {
+        if (isCancelled) return;
+        setBillingInvoicesData(data);
+        setBillingInvoicesError("");
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        setBillingInvoicesError(error instanceof Error ? error.message : t("settings.invoiceLoadError"));
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [billingInvoiceStatusFilter, t, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -218,6 +241,13 @@ export default function SettingsPage() {
 
   function invoiceAmountLabel(amountCents: number, currency: string) {
     return `${currency} ${(amountCents / 100).toFixed(2)}`;
+  }
+
+  function invoiceDateLabel(paidAt: string | null, dueAt: string | null) {
+    if (paidAt) return t("settings.invoicePaidAt").replace("{date}", paidAt);
+    if (dueAt) return t("settings.invoiceDueAt").replace("{date}", dueAt);
+
+    return t("settings.invoiceDateUnavailable");
   }
 
   function usageLimitLabel(limit: number | null) {
@@ -262,7 +292,9 @@ export default function SettingsPage() {
       const data = await cancelAccountSubscription();
       setSubscriptionData(data);
       setBillingMessage(t("settings.subscriptionCancelScheduled"));
-      setBillingInvoicesData(await fetchBillingInvoices());
+      setBillingInvoicesData(await fetchBillingInvoices({
+        status: billingInvoiceStatusFilter === "all" ? undefined : billingInvoiceStatusFilter,
+      }));
     } catch (error) {
       setSubscriptionError(error instanceof Error ? error.message : t("settings.cancelSubscriptionError"));
     } finally {
@@ -1219,13 +1251,61 @@ export default function SettingsPage() {
                 </div>
 
                 <div className="space-y-3 border-t border-slate-100 pt-5">
-                  <div>
-                    <h3 className="text-base font-semibold text-slate-900">{t("settings.invoiceHistory")}</h3>
-                    <p className="text-sm font-medium text-slate-500">{t("settings.invoiceHistoryDesc")}</p>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                    <div>
+                      <h3 className="text-base font-semibold text-slate-900">{t("settings.invoiceHistory")}</h3>
+                      <p className="text-sm font-medium text-slate-500">{t("settings.invoiceHistoryDesc")}</p>
+                    </div>
+                    <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
+                      {t("settings.invoiceFilter")}
+                      <select
+                        value={billingInvoiceStatusFilter}
+                        onChange={(event) =>
+                          setBillingInvoiceStatusFilter(event.target.value as "all" | BillingInvoiceStatus)
+                        }
+                        className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
+                      >
+                        {BILLING_INVOICE_STATUS_FILTERS.map((status) => (
+                          <option key={status} value={status}>
+                            {status === "all"
+                              ? t("settings.invoiceStatus_all")
+                              : t(`settings.invoiceStatus_${status}`)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                   </div>
                   {billingInvoicesError && <p className="text-sm font-medium text-red-600">{billingInvoicesError}</p>}
                   {!billingInvoicesData && !billingInvoicesError && (
                     <p className="text-sm font-medium text-slate-500">{t("settings.loadingInvoices")}</p>
+                  )}
+                  {billingInvoicesData?.summary && (
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-xs font-semibold uppercase text-slate-500">
+                          {t("settings.invoiceSummary")}
+                        </p>
+                        <p className="mt-1 text-sm font-semibold text-slate-900">
+                          {billingInvoicesData.summary.totalInvoices}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-xs font-semibold uppercase text-slate-500">
+                          {t("settings.invoicePaidTotal")}
+                        </p>
+                        <p className="mt-1 text-sm font-semibold text-slate-900">
+                          {invoiceAmountLabel(billingInvoicesData.summary.totalPaidCents, "USD")}
+                        </p>
+                      </div>
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-xs font-semibold uppercase text-slate-500">
+                          {t("settings.invoiceDueTotal")}
+                        </p>
+                        <p className="mt-1 text-sm font-semibold text-slate-900">
+                          {invoiceAmountLabel(billingInvoicesData.summary.totalDueCents, "USD")}
+                        </p>
+                      </div>
+                    </div>
                   )}
                   {billingInvoicesData?.invoices.length === 0 && (
                     <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm font-medium text-slate-500">
@@ -1249,25 +1329,38 @@ export default function SettingsPage() {
                           </div>
                           <p className="mt-1 text-xs font-medium text-slate-500">
                             {invoiceAmountLabel(invoice.amountPaidCents || invoice.amountDueCents, invoice.currency)}
-                            {invoice.paidAt ? ` · ${invoice.paidAt}` : invoice.dueAt ? ` · ${invoice.dueAt}` : ""}
+                            {" · "}
+                            {invoiceDateLabel(invoice.paidAt, invoice.dueAt)}
                           </p>
                         </div>
-                        {invoice.invoiceUrl && (
-                          <a
-                            href={invoice.invoiceUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className={`inline-flex h-8 w-full items-center justify-center rounded-lg border px-2.5 text-sm font-medium transition-colors sm:w-auto ${
-                              invoice.status === "payment_failed"
-                                ? "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
-                                : "border-slate-200 text-slate-700 hover:bg-slate-50"
-                            }`}
-                          >
-                            {invoice.status === "payment_failed"
-                              ? t("settings.retryPayment")
-                              : t("settings.viewInvoice")}
-                          </a>
-                        )}
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          {invoice.invoicePdfUrl && (
+                            <a
+                              href={invoice.invoicePdfUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex h-8 w-full items-center justify-center rounded-lg border border-slate-200 px-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 sm:w-auto"
+                            >
+                              {t("settings.viewInvoicePdf")}
+                            </a>
+                          )}
+                          {invoice.invoiceUrl && (
+                            <a
+                              href={invoice.invoiceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className={`inline-flex h-8 w-full items-center justify-center rounded-lg border px-2.5 text-sm font-medium transition-colors sm:w-auto ${
+                                invoice.status === "payment_failed"
+                                  ? "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
+                                  : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                              }`}
+                            >
+                              {invoice.status === "payment_failed"
+                                ? t("settings.retryPayment")
+                                : t("settings.viewInvoice")}
+                            </a>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
