@@ -8,6 +8,9 @@ describe("intent pages", () => {
     expect(page).toContain("fetchIntents");
     expect(page).toContain("/intents/");
     expect(page).toContain("Intent to Bid");
+    expect(page).toContain("winbids-workspace");
+    expect(page).toContain("winbids-hero-panel");
+    expect(page).toContain("winbids-panel");
   });
 
   it("loads intent workspace details and guards status updates", () => {
@@ -23,5 +26,8 @@ describe("intent pages", () => {
     expect(detailPage).toContain("submissionPath");
     expect(detailPage).toContain("Intent Workspace");
     expect(detailPage).toContain("Submission Path");
+    expect(detailPage).toContain("winbids-detail-workspace");
+    expect(detailPage).toContain("winbids-hero-panel");
+    expect(detailPage).toContain("winbids-panel");
   });
 });

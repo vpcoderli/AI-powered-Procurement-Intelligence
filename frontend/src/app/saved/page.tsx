@@ -17,23 +17,29 @@ export default function SavedBidsPage() {
     : t("saved.description").replace("{count}", String(savedBids.length));
 
   return (
-    <div className="flex flex-col h-full gap-6 max-w-5xl mx-auto pb-12">
-      <div className="flex items-center gap-3 pb-4 border-b border-slate-200">
-        <div className="p-2.5 bg-slate-100 text-slate-700 rounded-lg border border-slate-200 shadow-sm">
-          <Bookmark size={22} strokeWidth={2.5} />
+    <div className="winbids-workspace">
+      <section className="winbids-hero-panel flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="winbids-sidebar-mark">
+            <Bookmark size={22} strokeWidth={2.5} />
+          </div>
+          <div>
+            <p className="winbids-kicker">Saved queue</p>
+            <h1 className="winbids-title">{t("saved.title")}</h1>
+            <p className="winbids-lead mt-2">
+              {savedDescription}
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{t("saved.title")}</h1>
-          <p className="text-sm text-slate-500 font-medium mt-0.5">
-            {savedDescription}
-          </p>
-        </div>
-      </div>
+        <Link href="/search" className={buttonVariants({ className: "winbids-primary-action border-0 hover:bg-blue-800" })}>
+          <Search className="mr-2 h-4 w-4" /> {t("saved.browseBids")}
+        </Link>
+      </section>
 
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-8">
           {Array.from({ length: 4 }).map((_, index) => (
-            <div key={index} className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div key={index} className="winbids-panel">
               <div className="flex flex-col gap-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-3 flex-1">
@@ -53,14 +59,14 @@ export default function SavedBidsPage() {
           ))}
         </div>
       ) : error && savedBids.length === 0 ? (
-        <div className="text-center py-16 border border-dashed border-slate-300 bg-white rounded-xl">
+        <div className="winbids-panel text-center py-16 border-dashed border-slate-300">
           <p className="text-slate-900 font-semibold mb-2">{t("dashboard.errorTitle")}</p>
           <p className="text-sm text-slate-500">{t("dashboard.errorDescription")}</p>
         </div>
       ) : savedBids.length > 0 ? (
         <div className="flex flex-col gap-4 pb-8">
           {error && (
-            <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
+            <div className="winbids-panel text-sm text-slate-600">
               <span className="font-semibold text-slate-900">{t("dashboard.errorTitle")}</span>
               <span className="ml-2">{t("dashboard.errorDescription")}</span>
             </div>
@@ -72,7 +78,7 @@ export default function SavedBidsPage() {
           </div>
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center py-24 px-4 text-center border border-dashed border-slate-300 rounded-xl bg-slate-50/50 mt-4">
+        <div className="winbids-panel flex flex-col items-center justify-center py-24 px-4 text-center border-dashed border-slate-300 mt-4">
           <div className="h-16 w-16 bg-white border border-slate-100 shadow-sm rounded-full flex items-center justify-center text-slate-400 mb-5">
             <Bookmark size={28} />
           </div>
@@ -81,7 +87,7 @@ export default function SavedBidsPage() {
             {t("saved.emptyDescription")}
           </p>
           <Link
-            href="/"
+            href="/search"
             className={buttonVariants({
               className: "bg-slate-900 hover:bg-slate-800 text-white font-medium shadow-sm rounded-lg px-6 h-11",
             })}

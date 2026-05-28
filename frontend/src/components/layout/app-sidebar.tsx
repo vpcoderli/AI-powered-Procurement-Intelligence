@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link"
-import { Home, Bookmark, Settings, Search, ShieldCheck, ClipboardList, UserRound } from "lucide-react"
+import { usePathname } from "next/navigation"
+import { Home, Bookmark, Settings, Search, ShieldCheck, ClipboardList, UserRound, Route } from "lucide-react"
 import { useLanguage } from "@/lib/i18n/LanguageContext"
 import {
   Sidebar,
@@ -17,6 +18,7 @@ import {
 
 export function AppSidebar() {
   const { t } = useLanguage();
+  const pathname = usePathname();
 
   // Menu items.
   const items = [
@@ -46,6 +48,11 @@ export function AppSidebar() {
       icon: ClipboardList,
     },
     {
+      title: "Submission Path",
+      url: "/intents",
+      icon: Route,
+    },
+    {
       title: t('common.settings'),
       url: "/settings",
       icon: Settings,
@@ -58,30 +65,39 @@ export function AppSidebar() {
   ]
 
   return (
-    <Sidebar className="border-r border-slate-200 bg-white">
-      <SidebarHeader className="h-16 flex flex-row items-center px-6 border-b border-slate-100">
-        <div className="flex items-center gap-3 font-semibold text-xl text-slate-900 tracking-tight">
-          <div className="bg-slate-900 p-1.5 rounded-lg text-white shadow-sm">
-            <Search size={18} strokeWidth={2.5} />
+    <Sidebar className="winbids-sidebar border-r-0 bg-transparent">
+      <SidebarHeader className="h-20 flex flex-row items-center px-5">
+        <div className="winbids-sidebar-brand flex items-center gap-3 tracking-tight">
+          <div className="winbids-sidebar-mark">
+            WB
           </div>
-          APSi
+          <div>
+            <strong className="block text-lg font-black">WinBids</strong>
+            <small className="mt-0.5 block text-xs font-semibold text-white/60">APSi platform</small>
+          </div>
         </div>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>{t('common.application')}</SidebarGroupLabel>
+          <SidebarGroupLabel className="text-white/50">{t('common.application')}</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton render={
-                    <Link href={item.url}>
-                      <item.icon />
-                      <span>{item.title}</span>
-                    </Link>
-                  } />
-                </SidebarMenuItem>
-              ))}
+              {items.map((item) => {
+                const active = item.url === "/" ? pathname === "/" : pathname.startsWith(item.url);
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton
+                      className={`winbids-sidebar-link ${active ? "winbids-sidebar-link-active" : ""}`}
+                      render={
+                        <Link href={item.url}>
+                          <item.icon />
+                          <span>{item.title}</span>
+                        </Link>
+                      }
+                    />
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>

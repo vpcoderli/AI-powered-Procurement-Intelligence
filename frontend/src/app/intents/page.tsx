@@ -9,7 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { fetchIntents } from "@/lib/api/intents";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import type { IntentSummary } from "@/server/intents/types";
-import { ArrowRight, BriefcaseBusiness, CalendarClock, ClipboardList, Target } from "lucide-react";
+import { ArrowRight, BriefcaseBusiness, CalendarClock, ClipboardList, Route, Target } from "lucide-react";
 
 const productLabel = "Intent to Bid";
 
@@ -55,22 +55,28 @@ export default function IntentsPage() {
   }, []);
 
   return (
-    <div className="flex flex-col h-full gap-6 max-w-5xl mx-auto pb-12">
-      <div className="flex items-center gap-3 pb-4 border-b border-slate-200">
-        <div className="p-2.5 bg-slate-100 text-slate-700 rounded-lg border border-slate-200 shadow-sm">
-          <BriefcaseBusiness size={22} strokeWidth={2.5} />
+    <div className="winbids-workspace">
+      <section className="winbids-hero-panel flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="winbids-sidebar-mark">
+            <BriefcaseBusiness size={20} strokeWidth={2.5} />
+          </div>
+          <div className="min-w-0">
+            <p className="winbids-kicker">{productLabel}</p>
+            <h1 className="winbids-title">{t("intentsPage.title")}</h1>
+            <p className="winbids-lead mt-2">{t("intentsPage.description")}</p>
+          </div>
         </div>
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase text-slate-400">{productLabel}</p>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{t("intentsPage.title")}</h1>
-          <p className="text-sm text-slate-500 font-medium mt-0.5">{t("intentsPage.description")}</p>
+        <div className="winbids-score-badge">
+          <Route size={22} aria-hidden="true" />
+          <span className="text-[11px] font-black uppercase">Path</span>
         </div>
-      </div>
+      </section>
 
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-8">
           {Array.from({ length: 4 }).map((_, index) => (
-            <Card key={index} className="border-slate-200 shadow-sm rounded-xl bg-white">
+              <Card key={index} className="winbids-panel border-slate-200 shadow-sm rounded-lg bg-white">
               <CardHeader>
                 <Skeleton className="h-5 w-3/4" />
                 <Skeleton className="h-4 w-1/2" />
@@ -93,14 +99,14 @@ export default function IntentsPage() {
       ) : intents.length > 0 ? (
         <div className="flex flex-col gap-4 pb-8">
           {error && (
-            <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
+            <div className="winbids-panel text-sm text-slate-600">
               <span className="font-semibold text-slate-900">{t("intentsPage.errorTitle")}</span>
               <span className="ml-2">{t("intentsPage.errorDescription")}</span>
             </div>
           )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {intents.map((intent) => (
-              <Card key={intent.id} className="border-slate-200 shadow-sm rounded-xl bg-white">
+              <Card key={intent.id} className="winbids-panel border-slate-200 rounded-lg bg-white">
                 <CardHeader className="gap-3">
                   <div className="flex items-start justify-between gap-3">
                     <Badge variant="outline" className="rounded-md border-slate-200 bg-slate-50 text-slate-600">
@@ -150,7 +156,7 @@ export default function IntentsPage() {
           </div>
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center py-24 px-4 text-center border border-dashed border-slate-300 rounded-xl bg-slate-50/50 mt-4">
+        <div className="winbids-panel flex flex-col items-center justify-center py-24 px-4 text-center border-dashed border-slate-300 mt-4">
           <div className="h-16 w-16 bg-white border border-slate-100 shadow-sm rounded-full flex items-center justify-center text-slate-400 mb-5">
             <BriefcaseBusiness size={28} />
           </div>
