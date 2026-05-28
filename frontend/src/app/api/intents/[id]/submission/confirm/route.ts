@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { FeatureAccessError, requireFeature } from "@/server/auth/feature-gate";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
 import { db } from "@/server/db/client";
 import { IntentNotFoundError } from "@/server/intents/types";
@@ -75,11 +76,16 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   try {
+    requireFeature(principal, "submission_guidance");
     const { id } = await context.params;
     const confirmation = await createSubmissionConfirmation(db, principal.userId, id, input);
 
     return jsonWithPrincipalCookie({ confirmation }, principal, { status: 201 });
   } catch (error) {
+    if (error instanceof FeatureAccessError) {
+      return errorResponse(error.code, error.message, error.status, principal);
+    }
+
     if (error instanceof IntentNotFoundError) {
       return errorResponse("INTENT_NOT_FOUND", "Intent not found", 404, principal);
     }

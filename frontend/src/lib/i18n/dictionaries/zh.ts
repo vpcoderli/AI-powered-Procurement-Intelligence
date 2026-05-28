@@ -23,6 +23,8 @@ export const zh: Dictionary = {
     notifications: "通知",
     security: "安全",
     appearance: "外观",
+    currentPlan: "当前套餐",
+    featureAccess: "按账户等级显示可用功能。",
     personalInfo: "个人信息",
     personalInfoDesc: "更新您的个人详细信息及公开展示信息。",
     firstName: "名",

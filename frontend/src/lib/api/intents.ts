@@ -27,6 +27,7 @@ function isApiErrorResponse(body: unknown): body is IntentApiErrorResponse {
 
   return (
     (code === "BID_NOT_FOUND" ||
+      code === "FEATURE_NOT_AVAILABLE" ||
       code === "INTENT_NOT_FOUND" ||
       code === "INVALID_REQUEST" ||
       code === "INTERNAL_ERROR") &&

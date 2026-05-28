@@ -21,6 +21,22 @@ vi.mock("@/server/submission/service", async (importOriginal) => {
 const resolvePrincipal = vi.mocked(principal.resolvePrincipal);
 const createSubmissionConfirmation = vi.mocked(submissionService.createSubmissionConfirmation);
 
+const proPrincipal = {
+  kind: "authenticated" as const,
+  userId: "user_1",
+  role: "user" as const,
+  tier: "pro" as const,
+  features: ["bid_search", "submission_guidance"] as const,
+};
+
+const freePrincipal = {
+  kind: "authenticated" as const,
+  userId: "user_free",
+  role: "user" as const,
+  tier: "free" as const,
+  features: ["bid_search"] as const,
+};
+
 const confirmation: SubmissionConfirmation = {
   id: "submission_confirmation_1",
   intentId: "intent_1",
@@ -36,7 +52,7 @@ const confirmation: SubmissionConfirmation = {
 describe("POST /api/intents/[id]/submission/confirm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resolvePrincipal.mockResolvedValue({ kind: "authenticated", userId: "user_1" });
+    resolvePrincipal.mockResolvedValue(proPrincipal);
   });
 
   it("stores a manual external submission confirmation", async () => {
@@ -103,5 +119,25 @@ describe("POST /api/intents/[id]/submission/confirm", () => {
 
     expect(response.status).toBe(404);
     expect(body.error.code).toBe("INTENT_NOT_FOUND");
+  });
+
+  it("returns FEATURE_NOT_AVAILABLE before storing confirmations for users below Pro", async () => {
+    resolvePrincipal.mockResolvedValueOnce(freePrincipal);
+
+    const response = await POST(
+      new Request("http://localhost/api/intents/intent_1/submission/confirm", {
+        method: "POST",
+        body: JSON.stringify({
+          submittedAt: "2026-05-29T15:30:00.000Z",
+          method: "external_portal",
+        }),
+      }),
+      { params: Promise.resolve({ id: "intent_1" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("FEATURE_NOT_AVAILABLE");
+    expect(createSubmissionConfirmation).not.toHaveBeenCalled();
   });
 });

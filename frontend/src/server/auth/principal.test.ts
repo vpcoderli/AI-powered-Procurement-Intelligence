@@ -35,6 +35,9 @@ describe("principal resolution", () => {
     expect(principal).toEqual({
       kind: "authenticated",
       userId: registered.user.id,
+      role: "user",
+      tier: "free",
+      features: expect.arrayContaining(["bid_search", "supplier_profile"]),
     });
     expect(
       testDb.db.select().from(users).where(eq(users.id, "anon_existing")).limit(1).get(),
@@ -52,6 +55,9 @@ describe("principal resolution", () => {
     expect(principal).toEqual({
       kind: "anonymous",
       userId: "anon_existing",
+      role: "user",
+      tier: "free",
+      features: expect.arrayContaining(["bid_search"]),
     });
     expect(
       testDb.db.select().from(users).where(eq(users.id, "anon_existing")).limit(1).get(),
@@ -66,6 +72,11 @@ describe("principal resolution", () => {
 
     expect(principal.kind).toBe("anonymous");
     expect(principal.userId).toMatch(/^anon_[a-zA-Z0-9_-]+$/);
+    expect(principal).toMatchObject({
+      role: "user",
+      tier: "free",
+      features: expect.arrayContaining(["bid_search"]),
+    });
     expect(principal.anonymousCookie).toContain(
       `${ANONYMOUS_USER_COOKIE_NAME}=${principal.userId}`,
     );

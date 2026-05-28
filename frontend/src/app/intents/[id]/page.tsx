@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { fetchIntent, updateIntentStatus } from "@/lib/api/intents";
+import { lockedFeatureMessage, useFeature } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import type { IntentDetail, IntentStatus } from "@/server/intents/types";
 import { INTENT_STATUSES } from "@/server/intents/types";
@@ -22,6 +23,7 @@ import {
   FileCheck2,
   Gauge,
   Landmark,
+  LockKeyhole,
   PackageCheck,
   Route,
   ShieldAlert,
@@ -70,6 +72,7 @@ export default function IntentWorkspacePage() {
   const [saveError, setSaveError] = useState<Error | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
+  const submissionGuidanceFeature = useFeature("submission_guidance");
 
   const intentId = typeof params?.id === "string" ? params.id : Array.isArray(params?.id) ? params.id[0] : "";
 
@@ -329,15 +332,34 @@ export default function IntentWorkspacePage() {
               ["award", PackageCheck],
             ].map(([key, Icon]) => {
               const ModuleIcon = Icon as typeof Target;
+              const isLocked = key === "submission" && !submissionGuidanceFeature.enabled;
               return (
-                <div key={key as string} className="flex gap-3 rounded-lg border border-slate-200 bg-white p-4">
-                  <ModuleIcon className="mt-0.5 shrink-0 text-blue-700" size={18} aria-hidden="true" />
+                <div
+                  key={key as string}
+                  className={`flex gap-3 rounded-lg border p-4 ${
+                    isLocked ? "border-amber-200 bg-amber-50/60" : "border-slate-200 bg-white"
+                  }`}
+                >
+                  {isLocked ? (
+                    <LockKeyhole className="mt-0.5 shrink-0 text-amber-700" size={18} aria-hidden="true" />
+                  ) : (
+                    <ModuleIcon className="mt-0.5 shrink-0 text-blue-700" size={18} aria-hidden="true" />
+                  )}
                   <div>
-                    <p className="text-sm font-black text-slate-950">
-                      {t(`intentsPage.moduleItems.${key as string}.title`)}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-black text-slate-950">
+                        {t(`intentsPage.moduleItems.${key as string}.title`)}
+                      </p>
+                      {isLocked && (
+                        <Badge variant="outline" className="border-amber-200 bg-white text-amber-700">
+                          {submissionGuidanceFeature.requiredTier}
+                        </Badge>
+                      )}
+                    </div>
                     <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
-                      {t(`intentsPage.moduleItems.${key as string}.description`)}
+                      {isLocked
+                        ? lockedFeatureMessage("submission_guidance")
+                        : t(`intentsPage.moduleItems.${key as string}.description`)}
                     </p>
                   </div>
                 </div>
@@ -380,7 +402,11 @@ export default function IntentWorkspacePage() {
         </article>
       </section>
 
-      <section className="winbids-panel submissionPath rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <section
+        className={`winbids-panel submissionPath rounded-lg border p-5 shadow-sm ${
+          submissionGuidanceFeature.enabled ? "border-slate-200 bg-white" : "border-amber-200 bg-amber-50/60"
+        }`}
+      >
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-700">
@@ -392,10 +418,16 @@ export default function IntentWorkspacePage() {
             </h2>
           </div>
           <span className="w-fit rounded-full border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-700">
-            {t("intentsPage.mediumComplexity")}
+            {submissionGuidanceFeature.enabled
+              ? t("intentsPage.mediumComplexity")
+              : lockedFeatureMessage("submission_guidance")}
           </span>
         </div>
-        <div className="mt-5 flex flex-wrap items-center gap-3 rounded-lg bg-slate-50 p-4 text-sm font-bold text-slate-600">
+        <div
+          className={`mt-5 flex flex-wrap items-center gap-3 rounded-lg p-4 text-sm font-bold ${
+            submissionGuidanceFeature.enabled ? "bg-slate-50 text-slate-600" : "bg-white/70 text-amber-800"
+          }`}
+        >
           <Landmark size={18} className="text-blue-700" aria-hidden="true" />
           <span>{t("intentsPage.externalPortal")}</span>
           <ArrowRight size={15} className="text-slate-400" aria-hidden="true" />
