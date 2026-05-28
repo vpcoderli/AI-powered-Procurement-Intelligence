@@ -4,6 +4,14 @@ Updated: 2026-05-28
 
 This document is the working checklist for local development. Update it after each completed phase so the next task can start from this list instead of re-reading the whole codebase.
 
+## How To Use This Checklist
+
+每完成一个阶段后，都要更新下面三块：
+
+1. **Current Product Status**：哪些能力已经可用，哪些只是部分可用。
+2. **Account / Permission / Billing Tracker**：账户、admin、套餐、功能权限这条商业化主线的差距。
+3. **Recommended Next Phase**：下一阶段优先做什么，避免每次重新阅读代码后再判断。
+
 ## Current Product Status
 
 ### Implemented
@@ -32,6 +40,51 @@ This document is the working checklist for local development. Update it after ea
 | Compliance Manifest Lite | `compliance_manifest_items`, generator, service, Business-gated API route, API client, and Intent workspace UI for requirement status, evidence status, and notes. |
 | Pursue / No-Bid Decision Lite | `pursuit_decisions`, recommendation generator, Pro-gated API route, API client, and Intent workspace UI for decision capture, reasons, notes, and history. |
 | Static product demo | `/winbids-demo` isolated prototype page from Drive frontend references. |
+
+## Account / Permission / Billing Tracker
+
+这部分专门跟踪普通账户、管理员账户、用户等级、付费功能关联。后续每次做完权限或商业化相关功能，都优先更新这里。
+
+### Already Implemented
+
+| Capability | Status | Notes |
+|---|---|---|
+| 普通账户注册 | Done | `/register` and `/api/auth/register` create local user accounts, default `role=user`, default `account_tier=free`, and create sessions. |
+| 普通账户登录/退出/session | Done | `/login`, logout API, session cookie, `/api/auth/session`, disabled account rejection. |
+| 普通账户基础管理 | Done | `/settings` supports display name update, password change, password reset request/confirm. |
+| 普通账户团队空间 | Partial | Default organization/workspace exists; Team tab can rename workspace, invite local members, update member role, and remove members. |
+| Admin 账户基础分离 | Done | `role=admin` is distinct from `role=user`; `requireAdmin()` protects admin APIs; `/admin` is hidden/blocked for ordinary users. |
+| Admin 用户管理 | Done | Admin can list/search/filter users, create invited accounts with temporary passwords, update role/tier/enabled state, and view audit logs. |
+| 用户等级模型 | Done | `account_tier` supports `free`, `pro`, `business`, `enterprise`. |
+| 功能与等级关联 | Done | Central entitlement map controls feature keys such as `submission_guidance`, `compliance_manifest`, `pursue_no_bid`, `quote_workflow`, `knowledge_station`. |
+| 服务端功能拦截 | Partial | `requireFeature()` exists and is already used by Submission Guidance, Compliance Manifest, and Pursue / No-Bid APIs. |
+| 前端锁定态 | Partial | `useFeature()` and locked messages exist on key workspace modules and Settings feature overview. |
+| 使用额度限制 | Partial | Saved bids and intent workspace limits exist by tier. |
+| 订阅数据基础 | Partial | `account_subscriptions`, `subscription_events`, plan catalog, and Settings Billing tab exist. |
+
+### Still Needed
+
+| Priority | Capability | Needed Work | Why It Matters |
+|---:|---|---|---|
+| P0 | Billing Provider Sync | Add checkout session creation, provider webhook intake, provider/customer/subscription reconciliation, and subscription event idempotency. | Without this, paid user levels still depend on admin/manual assignment. |
+| P0 | Self-Service Upgrade / Cancel | Settings Billing tab should let users start checkout, view current plan, cancel, and see renewal/trial status. | Users need to upgrade without admin intervention. |
+| P0 | Invoice / Payment History UI | Store/display provider invoice links or local invoice records. | Paid users need billing records. |
+| P1 | Account Deletion / Export | Add user self-service export and deletion/deactivation flow with admin audit. | Required for serious account management and compliance readiness. |
+| P1 | Team Lifecycle Completion | Add ownership transfer, member disable/reactivation, pending invitation acceptance, and email delivery later. | Business/Enterprise accounts need real team administration. |
+| P1 | Entitlement Coverage Audit | Ensure every gated future API and UI action uses the central feature map and consistent locked states. | Prevents paid features from leaking to lower tiers. |
+| P1 | Usage Dashboard | Show current usage vs tier limits for saved bids, intents, and future quote/workspace limits. | Users need to understand why an upgrade is required. |
+| P2 | Granular Operator Roles | Add support/operator roles separate from full admin. | Useful once support operations grow. |
+| P2 | Advanced Feature Flags | Add configurable feature flags or per-account overrides beyond tier defaults. | Enables beta features and enterprise custom access. |
+
+### Current Tier-To-Feature Direction
+
+| Tier | User Type | Current / Planned Feature Access |
+|---|---|---|
+| Free | Ordinary trial/basic supplier | Search, saved bids with low quota, supplier profile, basic match score, limited intent workspace. |
+| Pro | Individual paid supplier | Higher quotas, Submission Guidance, Pursue / No-Bid, full match explanation. |
+| Business | Small team supplier | Pro features plus Compliance Manifest, team-ready workspace, future quote workflow. |
+| Enterprise | Advanced/team account | Business features plus Knowledge Station, advanced intelligence, higher limits, support/admin assistance. |
+| Admin | Platform operator | Admin console, crawler/source tools, user management, tier assignment, audit visibility. |
 
 ### Partially Implemented
 
@@ -62,12 +115,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Billing Provider Sync** next, then choose between **Account Lifecycle** and **Response Workspace** depending on whether the following sprint should connect real monetization or deepen bid execution workflow.
+Prioritize **Billing Provider Sync + Self-Service Plan Management** next. This is the most direct continuation of the new account requirement because the role/tier/feature foundation already exists, but paid tiers are not yet connected to a real upgrade and subscription lifecycle.
 
 Reason:
 
 - The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Business-gated Compliance Manifest, and Pro-gated Pursue / No-Bid Decision now exist.
-- The remaining account gap is not basic self-service; it is owner transfer/member reactivation, real billing provider sync, broader usage dashboards, and account deletion/export.
+- The remaining account gap is not basic registration; it is paid-plan self-service, provider sync, owner transfer/member reactivation, broader usage dashboards, and account deletion/export.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
