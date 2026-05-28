@@ -2,7 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { accountSubscriptions, billingCheckoutSessions, billingInvoices, subscriptionEvents } from "@/server/db/schema";
+import {
+  accountSubscriptions,
+  billingCheckoutSessions,
+  billingInvoices,
+  notificationOutbox,
+  subscriptionEvents,
+} from "@/server/db/schema";
 import type { BillingProviderAdapter } from "./providers";
 import {
   applyBillingProviderEvent,
@@ -412,6 +418,49 @@ describe("billing subscriptions service", () => {
         invoiceNumber: "WIN-1002",
         status: "payment_failed",
         amountDueCents: 24900,
+      }),
+    ]);
+  });
+
+  it("queues a deduped payment retry notification for failed invoice payments", () => {
+    upsertAccountSubscription(testDb.db, "user_buyer", {
+      tier: "business",
+      status: "active",
+      source: "billing_provider",
+      provider: "stripe",
+      providerCustomerId: "cus_123",
+      providerSubscriptionId: "sub_123",
+      currentPeriodEnd: "2026-06-28T00:00:00.000Z",
+    });
+    const event = {
+      id: "evt_invoice_failed_retry_1",
+      type: "invoice.payment_failed" as const,
+      provider: "stripe",
+      providerCustomerId: "cus_123",
+      providerSubscriptionId: "sub_123",
+      providerInvoiceId: "in_failed_retry",
+      invoiceNumber: "WIN-1003",
+      invoiceUrl: "https://billing.example.test/invoices/in_failed_retry",
+      amountDueCents: 24900,
+      amountPaidCents: 0,
+      currency: "USD",
+      status: "past_due" as const,
+      dueAt: "2026-05-28T00:00:00.000Z",
+    };
+
+    applyBillingProviderEvent(testDb.db, event);
+    applyBillingProviderEvent(testDb.db, { ...event, id: "evt_invoice_failed_retry_2" });
+
+    expect(testDb.db.select().from(notificationOutbox).all()).toEqual([
+      expect.objectContaining({
+        alertId: "billing_invoice:in_failed_retry",
+        userId: "user_buyer",
+        recipient: "buyer@example.com",
+        dedupeKey: "billing:payment_failed:in_failed_retry",
+        subject: "Payment failed for invoice WIN-1003",
+        bodyText: expect.stringContaining("https://billing.example.test/invoices/in_failed_retry"),
+        matchedBidIds: "[]",
+        status: "pending",
       }),
     ]);
   });
