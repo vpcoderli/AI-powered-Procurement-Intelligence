@@ -2,13 +2,15 @@ import crypto from "node:crypto";
 import { and, asc, desc, eq, isNotNull, like, or } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { hashPassword } from "@/server/auth/password";
-import { syncOwnedWorkspaceTier } from "@/server/account/workspace";
+import { ensureUserWorkspace, syncOwnedWorkspaceTier } from "@/server/account/workspace";
 import type { AppDatabase } from "@/server/db/client";
-import { adminUserAuditLogs, users } from "@/server/db/schema";
+import { adminUserAuditLogs, organizationFeatureOverrides, users } from "@/server/db/schema";
 import {
+  isFeatureKey,
   normalizeAccountTier,
   normalizeUserRole,
   type AccountTier,
+  type FeatureKey,
   type UserRole,
 } from "@/server/auth/entitlements";
 
@@ -55,6 +57,22 @@ export interface CreateAdminUserInviteResponse {
   temporaryPassword: string;
 }
 
+export interface AdminUserFeatureOverride {
+  featureKey: FeatureKey;
+  isEnabled: boolean;
+}
+
+export interface AdminUserFeatureOverridesResponse {
+  organizationId: string;
+  organizationName: string;
+  overrides: AdminUserFeatureOverride[];
+}
+
+export interface UpdateAdminUserFeatureOverrideInput {
+  featureKey: FeatureKey;
+  isEnabled: boolean | null;
+}
+
 export interface AdminUserAuditActor {
   actorKind: "admin" | "local-bypass" | "self-service";
   actorUserId: string | null;
@@ -64,6 +82,7 @@ export type AdminUserAuditChange =
   | { field: "role"; before: UserRole; after: UserRole }
   | { field: "tier"; before: AccountTier; after: AccountTier }
   | { field: "isDisabled"; before: boolean; after: boolean }
+  | { field: "featureOverride"; featureKey: FeatureKey; before: boolean | null; after: boolean | null }
   | { field: "created"; before: null; after: string }
   | { field: "email"; before: string | null; after: string | null }
   | { field: "workspaceAccess"; before: "active"; after: "removed" };
@@ -98,6 +117,13 @@ export class AdminUserEmailExistsError extends Error {
   constructor() {
     super("Email is already registered");
     this.name = "AdminUserEmailExistsError";
+  }
+}
+
+export class AdminUserFeatureOverrideError extends Error {
+  constructor(message = "Unsupported feature override") {
+    super(message);
+    this.name = "AdminUserFeatureOverrideError";
   }
 }
 
@@ -160,6 +186,41 @@ function toAuditLog(row: {
     changes: parseAuditChanges(row.changesJson),
     createdAt: row.createdAt,
   };
+}
+
+function validateFeatureOverrideKey(featureKey: FeatureKey) {
+  if (!isFeatureKey(featureKey) || featureKey === "admin_console") {
+    throw new AdminUserFeatureOverrideError();
+  }
+}
+
+function featureOverrideWorkspace(db: AppDatabase, userId: string) {
+  const user = db.select().from(users).where(eq(users.id, userId)).limit(1).get();
+
+  if (!user?.email) {
+    throw new AdminUserNotFoundError();
+  }
+
+  return ensureUserWorkspace(db, userId);
+}
+
+function listOrganizationFeatureOverrides(db: AppDatabase, organizationId: string): AdminUserFeatureOverride[] {
+  return db
+    .select({
+      featureKey: organizationFeatureOverrides.featureKey,
+      isEnabled: organizationFeatureOverrides.isEnabled,
+    })
+    .from(organizationFeatureOverrides)
+    .where(eq(organizationFeatureOverrides.organizationId, organizationId))
+    .orderBy(asc(organizationFeatureOverrides.featureKey))
+    .all()
+    .filter((row): row is { featureKey: FeatureKey; isEnabled: number } =>
+      isFeatureKey(row.featureKey) && row.featureKey !== "admin_console",
+    )
+    .map((row) => ({
+      featureKey: row.featureKey,
+      isEnabled: row.isEnabled === 1,
+    }));
 }
 
 function normalizeEmail(email: string) {
@@ -333,6 +394,95 @@ export function updateAdminUser(
   }
 
   return toAdminUser(row);
+}
+
+export function listAdminUserFeatureOverrides(db: AppDatabase, userId: string): AdminUserFeatureOverridesResponse {
+  const workspace = featureOverrideWorkspace(db, userId);
+
+  return {
+    organizationId: workspace.organizationId,
+    organizationName: workspace.organizationName,
+    overrides: listOrganizationFeatureOverrides(db, workspace.organizationId),
+  };
+}
+
+export function updateAdminUserFeatureOverride(
+  db: AppDatabase,
+  userId: string,
+  input: UpdateAdminUserFeatureOverrideInput,
+  actor: AdminUserAuditActor = { actorKind: "local-bypass", actorUserId: null },
+): AdminUserFeatureOverridesResponse {
+  validateFeatureOverrideKey(input.featureKey);
+
+  const workspace = featureOverrideWorkspace(db, userId);
+  const timestamp = nowIso();
+  const before = db
+    .select()
+    .from(organizationFeatureOverrides)
+    .where(and(
+      eq(organizationFeatureOverrides.organizationId, workspace.organizationId),
+      eq(organizationFeatureOverrides.featureKey, input.featureKey),
+    ))
+    .limit(1)
+    .get();
+  const beforeValue = before ? before.isEnabled === 1 : null;
+
+  if (input.isEnabled === null) {
+    db.delete(organizationFeatureOverrides)
+      .where(and(
+        eq(organizationFeatureOverrides.organizationId, workspace.organizationId),
+        eq(organizationFeatureOverrides.featureKey, input.featureKey),
+      ))
+      .run();
+  } else if (before) {
+    db.update(organizationFeatureOverrides)
+      .set({
+        isEnabled: input.isEnabled ? 1 : 0,
+        createdByUserId: actor.actorUserId,
+        updatedAt: timestamp,
+      })
+      .where(and(
+        eq(organizationFeatureOverrides.organizationId, workspace.organizationId),
+        eq(organizationFeatureOverrides.featureKey, input.featureKey),
+      ))
+      .run();
+  } else {
+    db.insert(organizationFeatureOverrides)
+      .values({
+        organizationId: workspace.organizationId,
+        featureKey: input.featureKey,
+        isEnabled: input.isEnabled ? 1 : 0,
+        createdByUserId: actor.actorUserId,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .run();
+  }
+
+  if (beforeValue !== input.isEnabled) {
+    db.insert(adminUserAuditLogs)
+      .values({
+        id: `audit_${crypto.randomUUID()}`,
+        actorKind: actor.actorKind,
+        actorUserId: actor.actorUserId,
+        targetUserId: userId,
+        action: "user_access_updated",
+        changesJson: JSON.stringify([{
+          field: "featureOverride",
+          featureKey: input.featureKey,
+          before: beforeValue,
+          after: input.isEnabled,
+        }]),
+        createdAt: timestamp,
+      })
+      .run();
+  }
+
+  return {
+    organizationId: workspace.organizationId,
+    organizationName: workspace.organizationName,
+    overrides: listOrganizationFeatureOverrides(db, workspace.organizationId),
+  };
 }
 
 export function listAdminUserAuditLogs(

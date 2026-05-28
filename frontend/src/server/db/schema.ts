@@ -227,6 +227,25 @@ export const organizations = sqliteTable("organizations", {
   updatedAt: text("updated_at").notNull(),
 });
 
+export const organizationFeatureOverrides = sqliteTable(
+  "organization_feature_overrides",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    featureKey: text("feature_key").notNull(),
+    isEnabled: integer("is_enabled").notNull(),
+    createdByUserId: text("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.organizationId, table.featureKey] }),
+    organizationIdx: index("idx_organization_feature_overrides_org").on(table.organizationId),
+    featureIdx: index("idx_organization_feature_overrides_feature").on(table.featureKey),
+  }),
+);
+
 export const organizationMemberships = sqliteTable(
   "organization_memberships",
   {

@@ -6,6 +6,7 @@ import type {
 import type {
   AdminUserAuditLog,
   AdminUserAuditLogsResponse,
+  AdminUserFeatureOverridesResponse,
   AdminUserFilterStatus,
   AdminUser,
   AdminUsersResponse,
@@ -13,6 +14,7 @@ import type {
   CreateAdminUserInviteResponse,
   ListAdminUsersFilters,
   UpdateAdminUserInput,
+  UpdateAdminUserFeatureOverrideInput,
 } from "@/server/admin/users-repository";
 import type { NotificationOutboxRow, NotificationStatus } from "@/server/notifications/types";
 import type { SubscriptionLifecycleReconcileResult } from "@/server/billing/subscriptions";
@@ -24,6 +26,7 @@ export type {
   AdminDataSourcesResponse,
   AdminUserAuditLog,
   AdminUserAuditLogsResponse,
+  AdminUserFeatureOverridesResponse,
   AdminUserFilterStatus,
   AdminUser,
   AdminUsersResponse,
@@ -31,6 +34,7 @@ export type {
   CreateAdminUserInviteResponse,
   ListAdminUsersFilters,
   UpdateAdminUserInput,
+  UpdateAdminUserFeatureOverrideInput,
 };
 
 type AdminApiErrorCode =
@@ -160,6 +164,12 @@ export async function listAdminUserAuditLogs(input: { limit?: number } = {}) {
   return parseResponse<AdminUserAuditLogsResponse>(response);
 }
 
+export async function listAdminUserFeatureOverrides(id: string) {
+  const response = await fetch(`/api/admin/users/${encodeURIComponent(id)}/feature-overrides`);
+
+  return parseResponse<AdminUserFeatureOverridesResponse>(response);
+}
+
 export async function createAdminUser(input: CreateAdminUserInviteInput) {
   const response = await fetch("/api/admin/users", {
     method: "POST",
@@ -178,6 +188,16 @@ export async function updateAdminUser(id: string, input: UpdateAdminUserInput) {
   });
 
   return parseResponse<UpdateAdminUserResponse>(response);
+}
+
+export async function updateAdminUserFeatureOverride(id: string, input: UpdateAdminUserFeatureOverrideInput) {
+  const response = await fetch(`/api/admin/users/${encodeURIComponent(id)}/feature-overrides`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<AdminUserFeatureOverridesResponse>(response);
 }
 
 export async function updateAdminDataSource(id: string, input: { isEnabled: boolean }) {

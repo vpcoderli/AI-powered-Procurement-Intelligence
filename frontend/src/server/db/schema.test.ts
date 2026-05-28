@@ -205,6 +205,7 @@ describe("database schema", () => {
       expect(tables).toContain("workspace_invitations");
       expect(tables).toContain("organizations");
       expect(tables).toContain("organization_memberships");
+      expect(tables).toContain("organization_feature_overrides");
       expect(tables).toContain("user_notification_preferences");
 
       const userColumns = testDb.db.$client
@@ -221,6 +222,15 @@ describe("database schema", () => {
         .map((row) => (row as { name: string }).name);
 
       expect(organizationColumns).toContain("account_tier");
+
+      const featureOverrideColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(organization_feature_overrides)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(featureOverrideColumns).toEqual(
+        expect.arrayContaining(["organization_id", "feature_key", "is_enabled", "created_by_user_id", "created_at", "updated_at"]),
+      );
 
       const subscriptionEventColumns = testDb.db.$client
         .prepare("PRAGMA table_info(subscription_events)")
@@ -290,6 +300,26 @@ describe("database schema", () => {
           createdAt: "2026-05-19T00:00:00.000Z",
           updatedAt: "2026-05-19T00:00:00.000Z",
         }).run(),
+      ).not.toThrow();
+
+      expect(() =>
+        testDb.db.$client.prepare(`
+          INSERT INTO organization_feature_overrides (
+            organization_id,
+            feature_key,
+            is_enabled,
+            created_by_user_id,
+            created_at,
+            updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          "org_1",
+          "compliance_manifest",
+          1,
+          "user_1",
+          "2026-05-19T00:00:00.000Z",
+          "2026-05-19T00:00:00.000Z",
+        ),
       ).not.toThrow();
 
       const workspaceInvitationColumns = testDb.db.$client

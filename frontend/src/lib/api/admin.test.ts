@@ -3,6 +3,7 @@ import {
   AdminApiError,
   createAdminUser,
   deliverAdminNotifications,
+  listAdminUserFeatureOverrides,
   listAdminNotifications,
   listAdminCrawlerLogs,
   listAdminDataSources,
@@ -12,6 +13,7 @@ import {
   runStateCrawlersNow,
   scheduleAdminBillingDunning,
   reconcileAdminSubscriptions,
+  updateAdminUserFeatureOverride,
   updateAdminDataSource,
   updateAdminUser,
 } from "./admin";
@@ -87,6 +89,18 @@ describe("admin API client", () => {
     expect(mockFetch).toHaveBeenCalledWith("/api/admin/users/audit-logs?limit=10");
   });
 
+  it("lists admin user feature overrides", async () => {
+    const body = {
+      organizationId: "org_1",
+      organizationName: "Buyer Workspace",
+      overrides: [{ featureKey: "compliance_manifest", isEnabled: true }],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(listAdminUserFeatureOverrides("user 1")).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/users/user%201/feature-overrides");
+  });
+
   it("updates admin user access", async () => {
     const body = {
       user: {
@@ -108,6 +122,25 @@ describe("admin API client", () => {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ role: "admin", tier: "business" }),
+    });
+  });
+
+  it("updates admin user feature overrides", async () => {
+    const body = {
+      organizationId: "org_1",
+      organizationName: "Buyer Workspace",
+      overrides: [{ featureKey: "compliance_manifest", isEnabled: false }],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(updateAdminUserFeatureOverride("user 1", {
+      featureKey: "compliance_manifest",
+      isEnabled: false,
+    })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/users/user%201/feature-overrides", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ featureKey: "compliance_manifest", isEnabled: false }),
     });
   });
 

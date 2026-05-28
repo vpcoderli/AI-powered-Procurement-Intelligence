@@ -101,6 +101,69 @@ describe("auth service", () => {
     });
   });
 
+  it("applies organization feature overrides to session entitlements", async () => {
+    const registered = await registerUser(testDb.db, {
+      email: "beta@example.com",
+      password: "strong-password",
+    });
+
+    testDb.db.$client.prepare(`
+      INSERT INTO organization_feature_overrides (
+        organization_id,
+        feature_key,
+        is_enabled,
+        created_by_user_id,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      registered.user.workspace.organizationId,
+      "compliance_manifest",
+      1,
+      registered.user.id,
+      "2026-05-28T00:00:00.000Z",
+      "2026-05-28T00:00:00.000Z",
+    );
+
+    await expect(getSessionUser(testDb.db, registered.sessionToken)).resolves.toMatchObject({
+      tier: "free",
+      features: expect.arrayContaining(["compliance_manifest"]),
+    });
+  });
+
+  it("lets organization feature overrides disable tier-default features", async () => {
+    const registered = await registerUser(testDb.db, {
+      email: "business@example.com",
+      password: "strong-password",
+    });
+    testDb.db.update(organizations)
+      .set({ accountTier: "business" })
+      .where(eq(organizations.id, registered.user.workspace.organizationId))
+      .run();
+    testDb.db.$client.prepare(`
+      INSERT INTO organization_feature_overrides (
+        organization_id,
+        feature_key,
+        is_enabled,
+        created_by_user_id,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      registered.user.workspace.organizationId,
+      "compliance_manifest",
+      0,
+      registered.user.id,
+      "2026-05-28T00:00:00.000Z",
+      "2026-05-28T00:00:00.000Z",
+    );
+
+    const sessionUser = await getSessionUser(testDb.db, registered.sessionToken);
+
+    expect(sessionUser).toMatchObject({ tier: "business" });
+    expect(sessionUser?.features).not.toContain("compliance_manifest");
+  });
+
   it("rejects duplicate normalized email addresses", async () => {
     await registerUser(testDb.db, {
       email: "buyer@example.com",
