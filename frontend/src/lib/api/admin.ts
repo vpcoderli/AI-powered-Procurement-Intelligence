@@ -16,6 +16,7 @@ import type {
 } from "@/server/admin/users-repository";
 import type { NotificationOutboxRow, NotificationStatus } from "@/server/notifications/types";
 import type { SubscriptionLifecycleReconcileResult } from "@/server/billing/subscriptions";
+import type { ScheduleDunningRemindersResult } from "@/server/billing/dunning";
 
 export type {
   AdminCrawlerLog,
@@ -64,6 +65,7 @@ export interface AdminNotificationDeliveryResponse {
 }
 
 export type AdminSubscriptionReconcileResponse = SubscriptionLifecycleReconcileResult;
+export type AdminBillingDunningResponse = ScheduleDunningRemindersResult;
 
 export class AdminApiError extends Error {
   status: number;
@@ -208,6 +210,16 @@ export async function deliverAdminNotifications(input: { limit?: number; maxAtte
   });
 
   return parseResponse<AdminNotificationDeliveryResponse>(response);
+}
+
+export async function scheduleAdminBillingDunning(input: { limit?: number } = {}) {
+  const response = await fetch("/api/admin/billing/dunning", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<AdminBillingDunningResponse>(response);
 }
 
 export async function reconcileAdminSubscriptions(input: { pastDueGraceDays?: number } = {}) {
