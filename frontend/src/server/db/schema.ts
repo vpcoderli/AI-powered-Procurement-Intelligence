@@ -357,6 +357,32 @@ export const complianceManifestItems = sqliteTable(
   }),
 );
 
+export const pursuitDecisions = sqliteTable(
+  "pursuit_decisions",
+  {
+    id: text("id").primaryKey(),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intentToBid.id, { onDelete: "cascade" }),
+    bidId: text("bid_id")
+      .notNull()
+      .references(() => bids.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    decision: text("decision").notNull(),
+    reasonsJson: text("reasons_json").notNull().default("[]"),
+    notes: text("notes").notNull().default(""),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    intentIdx: index("idx_pursuit_decisions_intent_id").on(table.intentId),
+    userIdx: index("idx_pursuit_decisions_user_id").on(table.userId),
+    decisionIdx: index("idx_pursuit_decisions_decision").on(table.decision),
+  }),
+);
+
 export const alerts = sqliteTable(
   "alerts",
   {

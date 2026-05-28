@@ -329,6 +329,34 @@ export const en = {
       submission: "Submission",
       risk: "Risk",
     },
+    pursuitDecision: "Pursue / No-Bid Decision",
+    pursuitDecisionLoading: "Loading decision guidance...",
+    pursuitDecisionSaved: "Pursuit decision saved.",
+    pursuitDecisionSaveError: "Unable to save pursuit decision.",
+    recommendation: "Recommendation",
+    decision: "Decision",
+    savePursuitDecision: "Save decision",
+    decisionReasons: "Reasons",
+    decisionReasonsPlaceholder: "One reason per line...",
+    decisionNotes: "Decision notes",
+    decisionNotesPlaceholder: "Add context, assumptions, or next steps...",
+    decisionHistory: "Decision history",
+    noDecisionHistory: "No decisions recorded yet.",
+    pursuitRecommendations: {
+      pursue: "Pursue",
+      no_bid: "No-bid",
+      review: "Review",
+    },
+    pursuitConfidence: {
+      low: "Low confidence",
+      medium: "Medium confidence",
+      high: "High confidence",
+    },
+    pursuitDecisions: {
+      pursue: "Pursue",
+      no_bid: "No-bid",
+      defer: "Defer",
+    },
     submissionMethods: {
       external_portal: "External portal",
       email: "Email",
@@ -352,6 +380,10 @@ export const en = {
       compliance: {
         title: "Compliance Manifest",
         description: "Track requirements, completion state, notes, and evidence readiness.",
+      },
+      decision: {
+        title: "Pursue / No-Bid",
+        description: "Capture recommendation, decision reasons, notes, and history.",
       },
       award: {
         title: "Status Tracking",

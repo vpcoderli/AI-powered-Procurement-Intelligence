@@ -14,6 +14,10 @@ import type {
   ComplianceManifestResponse,
   UpdateComplianceManifestItemInput,
 } from "@/server/compliance/types";
+import type {
+  CreatePursuitDecisionInput,
+  PursuitDecisionBoardResponse,
+} from "@/server/pursuit/types";
 import { ApiError } from "./bids";
 
 function isApiErrorResponse(body: unknown): body is IntentApiErrorResponse {
@@ -139,4 +143,23 @@ export async function updateComplianceManifestItem(
   });
 
   return parseResponse<ComplianceManifestResponse>(response);
+}
+
+export async function fetchPursuitDecisionBoard(id: string) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/decision`);
+
+  return parseResponse<PursuitDecisionBoardResponse>(response);
+}
+
+export async function updatePursuitDecision(
+  id: string,
+  input: CreatePursuitDecisionInput,
+) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/decision`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<PursuitDecisionBoardResponse>(response);
 }
