@@ -4,12 +4,16 @@ import { registerUser } from "@/server/auth/service";
 import { organizationMemberships, organizations, users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
+  WorkspaceLastOwnerError,
   WorkspaceEmailExistsError,
   WorkspacePermissionError,
   ensureUserWorkspace,
   getAccountWorkspace,
   inviteWorkspaceMember,
+  listWorkspaceMemberUserIds,
+  removeWorkspaceMember,
   updateOrganizationName,
+  updateWorkspaceMemberRole,
 } from "./workspace";
 
 describe("workspace account service", () => {
@@ -149,5 +153,75 @@ describe("workspace account service", () => {
         role: "member",
       }),
     ).rejects.toBeInstanceOf(WorkspaceEmailExistsError);
+  });
+
+  it("lets workspace owners update member roles", async () => {
+    const owner = await registerUser(testDb.db, {
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+    const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "member@example.com",
+      role: "member",
+    });
+
+    const workspace = updateWorkspaceMemberRole(testDb.db, owner.user.id, invite.member.userId, {
+      role: "owner",
+    });
+
+    expect(workspace.members.find((member) => member.userId === invite.member.userId)).toMatchObject({
+      workspaceRole: "owner",
+    });
+  });
+
+  it("blocks non-owners from updating or removing workspace members", async () => {
+    const owner = await registerUser(testDb.db, {
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+    const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "member@example.com",
+      role: "member",
+    });
+
+    expect(() =>
+      updateWorkspaceMemberRole(testDb.db, invite.member.userId, owner.user.id, { role: "member" }),
+    ).toThrow(WorkspacePermissionError);
+    expect(() => removeWorkspaceMember(testDb.db, invite.member.userId, owner.user.id)).toThrow(
+      WorkspacePermissionError,
+    );
+  });
+
+  it("keeps at least one active workspace owner", async () => {
+    const owner = await registerUser(testDb.db, {
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+
+    expect(() =>
+      updateWorkspaceMemberRole(testDb.db, owner.user.id, owner.user.id, { role: "member" }),
+    ).toThrow(WorkspaceLastOwnerError);
+    expect(() => removeWorkspaceMember(testDb.db, owner.user.id, owner.user.id)).toThrow(
+      WorkspaceLastOwnerError,
+    );
+  });
+
+  it("lets owners remove members from shared workspace access", async () => {
+    const owner = await registerUser(testDb.db, {
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+    const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "member@example.com",
+      role: "member",
+    });
+
+    const workspace = removeWorkspaceMember(testDb.db, owner.user.id, invite.member.userId);
+
+    expect(workspace.members.map((member) => member.userId)).not.toContain(invite.member.userId);
+    expect(listWorkspaceMemberUserIds(testDb.db, owner.user.id)).toEqual([owner.user.id]);
+    expect(ensureUserWorkspace(testDb.db, invite.member.userId).organizationId).not.toBe(
+      owner.user.workspace.organizationId,
+    );
   });
 });

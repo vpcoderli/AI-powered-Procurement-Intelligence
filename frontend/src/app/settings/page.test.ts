@@ -17,11 +17,17 @@ describe("settings page", () => {
     expect(page).toContain("fetchAccountWorkspace");
     expect(page).toContain("updateAccountWorkspace");
     expect(page).toContain("inviteWorkspaceMember");
+    expect(page).toContain("updateWorkspaceMemberRole");
+    expect(page).toContain("removeWorkspaceMember");
     expect(page).toContain("user?.email");
     expect(page).toContain("workspaceData");
     expect(page).toContain("settings.team");
     expect(page).toContain("settings.inviteMember");
     expect(page).toContain("settings.temporaryPassword");
+    expect(page).toContain("settings.changeRole");
+    expect(page).toContain("settings.removeMember");
+    expect(page).toContain("settings.memberUpdated");
+    expect(page).toContain("settings.memberRemoved");
     expect(page).toContain("displayName");
     expect(page).toContain("refreshSession");
     expect(page).toContain("settings.billing");

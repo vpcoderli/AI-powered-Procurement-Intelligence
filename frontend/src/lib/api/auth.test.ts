@@ -5,9 +5,11 @@ import {
   fetchAccountSubscription,
   fetchAccountWorkspace,
   inviteWorkspaceMember,
+  removeWorkspaceMember,
   requestPasswordReset,
   updateAccountWorkspace,
   updateAccountProfile,
+  updateWorkspaceMemberRole,
 } from "./auth";
 
 const mockFetch = vi.fn<typeof fetch>();
@@ -194,6 +196,56 @@ describe("auth API client", () => {
         displayName: "Member One",
         role: "member",
       }),
+    });
+  });
+
+  it("updates a workspace member role", async () => {
+    const body = {
+      organization: {
+        id: "org_1",
+        name: "Acme Federal Team",
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      },
+      currentUserRole: "owner",
+      members: [
+        {
+          userId: "user_2",
+          email: "member@example.com",
+          displayName: "Member One",
+          workspaceRole: "owner",
+          status: "active",
+          createdAt: "2026-05-28T00:00:00.000Z",
+          updatedAt: "2026-05-28T00:00:00.000Z",
+        },
+      ],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(updateWorkspaceMemberRole("user_2", { role: "owner" })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/workspace/members/user_2", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "owner" }),
+    });
+  });
+
+  it("removes a workspace member", async () => {
+    const body = {
+      organization: {
+        id: "org_1",
+        name: "Acme Federal Team",
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      },
+      currentUserRole: "owner",
+      members: [],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(removeWorkspaceMember("user_2")).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/workspace/members/user_2", {
+      method: "DELETE",
     });
   });
 });
