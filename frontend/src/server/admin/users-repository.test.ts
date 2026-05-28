@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { users } from "@/server/db/schema";
 import { createTestDatabase } from "@/server/db/test-utils";
-import { listAdminUserAuditLogs, listAdminUsers, updateAdminUser } from "./users-repository";
+import { verifyPassword } from "@/server/auth/password";
+import {
+  AdminUserEmailExistsError,
+  createAdminUserInvite,
+  listAdminUserAuditLogs,
+  listAdminUsers,
+  updateAdminUser,
+} from "./users-repository";
 
 const NOW = "2026-05-28T00:00:00.000Z";
 
@@ -99,6 +107,69 @@ describe("admin users repository", () => {
           ]),
         }),
       ]);
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("creates an invited user with role, tier, temporary password, and audit log", async () => {
+    const testDb = await createTestDatabase();
+
+    try {
+      const result = await createAdminUserInvite(
+        testDb.db,
+        {
+          email: " NewBuyer@Example.com ",
+          displayName: "New Buyer",
+          role: "user",
+          tier: "pro",
+        },
+        { actorKind: "admin", actorUserId: "admin_1" },
+      );
+
+      expect(result.temporaryPassword.length).toBeGreaterThanOrEqual(12);
+      expect(result.user).toEqual(expect.objectContaining({
+        email: "newbuyer@example.com",
+        displayName: "New Buyer",
+        role: "user",
+        tier: "pro",
+        isDisabled: false,
+      }));
+
+      const row = testDb.db.select().from(users).where(eq(users.id, result.user.id)).limit(1).get();
+      expect(row?.passwordHash).toBeTruthy();
+      expect(await verifyPassword(result.temporaryPassword, row?.passwordHash ?? "")).toBe(true);
+
+      const auditLogs = listAdminUserAuditLogs(testDb.db, { limit: 5 });
+      expect(auditLogs.logs[0]).toEqual(expect.objectContaining({
+        action: "user_invited",
+        actorKind: "admin",
+        actorUserId: "admin_1",
+        targetUserId: result.user.id,
+        targetEmail: "newbuyer@example.com",
+      }));
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("rejects duplicate invited user emails", async () => {
+    const testDb = await createTestDatabase();
+
+    try {
+      await createAdminUserInvite(testDb.db, {
+        email: "buyer@example.com",
+        role: "user",
+        tier: "free",
+      });
+
+      await expect(
+        createAdminUserInvite(testDb.db, {
+          email: " Buyer@Example.com ",
+          role: "user",
+          tier: "pro",
+        }),
+      ).rejects.toBeInstanceOf(AdminUserEmailExistsError);
     } finally {
       await testDb.cleanup();
     }

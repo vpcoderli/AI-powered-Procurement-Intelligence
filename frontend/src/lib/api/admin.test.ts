@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AdminApiError,
+  createAdminUser,
   listAdminCrawlerLogs,
   listAdminDataSources,
   listAdminUserAuditLogs,
@@ -103,6 +104,43 @@ describe("admin API client", () => {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ role: "admin", tier: "business" }),
+    });
+  });
+
+  it("creates invited admin users", async () => {
+    const body = {
+      temporaryPassword: "temp-password-123",
+      user: {
+        id: "user_2",
+        email: "newbuyer@example.com",
+        displayName: "New Buyer",
+        role: "user",
+        tier: "pro",
+        isDisabled: false,
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+        lastLoginAt: null,
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(
+      createAdminUser({
+        email: "newbuyer@example.com",
+        displayName: "New Buyer",
+        role: "user",
+        tier: "pro",
+      }),
+    ).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: "newbuyer@example.com",
+        displayName: "New Buyer",
+        role: "user",
+        tier: "pro",
+      }),
     });
   });
 
