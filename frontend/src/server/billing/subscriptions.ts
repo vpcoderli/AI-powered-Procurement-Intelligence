@@ -53,6 +53,18 @@ export interface CheckoutSessionResponse {
   checkoutSession: CheckoutSessionView;
 }
 
+export interface CustomerPortalSessionView {
+  userId: string;
+  provider: "local_checkout" | "billing_provider";
+  portalUrl: string;
+  returnUrl: string;
+  createdAt: string;
+}
+
+export interface CustomerPortalSessionResponse {
+  portalSession: CustomerPortalSessionView;
+}
+
 export type BillingInvoiceStatus = "open" | "paid" | "payment_failed" | "void" | "uncollectible";
 
 export interface BillingInvoiceView {
@@ -91,6 +103,10 @@ export interface UpsertAccountSubscriptionInput {
 
 export interface CreateCheckoutSessionInput {
   tier: AccountTier;
+  origin?: string;
+}
+
+export interface CreateCustomerPortalSessionInput {
   origin?: string;
 }
 
@@ -164,6 +180,74 @@ function nowIso() {
 
 function addHoursIso(timestamp: string, hours: number) {
   return new Date(new Date(timestamp).getTime() + hours * 60 * 60 * 1000).toISOString();
+}
+
+function originOrEmpty(origin?: string) {
+  return origin?.replace(/\/$/, "") ?? "";
+}
+
+function settingsReturnUrl(origin?: string) {
+  const normalizedOrigin = originOrEmpty(origin);
+  return normalizedOrigin ? `${normalizedOrigin}/settings` : "/settings";
+}
+
+function billingProviderName() {
+  return process.env.BILLING_PROVIDER?.trim() || "local";
+}
+
+function formatProviderUrlTemplate(template: string, values: Record<string, string | null | undefined>) {
+  return template.replace(/\{([a-zA-Z0-9_]+)\}/g, (_, key: string) =>
+    encodeURIComponent(values[key] ?? ""),
+  );
+}
+
+function hostedCheckoutUrl(input: {
+  checkoutSessionId: string;
+  providerSessionId: string;
+  tier: AccountTier;
+  userId: string;
+  origin?: string;
+}) {
+  const template = process.env.BILLING_CHECKOUT_URL_TEMPLATE?.trim();
+  const returnUrl = settingsReturnUrl(input.origin);
+
+  if (!template) {
+    return `${returnUrl}?checkoutSession=${input.checkoutSessionId}`;
+  }
+
+  return formatProviderUrlTemplate(template, {
+    providerSessionId: input.providerSessionId,
+    checkoutSessionId: input.checkoutSessionId,
+    tier: input.tier,
+    userId: input.userId,
+    successUrl: `${returnUrl}?checkoutSession=${input.checkoutSessionId}&checkout=success`,
+    cancelUrl: `${returnUrl}?checkout=cancel`,
+  });
+}
+
+function hostedCustomerPortalUrl(input: {
+  userId: string;
+  providerCustomerId?: string | null;
+  providerSubscriptionId?: string | null;
+  origin?: string;
+}) {
+  const template = process.env.BILLING_CUSTOMER_PORTAL_URL_TEMPLATE?.trim();
+  const returnUrl = settingsReturnUrl(input.origin);
+
+  if (!template) {
+    return `${returnUrl}?billingPortal=local`;
+  }
+
+  if (!input.providerCustomerId) {
+    throw new InvalidSubscriptionInputError("Provider customer id is required for hosted billing portal");
+  }
+
+  return formatProviderUrlTemplate(template, {
+    userId: input.userId,
+    providerCustomerId: input.providerCustomerId,
+    providerSubscriptionId: input.providerSubscriptionId,
+    returnUrl,
+  });
 }
 
 function isSubscriptionStatus(value: unknown): value is SubscriptionStatus {
@@ -490,9 +574,15 @@ export function createCheckoutSession(
 
   const timestamp = nowIso();
   const checkoutId = `checkout_${randomUUID()}`;
-  const providerSessionId = `local_cs_${randomUUID()}`;
-  const origin = input.origin?.replace(/\/$/, "") ?? "";
-  const checkoutUrl = `${origin}/settings?checkoutSession=${checkoutId}`;
+  const isHostedProvider = Boolean(process.env.BILLING_CHECKOUT_URL_TEMPLATE?.trim());
+  const providerSessionId = `${isHostedProvider ? billingProviderName() : "local"}_cs_${randomUUID()}`;
+  const checkoutUrl = hostedCheckoutUrl({
+    checkoutSessionId: checkoutId,
+    providerSessionId,
+    tier: input.tier,
+    userId,
+    origin: input.origin,
+  });
 
   db.insert(billingCheckoutSessions)
     .values({
@@ -500,7 +590,7 @@ export function createCheckoutSession(
       userId,
       tier: input.tier,
       status: "open",
-      provider: "local_checkout",
+      provider: isHostedProvider ? "billing_provider" : "local_checkout",
       providerSessionId,
       checkoutUrl,
       expiresAt: addHoursIso(timestamp, 1),
@@ -534,6 +624,33 @@ export function createCheckoutSession(
   }
 
   return { checkoutSession: checkoutSessionFromRow(row) };
+}
+
+export function createCustomerPortalSession(
+  db: AppDatabase,
+  userId: string,
+  input: CreateCustomerPortalSessionInput = {},
+): CustomerPortalSessionResponse {
+  getUserOrThrow(db, userId);
+
+  const subscription = existingSubscriptionForUser(db, userId);
+  const isHostedProvider = Boolean(process.env.BILLING_CUSTOMER_PORTAL_URL_TEMPLATE?.trim());
+  const returnUrl = settingsReturnUrl(input.origin);
+
+  return {
+    portalSession: {
+      userId,
+      provider: isHostedProvider ? "billing_provider" : "local_checkout",
+      portalUrl: hostedCustomerPortalUrl({
+        userId,
+        providerCustomerId: subscription?.providerCustomerId,
+        providerSubscriptionId: subscription?.providerSubscriptionId,
+        origin: input.origin,
+      }),
+      returnUrl,
+      createdAt: nowIso(),
+    },
+  };
 }
 
 function findProviderEvent(db: AppDatabase, providerEventId: string) {

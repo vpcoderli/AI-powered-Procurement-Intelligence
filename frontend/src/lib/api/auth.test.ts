@@ -3,6 +3,7 @@ import {
   changePassword,
   confirmPasswordReset,
   cancelAccountSubscription,
+  createBillingPortalSession,
   createCheckoutSession,
   fetchBillingInvoices,
   fetchAccountSubscription,
@@ -167,6 +168,24 @@ describe("auth API client", () => {
 
     await expect(fetchBillingInvoices()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/account/billing/invoices");
+  });
+
+  it("creates a billing customer portal session", async () => {
+    const body = {
+      portalSession: {
+        userId: "user_1",
+        provider: "billing_provider",
+        portalUrl: "https://billing.example.test/portal?customer=cus_123",
+        returnUrl: "http://localhost:3000/settings",
+        createdAt: "2026-05-28T00:00:00.000Z",
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(createBillingPortalSession()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/billing/portal", {
+      method: "POST",
+    });
   });
 
   it("requests a password reset token", async () => {

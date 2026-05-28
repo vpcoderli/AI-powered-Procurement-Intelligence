@@ -27,6 +27,7 @@ import {
   changePassword,
   AuthApiError,
   cancelAccountSubscription,
+  createBillingPortalSession,
   createCheckoutSession,
   fetchAccountSubscription,
   fetchBillingInvoices,
@@ -74,7 +75,7 @@ export default function SettingsPage() {
   const [subscriptionData, setSubscriptionData] = useState<AccountSubscriptionResponse | null>(null);
   const [subscriptionError, setSubscriptionError] = useState("");
   const [billingMessage, setBillingMessage] = useState("");
-  const [billingActionTier, setBillingActionTier] = useState<AccountTier | "cancel" | null>(null);
+  const [billingActionTier, setBillingActionTier] = useState<AccountTier | "cancel" | "portal" | null>(null);
   const [billingInvoicesData, setBillingInvoicesData] = useState<BillingInvoicesResponse | null>(null);
   const [billingInvoicesError, setBillingInvoicesError] = useState("");
   const [workspaceData, setWorkspaceData] = useState<AccountWorkspaceResponse | null>(null);
@@ -205,6 +206,21 @@ export default function SettingsPage() {
     } catch (error) {
       setSubscriptionError(error instanceof Error ? error.message : t("settings.cancelSubscriptionError"));
     } finally {
+      setBillingActionTier(null);
+    }
+  }
+
+  async function handleBillingPortal() {
+    setBillingMessage("");
+    setSubscriptionError("");
+    setBillingActionTier("portal");
+
+    try {
+      const result = await createBillingPortalSession();
+      setBillingMessage(t("settings.portalStarted"));
+      window.location.assign(result.portalSession.portalUrl);
+    } catch (error) {
+      setSubscriptionError(error instanceof Error ? error.message : t("settings.portalError"));
       setBillingActionTier(null);
     }
   }
@@ -681,6 +697,20 @@ export default function SettingsPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-5 p-6">
+                <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{t("settings.manageBilling")}</p>
+                    <p className="text-xs font-medium text-slate-500">{t("settings.manageBillingDesc")}</p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    disabled={billingActionTier === "portal" || !user}
+                    onClick={handleBillingPortal}
+                    className="w-full rounded-lg border-slate-200 text-slate-700 sm:w-auto"
+                  >
+                    {billingActionTier === "portal" ? t("settings.openingPortal") : t("settings.manageBilling")}
+                  </Button>
+                </div>
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                     <p className="text-xs font-semibold uppercase text-slate-500">{t("settings.subscriptionStatus")}</p>

@@ -86,6 +86,18 @@ export interface BillingInvoicesResponse {
   invoices: BillingInvoice[];
 }
 
+export interface BillingPortalSession {
+  userId: string;
+  provider: "local_checkout" | "billing_provider";
+  portalUrl: string;
+  returnUrl: string;
+  createdAt: string;
+}
+
+export interface BillingPortalSessionResponse {
+  portalSession: BillingPortalSession;
+}
+
 export interface PasswordResetRequestResponse {
   ok: true;
   resetToken?: string;
@@ -286,6 +298,14 @@ export async function fetchBillingInvoices(): Promise<BillingInvoicesResponse> {
   const response = await fetch("/api/account/billing/invoices");
 
   return parseResponse<BillingInvoicesResponse>(response);
+}
+
+export async function createBillingPortalSession(): Promise<BillingPortalSessionResponse> {
+  const response = await fetch("/api/account/billing/portal", {
+    method: "POST",
+  });
+
+  return parseResponse<BillingPortalSessionResponse>(response);
 }
 
 export async function requestPasswordReset(input: {

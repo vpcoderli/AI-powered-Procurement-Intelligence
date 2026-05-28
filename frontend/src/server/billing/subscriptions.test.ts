@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
@@ -7,6 +7,7 @@ import {
   applyBillingProviderEvent,
   cancelAccountSubscription,
   createCheckoutSession,
+  createCustomerPortalSession,
   InvalidSubscriptionInputError,
   getAccountSubscription,
   listAccountInvoices,
@@ -32,6 +33,7 @@ describe("billing subscriptions service", () => {
   });
 
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await testDb.cleanup();
   });
 
@@ -120,6 +122,58 @@ describe("billing subscriptions service", () => {
     expect(() => createCheckoutSession(testDb.db, "user_buyer", { tier: "enterprise" })).toThrow(
       InvalidSubscriptionInputError,
     );
+  });
+
+  it("uses the configured hosted checkout template for production providers", () => {
+    vi.stubEnv("BILLING_PROVIDER", "stripe");
+    vi.stubEnv(
+      "BILLING_CHECKOUT_URL_TEMPLATE",
+      "https://billing.example.test/checkout?session={providerSessionId}&tier={tier}&user={userId}&success={successUrl}&cancel={cancelUrl}",
+    );
+
+    const result = createCheckoutSession(testDb.db, "user_buyer", {
+      tier: "business",
+      origin: "http://localhost:3000",
+    });
+
+    expect(result.checkoutSession).toMatchObject({
+      provider: "billing_provider",
+      tier: "business",
+      status: "open",
+    });
+    expect(result.checkoutSession.checkoutUrl).toContain("https://billing.example.test/checkout");
+    expect(result.checkoutSession.checkoutUrl).toContain("tier=business");
+    expect(result.checkoutSession.checkoutUrl).toContain("user=user_buyer");
+    expect(result.checkoutSession.checkoutUrl).toContain(encodeURIComponent("http://localhost:3000/settings"));
+  });
+
+  it("creates a customer portal session from provider customer state", () => {
+    vi.stubEnv("BILLING_PROVIDER", "stripe");
+    vi.stubEnv(
+      "BILLING_CUSTOMER_PORTAL_URL_TEMPLATE",
+      "https://billing.example.test/portal?customer={providerCustomerId}&return={returnUrl}",
+    );
+    upsertAccountSubscription(testDb.db, "user_buyer", {
+      tier: "pro",
+      status: "active",
+      source: "billing_provider",
+      provider: "stripe",
+      providerCustomerId: "cus_123",
+      providerSubscriptionId: "sub_123",
+      currentPeriodEnd: "2026-06-28T00:00:00.000Z",
+    });
+
+    const result = createCustomerPortalSession(testDb.db, "user_buyer", {
+      origin: "http://localhost:3000",
+    });
+
+    expect(result.portalSession).toMatchObject({
+      userId: "user_buyer",
+      provider: "billing_provider",
+    });
+    expect(result.portalSession.portalUrl).toContain("https://billing.example.test/portal");
+    expect(result.portalSession.portalUrl).toContain("customer=cus_123");
+    expect(result.portalSession.portalUrl).toContain(encodeURIComponent("http://localhost:3000/settings"));
   });
 
   it("syncs a provider checkout completion into the subscription tier", () => {
