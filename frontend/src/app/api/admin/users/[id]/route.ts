@@ -63,9 +63,12 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 
   try {
-    await requireAdmin(db, request);
+    const principal = await requireAdmin(db, request);
     const { id } = await context.params;
-    const user = updateAdminUser(db, id, input);
+    const user = updateAdminUser(db, id, input, {
+      actorKind: principal.kind,
+      actorUserId: principal.kind === "admin" ? principal.userId : null,
+    });
 
     return NextResponse.json({ user });
   } catch (error) {

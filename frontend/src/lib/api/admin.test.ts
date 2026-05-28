@@ -3,6 +3,7 @@ import {
   AdminApiError,
   listAdminCrawlerLogs,
   listAdminDataSources,
+  listAdminUserAuditLogs,
   listAdminUsers,
   runSamGovCrawlerNow,
   runStateCrawlersNow,
@@ -61,6 +62,24 @@ describe("admin API client", () => {
 
     await expect(listAdminUsers()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/admin/users");
+  });
+
+  it("lists admin users with filters", async () => {
+    const body = { users: [] };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(
+      listAdminUsers({ q: "buyer", role: "user", tier: "pro", status: "enabled" }),
+    ).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/users?q=buyer&role=user&tier=pro&status=enabled");
+  });
+
+  it("lists admin user audit logs", async () => {
+    const body = { logs: [{ id: "audit_1", targetEmail: "buyer@example.com" }] };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(listAdminUserAuditLogs({ limit: 10 })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/users/audit-logs?limit=10");
   });
 
   it("updates admin user access", async () => {

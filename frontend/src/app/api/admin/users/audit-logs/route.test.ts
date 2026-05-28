@@ -10,51 +10,43 @@ vi.mock("@/server/admin/auth", async (importOriginal) => {
   return { ...actual, requireAdmin: vi.fn() };
 });
 vi.mock("@/server/admin/users-repository", () => ({
-  listAdminUsers: vi.fn(),
+  listAdminUserAuditLogs: vi.fn(),
 }));
 
-describe("GET /api/admin/users", () => {
+describe("GET /api/admin/users/audit-logs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("returns users for admins", async () => {
+  it("returns recent user audit logs for admins", async () => {
     vi.mocked(adminAuth.requireAdmin).mockResolvedValueOnce({ kind: "admin", userId: "admin_1" });
-    vi.mocked(usersRepository.listAdminUsers).mockReturnValueOnce({
-      users: [{
-        id: "user_1",
-        email: "buyer@example.com",
-        displayName: "Buyer",
-        role: "user",
-        tier: "free",
-        isDisabled: false,
-        createdAt: "2026-05-28T00:00:00.000Z",
-        updatedAt: "2026-05-28T00:00:00.000Z",
-        lastLoginAt: null,
-      }],
+    vi.mocked(usersRepository.listAdminUserAuditLogs).mockReturnValueOnce({
+      logs: [
+        {
+          id: "audit_1",
+          actorKind: "admin",
+          actorUserId: "admin_1",
+          targetUserId: "user_1",
+          targetEmail: "buyer@example.com",
+          action: "user_access_updated",
+          changes: [{ field: "tier", before: "free", after: "pro" }],
+          createdAt: "2026-05-28T00:00:00.000Z",
+        },
+      ],
     });
 
-    const response = await GET(new Request("http://localhost/api/admin/users?q=buyer&role=user&tier=free&status=enabled"));
+    const response = await GET(new Request("http://localhost/api/admin/users/audit-logs?limit=10"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.users[0]).toEqual(expect.objectContaining({
-      email: "buyer@example.com",
-      tier: "free",
-      role: "user",
-    }));
-    expect(usersRepository.listAdminUsers).toHaveBeenCalledWith(expect.anything(), {
-      q: "buyer",
-      role: "user",
-      tier: "free",
-      status: "enabled",
-    });
+    expect(body.logs[0]).toEqual(expect.objectContaining({ id: "audit_1", targetEmail: "buyer@example.com" }));
+    expect(usersRepository.listAdminUserAuditLogs).toHaveBeenCalledWith(expect.anything(), { limit: 10 });
   });
 
   it("denies non-admin requests", async () => {
     vi.mocked(adminAuth.requireAdmin).mockRejectedValueOnce(new AdminAuthError());
 
-    const response = await GET(new Request("http://localhost/api/admin/users"));
+    const response = await GET(new Request("http://localhost/api/admin/users/audit-logs"));
     const body = await response.json();
 
     expect(response.status).toBe(403);

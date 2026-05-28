@@ -17,7 +17,7 @@ This document is the working checklist for local development. Update it after ea
 | Auth basics | Register, login, logout, session cookie, session lookup, login/register pages, session payload with role/tier/features. |
 | User data model basics | `users` table, `sessions` table, `role`, `account_tier`, and `is_disabled` account state. |
 | Admin auth helper | `requireAdmin()` checks authenticated non-disabled admin sessions; local bypass for development. |
-| Admin user access console | `/admin` lists registered users and lets admins change role, tier, and enabled/disabled state. |
+| Admin user access console | `/admin` lists registered users, filters/searches accounts, changes role/tier/enabled state, and shows access audit logs. |
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs. |
 | Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin-only console access. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, and tier-aware locked states for gated features. |
@@ -32,9 +32,9 @@ This document is the working checklist for local development. Update it after ea
 
 | Area | What exists | Missing to be useful |
 |---|---|---|
-| Account management | Register/login/logout/session APIs and pages; admin can enable/disable users | Account settings, password change/reset, admin-created accounts, user search/filtering |
+| Account management | Register/login/logout/session APIs and pages; admin can enable/disable users, search/filter users, and review access audit logs | Account settings, password change/reset, admin-created accounts |
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users | Route-level friendly forbidden UI, admin page redirect/empty state for non-admin users |
-| User role model | `user`/`admin` role enum, role update API, role-aware frontend session payload | Audit trail, more granular operator roles such as support/owner/member |
+| User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map | Billing provider sync, usage limits, paywall/upgrade UI, subscription history |
 | Feature access control | Central feature map, server guard, client helper, and visible locked states | Apply guards to every future gated API and add usage limits |
 | Submission Guidance UI | Static Submission Path preview in Intent workspace; backend API exists; API is Pro-gated | Fetch real submission guidance, editable fields, confirmation form, saved confirmation state |
@@ -61,12 +61,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Admin User Management Polish and Account Settings** before continuing advanced bid features.
+Prioritize **Account Settings Foundation** before continuing advanced bid features.
 
 Reason:
 
-- The data model, session payload, admin user management, feature map, and reusable feature guards now exist.
-- The next gap is making account management usable day to day: search/filter users, audit changes, and start real account settings.
+- The data model, session payload, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
+- The next gap is making account management usable by the end user: real profile fields, password change, and account state messaging.
 - Advanced features such as Compliance Manifest, Submission Guidance editing, and Knowledge Station can now rely on the same feature gate.
 
 ## Account / Role / Tier Direction
@@ -113,17 +113,13 @@ Start with a central feature map:
 
 ## Suggested Implementation Order
 
-1. **Admin user management polish**
-   - Add user search/filtering.
-   - Add audit events for role/tier/disabled changes.
-   - Add admin-created account flow when needed.
-
-2. **Account settings foundation**
+1. **Account settings foundation**
    - Show authenticated email/display name instead of placeholder profile values.
    - Add password change flow.
    - Add disabled/account-state messaging where needed.
+   - Add admin-created account flow when needed.
 
-3. **Then resume product features**
+2. **Then resume product features**
    - Connect real Submission Guidance UI.
    - Build Compliance Manifest Lite.
    - Build Pursue / No-Bid Decision Lite.
@@ -138,9 +134,8 @@ Start with a central feature map:
 - `/admin` 接入用户权限表，普通用户侧边栏不再显示 Admin 入口。
 
 当前还剩：
-1. Admin 用户搜索、筛选、审计日志。
-2. 密码重置、账户设置页完善、billing 集成。
-3. Submission Guidance 真实编辑 UI。
+1. 账户设置页完善、密码修改/重置、billing 集成。
+2. Submission Guidance 真实编辑 UI。
 
 ## Completed Phase: Feature Guards / Tier-Aware UI
 
@@ -153,10 +148,23 @@ Start with a central feature map:
 - Settings/Profile 区域显示当前套餐和功能可用/锁定状态。
 
 当前还剩：
-1. Admin 用户搜索、筛选、审计日志。
-2. 账户设置从静态表单升级为真实资料与密码修改。
-3. Billing/订阅同步与真实付费状态接入。
-4. Submission Guidance 真实编辑与确认 UI。
+1. 账户设置从静态表单升级为真实资料与密码修改。
+2. Billing/订阅同步与真实付费状态接入。
+3. Submission Guidance 真实编辑与确认 UI。
+
+## Completed Phase: Admin User Management Polish
+
+本阶段完成：
+- 新增 `admin_user_audit_logs` 表与迁移。
+- `/api/admin/users` 支持按关键词、角色、套餐、启用状态过滤。
+- `/api/admin/users/[id]` 修改角色、套餐、启用/禁用时写入审计日志。
+- 新增 `/api/admin/users/audit-logs` 管理员接口。
+- `/admin` 用户权限区增加搜索/筛选控件与“用户权限审计”视图。
+
+当前还剩：
+1. 账户设置从静态表单升级为真实资料与密码修改。
+2. Billing/订阅同步与真实付费状态接入。
+3. Submission Guidance 真实编辑与确认 UI。
 
 ## Status Update Template
 

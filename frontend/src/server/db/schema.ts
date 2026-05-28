@@ -19,6 +19,26 @@ export const users = sqliteTable(
   }),
 );
 
+export const adminUserAuditLogs = sqliteTable(
+  "admin_user_audit_logs",
+  {
+    id: text("id").primaryKey(),
+    actorKind: text("actor_kind").notNull(),
+    actorUserId: text("actor_user_id"),
+    targetUserId: text("target_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    action: text("action").notNull(),
+    changesJson: text("changes_json").notNull().default("[]"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    actorIdx: index("idx_admin_user_audit_actor").on(table.actorUserId),
+    targetIdx: index("idx_admin_user_audit_target").on(table.targetUserId),
+    createdIdx: index("idx_admin_user_audit_created").on(table.createdAt),
+  }),
+);
+
 export const sessions = sqliteTable(
   "sessions",
   {

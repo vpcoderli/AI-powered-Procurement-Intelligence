@@ -5,14 +5,17 @@ import {
   Activity,
   AlertTriangle,
   Database,
+  History,
   Play,
   RefreshCw,
+  Search,
   ServerCog,
   ShieldCheck,
   UserCog,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
@@ -27,6 +30,7 @@ import {
 import {
   listAdminCrawlerLogs,
   listAdminDataSources,
+  listAdminUserAuditLogs,
   listAdminUsers,
   runStateCrawlersNow,
   updateAdminDataSource,
@@ -34,6 +38,8 @@ import {
   type AdminCrawlerLog,
   type AdminDataSource,
   type AdminDataSourcesResponse,
+  type AdminUserAuditLog,
+  type AdminUserFilterStatus,
   type AdminUser,
   type UpdateAdminUserInput,
 } from "@/lib/api/admin";
@@ -44,7 +50,20 @@ import { stateCrawlerSourceIdForAdminSource } from "@/lib/state-crawler-sources"
 type LoadState =
   | { status: "loading" }
   | { status: "error" }
-  | { status: "ready"; data: AdminDataSourcesResponse; logs: AdminCrawlerLog[]; users: AdminUser[] };
+  | {
+      status: "ready";
+      data: AdminDataSourcesResponse;
+      logs: AdminCrawlerLog[];
+      users: AdminUser[];
+      userAuditLogs: AdminUserAuditLog[];
+    };
+
+type UserFilters = {
+  q?: string;
+  role?: UserRole;
+  tier?: AccountTier;
+  status?: AdminUserFilterStatus;
+};
 
 const USER_ROLES: UserRole[] = ["user", "admin"];
 const ACCOUNT_TIERS: AccountTier[] = ["free", "pro", "business", "enterprise"];
@@ -85,6 +104,14 @@ function fallbackMessage(log: AdminCrawlerLog | null | undefined) {
   return log.fallbackReason ? compactErrorMessage(log.fallbackReason) : null;
 }
 
+function formatAuditChanges(log: AdminUserAuditLog) {
+  if (log.changes.length === 0) return "-";
+
+  return log.changes
+    .map((change) => `${change.field}: ${String(change.before)} -> ${String(change.after)}`)
+    .join(", ");
+}
+
 function SummaryCard({
   label,
   value,
@@ -110,20 +137,32 @@ export default function AdminPage() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [pendingSourceId, setPendingSourceId] = useState<string | null>(null);
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
+  const [userFilters, setUserFilters] = useState<UserFilters>({});
   const [isRunning, setIsRunning] = useState(false);
   const [runningSourceId, setRunningSourceId] = useState<string | null>(null);
   const [runMessage, setRunMessage] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setState({ status: "loading" });
-    Promise.all([listAdminDataSources(), listAdminCrawlerLogs(), listAdminUsers()])
-      .then(([data, logsResponse, usersResponse]) => {
-        setState({ status: "ready", data, logs: logsResponse.logs, users: usersResponse.users });
+    Promise.all([
+      listAdminDataSources(),
+      listAdminCrawlerLogs(),
+      listAdminUsers(userFilters),
+      listAdminUserAuditLogs({ limit: 10 }),
+    ])
+      .then(([data, logsResponse, usersResponse, userAuditLogsResponse]) => {
+        setState({
+          status: "ready",
+          data,
+          logs: logsResponse.logs,
+          users: usersResponse.users,
+          userAuditLogs: userAuditLogsResponse.logs,
+        });
       })
       .catch(() => {
         setState({ status: "error" });
       });
-  }, []);
+  }, [userFilters]);
 
   useEffect(() => {
     queueMicrotask(load);
@@ -133,6 +172,7 @@ export default function AdminPage() {
   const sources = state.status === "ready" ? state.data.sources : [];
   const logs = state.status === "ready" ? state.logs : [];
   const users = state.status === "ready" ? state.users : [];
+  const userAuditLogs = state.status === "ready" ? state.userAuditLogs : [];
 
   const toggleSource = (source: AdminDataSource) => {
     setPendingSourceId(source.id);
@@ -210,6 +250,19 @@ export default function AdminPage() {
           return {
             ...current,
             users: current.users.map((item) => (item.id === updated.id ? updated : item)),
+          };
+        });
+        return listAdminUserAuditLogs({ limit: 10 });
+      })
+      .then((response) => {
+        if (!response) return;
+
+        setState((current) => {
+          if (current.status !== "ready") return current;
+
+          return {
+            ...current,
+            userAuditLogs: response.logs,
           };
         });
       })
@@ -296,6 +349,68 @@ export default function AdminPage() {
               {users.length}
             </Badge>
           </div>
+          <div className="grid gap-3 border-b border-slate-100 px-4 py-3 md:grid-cols-[minmax(220px,1fr)_160px_160px_160px]">
+            <div className="relative">
+              <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={userFilters.q ?? ""}
+                onChange={(event) => setUserFilters((current) => ({ ...current, q: event.target.value || undefined }))}
+                placeholder={t("admin.searchUsers")}
+                className="h-9 rounded-lg border-slate-200 pl-9"
+              />
+            </div>
+            <select
+              value={userFilters.role ?? "all"}
+              onChange={(event) =>
+                setUserFilters((current) => ({
+                  ...current,
+                  role: event.target.value === "all" ? undefined : event.target.value as UserRole,
+                }))
+              }
+              aria-label={t("admin.role")}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
+            >
+              <option value="all">{t("admin.allRoles")}</option>
+              {USER_ROLES.map((role) => (
+                <option key={role} value={role}>
+                  {t(`admin.role_${role}`)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={userFilters.tier ?? "all"}
+              onChange={(event) =>
+                setUserFilters((current) => ({
+                  ...current,
+                  tier: event.target.value === "all" ? undefined : event.target.value as AccountTier,
+                }))
+              }
+              aria-label={t("admin.tier")}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
+            >
+              <option value="all">{t("admin.allTiers")}</option>
+              {ACCOUNT_TIERS.map((tier) => (
+                <option key={tier} value={tier}>
+                  {t(`admin.tier_${tier}`)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={userFilters.status ?? "all"}
+              onChange={(event) =>
+                setUserFilters((current) => ({
+                  ...current,
+                  status: event.target.value === "all" ? undefined : event.target.value as AdminUserFilterStatus,
+                }))
+              }
+              aria-label={t("admin.status")}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
+            >
+              <option value="all">{t("admin.allStatuses")}</option>
+              <option value="enabled">{t("admin.enabled")}</option>
+              <option value="disabled">{t("admin.disabled")}</option>
+            </select>
+          </div>
           <Table>
             <TableHeader>
               <TableRow>
@@ -373,6 +488,35 @@ export default function AdminPage() {
               })}
             </TableBody>
           </Table>
+        </section>
+      )}
+
+      {state.status === "ready" && (
+        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 font-semibold text-slate-950">
+            <History size={18} />
+            {t("admin.userAuditLogs")}
+          </div>
+          <div className="divide-y divide-slate-100">
+            {userAuditLogs.length === 0 && (
+              <div className="px-4 py-5 text-sm text-slate-500">{t("admin.noUserAuditLogs")}</div>
+            )}
+            {userAuditLogs.map((log) => (
+              <div key={log.id} className="grid gap-2 px-4 py-3 md:grid-cols-[1fr_auto] md:items-center">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-slate-900">{log.targetEmail ?? log.targetUserId}</span>
+                    <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+                      {log.actorKind}
+                    </Badge>
+                    <span className="text-xs text-slate-500">{formatDate(log.createdAt)}</span>
+                  </div>
+                  <div className="mt-1 text-sm text-slate-600">{formatAuditChanges(log)}</div>
+                </div>
+                <div className="text-xs font-medium text-slate-500">{log.action}</div>
+              </div>
+            ))}
+          </div>
         </section>
       )}
 
