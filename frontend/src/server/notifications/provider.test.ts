@@ -7,10 +7,24 @@ import { createNotificationProvider } from "./provider";
 describe("notification provider factory", () => {
   const originalProvider = process.env.NOTIFICATION_PROVIDER;
   const originalOutboxDir = process.env.NOTIFICATION_OUTBOX_DIR;
+  const originalHttpEndpoint = process.env.NOTIFICATION_HTTP_ENDPOINT;
+  const originalHttpToken = process.env.NOTIFICATION_HTTP_TOKEN;
+  const fetchMock = vi.fn<typeof fetch>();
+
+  function restoreEnv(key: string, value: string | undefined) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
 
   afterEach(() => {
-    process.env.NOTIFICATION_PROVIDER = originalProvider;
-    process.env.NOTIFICATION_OUTBOX_DIR = originalOutboxDir;
+    restoreEnv("NOTIFICATION_PROVIDER", originalProvider);
+    restoreEnv("NOTIFICATION_OUTBOX_DIR", originalOutboxDir);
+    restoreEnv("NOTIFICATION_HTTP_ENDPOINT", originalHttpEndpoint);
+    restoreEnv("NOTIFICATION_HTTP_TOKEN", originalHttpToken);
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -62,5 +76,32 @@ describe("notification provider factory", () => {
       "[notification]",
       expect.objectContaining({ id: "notification_1", recipient: "buyer@example.com" }),
     );
+  });
+
+  it("uses the http provider when requested", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ providerMessageId: "mail_1" }), {
+      status: 202,
+      headers: { "Content-Type": "application/json" },
+    }));
+    process.env.NOTIFICATION_PROVIDER = "http";
+    process.env.NOTIFICATION_HTTP_ENDPOINT = "https://mail.example.test/send";
+    process.env.NOTIFICATION_HTTP_TOKEN = "secret-token";
+
+    const provider = createNotificationProvider();
+    const result = await provider.send({
+      id: "notification_1",
+      channel: "email",
+      recipient: "buyer@example.com",
+      subject: "Subject",
+      bodyText: "Body",
+      dedupeKey: "alert_1:2026-05-19:email",
+      matchedBidIds: ["bid_1"],
+    });
+
+    expect(result).toEqual({ ok: true, providerMessageId: "mail_1" });
+    expect(fetchMock).toHaveBeenCalledWith("https://mail.example.test/send", expect.objectContaining({
+      method: "POST",
+    }));
   });
 });

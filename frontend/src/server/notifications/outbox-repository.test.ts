@@ -3,6 +3,7 @@ import { notificationOutbox } from "@/server/db/schema";
 import { createTestDatabase } from "@/server/db/test-utils";
 import {
   enqueueNotification,
+  listDeliverableNotifications,
   markNotificationFailed,
   markNotificationSent,
 } from "./outbox-repository";
@@ -66,6 +67,49 @@ describe("notification outbox repository", () => {
       expect(failed.status).toBe("failed");
       expect(failed.lastError).toBe("Provider unavailable");
       expect(failed.attemptCount).toBe(1);
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("lists pending and retryable failed notifications up to the attempt limit", async () => {
+    const testDb = await createTestDatabase();
+
+    try {
+      enqueueNotification(testDb.db, input);
+      enqueueNotification(testDb.db, {
+        ...input,
+        id: "notification_retry",
+        dedupeKey: "alert_1:2026-05-20:email",
+        createdAt: "2026-05-19T00:01:00.000Z",
+      });
+      markNotificationFailed(
+        testDb.db,
+        "notification_retry",
+        "Provider unavailable",
+        "2026-05-19T00:02:00.000Z",
+      );
+      enqueueNotification(testDb.db, {
+        ...input,
+        id: "notification_exhausted",
+        dedupeKey: "alert_1:2026-05-21:email",
+        createdAt: "2026-05-19T00:03:00.000Z",
+      });
+      markNotificationFailed(testDb.db, "notification_exhausted", "Provider unavailable", "2026-05-19T00:04:00.000Z");
+      markNotificationFailed(testDb.db, "notification_exhausted", "Provider unavailable", "2026-05-19T00:05:00.000Z");
+      markNotificationFailed(testDb.db, "notification_exhausted", "Provider unavailable", "2026-05-19T00:06:00.000Z");
+      enqueueNotification(testDb.db, {
+        ...input,
+        id: "notification_sent",
+        dedupeKey: "alert_1:2026-05-22:email",
+        createdAt: "2026-05-19T00:07:00.000Z",
+      });
+      markNotificationSent(testDb.db, "notification_sent", "2026-05-19T00:08:00.000Z");
+
+      expect(listDeliverableNotifications(testDb.db, { maxAttempts: 3 }).map((row) => row.id)).toEqual([
+        "notification_1",
+        "notification_retry",
+      ]);
     } finally {
       await testDb.cleanup();
     }

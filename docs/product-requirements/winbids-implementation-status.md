@@ -31,6 +31,7 @@ This document is the working checklist for local development. Update it after ea
 | Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin-only console access. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, tier-aware locked states for gated features, and static coverage tests for current advanced feature API routes. |
 | Usage limits | Central saved bid and intent workspace quota checks by tier; authenticated users are counted at workspace scope; APIs return `USAGE_LIMIT_REACHED` before creating over-limit resources; Settings shows current workspace usage vs plan limits. |
+| Notification delivery foundation | `notification_outbox`, file/console/http providers, retryable delivery worker, and admin delivery trigger API. |
 | Subscription foundation | `account_subscriptions`, `subscription_events`, plan catalog, account subscription API, Settings Billing tab. |
 | Billing provider sync foundation | `billing_checkout_sessions`, checkout creation API, provider webhook intake, provider event idempotency, subscription status reconciliation, and Settings self-service upgrade/cancel controls. |
 | Invoice / payment history foundation | `billing_invoices`, provider invoice event sync, payment-failed status handling, account invoice API, Settings invoice history UI, and optional HMAC webhook signature verification via `BILLING_WEBHOOK_SECRET`. |
@@ -76,7 +77,7 @@ This document is the working checklist for local development. Update it after ea
 | P1 | Invoice / Payment History Polish | Add PDF/download affordances, invoice filters, customer-facing payment retry links, and richer invoice detail. | Paid users need a complete billing record experience. |
 | P1 | Trial / Dunning Lifecycle | Add trial expiration, past-due reminders, payment failure states, and downgrade rules. | Prevents stale paid access when payment state changes. |
 | P1 | Account Deletion / Export Polish | Add admin-facing deletion audit review and richer export format/version metadata. | Required for serious account management and compliance readiness. |
-| P1 | Team Lifecycle Completion | Replace local invitation outbox with production email provider delivery, delivery retries, and user-facing delivery status. | Business/Enterprise accounts need real team administration. |
+| P1 | Team Lifecycle Completion | Add user-facing invitation delivery status and preference controls on top of the delivery worker. | Business/Enterprise accounts need real team administration. |
 | P1 | Entitlement Coverage Expansion | Extend coverage tests as future gated APIs such as quote workflow and Knowledge Station are implemented. | Prevents paid features from leaking to lower tiers. |
 | P1 | Usage Dashboard Expansion | Add future quote/workspace/AI-call usage metrics after those resources exist. | Users need to understand why an upgrade is required. |
 | P2 | Granular Operator Roles | Add support/operator roles separate from full admin. | Useful once support operations grow. |
@@ -97,13 +98,13 @@ This document is the working checklist for local development. Update it after ea
 | Area | What exists | Missing to be useful |
 |---|---|---|
 | Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; password reset token flow; users can export account data and soft-delete/deactivate their account; admin can create invited accounts, enable/disable users, search/filter users, and review access audit logs | Admin-facing deletion audit review and richer export format/version metadata |
-| Organization/workspace model | Registered users get a default organization, session payload includes current workspace and owner/member role, Settings Team tab can rename workspace, invite local members, queue invitation email notifications, resend/revoke pending invitations, accept invitations, transfer owner, change member roles, disable/restore members, remove members, and saved bids/intents are shared across organization members | Production email provider delivery, retries, and delivery status |
+| Organization/workspace model | Registered users get a default organization, session payload includes current workspace and owner/member role, Settings Team tab can rename workspace, invite local members, queue invitation email notifications, resend/revoke pending invitations, accept invitations, transfer owner, change member roles, disable/restore members, remove members, and saved bids/intents are shared across organization members | User-facing invitation delivery status and notification preferences |
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, provider-compatible webhook sync, cancellation scheduling, invoice history, and optional webhook signature verification | Real payment provider SDK/API calls, provider-specific event mapping, sandbox credentials, trial/dunning lifecycle |
 | Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits, Settings usage dashboard, and static coverage test; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated | Extend guards/limits as future gated APIs are added |
 | Search alerts | API/service foundation exists | Full alert management UI, digest configuration, real email delivery |
-| Notifications | Notification outbox foundation exists | Provider configuration, delivery retries, user notification preferences |
+| Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, and admin delivery trigger exist | User-facing delivery status, preferences, scheduled worker deployment |
 | Admin data QA | Source status and logs exist | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
 
 ### Not Implemented
@@ -111,7 +112,7 @@ This document is the working checklist for local development. Update it after ea
 | Area | Needed capability |
 |---|---|
 | Production billing polish | Real provider SDK/API calls, provider-specific event mapping, sandbox credentials, trial expiration, and dunning. |
-| Organization team lifecycle | Production email provider delivery, retry worker, and invitation delivery status. |
+| Organization team lifecycle | User-facing invitation delivery status and notification preferences. |
 | Response Workspace | Tasks, artifacts, internal checkpoints, reusable documents. |
 | Sourcing / quote workflow | Partner database, quote requests, quote comparison, attachment storage. |
 | Award / tabulation tracking | Award notices, bid status monitoring, tabulation records. |
@@ -121,12 +122,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Production Billing Provider SDK/API Adapter** next if the next sprint stays on monetization. If the next sprint stays on account lifecycle, prioritize Usage Dashboard and entitlement coverage audit.
+Prioritize **Production Billing Provider SDK/API Adapter** next if the next sprint stays on monetization. If the next sprint stays on account lifecycle, prioritize user-facing notification preferences and invitation delivery status.
 
 Reason:
 
 - The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Business-gated Compliance Manifest, and Pro-gated Pursue / No-Bid Decision now exist.
-- The remaining account gap is not basic registration; it is real payment provider SDK/API integration, provider-specific event mapping, trial/dunning lifecycle, production email provider delivery, broader usage dashboards, and account export/deletion polish.
+- The remaining account gap is not basic registration; it is real payment provider SDK/API integration, provider-specific event mapping, trial/dunning lifecycle, notification preferences/status UI, broader usage dashboards, and account export/deletion polish.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
@@ -189,7 +190,7 @@ Current local limits:
 
 2. **Account lifecycle**
    - Add usage dashboard for tier limits.
-   - Add production notification delivery and retry status.
+   - Add notification preferences and invitation delivery status UI.
 
 3. **Product workflow depth**
    - Build Response Workspace.
@@ -720,6 +721,32 @@ Current local limits:
 
 建议下一步：
 - 如果继续权限/账户主线，做 Production Notification Delivery；如果继续商业化主线，做 Production Billing Provider SDK/API Adapter。
+
+## Completed Phase: Production Notification Delivery Foundation
+
+本阶段完成：
+- `notification_outbox` repository 新增 `listDeliverableNotifications()`，可按创建时间读取 pending 和未超过重试次数的 failed 通知。
+- 新增 `deliverPendingNotifications()`，统一投递 pending/failed 通知，成功标记 sent，失败记录错误并增加 attempt count，超过最大重试次数会跳过。
+- 新增 HTTP notification provider：`NOTIFICATION_PROVIDER=http`、`NOTIFICATION_HTTP_ENDPOINT`、`NOTIFICATION_HTTP_TOKEN` 可把通知 payload POST 到外部邮件/通知服务。
+- provider factory 支持 file、console、http 三种模式；file 仍作为本地默认 fallback。
+- 新增 `/api/admin/notifications/deliver`，管理员可手动触发一次通知投递批处理并拿到 attempted/sent/failed/skipped 摘要。
+- 补齐 outbox、delivery、HTTP provider、provider factory 和 admin API 测试。
+
+验证：
+- `npm test -- src/server/notifications/outbox-repository.test.ts src/server/notifications/delivery.test.ts src/server/notifications/providers/http.test.ts src/server/notifications/provider.test.ts src/app/api/admin/notifications/deliver/route.test.ts`
+
+当前还剩：
+1. Production Billing Provider SDK/API：接真实 Stripe/其他 provider SDK、真实 hosted checkout/customer portal session 创建、sandbox credentials。
+2. Provider-specific event mapping：把真实 provider payload 转换为当前内部 `BillingProviderEvent`。
+3. Trial / Dunning Lifecycle：试用到期、扣款失败重试、逾期提醒、自动降级规则。
+4. Invoice / Payment History Polish：PDF 下载体验、筛选、支付重试链接、更完整的发票详情。
+5. Notification Preferences / Delivery Status UI：用户通知偏好、邀请投递状态、admin 通知投递历史 UI。
+6. Scheduled Notification Worker：部署环境中的定时投递任务。
+7. Usage Dashboard Expansion：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
+8. Entitlement Coverage Expansion：未来新增高级功能 API 时继续加入 coverage 审计。
+
+建议下一步：
+- 如果继续权限/账户主线，做 Notification Preferences / Delivery Status UI；如果继续商业化主线，做 Production Billing Provider SDK/API Adapter。
 
 ## Status Update Template
 
