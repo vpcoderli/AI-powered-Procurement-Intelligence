@@ -32,6 +32,14 @@ STRIPE_PRICE_BUSINESS_MONTHLY=price_...
 
 Stripe webhooks should POST to `/api/billing/webhook` with the standard `Stripe-Signature` header. The app maps Stripe checkout, subscription, and invoice events into the internal billing event format before updating user tiers and subscription state.
 
+To run the operator-assisted Stripe sandbox E2E verifier, start the local app and Stripe CLI webhook forwarder, then run:
+
+```bash
+npm run billing:stripe:sandbox -- --tier=pro
+```
+
+Use `--tier=business` for the Business plan, `--origin=http://localhost:3000` to target a different local origin, `--timeout-ms=300000` to change the webhook wait timeout, and `--skip-cancel` to keep the test subscription after verification. Full setup and troubleshooting steps live in [`../docs/operations/stripe-sandbox-e2e.md`](../docs/operations/stripe-sandbox-e2e.md).
+
 ## Notification Worker
 
 The notification worker schedules staged billing dunning reminders and delivers pending notification outbox rows.
