@@ -93,7 +93,13 @@ describe("admin API client", () => {
     const body = {
       organizationId: "org_1",
       organizationName: "Buyer Workspace",
-      overrides: [{ featureKey: "compliance_manifest", isEnabled: true }],
+      overrides: [{
+        featureKey: "compliance_manifest",
+        isEnabled: true,
+        reason: "Pilot",
+        expiresAt: "2026-06-28T00:00:00.000Z",
+        isExpired: false,
+      }],
     };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));
 
@@ -129,18 +135,31 @@ describe("admin API client", () => {
     const body = {
       organizationId: "org_1",
       organizationName: "Buyer Workspace",
-      overrides: [{ featureKey: "compliance_manifest", isEnabled: false }],
+      overrides: [{
+        featureKey: "compliance_manifest",
+        isEnabled: false,
+        reason: "Enterprise exception",
+        expiresAt: "2026-06-28T00:00:00.000Z",
+        isExpired: false,
+      }],
     };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));
 
     await expect(updateAdminUserFeatureOverride("user 1", {
       featureKey: "compliance_manifest",
       isEnabled: false,
+      reason: "Enterprise exception",
+      expiresAt: "2026-06-28T00:00:00.000Z",
     })).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/admin/users/user%201/feature-overrides", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ featureKey: "compliance_manifest", isEnabled: false }),
+      body: JSON.stringify({
+        featureKey: "compliance_manifest",
+        isEnabled: false,
+        reason: "Enterprise exception",
+        expiresAt: "2026-06-28T00:00:00.000Z",
+      }),
     });
   });
 

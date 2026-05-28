@@ -30,6 +30,11 @@ describe("admin page", () => {
     expect(page).toContain("handleCreateAdminUser");
     expect(page).toContain('t("admin.userAuditLogs")');
     expect(page).toContain('t("admin.featureOverrides")');
+    expect(page).toContain('t("admin.overrideReason")');
+    expect(page).toContain('t("admin.overrideExpiresAt")');
+    expect(page).toContain('t("admin.overrideExpired")');
+    expect(page).toContain("featureOverrideReason");
+    expect(page).toContain("featureOverrideExpiresAt");
     expect(page).toContain("userFilters");
     expect(page).toContain("featureOverrideUser");
     expect(page).toContain("USER_ROLES");

@@ -181,20 +181,33 @@ describe("admin users repository", () => {
       const enabled = updateAdminUserFeatureOverride(
         testDb.db,
         "user_1",
-        { featureKey: "compliance_manifest", isEnabled: true },
+        {
+          featureKey: "compliance_manifest",
+          isEnabled: true,
+          reason: "Pilot customer",
+          expiresAt: "2026-06-28T00:00:00.000Z",
+        },
         { actorKind: "admin", actorUserId: "admin_1" },
       );
 
       expect(enabled).toEqual({
         organizationId: "org_1",
         organizationName: "Buyer Workspace",
-        overrides: [{ featureKey: "compliance_manifest", isEnabled: true }],
+        overrides: [{
+          featureKey: "compliance_manifest",
+          isEnabled: true,
+          reason: "Pilot customer",
+          expiresAt: "2026-06-28T00:00:00.000Z",
+          isExpired: false,
+        }],
       });
       expect(testDb.db.select().from(organizationFeatureOverrides).all()).toEqual([
         expect.objectContaining({
           organizationId: "org_1",
           featureKey: "compliance_manifest",
           isEnabled: 1,
+          reason: "Pilot customer",
+          expiresAt: "2026-06-28T00:00:00.000Z",
           createdByUserId: "admin_1",
         }),
       ]);
@@ -206,7 +219,13 @@ describe("admin users repository", () => {
         { actorKind: "admin", actorUserId: "admin_1" },
       );
 
-      expect(disabled.overrides).toEqual([{ featureKey: "compliance_manifest", isEnabled: false }]);
+      expect(disabled.overrides).toEqual([{
+        featureKey: "compliance_manifest",
+        isEnabled: false,
+        reason: null,
+        expiresAt: null,
+        isExpired: false,
+      }]);
 
       const cleared = updateAdminUserFeatureOverride(
         testDb.db,
@@ -220,7 +239,7 @@ describe("admin users repository", () => {
       expect(listAdminUserAuditLogs(testDb.db, { limit: 5 }).logs[0].changes[0]).toEqual({
         field: "featureOverride",
         featureKey: "compliance_manifest",
-        before: false,
+        before: { isEnabled: false, reason: null, expiresAt: null },
         after: null,
       });
     } finally {
