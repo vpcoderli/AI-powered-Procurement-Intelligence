@@ -299,6 +299,36 @@ export const en = {
     confirmationReference: "Confirmation reference",
     confirmationNotes: "Confirmation notes",
     latestConfirmation: "Latest confirmation",
+    complianceManifest: "Compliance Manifest",
+    complianceLoading: "Loading compliance manifest...",
+    complianceComplete: "complete",
+    complianceManifestSaved: "Compliance manifest saved.",
+    complianceSaveError: "Unable to save compliance manifest.",
+    complianceNotesPlaceholder: "Add internal notes or evidence references...",
+    complianceSummary: {
+      total: "Total",
+      completed: "Complete",
+      blocked: "Blocked",
+      evidenceAttached: "Evidence",
+    },
+    complianceStatuses: {
+      not_started: "Not started",
+      in_progress: "In progress",
+      complete: "Complete",
+      blocked: "Blocked",
+    },
+    complianceEvidenceStatuses: {
+      needed: "Evidence needed",
+      attached: "Evidence attached",
+      not_required: "Not required",
+    },
+    complianceCategories: {
+      eligibility: "Eligibility",
+      documents: "Documents",
+      pricing: "Pricing",
+      submission: "Submission",
+      risk: "Risk",
+    },
     submissionMethods: {
       external_portal: "External portal",
       email: "Email",
@@ -318,6 +348,10 @@ export const en = {
       submission: {
         title: "Submission Path",
         description: "Preview external portal, registration, and receipt flow.",
+      },
+      compliance: {
+        title: "Compliance Manifest",
+        description: "Track requirements, completion state, notes, and evidence readiness.",
       },
       award: {
         title: "Status Tracking",

@@ -138,6 +138,7 @@ describe("database schema", () => {
       expect(tables).toContain("intent_to_bid");
       expect(tables).toContain("submission_paths");
       expect(tables).toContain("submission_confirmations");
+      expect(tables).toContain("compliance_manifest_items");
       expect(tables).toContain("admin_user_audit_logs");
       expect(tables).toContain("account_subscriptions");
       expect(tables).toContain("subscription_events");

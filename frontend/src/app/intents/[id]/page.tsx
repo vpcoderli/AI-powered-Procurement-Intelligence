@@ -11,8 +11,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   confirmSubmission,
+  fetchComplianceManifest,
   fetchIntent,
   fetchSubmissionGuidance,
+  updateComplianceManifestItem,
   updateIntentStatus,
   updateSubmissionGuidance,
 } from "@/lib/api/intents";
@@ -20,6 +22,16 @@ import { lockedFeatureMessage, useFeature } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import type { IntentDetail, IntentStatus } from "@/server/intents/types";
 import { INTENT_STATUSES } from "@/server/intents/types";
+import type {
+  ComplianceEvidenceStatus,
+  ComplianceItemStatus,
+  ComplianceManifest,
+  ComplianceManifestItem,
+} from "@/server/compliance/types";
+import {
+  COMPLIANCE_EVIDENCE_STATUSES,
+  COMPLIANCE_ITEM_STATUSES,
+} from "@/server/compliance/types";
 import type {
   SubmissionConfirmation,
   SubmissionGuidance,
@@ -64,6 +76,9 @@ const submissionMethods: SubmissionMethod[] = [
   "mixed",
   "unknown",
 ];
+
+const complianceStatuses: ComplianceItemStatus[] = [...COMPLIANCE_ITEM_STATUSES];
+const complianceEvidenceStatuses: ComplianceEvidenceStatus[] = [...COMPLIANCE_EVIDENCE_STATUSES];
 
 type SubmissionDraft = Pick<
   SubmissionGuidance,
@@ -148,7 +163,13 @@ export default function IntentWorkspacePage() {
   const [isConfirmationSaving, setIsConfirmationSaving] = useState(false);
   const [submissionError, setSubmissionError] = useState<Error | null>(null);
   const [submissionNotice, setSubmissionNotice] = useState("");
+  const [complianceManifest, setComplianceManifest] = useState<ComplianceManifest | null>(null);
+  const [isComplianceLoading, setIsComplianceLoading] = useState(false);
+  const [complianceSavingItemId, setComplianceSavingItemId] = useState<string | null>(null);
+  const [complianceError, setComplianceError] = useState<Error | null>(null);
+  const [complianceNotice, setComplianceNotice] = useState("");
   const submissionGuidanceFeature = useFeature("submission_guidance");
+  const complianceManifestFeature = useFeature("compliance_manifest");
 
   const intentId = typeof params?.id === "string" ? params.id : Array.isArray(params?.id) ? params.id[0] : "";
 
@@ -235,6 +256,43 @@ export default function IntentWorkspacePage() {
       cancelled = true;
     };
   }, [intentId, submissionGuidanceFeature.enabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled || !mountedRef.current) return;
+
+      setComplianceManifest(null);
+      setComplianceNotice("");
+      setComplianceError(null);
+
+      if (!intentId || !complianceManifestFeature.enabled) {
+        setIsComplianceLoading(false);
+        return;
+      }
+
+      setIsComplianceLoading(true);
+
+      fetchComplianceManifest(intentId)
+        .then((response) => {
+          if (cancelled || !mountedRef.current) return;
+          setComplianceManifest(response.manifest);
+        })
+        .catch((err) => {
+          if (cancelled || !mountedRef.current) return;
+          setComplianceError(err instanceof Error ? err : new Error("Failed to load compliance manifest"));
+        })
+        .finally(() => {
+          if (cancelled || !mountedRef.current) return;
+          setIsComplianceLoading(false);
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [intentId, complianceManifestFeature.enabled]);
 
   const matchComponents = useMemo(() => {
     if (!intent) return [];
@@ -327,6 +385,47 @@ export default function IntentWorkspacePage() {
     } finally {
       if (mountedRef.current) {
         setIsConfirmationSaving(false);
+      }
+    }
+  };
+
+  function updateLocalComplianceItem(
+    itemId: string,
+    patch: Partial<Pick<ComplianceManifestItem, "status" | "evidenceStatus" | "notes">>,
+  ) {
+    setComplianceManifest((current) => current
+      ? {
+          ...current,
+          items: current.items.map((item) => (item.id === itemId ? { ...item, ...patch } : item)),
+        }
+      : current);
+  }
+
+  const handleComplianceItemUpdate = async (
+    item: ComplianceManifestItem,
+    patch: Partial<Pick<ComplianceManifestItem, "status" | "evidenceStatus" | "notes">>,
+  ) => {
+    if (!intent || !complianceManifestFeature.enabled || complianceSavingItemId) return;
+
+    setComplianceSavingItemId(item.id);
+    setComplianceNotice("");
+    setComplianceError(null);
+
+    try {
+      const response = await updateComplianceManifestItem(intent.id, {
+        itemId: item.id,
+        ...patch,
+      });
+      if (!mountedRef.current) return;
+
+      setComplianceManifest(response.manifest);
+      setComplianceNotice(t("intentsPage.complianceManifestSaved"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setComplianceError(err instanceof Error ? err : new Error("Failed to save compliance manifest"));
+    } finally {
+      if (mountedRef.current) {
+        setComplianceSavingItemId(null);
       }
     }
   };
@@ -511,10 +610,19 @@ export default function IntentWorkspacePage() {
               ["match", Target],
               ["brief", Sparkles],
               ["submission", Route],
+              ["compliance", FileCheck2],
               ["award", PackageCheck],
             ].map(([key, Icon]) => {
               const ModuleIcon = Icon as typeof Target;
-              const isLocked = key === "submission" && !submissionGuidanceFeature.enabled;
+              const isSubmissionLocked = key === "submission" && !submissionGuidanceFeature.enabled;
+              const isComplianceLocked = key === "compliance" && !complianceManifestFeature.enabled;
+              const isLocked = isSubmissionLocked || isComplianceLocked;
+              const requiredTier = isComplianceLocked
+                ? complianceManifestFeature.requiredTier
+                : submissionGuidanceFeature.requiredTier;
+              const lockedMessage = isComplianceLocked
+                ? lockedFeatureMessage("compliance_manifest")
+                : lockedFeatureMessage("submission_guidance");
               return (
                 <div
                   key={key as string}
@@ -534,13 +642,13 @@ export default function IntentWorkspacePage() {
                       </p>
                       {isLocked && (
                         <Badge variant="outline" className="border-amber-200 bg-white text-amber-700">
-                          {submissionGuidanceFeature.requiredTier}
+                          {requiredTier}
                         </Badge>
                       )}
                     </div>
                     <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
                       {isLocked
-                        ? lockedFeatureMessage("submission_guidance")
+                        ? lockedMessage
                         : t(`intentsPage.moduleItems.${key as string}.description`)}
                     </p>
                   </div>
@@ -859,6 +967,135 @@ export default function IntentWorkspacePage() {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+      </section>
+
+      <section
+        className={`winbids-panel complianceManifest rounded-lg border p-5 shadow-sm ${
+          complianceManifestFeature.enabled ? "border-slate-200 bg-white" : "border-amber-200 bg-amber-50/60"
+        }`}
+      >
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-700">
+              {complianceManifestFeature.enabled
+                ? t("intentsPage.complianceManifest")
+                : t("intentsPage.nextPhasePreview")}
+            </p>
+            <h2 className="mt-1 flex items-center gap-2 text-2xl font-black text-slate-950">
+              <FileCheck2 size={21} className="text-blue-700" aria-hidden="true" />
+              {t("intentsPage.complianceManifest")}
+            </h2>
+          </div>
+          <span className="w-fit rounded-full border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-700">
+            {complianceManifestFeature.enabled
+              ? complianceManifest
+                ? `${complianceManifest.summary.completed}/${complianceManifest.summary.total} ${t("intentsPage.complianceComplete")}`
+                : t("intentsPage.complianceLoading")
+              : lockedFeatureMessage("compliance_manifest")}
+          </span>
+        </div>
+
+        {!complianceManifestFeature.enabled ? (
+          <p className="mt-4 text-sm font-semibold leading-6 text-amber-800">
+            {lockedFeatureMessage("compliance_manifest")}
+          </p>
+        ) : (
+          <div className="mt-5 space-y-4">
+            <div className="grid gap-3 sm:grid-cols-4">
+              {[
+                ["total", complianceManifest?.summary.total ?? 0],
+                ["completed", complianceManifest?.summary.completed ?? 0],
+                ["blocked", complianceManifest?.summary.blocked ?? 0],
+                ["evidenceAttached", complianceManifest?.summary.evidenceAttached ?? 0],
+              ].map(([key, value]) => (
+                <div key={key as string} className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+                  <p className="text-xs font-black uppercase text-slate-400">
+                    {t(`intentsPage.complianceSummary.${key as string}`)}
+                  </p>
+                  <p className="mt-1 text-2xl font-black text-slate-950">{value}</p>
+                </div>
+              ))}
+            </div>
+
+            {isComplianceLoading ? (
+              <p className="text-sm font-semibold text-slate-500">{t("intentsPage.complianceLoading")}</p>
+            ) : (
+              <div className="grid gap-3">
+                {(complianceManifest?.items ?? []).map((item) => (
+                  <article key={item.id} className="rounded-lg border border-slate-200 bg-white p-4">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline" className="border-blue-100 bg-blue-50 text-blue-700">
+                            {t(`intentsPage.complianceCategories.${item.category}`)}
+                          </Badge>
+                          {complianceSavingItemId === item.id && (
+                            <span className="text-xs font-bold text-slate-400">
+                              {t("intentsPage.submissionSaving")}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-2 break-words text-sm font-black leading-6 text-slate-950">{item.title}</p>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2 lg:w-[360px]">
+                        <Select
+                          value={item.status}
+                          onValueChange={(value) =>
+                            void handleComplianceItemUpdate(item, { status: value as ComplianceItemStatus })
+                          }
+                          disabled={Boolean(complianceSavingItemId)}
+                        >
+                          <SelectTrigger className="h-9 rounded-lg border-slate-200 bg-white shadow-sm focus:ring-slate-900">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="rounded-lg border-slate-200 shadow-lg">
+                            {complianceStatuses.map((status) => (
+                              <SelectItem key={status} value={status}>
+                                {t(`intentsPage.complianceStatuses.${status}`)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={item.evidenceStatus}
+                          onValueChange={(value) =>
+                            void handleComplianceItemUpdate(item, { evidenceStatus: value as ComplianceEvidenceStatus })
+                          }
+                          disabled={Boolean(complianceSavingItemId)}
+                        >
+                          <SelectTrigger className="h-9 rounded-lg border-slate-200 bg-white shadow-sm focus:ring-slate-900">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="rounded-lg border-slate-200 shadow-lg">
+                            {complianceEvidenceStatuses.map((status) => (
+                              <SelectItem key={status} value={status}>
+                                {t(`intentsPage.complianceEvidenceStatuses.${status}`)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <textarea
+                      value={item.notes}
+                      onChange={(event) => updateLocalComplianceItem(item.id, { notes: event.target.value })}
+                      onBlur={(event) => void handleComplianceItemUpdate(item, { notes: event.currentTarget.value })}
+                      disabled={Boolean(complianceSavingItemId)}
+                      placeholder={t("intentsPage.complianceNotesPlaceholder")}
+                      className="mt-3 min-h-16 w-full resize-y rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                    />
+                  </article>
+                ))}
+              </div>
+            )}
+
+            <p className="min-h-5 text-sm font-semibold text-slate-500">
+              {complianceError
+                ? t("intentsPage.complianceSaveError")
+                : complianceNotice}
+            </p>
           </div>
         )}
       </section>
