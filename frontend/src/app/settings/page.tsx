@@ -1,7 +1,18 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, CheckCircle2, CreditCard, Key, LockKeyhole, PaintBucket, Settings, Shield, User } from "lucide-react";
+import {
+  Bell,
+  CheckCircle2,
+  CreditCard,
+  Key,
+  LockKeyhole,
+  PaintBucket,
+  Settings,
+  Shield,
+  User,
+  Users,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,8 +26,12 @@ import { useAuth } from "@/context/AuthContext";
 import {
   changePassword,
   fetchAccountSubscription,
+  fetchAccountWorkspace,
+  inviteWorkspaceMember,
+  updateAccountWorkspace,
   updateAccountProfile,
   type AccountSubscriptionResponse,
+  type AccountWorkspaceResponse,
 } from "@/lib/api/auth";
 import { canUseFeature, lockedFeatureMessage } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
@@ -50,10 +65,21 @@ export default function SettingsPage() {
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [subscriptionData, setSubscriptionData] = useState<AccountSubscriptionResponse | null>(null);
   const [subscriptionError, setSubscriptionError] = useState("");
+  const [workspaceData, setWorkspaceData] = useState<AccountWorkspaceResponse | null>(null);
+  const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
+  const [workspaceMessage, setWorkspaceMessage] = useState("");
+  const [workspaceError, setWorkspaceError] = useState("");
+  const [isSavingWorkspace, setIsSavingWorkspace] = useState(false);
+  const [inviteDraft, setInviteDraft] = useState({ email: "", displayName: "" });
+  const [inviteMessage, setInviteMessage] = useState("");
+  const [inviteError, setInviteError] = useState("");
+  const [temporaryPassword, setTemporaryPassword] = useState("");
+  const [isInvitingMember, setIsInvitingMember] = useState(false);
   const currentTier = user ? ACCOUNT_TIER_LABELS[user.tier] : ACCOUNT_TIER_LABELS.free;
   const displayName =
     profileDraft.userId === user?.id ? profileDraft.displayName : (user?.displayName ?? "");
   const currentSubscription = user ? subscriptionData?.subscription : null;
+  const canManageWorkspace = workspaceData?.currentUserRole === "owner";
 
   useEffect(() => {
     if (!user) return;
@@ -69,6 +95,28 @@ export default function SettingsPage() {
       .catch((error) => {
         if (isCancelled) return;
         setSubscriptionError(error instanceof Error ? error.message : t("settings.subscriptionLoadError"));
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [t, user]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    let isCancelled = false;
+
+    fetchAccountWorkspace()
+      .then((data) => {
+        if (isCancelled) return;
+        setWorkspaceData(data);
+        setWorkspaceNameDraft(data.organization.name);
+        setWorkspaceError("");
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        setWorkspaceError(error instanceof Error ? error.message : t("settings.workspaceLoadError"));
       });
 
     return () => {
@@ -131,6 +179,48 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleWorkspaceSave() {
+    setWorkspaceMessage("");
+    setWorkspaceError("");
+    setIsSavingWorkspace(true);
+
+    try {
+      const data = await updateAccountWorkspace({ name: workspaceNameDraft });
+      setWorkspaceData(data);
+      setWorkspaceNameDraft(data.organization.name);
+      await refreshSession();
+      setWorkspaceMessage(t("settings.workspaceSaved"));
+    } catch (error) {
+      setWorkspaceError(error instanceof Error ? error.message : t("settings.workspaceSaveError"));
+    } finally {
+      setIsSavingWorkspace(false);
+    }
+  }
+
+  async function handleInviteMember() {
+    setInviteMessage("");
+    setInviteError("");
+    setTemporaryPassword("");
+    setIsInvitingMember(true);
+
+    try {
+      const invite = await inviteWorkspaceMember({
+        email: inviteDraft.email,
+        displayName: inviteDraft.displayName.trim() || undefined,
+        role: "member",
+      });
+      const data = await fetchAccountWorkspace();
+      setWorkspaceData(data);
+      setInviteDraft({ email: "", displayName: "" });
+      setTemporaryPassword(invite.temporaryPassword);
+      setInviteMessage(t("settings.memberInvited"));
+    } catch (error) {
+      setInviteError(error instanceof Error ? error.message : t("settings.memberInviteError"));
+    } finally {
+      setIsInvitingMember(false);
+    }
+  }
+
   return (
     <div className="flex flex-col h-full gap-8 max-w-4xl mx-auto pb-12">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-200">
@@ -152,6 +242,9 @@ export default function SettingsPage() {
           </TabsTrigger>
           <TabsTrigger value="notifications" className="w-full justify-start text-left data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded-lg text-slate-500 font-medium py-2.5 px-3">
             <Bell className="mr-2.5 h-4 w-4" /> {t("settings.notifications")}
+          </TabsTrigger>
+          <TabsTrigger value="team" className="w-full justify-start text-left data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded-lg text-slate-500 font-medium py-2.5 px-3">
+            <Users className="mr-2.5 h-4 w-4" /> {t("settings.team")}
           </TabsTrigger>
           <TabsTrigger value="billing" className="w-full justify-start text-left data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded-lg text-slate-500 font-medium py-2.5 px-3">
             <CreditCard className="mr-2.5 h-4 w-4" /> {t("settings.billing")}
@@ -252,6 +345,126 @@ export default function SettingsPage() {
                   {isSavingProfile ? t("settings.saving") : t("common.save")}
                 </Button>
               </CardFooter>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="team" className="m-0 space-y-6">
+            <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
+              <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <CardTitle className="text-lg font-semibold text-slate-900">{t("settings.workspace")}</CardTitle>
+                    <CardDescription className="text-slate-500 font-medium">{t("settings.workspaceDesc")}</CardDescription>
+                  </div>
+                  <Badge variant="outline" className="w-fit border-slate-200 bg-white text-slate-700">
+                    {workspaceData ? t(`settings.workspaceRole_${workspaceData.currentUserRole}`) : t("settings.loadingPlans")}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-5 p-6">
+                <div className="space-y-2">
+                  <Label htmlFor="workspaceName" className="text-slate-700 font-medium">
+                    {t("settings.workspaceName")}
+                  </Label>
+                  <Input
+                    id="workspaceName"
+                    value={workspaceNameDraft}
+                    onChange={(event) => setWorkspaceNameDraft(event.target.value)}
+                    disabled={!canManageWorkspace || isSavingWorkspace || !user}
+                    className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg"
+                  />
+                  {!canManageWorkspace && workspaceData && (
+                    <p className="text-xs font-medium text-slate-500">{t("settings.ownerOnlyWorkspace")}</p>
+                  )}
+                </div>
+                {workspaceMessage && <p className="text-sm font-medium text-emerald-700">{workspaceMessage}</p>}
+                {workspaceError && <p className="text-sm font-medium text-red-600">{workspaceError}</p>}
+              </CardContent>
+              <CardFooter className="border-t border-slate-100 bg-slate-50/50 px-6 py-4">
+                <Button
+                  onClick={handleWorkspaceSave}
+                  disabled={!canManageWorkspace || isSavingWorkspace || !workspaceNameDraft.trim()}
+                  className="bg-slate-900 hover:bg-slate-800 text-white font-medium shadow-sm rounded-lg px-6 h-10"
+                >
+                  {isSavingWorkspace ? t("settings.saving") : t("common.save")}
+                </Button>
+              </CardFooter>
+            </Card>
+
+            <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
+              <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
+                <CardTitle className="text-lg font-semibold text-slate-900">{t("settings.teamMembers")}</CardTitle>
+                <CardDescription className="text-slate-500 font-medium">{t("settings.teamMembersDesc")}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5 p-6">
+                {canManageWorkspace && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <h3 className="text-sm font-semibold text-slate-900">{t("settings.inviteMember")}</h3>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label htmlFor="inviteEmail" className="text-slate-700 font-medium">
+                          {t("settings.email")}
+                        </Label>
+                        <Input
+                          id="inviteEmail"
+                          type="email"
+                          value={inviteDraft.email}
+                          onChange={(event) => setInviteDraft((draft) => ({ ...draft, email: event.target.value }))}
+                          className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="inviteDisplayName" className="text-slate-700 font-medium">
+                          {t("settings.displayName")}
+                        </Label>
+                        <Input
+                          id="inviteDisplayName"
+                          value={inviteDraft.displayName}
+                          onChange={(event) => setInviteDraft((draft) => ({ ...draft, displayName: event.target.value }))}
+                          className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg"
+                        />
+                      </div>
+                    </div>
+                    <Button
+                      onClick={handleInviteMember}
+                      disabled={isInvitingMember || !inviteDraft.email.trim()}
+                      className="mt-4 bg-slate-900 hover:bg-slate-800 text-white font-medium shadow-sm rounded-lg px-6 h-10"
+                    >
+                      {isInvitingMember ? t("settings.inviting") : t("settings.inviteMember")}
+                    </Button>
+                    {inviteMessage && <p className="mt-3 text-sm font-medium text-emerald-700">{inviteMessage}</p>}
+                    {temporaryPassword && (
+                      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                        <span className="font-semibold">{t("settings.temporaryPassword")}:</span>{" "}
+                        <span className="break-all font-mono">{temporaryPassword}</span>
+                      </div>
+                    )}
+                    {inviteError && <p className="mt-3 text-sm font-medium text-red-600">{inviteError}</p>}
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                  {(workspaceData?.members ?? []).map((member) => (
+                    <div
+                      key={member.userId}
+                      className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">
+                          {member.displayName || member.email || member.userId}
+                        </p>
+                        <p className="mt-1 text-xs font-medium text-slate-500">{member.email}</p>
+                      </div>
+                      <Badge variant="outline" className="w-fit border-slate-200 bg-slate-50 text-slate-700">
+                        {t(`settings.workspaceRole_${member.workspaceRole}`)}
+                      </Badge>
+                    </div>
+                  ))}
+                  {!workspaceData && !workspaceError && (
+                    <p className="text-sm font-medium text-slate-500">{t("settings.loadingPlans")}</p>
+                  )}
+                </div>
+              </CardContent>
             </Card>
           </TabsContent>
 

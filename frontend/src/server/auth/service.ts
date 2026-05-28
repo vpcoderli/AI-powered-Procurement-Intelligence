@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { ensureUserWorkspace, type PublicWorkspace } from "@/server/account/workspace";
 import type { AppDatabase } from "@/server/db/client";
 import { sessions, users } from "@/server/db/schema";
 import {
@@ -24,6 +25,7 @@ export interface PublicUser {
   role: UserRole;
   tier: AccountTier;
   features: FeatureKey[];
+  workspace?: PublicWorkspace;
 }
 
 export interface RegisterUserInput {
@@ -97,7 +99,7 @@ function toPublicUser(row: {
   role?: string | null;
   accountTier?: string | null;
   isDisabled?: number | boolean | null;
-}): PublicUser {
+}, workspace?: PublicWorkspace): PublicUser {
   if (!row.email) {
     throw new InvalidAuthInputError("Authenticated users must have an email");
   }
@@ -116,6 +118,7 @@ function toPublicUser(row: {
     role,
     tier,
     features: featuresForUser({ role, tier }),
+    ...(workspace ? { workspace } : {}),
   };
 }
 
@@ -188,7 +191,7 @@ export async function registerUser(db: AppDatabase, input: RegisterUserInput) {
   }
 
   return {
-    user: toPublicUser(user),
+    user: toPublicUser(user, ensureUserWorkspace(db, user.id)),
     sessionToken: await createSession(db, user.id),
   };
 }
@@ -214,7 +217,7 @@ export async function loginUser(db: AppDatabase, emailInput: string, password: s
     .run();
 
   return {
-    user: toPublicUser(user),
+    user: toPublicUser(user, ensureUserWorkspace(db, user.id)),
     sessionToken: await createSession(db, user.id),
   };
 }
@@ -246,7 +249,7 @@ export async function updateUserProfile(
     throw new InvalidAuthInputError("User not found");
   }
 
-  return toPublicUser(updatedUser);
+  return toPublicUser(updatedUser, ensureUserWorkspace(db, updatedUser.id));
 }
 
 export async function changeUserPassword(
@@ -320,14 +323,17 @@ export async function getSessionUser(db: AppDatabase, sessionToken: string) {
     return null;
   }
 
-  return toPublicUser({
-    id: row.userId,
-    email: row.email,
-    displayName: row.displayName,
-    role: row.role,
-    accountTier: row.accountTier,
-    isDisabled: row.isDisabled,
-  });
+  return toPublicUser(
+    {
+      id: row.userId,
+      email: row.email,
+      displayName: row.displayName,
+      role: row.role,
+      accountTier: row.accountTier,
+      isDisabled: row.isDisabled,
+    },
+    ensureUserWorkspace(db, row.userId),
+  );
 }
 
 export async function logoutSession(db: AppDatabase, sessionToken: string) {

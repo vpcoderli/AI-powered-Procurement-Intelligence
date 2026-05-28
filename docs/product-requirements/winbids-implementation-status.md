@@ -15,8 +15,8 @@ This document is the working checklist for local development. Update it after ea
 | Saved bids | Anonymous and authenticated saved bids, merge anonymous saved bids on register/login. |
 | Supplier profile | `/profile`, profile API, completion score, deterministic matching inputs. |
 | Auth basics | Register, login, logout, session cookie, session lookup, login/register pages, session payload with role/tier/features. |
-| Account self-service | `/settings` shows authenticated email/display name, updates display name, changes password after validating current password; `/forgot-password` and `/reset-password` support local token-based password recovery. |
-| User data model basics | `users` table, `sessions` table, `role`, `account_tier`, and `is_disabled` account state. |
+| Account self-service | `/settings` shows authenticated email/display name, updates display name, changes password after validating current password; `/forgot-password` and `/reset-password` support local token-based password recovery; Settings Team tab manages workspace name and member invites. |
+| User data model basics | `users` table, `sessions` table, `organizations`, `organization_memberships`, `role`, `account_tier`, `is_disabled`, and workspace owner/member state. |
 | Admin auth helper | `requireAdmin()` checks authenticated non-disabled admin sessions; local bypass for development. |
 | Admin user access console | `/admin` lists registered users, creates invited accounts with temporary passwords, filters/searches accounts, changes role/tier/enabled state, shows access audit logs, and presents login/forbidden states for non-admin access. |
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs. |
@@ -36,6 +36,7 @@ This document is the working checklist for local development. Update it after ea
 | Area | What exists | Missing to be useful |
 |---|---|---|
 | Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; password reset token flow; admin can create invited accounts, enable/disable users, search/filter users, and review access audit logs | Account deletion/export |
+| Organization/workspace model | Registered users get a default organization, session payload includes current workspace and owner/member role, Settings Team tab can rename workspace and invite local members | Shared saved bids/intents across organization members, team role management beyond invite-only member creation |
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab | Billing provider sync, real checkout, invoices, cancellation |
@@ -49,7 +50,7 @@ This document is the working checklist for local development. Update it after ea
 | Area | Needed capability |
 |---|---|
 | Billing integration | Checkout, subscription status sync, invoices, cancellation, trial expiration. |
-| Organization/workspace model | Company account, multiple users under one company, shared bids/intents, team roles. |
+| Organization shared workspace data | Shared bids/intents across company members, workspace-scoped ownership, team role changes/removal. |
 | Compliance Manifest Lite | Structured bid requirements, manual completion, notes, evidence status. |
 | Pursue / No-Bid Decision Lite | Recommendation, decision capture, reasons, decision history. |
 | Response Workspace | Tasks, artifacts, internal checkpoints, reusable documents. |
@@ -61,12 +62,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Organization / Workspace Model** next, then choose between **Compliance Manifest Lite** and **Billing Provider Sync** depending on whether the following sprint should deepen bid execution workflow or connect real monetization.
+Prioritize **Organization Shared Workspace Data** next, then choose between **Compliance Manifest Lite** and **Billing Provider Sync** depending on whether the following sprint should deepen bid execution workflow or connect real monetization.
 
 Reason:
 
-- The data model, session payload, account settings, password reset flow, subscription foundation, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
-- The remaining account gap is not basic self-service; it is real billing provider sync, broader usage dashboards, account deletion/export, and organization/team support.
+- The data model, session payload, account settings, password reset flow, organization/member foundation, subscription foundation, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
+- The remaining account gap is not basic self-service; it is real billing provider sync, broader usage dashboards, account deletion/export, and organization-scoped shared data.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
@@ -133,7 +134,7 @@ Current local limits:
 
 3. **Account lifecycle**
    - Add account deletion/export.
-   - Add organization/workspace model.
+   - Add organization-scoped shared bids/intents.
 
 ## Completed Phase: Account / Role / Tier Foundation
 
@@ -146,7 +147,7 @@ Current local limits:
 
 当前还剩：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
-2. Organization/workspace 多用户公司账户模型。
+2. Organization shared workspace data：公司成员共享 saved bids / intents。
 3. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Feature Guards / Tier-Aware UI
@@ -161,7 +162,7 @@ Current local limits:
 
 当前还剩：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
-2. Organization/workspace 多用户公司账户模型。
+2. Organization shared workspace data：公司成员共享 saved bids / intents。
 3. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Admin User Management Polish
@@ -175,7 +176,7 @@ Current local limits:
 
 当前还剩：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
-2. Organization/workspace 多用户公司账户模型。
+2. Organization shared workspace data：公司成员共享 saved bids / intents。
 3. Submission Guidance 真实编辑与确认 UI。
 
 ## Completed Phase: Account Settings Foundation
@@ -189,7 +190,7 @@ Current local limits:
 
 当前还剩：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
-2. Organization/workspace 多用户公司账户模型。
+2. Organization shared workspace data：公司成员共享 saved bids / intents。
 3. Account deletion/export 账号数据导出与删除。
 4. Submission Guidance 真实编辑与确认 UI。
 
@@ -205,7 +206,7 @@ Current local limits:
 当前还剩：
 1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 2. Usage limits：继续覆盖 alerts、AI/高级功能调用次数，并增加使用量仪表盘。
-3. Organization/workspace 多用户公司账户模型。
+3. Organization shared workspace data：公司成员共享 saved bids / intents。
 4. Account deletion/export 账号数据导出与删除。
 5. Submission Guidance 真实编辑与确认 UI。
 
@@ -221,7 +222,7 @@ Current local limits:
 当前还剩：
 1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 2. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
-3. Organization/workspace 多用户公司账户模型。
+3. Organization shared workspace data：公司成员共享 saved bids / intents。
 4. Account deletion/export 账号数据导出与删除。
 
 ## Completed Phase: Submission Guidance UI
@@ -245,7 +246,7 @@ Current local limits:
 2. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 4. Account deletion/export 账号数据导出与删除。
-5. Organization/workspace 多用户公司账户模型。
+5. Organization shared workspace data：公司成员共享 saved bids / intents。
 6. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
 
 建议下一步：
@@ -273,11 +274,11 @@ Current local limits:
 2. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 4. Account deletion/export 账号数据导出与删除。
-5. Organization/workspace 多用户公司账户模型。
+5. Organization shared workspace data：公司成员共享 saved bids / intents。
 6. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
 
 建议下一步：
-- 继续做 Organization/workspace 多用户公司账户模型，补齐公司团队协作能力。
+- 继续做 Organization shared workspace data，让公司成员共享 saved bids / intents。
 
 ## Completed Phase: Admin User Invite Flow
 
@@ -297,7 +298,7 @@ Current local limits:
 - 浏览器烟测：打开 `/admin`，确认“邀请用户”表单、角色/套餐选择和“创建邀请”按钮已渲染。
 
 当前还剩：
-1. Organization/workspace 多用户公司账户模型。
+1. Organization shared workspace data：公司成员共享 saved bids / intents。
 2. Account deletion/export 账号数据导出与删除。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 4. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
@@ -305,7 +306,7 @@ Current local limits:
 6. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 
 建议下一步：
-- 优先做 Organization/workspace 多用户公司账户模型，因为账号、角色、套餐和恢复闭环已经具备，下一块应支持公司账户下的团队协作。
+- 优先做 Organization shared workspace data，因为账号、角色、套餐、恢复闭环和团队基础已经具备，下一块应把 saved bids / intents 切到公司协作维度。
 
 ## Completed Phase: Password Reset Flow
 
@@ -321,7 +322,7 @@ Current local limits:
 - `npm test -- src/server/auth/password-reset.test.ts src/server/db/schema.test.ts src/app/api/auth/password-reset/request/route.test.ts src/app/api/auth/password-reset/confirm/route.test.ts src/lib/api/auth.test.ts src/app/login/page.test.ts src/app/forgot-password/page.test.ts src/app/reset-password/page.test.ts`
 
 当前还剩：
-1. Organization/workspace 多用户公司账户模型。
+1. Organization shared workspace data：公司成员共享 saved bids / intents。
 2. Account deletion/export 账号数据导出与删除。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 4. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
@@ -329,7 +330,33 @@ Current local limits:
 6. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 
 建议下一步：
-- 优先开发 Organization/workspace 多用户公司账户模型，让普通账号、admin、套餐等级和未来高级功能可以落到“公司/团队”维度管理。
+- 优先开发 Organization shared workspace data，让普通账号、admin、套餐等级和未来高级功能真正落到“公司/团队”的共享业务数据上。
+
+## Completed Phase: Organization / Workspace Foundation
+
+本阶段完成：
+- 新增 `organizations` 与 `organization_memberships` 表，支持组织和 owner/member 工作区角色。
+- 注册普通用户时自动创建默认 organization，并写入 owner membership。
+- 旧用户在读取 session/workspace 时会自动补齐个人工作区，兼容已有本地数据库。
+- `/api/auth/session` 的用户 payload 可携带当前 workspace 信息：organizationId、organizationName、role。
+- 新增 workspace 服务：读取工作区、修改组织名称、owner 邀请本地成员、member 管理操作会被拒绝。
+- 新增 `/api/account/workspace` GET/PATCH 与 `/api/account/workspace/members` POST。
+- 前端 API client 新增 `fetchAccountWorkspace()`、`updateAccountWorkspace()`、`inviteWorkspaceMember()`。
+- `/settings` 新增 Team 标签页，可查看工作区、修改名称、邀请成员并显示一次性临时密码。
+
+验证：
+- `npm test -- src/server/account/workspace.test.ts src/server/db/schema.test.ts src/app/api/auth/session/route.test.ts src/app/api/account/workspace/route.test.ts src/app/api/account/workspace/members/route.test.ts src/lib/api/auth.test.ts src/app/settings/page.test.ts src/server/auth/service.test.ts`
+
+当前还剩：
+1. Organization shared workspace data：公司成员共享 saved bids / intents。
+2. Account deletion/export 账号数据导出与删除。
+3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
+4. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
+5. Compliance Manifest Lite：结构化需求、人工完成状态、备注和证据状态。
+6. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
+
+建议下一步：
+- 继续做 Organization shared workspace data，把 saved bids 与 intent workspace 从单用户视角升级为组织成员共享视图。
 
 ## Status Update Template
 

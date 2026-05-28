@@ -1,4 +1,5 @@
 import type { AppDatabase } from "@/server/db/client";
+import type { PublicWorkspace } from "@/server/account/workspace";
 import { ensureUser } from "@/server/bids/repository";
 import {
   createAnonymousUserCookie,
@@ -20,6 +21,7 @@ export type RequestPrincipal =
       role: UserRole;
       tier: AccountTier;
       features: FeatureKey[];
+      workspace?: PublicWorkspace;
     }
   | {
       kind: "anonymous";
@@ -46,6 +48,7 @@ export async function resolvePrincipal(
         role: sessionUser.role,
         tier: sessionUser.tier,
         features: sessionUser.features,
+        workspace: sessionUser.workspace,
       };
     }
   }

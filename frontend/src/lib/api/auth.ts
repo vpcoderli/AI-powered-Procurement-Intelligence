@@ -1,4 +1,5 @@
 import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlements";
+import type { WorkspaceRole } from "@/server/account/workspace";
 
 export type SubscriptionStatus = "none" | "trialing" | "active" | "past_due" | "canceled";
 export type SubscriptionSource = "admin_override" | "local_checkout" | "billing_provider";
@@ -10,6 +11,11 @@ export interface PublicUser {
   role: UserRole;
   tier: AccountTier;
   features: FeatureKey[];
+  workspace?: {
+    organizationId: string;
+    organizationName: string;
+    role: WorkspaceRole;
+  };
 }
 
 export interface AuthResponse {
@@ -47,10 +53,37 @@ export interface PasswordResetRequestResponse {
   expiresAt?: string;
 }
 
+export interface AccountWorkspaceMember {
+  userId: string;
+  email: string | null;
+  displayName: string | null;
+  workspaceRole: WorkspaceRole;
+  status: "active";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AccountWorkspaceResponse {
+  organization: {
+    id: string;
+    name: string;
+    createdAt: string;
+    updatedAt: string;
+  };
+  currentUserRole: WorkspaceRole;
+  members: AccountWorkspaceMember[];
+}
+
+export interface InviteWorkspaceMemberResponse {
+  member: AccountWorkspaceMember;
+  temporaryPassword: string;
+}
+
 type AuthErrorCode =
   | "ACCOUNT_DISABLED"
   | "AUTH_REQUIRED"
   | "EMAIL_ALREADY_REGISTERED"
+  | "FORBIDDEN"
   | "INVALID_CREDENTIALS"
   | "INVALID_REQUEST"
   | "INVALID_RESET_TOKEN"
@@ -92,6 +125,7 @@ function isApiErrorResponse(body: unknown): body is ApiErrorResponse {
     (code === "ACCOUNT_DISABLED" ||
       code === "AUTH_REQUIRED" ||
       code === "EMAIL_ALREADY_REGISTERED" ||
+      code === "FORBIDDEN" ||
       code === "INVALID_CREDENTIALS" ||
       code === "INVALID_REQUEST" ||
       code === "INVALID_RESET_TOKEN" ||
@@ -210,4 +244,36 @@ export async function confirmPasswordReset(input: {
   });
 
   return parseResponse<{ ok: true }>(response);
+}
+
+export async function fetchAccountWorkspace(): Promise<AccountWorkspaceResponse> {
+  const response = await fetch("/api/account/workspace");
+
+  return parseResponse<AccountWorkspaceResponse>(response);
+}
+
+export async function updateAccountWorkspace(input: {
+  name: string;
+}): Promise<AccountWorkspaceResponse> {
+  const response = await fetch("/api/account/workspace", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<AccountWorkspaceResponse>(response);
+}
+
+export async function inviteWorkspaceMember(input: {
+  email: string;
+  displayName?: string;
+  role: WorkspaceRole;
+}): Promise<InviteWorkspaceMemberResponse> {
+  const response = await fetch("/api/account/workspace/members", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<InviteWorkspaceMemberResponse>(response);
 }
