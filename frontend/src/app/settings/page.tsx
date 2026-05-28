@@ -26,6 +26,8 @@ import { useAuth } from "@/context/AuthContext";
 import {
   changePassword,
   AuthApiError,
+  cancelAccountSubscription,
+  createCheckoutSession,
   fetchAccountSubscription,
   fetchAccountWorkspace,
   inviteWorkspaceMember,
@@ -69,6 +71,8 @@ export default function SettingsPage() {
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [subscriptionData, setSubscriptionData] = useState<AccountSubscriptionResponse | null>(null);
   const [subscriptionError, setSubscriptionError] = useState("");
+  const [billingMessage, setBillingMessage] = useState("");
+  const [billingActionTier, setBillingActionTier] = useState<AccountTier | "cancel" | null>(null);
   const [workspaceData, setWorkspaceData] = useState<AccountWorkspaceResponse | null>(null);
   const [workspaceNameDraft, setWorkspaceNameDraft] = useState("");
   const [workspaceMessage, setWorkspaceMessage] = useState("");
@@ -143,7 +147,46 @@ export default function SettingsPage() {
     if (priceMonthlyUsd === null) return t("settings.customPricing");
     if (priceMonthlyUsd === 0) return t("settings.freePrice");
 
-    return t("settings.priceMonthly").replace("{price}", String(priceMonthlyUsd));
+     return t("settings.priceMonthly").replace("{price}", String(priceMonthlyUsd));
+  }
+
+  async function refreshSubscription() {
+    const data = await fetchAccountSubscription();
+    setSubscriptionData(data);
+    return data;
+  }
+
+  async function handleStartCheckout(tier: AccountTier) {
+    setBillingMessage("");
+    setSubscriptionError("");
+    setBillingActionTier(tier);
+
+    try {
+      const result = await createCheckoutSession({ tier });
+      setBillingMessage(t("settings.checkoutStarted"));
+      window.history.replaceState(null, "", result.checkoutSession.checkoutUrl);
+      await refreshSubscription();
+    } catch (error) {
+      setSubscriptionError(error instanceof Error ? error.message : t("settings.checkoutError"));
+    } finally {
+      setBillingActionTier(null);
+    }
+  }
+
+  async function handleCancelSubscription() {
+    setBillingMessage("");
+    setSubscriptionError("");
+    setBillingActionTier("cancel");
+
+    try {
+      const data = await cancelAccountSubscription();
+      setSubscriptionData(data);
+      setBillingMessage(t("settings.subscriptionCancelScheduled"));
+    } catch (error) {
+      setSubscriptionError(error instanceof Error ? error.message : t("settings.cancelSubscriptionError"));
+    } finally {
+      setBillingActionTier(null);
+    }
   }
 
   async function handleProfileSave() {
@@ -648,6 +691,7 @@ export default function SettingsPage() {
                     <h3 className="text-base font-semibold text-slate-900">{t("settings.availablePlans")}</h3>
                     <p className="text-sm font-medium text-slate-500">{t("settings.availablePlansDesc")}</p>
                   </div>
+                  {billingMessage && <p className="text-sm font-medium text-emerald-700">{billingMessage}</p>}
                   {subscriptionError && <p className="text-sm font-medium text-red-600">{subscriptionError}</p>}
                   {!subscriptionData && !subscriptionError && (
                     <p className="text-sm font-medium text-slate-500">{t("settings.loadingPlans")}</p>
@@ -655,6 +699,8 @@ export default function SettingsPage() {
                   <div className="grid gap-3 lg:grid-cols-2">
                     {(subscriptionData?.plans ?? []).map((plan) => {
                       const isCurrentPlan = user?.tier === plan.tier;
+                      const canSelfServe = plan.tier === "pro" || plan.tier === "business";
+                      const isWorking = billingActionTier === plan.tier;
 
                       return (
                         <div
@@ -686,7 +732,8 @@ export default function SettingsPage() {
                           </ul>
                           <Button
                             variant={isCurrentPlan ? "outline" : "default"}
-                            disabled
+                            disabled={isCurrentPlan || !canSelfServe || isWorking || !user}
+                            onClick={() => handleStartCheckout(plan.tier)}
                             className={`mt-4 w-full rounded-lg ${
                               isCurrentPlan ? "border-slate-200 text-slate-700" : "bg-slate-900 text-white"
                             }`}
@@ -695,12 +742,31 @@ export default function SettingsPage() {
                               ? t("settings.current")
                               : plan.tier === "enterprise"
                                 ? t("settings.contactSales")
-                                : t("settings.upgradeSoon")}
+                                : isWorking
+                                  ? t("settings.startingCheckout")
+                                  : t("settings.startCheckout")}
                           </Button>
                         </div>
                       );
                     })}
                   </div>
+                  {currentSubscription &&
+                    currentSubscription.status !== "none" &&
+                    !currentSubscription.cancelAtPeriodEnd && (
+                      <Button
+                        variant="outline"
+                        disabled={billingActionTier === "cancel" || !user}
+                        onClick={handleCancelSubscription}
+                        className="w-full rounded-lg border-slate-200 text-slate-700 sm:w-auto"
+                      >
+                        {billingActionTier === "cancel"
+                          ? t("settings.cancelingSubscription")
+                          : t("settings.cancelSubscription")}
+                      </Button>
+                    )}
+                  {currentSubscription?.cancelAtPeriodEnd && (
+                    <p className="text-sm font-medium text-amber-700">{t("settings.subscriptionCancelPending")}</p>
+                  )}
                 </div>
               </CardContent>
             </Card>

@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { eq, or } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
-import { accountSubscriptions, subscriptionEvents, users } from "@/server/db/schema";
+import { accountSubscriptions, billingCheckoutSessions, subscriptionEvents, users } from "@/server/db/schema";
 import {
+  isAccountTier,
   ACCOUNT_TIER_LABELS,
   normalizeAccountTier,
   type AccountTier,
@@ -35,6 +36,23 @@ export interface AccountSubscriptionResponse {
   plans: SubscriptionPlan[];
 }
 
+export interface CheckoutSessionView {
+  id: string;
+  userId: string;
+  tier: AccountTier;
+  status: "open" | "completed" | "expired" | "canceled";
+  provider: "local_checkout" | "billing_provider";
+  providerSessionId: string;
+  checkoutUrl: string;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CheckoutSessionResponse {
+  checkoutSession: CheckoutSessionView;
+}
+
 export interface UpsertAccountSubscriptionInput {
   tier: AccountTier;
   status: SubscriptionStatus;
@@ -44,6 +62,27 @@ export interface UpsertAccountSubscriptionInput {
   provider?: string | null;
   providerCustomerId?: string | null;
   providerSubscriptionId?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CreateCheckoutSessionInput {
+  tier: AccountTier;
+  origin?: string;
+}
+
+export interface BillingProviderEvent {
+  id: string;
+  type: "checkout.completed" | "subscription.updated" | "subscription.deleted";
+  provider?: string;
+  userId?: string;
+  email?: string;
+  providerCustomerId?: string | null;
+  providerSubscriptionId?: string | null;
+  providerSessionId?: string | null;
+  tier?: AccountTier;
+  status?: SubscriptionStatus;
+  currentPeriodEnd?: string | null;
+  cancelAtPeriodEnd?: boolean;
   metadata?: Record<string, unknown>;
 }
 
@@ -85,6 +124,10 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function addHoursIso(timestamp: string, hours: number) {
+  return new Date(new Date(timestamp).getTime() + hours * 60 * 60 * 1000).toISOString();
+}
+
 function isSubscriptionStatus(value: unknown): value is SubscriptionStatus {
   return typeof value === "string" && SUBSCRIPTION_STATUSES.includes(value as SubscriptionStatus);
 }
@@ -113,6 +156,58 @@ function getUserOrThrow(db: AppDatabase, userId: string) {
   }
 
   return user;
+}
+
+function writeSubscriptionEvent(
+  db: AppDatabase,
+  input: {
+    userId: string;
+    subscriptionId?: string | null;
+    providerEventId?: string | null;
+    eventType: string;
+    fromTier?: AccountTier | null;
+    toTier?: AccountTier | null;
+    fromStatus?: SubscriptionStatus | null;
+    toStatus?: SubscriptionStatus | null;
+    source: SubscriptionSource;
+    metadata?: Record<string, unknown>;
+    createdAt?: string;
+  },
+) {
+  db.insert(subscriptionEvents)
+    .values({
+      id: `subevt_${randomUUID()}`,
+      providerEventId: input.providerEventId ?? null,
+      userId: input.userId,
+      subscriptionId: input.subscriptionId ?? null,
+      eventType: input.eventType,
+      fromTier: input.fromTier ?? null,
+      toTier: input.toTier ?? null,
+      fromStatus: input.fromStatus ?? null,
+      toStatus: input.toStatus ?? null,
+      source: input.source,
+      metadataJson: JSON.stringify(input.metadata ?? {}),
+      createdAt: input.createdAt ?? nowIso(),
+    })
+    .run();
+}
+
+function checkoutSessionFromRow(row: typeof billingCheckoutSessions.$inferSelect): CheckoutSessionView {
+  return {
+    id: row.id,
+    userId: row.userId,
+    tier: normalizeAccountTier(row.tier),
+    status:
+      row.status === "completed" || row.status === "expired" || row.status === "canceled"
+        ? row.status
+        : "open",
+    provider: row.provider === "billing_provider" ? "billing_provider" : "local_checkout",
+    providerSessionId: row.providerSessionId,
+    checkoutUrl: row.checkoutUrl,
+    expiresAt: row.expiresAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
 }
 
 export function getAccountSubscription(db: AppDatabase, userId: string): AccountSubscriptionResponse {
@@ -158,6 +253,10 @@ export function upsertAccountSubscription(
   db: AppDatabase,
   userId: string,
   input: UpsertAccountSubscriptionInput,
+  eventOptions?: {
+    eventType?: string;
+    providerEventId?: string | null;
+  },
 ): AccountSubscriptionResponse {
   const user = getUserOrThrow(db, userId);
   const existing = db
@@ -213,21 +312,241 @@ export function upsertAccountSubscription(
     .where(eq(users.id, userId))
     .run();
 
-  db.insert(subscriptionEvents)
+  writeSubscriptionEvent(db, {
+    userId,
+    subscriptionId,
+    eventType: eventOptions?.eventType ?? "subscription_updated",
+    providerEventId: eventOptions?.providerEventId ?? null,
+    fromTier,
+    toTier: input.tier,
+    fromStatus,
+    toStatus: input.status,
+    source: input.source,
+    metadata: input.metadata,
+    createdAt: timestamp,
+  });
+
+  return getAccountSubscription(db, userId);
+}
+
+export function createCheckoutSession(
+  db: AppDatabase,
+  userId: string,
+  input: CreateCheckoutSessionInput,
+): CheckoutSessionResponse {
+  getUserOrThrow(db, userId);
+
+  if (input.tier === "free" || input.tier === "enterprise") {
+    throw new InvalidSubscriptionInputError("Only Pro and Business plans support self-service checkout");
+  }
+
+  const timestamp = nowIso();
+  const checkoutId = `checkout_${randomUUID()}`;
+  const providerSessionId = `local_cs_${randomUUID()}`;
+  const origin = input.origin?.replace(/\/$/, "") ?? "";
+  const checkoutUrl = `${origin}/settings?checkoutSession=${checkoutId}`;
+
+  db.insert(billingCheckoutSessions)
     .values({
-      id: `subevt_${randomUUID()}`,
+      id: checkoutId,
       userId,
-      subscriptionId,
-      eventType: "subscription_updated",
-      fromTier,
-      toTier: input.tier,
-      fromStatus,
-      toStatus: input.status,
-      source: input.source,
-      metadataJson: JSON.stringify(input.metadata ?? {}),
+      tier: input.tier,
+      status: "open",
+      provider: "local_checkout",
+      providerSessionId,
+      checkoutUrl,
+      expiresAt: addHoursIso(timestamp, 1),
+      completedAt: null,
       createdAt: timestamp,
+      updatedAt: timestamp,
     })
     .run();
+
+  writeSubscriptionEvent(db, {
+    userId,
+    eventType: "checkout_started",
+    fromTier: null,
+    toTier: input.tier,
+    fromStatus: null,
+    toStatus: "none",
+    source: "local_checkout",
+    metadata: { checkoutSessionId: checkoutId, providerSessionId },
+    createdAt: timestamp,
+  });
+
+  const row = db
+    .select()
+    .from(billingCheckoutSessions)
+    .where(eq(billingCheckoutSessions.id, checkoutId))
+    .limit(1)
+    .get();
+
+  if (!row) {
+    throw new InvalidSubscriptionInputError("Checkout session could not be created");
+  }
+
+  return { checkoutSession: checkoutSessionFromRow(row) };
+}
+
+function findProviderEvent(db: AppDatabase, providerEventId: string) {
+  return db
+    .select()
+    .from(subscriptionEvents)
+    .where(eq(subscriptionEvents.providerEventId, providerEventId))
+    .limit(1)
+    .get();
+}
+
+function findUserForProviderEvent(db: AppDatabase, event: BillingProviderEvent) {
+  if (event.userId) {
+    return getUserOrThrow(db, event.userId);
+  }
+
+  if (event.email) {
+    const user = db.select().from(users).where(eq(users.email, event.email)).limit(1).get();
+    if (user) return user;
+  }
+
+  if (event.providerSubscriptionId || event.providerCustomerId) {
+    const row = db
+      .select()
+      .from(accountSubscriptions)
+      .where(
+        or(
+          event.providerSubscriptionId
+            ? eq(accountSubscriptions.providerSubscriptionId, event.providerSubscriptionId)
+            : undefined,
+          event.providerCustomerId
+            ? eq(accountSubscriptions.providerCustomerId, event.providerCustomerId)
+            : undefined,
+        ),
+      )
+      .limit(1)
+      .get();
+    if (row) return getUserOrThrow(db, row.userId);
+  }
+
+  throw new InvalidSubscriptionInputError("Provider event must identify a user");
+}
+
+function normalizedProviderEventTier(event: BillingProviderEvent): AccountTier {
+  if (event.type === "subscription.deleted") {
+    return "free";
+  }
+
+  if (!isAccountTier(event.tier)) {
+    throw new InvalidSubscriptionInputError("Provider event must include a valid tier");
+  }
+
+  return event.tier;
+}
+
+function normalizedProviderEventStatus(event: BillingProviderEvent): SubscriptionStatus {
+  if (event.type === "subscription.deleted") {
+    return "canceled";
+  }
+
+  if (!isSubscriptionStatus(event.status)) {
+    throw new InvalidSubscriptionInputError("Provider event must include a valid subscription status");
+  }
+
+  return event.status;
+}
+
+export function applyBillingProviderEvent(
+  db: AppDatabase,
+  event: BillingProviderEvent,
+): AccountSubscriptionResponse {
+  if (!event.id || !event.type) {
+    throw new InvalidSubscriptionInputError("Provider event must include id and type");
+  }
+
+  const user = findUserForProviderEvent(db, event);
+  const existingProviderEvent = findProviderEvent(db, event.id);
+
+  if (existingProviderEvent) {
+    return getAccountSubscription(db, user.id);
+  }
+
+  const tier = normalizedProviderEventTier(event);
+  const status = normalizedProviderEventStatus(event);
+  const result = upsertAccountSubscription(
+    db,
+    user.id,
+    {
+      tier,
+      status,
+      source: "billing_provider",
+      provider: event.provider ?? "billing_provider",
+      providerCustomerId: event.providerCustomerId ?? null,
+      providerSubscriptionId: event.providerSubscriptionId ?? null,
+      currentPeriodEnd: event.currentPeriodEnd ?? null,
+      cancelAtPeriodEnd: event.cancelAtPeriodEnd ?? false,
+      metadata: {
+        ...event.metadata,
+        providerEventType: event.type,
+        providerSessionId: event.providerSessionId ?? null,
+      },
+    },
+    {
+      eventType: event.type,
+      providerEventId: event.id,
+    },
+  );
+
+  if (event.providerSessionId) {
+    const timestamp = nowIso();
+
+    db.update(billingCheckoutSessions)
+      .set({
+        status: event.type === "checkout.completed" ? "completed" : "open",
+        completedAt: event.type === "checkout.completed" ? timestamp : null,
+        updatedAt: timestamp,
+      })
+      .where(eq(billingCheckoutSessions.providerSessionId, event.providerSessionId))
+      .run();
+  }
+
+  return result;
+}
+
+export function cancelAccountSubscription(db: AppDatabase, userId: string): AccountSubscriptionResponse {
+  getUserOrThrow(db, userId);
+  const row = db
+    .select()
+    .from(accountSubscriptions)
+    .where(eq(accountSubscriptions.userId, userId))
+    .limit(1)
+    .get();
+
+  if (!row || normalizeSubscriptionStatus(row.status) === "none") {
+    throw new InvalidSubscriptionInputError("No active subscription to cancel");
+  }
+
+  const timestamp = nowIso();
+  const status = normalizeSubscriptionStatus(row.status);
+  const tier = normalizeAccountTier(row.tier);
+
+  db.update(accountSubscriptions)
+    .set({
+      cancelAtPeriodEnd: 1,
+      updatedAt: timestamp,
+    })
+    .where(eq(accountSubscriptions.id, row.id))
+    .run();
+
+  writeSubscriptionEvent(db, {
+    userId,
+    subscriptionId: row.id,
+    eventType: "subscription_cancel_scheduled",
+    fromTier: tier,
+    toTier: tier,
+    fromStatus: status,
+    toStatus: status,
+    source: normalizeSubscriptionSource(row.source),
+    metadata: { providerSubscriptionId: row.providerSubscriptionId },
+    createdAt: timestamp,
+  });
 
   return getAccountSubscription(db, userId);
 }

@@ -47,6 +47,23 @@ export interface AccountSubscriptionResponse {
   plans: SubscriptionPlan[];
 }
 
+export interface CheckoutSession {
+  id: string;
+  userId: string;
+  tier: AccountTier;
+  status: "open" | "completed" | "expired" | "canceled";
+  provider: "local_checkout" | "billing_provider";
+  providerSessionId: string;
+  checkoutUrl: string;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CheckoutSessionResponse {
+  checkoutSession: CheckoutSession;
+}
+
 export interface PasswordResetRequestResponse {
   ok: true;
   resetToken?: string;
@@ -221,6 +238,24 @@ export async function changePassword(input: {
 
 export async function fetchAccountSubscription(): Promise<AccountSubscriptionResponse> {
   const response = await fetch("/api/account/subscription");
+
+  return parseResponse<AccountSubscriptionResponse>(response);
+}
+
+export async function createCheckoutSession(input: { tier: AccountTier }): Promise<CheckoutSessionResponse> {
+  const response = await fetch("/api/account/subscription/checkout", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<CheckoutSessionResponse>(response);
+}
+
+export async function cancelAccountSubscription(): Promise<AccountSubscriptionResponse> {
+  const response = await fetch("/api/account/subscription/cancel", {
+    method: "POST",
+  });
 
   return parseResponse<AccountSubscriptionResponse>(response);
 }

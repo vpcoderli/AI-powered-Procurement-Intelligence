@@ -51,8 +51,23 @@ export function runMigrations(db: AppDatabase) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS billing_checkout_sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      tier TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      provider TEXT NOT NULL DEFAULT 'local_checkout',
+      provider_session_id TEXT NOT NULL,
+      checkout_url TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      completed_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS subscription_events (
       id TEXT PRIMARY KEY,
+      provider_event_id TEXT,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       subscription_id TEXT REFERENCES account_subscriptions(id) ON DELETE SET NULL,
       event_type TEXT NOT NULL,
@@ -309,6 +324,8 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_admin_user_audit_created ON admin_user_audit_logs(created_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_account_subscriptions_user_id ON account_subscriptions(user_id);
     CREATE INDEX IF NOT EXISTS idx_account_subscriptions_provider_subscription ON account_subscriptions(provider_subscription_id);
+    CREATE INDEX IF NOT EXISTS idx_billing_checkout_sessions_user_id ON billing_checkout_sessions(user_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_checkout_sessions_provider_session_id ON billing_checkout_sessions(provider_session_id);
     CREATE INDEX IF NOT EXISTS idx_subscription_events_user_id ON subscription_events(user_id);
     CREATE INDEX IF NOT EXISTS idx_subscription_events_subscription_id ON subscription_events(subscription_id);
     CREATE INDEX IF NOT EXISTS idx_subscription_events_created ON subscription_events(created_at);
@@ -364,4 +381,17 @@ export function runMigrations(db: AppDatabase) {
   if (!userColumns.has("is_disabled")) {
     sqlite.exec("ALTER TABLE users ADD COLUMN is_disabled INTEGER NOT NULL DEFAULT 0");
   }
+
+  const subscriptionEventColumns = new Set(
+    sqlite
+      .prepare("PRAGMA table_info(subscription_events)")
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+
+  if (!subscriptionEventColumns.has("provider_event_id")) {
+    sqlite.exec("ALTER TABLE subscription_events ADD COLUMN provider_event_id TEXT");
+  }
+
+  sqlite.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_subscription_events_provider_event_id ON subscription_events(provider_event_id)");
 }
