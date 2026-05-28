@@ -18,7 +18,7 @@ This document is the working checklist for local development. Update it after ea
 | Account self-service | `/settings` shows authenticated email/display name, updates display name, changes password after validating current password. |
 | User data model basics | `users` table, `sessions` table, `role`, `account_tier`, and `is_disabled` account state. |
 | Admin auth helper | `requireAdmin()` checks authenticated non-disabled admin sessions; local bypass for development. |
-| Admin user access console | `/admin` lists registered users, filters/searches accounts, changes role/tier/enabled state, and shows access audit logs. |
+| Admin user access console | `/admin` lists registered users, filters/searches accounts, changes role/tier/enabled state, shows access audit logs, and presents login/forbidden states for non-admin access. |
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs. |
 | Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin-only console access. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, and tier-aware locked states for gated features. |
@@ -36,7 +36,7 @@ This document is the working checklist for local development. Update it after ea
 | Area | What exists | Missing to be useful |
 |---|---|---|
 | Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; admin can enable/disable users, search/filter users, and review access audit logs | Password reset, admin-created accounts, account deletion/export |
-| Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users | Route-level friendly forbidden UI, admin page redirect/empty state for non-admin users |
+| Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab | Billing provider sync, real checkout, invoices, cancellation |
 | Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits | Apply guards/limits to every future gated API and add richer usage dashboards |
@@ -256,6 +256,35 @@ Current local limits:
 
 建议下一步：
 - 优先开发 Compliance Manifest Lite，因为它直接承接 Submission Guidance，让用户开始把投标要求转成可执行清单。
+
+## Completed Phase: Admin Page Access Guard
+
+本阶段完成：
+- `/admin` 页面接入当前 session 权限判断。
+- 未登录用户访问 `/admin` 时显示登录提示和登录入口。
+- 已登录但非 admin 用户访问 `/admin` 时显示无权限提示和返回控制台入口。
+- 只有 admin 用户才触发 admin 数据源、用户、审计日志等管理 API 加载。
+- 补齐中英文权限状态文案和 admin 页面静态检查测试。
+
+验证：
+- `npm test -- src/app/admin/page.test.ts`
+- `npm test -- src/app/admin/page.test.ts src/app/layout.test.ts src/lib/api/admin.test.ts`
+- `npm test`
+- `npm run lint`
+- `npm run build`
+- 浏览器烟测：打开 `/admin`，当前 admin 会话正常进入“管理员运维”页面。
+
+当前还剩：
+1. Compliance Manifest Lite：结构化需求、人工完成状态、备注和证据状态。
+2. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
+3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
+4. Password reset 邮件 token 流程。
+5. Admin 创建账号 / 邀请用户流程。
+6. Organization/workspace 多用户公司账户模型。
+7. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
+
+建议下一步：
+- 继续做 Admin 创建账号 / 邀请用户流程，补齐管理员对普通账号生命周期的主动管理能力。
 
 ## Status Update Template
 

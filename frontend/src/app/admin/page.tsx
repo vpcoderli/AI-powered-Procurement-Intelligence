@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import {
   Activity,
   AlertTriangle,
@@ -14,11 +15,12 @@ import {
   UserCog,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { useAuth } from "@/context/AuthContext";
 import {
   Table,
   TableBody,
@@ -132,8 +134,46 @@ function SummaryCard({
   );
 }
 
+function AdminAccessState({
+  icon: Icon,
+  title,
+  description,
+  action,
+}: {
+  icon: typeof ShieldCheck;
+  title: string;
+  description: string;
+  action?: {
+    href: string;
+    label: string;
+  };
+}) {
+  return (
+    <main className="mx-auto flex w-full max-w-3xl flex-col gap-5 pb-8">
+      <section className="rounded-lg border border-slate-200 bg-white p-6 text-center shadow-sm">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
+          <Icon size={22} aria-hidden="true" />
+        </div>
+        <h1 className="mt-4 text-2xl font-semibold tracking-normal text-slate-950">{title}</h1>
+        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600">{description}</p>
+        {action ? (
+          <Link
+            href={action.href}
+            className={buttonVariants({
+              className: "mt-5 h-10 rounded-lg bg-slate-900 px-4 text-white hover:bg-slate-800",
+            })}
+          >
+            {action.label}
+          </Link>
+        ) : null}
+      </section>
+    </main>
+  );
+}
+
 export default function AdminPage() {
   const { t } = useLanguage();
+  const { user, isLoading: isAuthLoading } = useAuth();
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [pendingSourceId, setPendingSourceId] = useState<string | null>(null);
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
@@ -141,8 +181,11 @@ export default function AdminPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [runningSourceId, setRunningSourceId] = useState<string | null>(null);
   const [runMessage, setRunMessage] = useState<string | null>(null);
+  const isAdmin = user?.role === "admin";
 
   const load = useCallback(() => {
+    if (!isAdmin) return;
+
     setState({ status: "loading" });
     Promise.all([
       listAdminDataSources(),
@@ -162,11 +205,14 @@ export default function AdminPage() {
       .catch(() => {
         setState({ status: "error" });
       });
-  }, [userFilters]);
+  }, [isAdmin, userFilters]);
 
   useEffect(() => {
+    if (isAuthLoading) return;
+    if (!isAdmin) return;
+
     queueMicrotask(load);
-  }, [load]);
+  }, [isAdmin, isAuthLoading, load]);
 
   const summary = state.status === "ready" ? state.data.summary : null;
   const sources = state.status === "ready" ? state.data.sources : [];
@@ -273,6 +319,38 @@ export default function AdminPage() {
         setPendingUserId(null);
       });
   };
+
+  if (isAuthLoading) {
+    return (
+      <AdminAccessState
+        icon={ShieldCheck}
+        title={t("admin.authLoading")}
+        description={t("admin.authLoadingDescription")}
+      />
+    );
+  }
+
+  if (!user) {
+    return (
+      <AdminAccessState
+        icon={ShieldCheck}
+        title={t("admin.loginRequiredTitle")}
+        description={t("admin.loginRequiredDescription")}
+        action={{ href: "/login", label: t("admin.loginAction") }}
+      />
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <AdminAccessState
+        icon={ShieldCheck}
+        title={t("admin.forbiddenTitle")}
+        description={t("admin.forbiddenDescription")}
+        action={{ href: "/", label: t("admin.returnToDashboard") }}
+      />
+    );
+  }
 
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 pb-8">

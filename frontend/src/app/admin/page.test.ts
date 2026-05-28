@@ -8,6 +8,12 @@ describe("admin page", () => {
     expect(page).toContain("listAdminUsers");
     expect(page).toContain("listAdminUserAuditLogs");
     expect(page).toContain("updateAdminUserAccess");
+    expect(page).toContain("useAuth");
+    expect(page).toContain("isAdmin");
+    expect(page).toContain('t("admin.authLoading")');
+    expect(page).toContain('t("admin.loginRequiredTitle")');
+    expect(page).toContain('t("admin.forbiddenTitle")');
+    expect(page).toContain('if (!isAdmin) return');
     expect(page).toContain('t("admin.users")');
     expect(page).toContain('t("admin.userAuditLogs")');
     expect(page).toContain("userFilters");
