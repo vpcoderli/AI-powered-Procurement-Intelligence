@@ -16,6 +16,22 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Billing Provider
+
+Local development works without external billing credentials. In that mode, checkout and billing portal sessions fall back to local/template URLs.
+
+To enable Stripe-backed subscription billing, configure:
+
+```bash
+BILLING_PROVIDER=stripe
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_PRICE_PRO_MONTHLY=price_...
+STRIPE_PRICE_BUSINESS_MONTHLY=price_...
+```
+
+Stripe webhooks should POST to `/api/billing/webhook` with the standard `Stripe-Signature` header. The app maps Stripe checkout, subscription, and invoice events into the internal billing event format before updating user tiers and subscription state.
+
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.

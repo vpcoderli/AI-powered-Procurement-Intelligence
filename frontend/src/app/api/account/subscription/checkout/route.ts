@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json(
-      createCheckoutSession(db, sessionUser.id, {
+      await createCheckoutSession(db, sessionUser.id, {
         tier: body.tier,
         origin: new URL(request.url).origin,
       }),

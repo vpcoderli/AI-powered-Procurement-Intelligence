@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { accountSubscriptions, billingCheckoutSessions, billingInvoices, subscriptionEvents } from "@/server/db/schema";
+import type { BillingProviderAdapter } from "./providers";
 import {
   applyBillingProviderEvent,
   cancelAccountSubscription,
@@ -149,6 +150,49 @@ describe("billing subscriptions service", () => {
     expect(result.checkoutSession.checkoutUrl).toContain(encodeURIComponent("http://localhost:3000/settings"));
   });
 
+  it("creates checkout through a real provider adapter when one is configured", async () => {
+    vi.stubEnv("STRIPE_PRICE_PRO_MONTHLY", "price_pro_monthly");
+    const providerAdapter: BillingProviderAdapter = {
+      name: "stripe",
+      createCheckoutSession: vi.fn().mockResolvedValue({
+        providerSessionId: "cs_test_123",
+        checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_123",
+        expiresAt: "2026-05-28T01:00:00.000Z",
+      }),
+      createCustomerPortalSession: vi.fn(),
+      scheduleSubscriptionCancel: vi.fn(),
+    };
+
+    const result = await createCheckoutSession(testDb.db, "user_buyer", {
+      tier: "pro",
+      origin: "http://localhost:3000",
+      providerAdapter,
+    });
+
+    expect(providerAdapter.createCheckoutSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userId: "user_buyer",
+        email: "buyer@example.com",
+        tier: "pro",
+        priceId: "price_pro_monthly",
+        successUrl: expect.stringContaining("checkout=success"),
+        cancelUrl: "http://localhost:3000/settings?checkout=cancel",
+      }),
+    );
+    expect(result.checkoutSession).toMatchObject({
+      provider: "billing_provider",
+      providerSessionId: "cs_test_123",
+      checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_123",
+      expiresAt: "2026-05-28T01:00:00.000Z",
+    });
+    expect(testDb.db.select().from(subscriptionEvents).all()).toEqual([
+      expect.objectContaining({
+        eventType: "checkout_started",
+        source: "billing_provider",
+      }),
+    ]);
+  });
+
   it("creates a customer portal session from provider customer state", () => {
     vi.stubEnv("BILLING_PROVIDER", "stripe");
     vi.stubEnv(
@@ -176,6 +220,41 @@ describe("billing subscriptions service", () => {
     expect(result.portalSession.portalUrl).toContain("https://billing.example.test/portal");
     expect(result.portalSession.portalUrl).toContain("customer=cus_123");
     expect(result.portalSession.portalUrl).toContain(encodeURIComponent("http://localhost:3000/settings"));
+  });
+
+  it("creates customer portal through a real provider adapter when one is configured", async () => {
+    upsertAccountSubscription(testDb.db, "user_buyer", {
+      tier: "business",
+      status: "active",
+      source: "billing_provider",
+      provider: "stripe",
+      providerCustomerId: "cus_123",
+      providerSubscriptionId: "sub_123",
+      currentPeriodEnd: "2026-06-28T00:00:00.000Z",
+    });
+    const providerAdapter: BillingProviderAdapter = {
+      name: "stripe",
+      createCheckoutSession: vi.fn(),
+      createCustomerPortalSession: vi.fn().mockResolvedValue({
+        portalUrl: "https://billing.stripe.com/session/bps_123",
+      }),
+      scheduleSubscriptionCancel: vi.fn(),
+    };
+
+    const result = await createCustomerPortalSession(testDb.db, "user_buyer", {
+      origin: "http://localhost:3000",
+      providerAdapter,
+    });
+
+    expect(providerAdapter.createCustomerPortalSession).toHaveBeenCalledWith({
+      userId: "user_buyer",
+      providerCustomerId: "cus_123",
+      returnUrl: "http://localhost:3000/settings",
+    });
+    expect(result.portalSession).toMatchObject({
+      provider: "billing_provider",
+      portalUrl: "https://billing.stripe.com/session/bps_123",
+    });
   });
 
   it("syncs a provider checkout completion into the subscription tier", () => {
@@ -361,6 +440,39 @@ describe("billing subscriptions service", () => {
         }),
       ]),
     );
+  });
+
+  it("schedules provider-side cancellation before marking local subscription canceling", async () => {
+    upsertAccountSubscription(testDb.db, "user_buyer", {
+      tier: "pro",
+      status: "active",
+      source: "billing_provider",
+      provider: "stripe",
+      providerCustomerId: "cus_123",
+      providerSubscriptionId: "sub_123",
+      currentPeriodEnd: "2026-06-28T00:00:00.000Z",
+    });
+    const providerAdapter: BillingProviderAdapter = {
+      name: "stripe",
+      createCheckoutSession: vi.fn(),
+      createCustomerPortalSession: vi.fn(),
+      scheduleSubscriptionCancel: vi.fn().mockResolvedValue({
+        cancelAtPeriodEnd: true,
+        currentPeriodEnd: "2026-06-28T00:00:00.000Z",
+      }),
+    };
+
+    const result = await cancelAccountSubscription(testDb.db, "user_buyer", { providerAdapter });
+
+    expect(providerAdapter.scheduleSubscriptionCancel).toHaveBeenCalledWith({
+      userId: "user_buyer",
+      providerSubscriptionId: "sub_123",
+    });
+    expect(result.subscription).toMatchObject({
+      tier: "pro",
+      status: "active",
+      cancelAtPeriodEnd: true,
+    });
   });
 
   it("cancels subscriptions scheduled to end after the paid period expires", () => {

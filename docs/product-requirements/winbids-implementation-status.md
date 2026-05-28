@@ -33,7 +33,7 @@ This document is the working checklist for local development. Update it after ea
 | Usage limits | Central saved bid and intent workspace quota checks by tier; authenticated users are counted at workspace scope; APIs return `USAGE_LIMIT_REACHED` before creating over-limit resources; Settings shows current workspace usage vs plan limits. |
 | Notification delivery foundation | `notification_outbox`, file/console/http providers, retryable delivery worker, user notification preferences, invitation delivery status, admin notification history UI, and admin delivery trigger API/UI. |
 | Subscription foundation | `account_subscriptions`, `subscription_events`, plan catalog, account subscription API, Settings Billing tab. |
-| Billing provider sync foundation | `billing_checkout_sessions`, checkout creation API, provider webhook intake, provider event idempotency, subscription status reconciliation, lifecycle reconciliation, and Settings self-service upgrade/cancel controls. |
+| Billing provider sync foundation | `billing_checkout_sessions`, checkout creation API, Stripe SDK/API adapter, Stripe webhook signature verification/mapping, provider event idempotency, subscription status reconciliation, lifecycle reconciliation, and Settings self-service upgrade/cancel controls. |
 | Invoice / payment history foundation | `billing_invoices`, provider invoice event sync, payment-failed status handling, account invoice API, Settings invoice history UI, and optional HMAC webhook signature verification via `BILLING_WEBHOOK_SECRET`. |
 | Customer portal foundation | Hosted checkout and customer portal URL templates, provider/customer placeholders, account portal API, and Settings Manage Billing entry. |
 | Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, CA/TX/NY/FL/IL runner wiring. |
@@ -66,7 +66,7 @@ This document is the working checklist for local development. Update it after ea
 | 使用额度限制 | Partial | Saved bids and intent workspace limits exist by tier; `/api/account/usage` and Settings Usage Dashboard show current usage, remaining quota, and upgrade prompt. |
 | 通知偏好与投递状态 | Partial | Users can persist saved-search alert and marketing preferences; disabled saved-search alerts are skipped by the notification service; invited members show latest delivery status; Admin can view notification outbox rows and manually trigger delivery. |
 | 订阅数据基础 | Partial | `account_subscriptions`, `subscription_events`, plan catalog, and Settings Billing tab exist. |
-| 自助升级/取消基础 | Partial | Settings Billing can start Pro/Business checkout sessions, receive provider-compatible webhook updates, sync account tier/status, dedupe provider events, schedule cancellation at period end, and reconcile expired/canceled/past-due access. |
+| 自助升级/取消基础 | Partial | Settings Billing can start Pro/Business checkout sessions through local fallback or Stripe Checkout, receive provider-compatible/Stripe webhook updates, sync account tier/status, dedupe provider events, schedule provider-side cancellation at period end, and reconcile expired/canceled/past-due access. |
 | 发票/支付历史基础 | Partial | Provider invoice paid/payment-failed events write `billing_invoices`; users can read invoice history in Settings; signed webhook verification is supported when `BILLING_WEBHOOK_SECRET` is configured. |
 | 支付服务商配置/门户基础 | Partial | Hosted checkout/customer portal templates can redirect to provider URLs; users can open Manage Billing from Settings. |
 
@@ -74,7 +74,7 @@ This document is the working checklist for local development. Update it after ea
 
 | Priority | Capability | Needed Work | Why It Matters |
 |---:|---|---|---|
-| P0 | Production Billing Provider Hardening | Add real provider SDK/API calls, provider-specific event mapping, deployment env guidance, and end-to-end sandbox test credentials. | The current boundary is provider-compatible, but not yet production payment processing. |
+| P0 | Production Billing Provider Hardening | Add end-to-end Stripe sandbox verification, provider dashboard setup notes, and production credential/deployment runbook. | The SDK/API adapter exists; the remaining work is environment hardening and live sandbox proof. |
 | P1 | Invoice / Payment History Polish | Add PDF/download affordances, invoice filters, customer-facing payment retry links, and richer invoice detail. | Paid users need a complete billing record experience. |
 | P1 | Trial / Dunning Lifecycle | Add user-facing payment retry/reminder emails and provider-specific dunning events. | Prevents stale paid access when payment state changes. |
 | P1 | Account Deletion / Export Polish | Add admin-facing deletion audit review and richer export format/version metadata. | Required for serious account management and compliance readiness. |
@@ -101,7 +101,7 @@ This document is the working checklist for local development. Update it after ea
 | Organization/workspace model | Registered users get a default organization, session payload includes current workspace and owner/member role, Settings Team tab can rename workspace, invite local members, queue invitation email notifications, show latest invite delivery status, resend/revoke pending invitations, accept invitations, transfer owner, change member roles, disable/restore members, remove members, and saved bids/intents are shared across organization members | Invite acceptance analytics, richer team audit history, and granular operator/support roles |
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
-| Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, provider-compatible webhook sync, cancellation scheduling, subscription lifecycle reconciliation, invoice history, and optional webhook signature verification | Real payment provider SDK/API calls, provider-specific event mapping, sandbox credentials, payment retry links and dunning emails |
+| Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, Stripe SDK/API checkout and portal sessions, Stripe webhook mapping/signature verification, cancellation scheduling, subscription lifecycle reconciliation, invoice history, and optional generic webhook signature verification | Stripe sandbox verification/runbook, payment retry links and dunning emails |
 | Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits, Settings usage dashboard, and static coverage test; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated | Extend guards/limits as future gated APIs are added |
 | Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails | Full alert management UI, per-alert digest configuration, real email delivery provider |
 | Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, user preferences, invite delivery status, admin notification history, and admin delivery trigger exist | Scheduled worker deployment and production email provider hardening |
@@ -111,7 +111,7 @@ This document is the working checklist for local development. Update it after ea
 
 | Area | Needed capability |
 |---|---|
-| Production billing polish | Real provider SDK/API calls, provider-specific event mapping, sandbox credentials, payment retry links, and dunning emails. |
+| Production billing polish | Stripe sandbox verification/runbook, payment retry links, dunning emails, and richer provider dashboard setup notes. |
 | Organization team lifecycle | Invite acceptance analytics, richer team audit history, and granular operator/support roles. |
 | Response Workspace | Tasks, artifacts, internal checkpoints, reusable documents. |
 | Sourcing / quote workflow | Partner database, quote requests, quote comparison, attachment storage. |
@@ -122,12 +122,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Production Billing Provider SDK/API Adapter** next if the next sprint stays on monetization. If the next sprint stays on account lifecycle, prioritize Scheduled Notification Worker deployment and full Search Alerts management UI.
+Prioritize **Payment Retry / Dunning Communications** next if the next sprint stays on monetization. If the next sprint focuses on production readiness, prioritize Stripe sandbox end-to-end verification and deployment runbook.
 
 Reason:
 
 - The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Business-gated Compliance Manifest, and Pro-gated Pursue / No-Bid Decision now exist.
-- The remaining account gap is not basic registration; it is real payment provider SDK/API integration, provider-specific event mapping, payment retry/dunning communications, scheduled notification worker deployment, broader usage dashboards, and account export/deletion polish.
+- The remaining account gap is not basic registration; it is Stripe sandbox/deployment hardening, payment retry/dunning communications, scheduled notification worker deployment, broader usage dashboards, and account export/deletion polish.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
@@ -183,10 +183,10 @@ Current local limits:
 
 ## Suggested Implementation Order
 
-1. **Billing provider SDK/API adapter**
-   - Replace URL-template-only checkout/customer portal with real provider SDK/API calls.
-   - Map real provider checkout, customer, subscription, invoice, and payment retry events into `BillingProviderEvent`.
-   - Add sandbox credential docs and end-to-end sandbox verification.
+1. **Billing provider hardening**
+   - Run Stripe sandbox checkout/portal/webhook end to end with real test credentials.
+   - Add deployment runbook for provider dashboard webhook endpoints, price ids, and secrets.
+   - Add payment retry links and dunning email flows.
 
 2. **Account lifecycle**
    - Add scheduled notification worker deployment.
@@ -799,7 +799,32 @@ Current local limits:
 8. Entitlement Coverage Expansion：未来新增高级功能 API 时继续加入 coverage 审计。
 
 建议下一步：
-- 如果继续权限/商业化主线，做 Payment Retry / Dunning Communications；如果继续通知主线，做 Scheduled Notification Worker 和 Full Search Alerts UI。
+- 如果继续权限/商业化主线，做 Production Billing Provider SDK/API Adapter；如果继续通知主线，做 Scheduled Notification Worker 和 Full Search Alerts UI。
+
+## Completed Phase: Stripe Billing Provider SDK/API Adapter
+
+本阶段完成：
+- 新增 `stripe` SDK 依赖与 `BillingProviderAdapter` 抽象，保留本地/template checkout fallback。
+- Settings Billing 的 Pro/Business checkout 可在 `BILLING_PROVIDER=stripe` 时创建真实 Stripe Checkout subscription session。
+- Manage Billing 可在已有 `providerCustomerId` 时创建真实 Stripe Billing Portal session。
+- Cancel subscription 会在 Stripe 侧设置 `cancel_at_period_end=true` 后再更新本地取消状态。
+- `/api/billing/webhook` 支持 Stripe `Stripe-Signature` 验签，并把 `checkout.session.completed`、`customer.subscription.updated/deleted`、`invoice.paid`、`invoice.payment_failed` 映射为内部 `BillingProviderEvent`。
+- 新增 Stripe 价格环境变量说明：`STRIPE_PRICE_PRO_MONTHLY`、`STRIPE_PRICE_BUSINESS_MONTHLY`，并在 README 中补充本地/Stripe billing 配置。
+
+验证：
+- `npm test -- src/app/api/billing/webhook/route.test.ts src/server/billing/providers.test.ts src/server/billing/subscriptions.test.ts`
+
+当前还剩：
+1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
+2. Payment Retry / Dunning Communications：支付失败提醒邮件、支付重试链接、逾期提示 UI。
+3. Invoice / Payment History Polish：PDF 下载体验、筛选、支付重试链接、更完整的发票详情。
+4. Scheduled Notification Worker：部署环境中的定时投递任务。
+5. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+6. Usage Dashboard Expansion：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
+7. Entitlement Coverage Expansion：未来新增高级功能 API 时继续加入 coverage 审计。
+
+建议下一步：
+- 如果继续商业化主线，做 Payment Retry / Dunning Communications；如果要先稳定生产环境，做 Stripe Sandbox E2E Verification 和部署 runbook。
 
 ## Status Update Template
 

@@ -5,6 +5,7 @@ import {
   applyBillingProviderEvent,
   type BillingProviderEvent,
 } from "@/server/billing/subscriptions";
+import { constructStripeWebhookEvent, normalizeStripeWebhookEvent } from "@/server/billing/providers";
 import { db } from "@/server/db/client";
 
 function errorResponse(code: string, message: string, status: number) {
@@ -47,8 +48,40 @@ function verifyWebhookSignature(rawBody: string, signature: string | null) {
   return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
+function shouldUseStripeWebhook(request: Request) {
+  return (
+    process.env.BILLING_PROVIDER?.trim().toLowerCase() === "stripe" &&
+    Boolean(process.env.STRIPE_WEBHOOK_SECRET?.trim()) &&
+    Boolean(request.headers.get("stripe-signature"))
+  );
+}
+
+function constructStripeEvent(rawBody: string, signature: string | null) {
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+
+  if (!secret || !signature) {
+    throw new InvalidSubscriptionInputError("Stripe webhook configuration is incomplete");
+  }
+
+  return constructStripeWebhookEvent(rawBody, signature, secret);
+}
+
 export async function POST(request: Request) {
   const rawBody = await readBodyText(request);
+
+  if (shouldUseStripeWebhook(request)) {
+    try {
+      return NextResponse.json(applyBillingProviderEvent(db, normalizeStripeWebhookEvent(
+        constructStripeEvent(rawBody, request.headers.get("stripe-signature")),
+      )));
+    } catch (error) {
+      if (error instanceof InvalidSubscriptionInputError) {
+        return errorResponse("INVALID_REQUEST", error.message, 400);
+      }
+
+      return errorResponse("INVALID_SIGNATURE", "Invalid Stripe billing webhook signature", 401);
+    }
+  }
 
   if (!verifyWebhookSignature(rawBody, request.headers.get("x-billing-signature"))) {
     return errorResponse("INVALID_SIGNATURE", "Invalid billing webhook signature", 401);
