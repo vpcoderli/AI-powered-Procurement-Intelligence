@@ -34,6 +34,7 @@ import {
   deleteAccount,
   exportAccountData,
   fetchAccountSubscription,
+  fetchAccountUsage,
   fetchBillingInvoices,
   fetchAccountWorkspace,
   inviteWorkspaceMember,
@@ -47,6 +48,7 @@ import {
   updateWorkspaceMemberRole,
   type AccountWorkspaceMember,
   type AccountSubscriptionResponse,
+  type AccountUsageData,
   type AccountWorkspaceResponse,
   type BillingInvoicesResponse,
 } from "@/lib/api/auth";
@@ -82,6 +84,8 @@ export default function SettingsPage() {
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [subscriptionData, setSubscriptionData] = useState<AccountSubscriptionResponse | null>(null);
   const [subscriptionError, setSubscriptionError] = useState("");
+  const [usageData, setUsageData] = useState<AccountUsageData | null>(null);
+  const [usageError, setUsageError] = useState("");
   const [billingMessage, setBillingMessage] = useState("");
   const [billingActionTier, setBillingActionTier] = useState<AccountTier | "cancel" | "portal" | null>(null);
   const [billingInvoicesData, setBillingInvoicesData] = useState<BillingInvoicesResponse | null>(null);
@@ -135,6 +139,17 @@ export default function SettingsPage() {
         setBillingInvoicesError(error instanceof Error ? error.message : t("settings.invoiceLoadError"));
       });
 
+    fetchAccountUsage()
+      .then((data) => {
+        if (isCancelled) return;
+        setUsageData(data);
+        setUsageError("");
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        setUsageError(error instanceof Error ? error.message : t("settings.usageLoadError"));
+      });
+
     return () => {
       isCancelled = true;
     };
@@ -179,6 +194,16 @@ export default function SettingsPage() {
 
   function invoiceAmountLabel(amountCents: number, currency: string) {
     return `${currency} ${(amountCents / 100).toFixed(2)}`;
+  }
+
+  function usageLimitLabel(limit: number | null) {
+    return limit === null ? t("settings.unlimitedUsage") : String(limit);
+  }
+
+  function usageRemainingLabel(remaining: number | null) {
+    return remaining === null
+      ? t("settings.unlimitedUsage")
+      : t("settings.usageRemaining").replace("{remaining}", String(remaining));
   }
 
   async function refreshSubscription() {
@@ -569,6 +594,60 @@ export default function SettingsPage() {
                       {!enabled && (
                         <p className="mt-2 text-xs font-medium leading-5 text-slate-500">
                           {lockedFeatureMessage(feature.key)}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+
+            <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
+              <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
+                <CardTitle className="text-lg font-semibold text-slate-900">{t("settings.usageDashboard")}</CardTitle>
+                <CardDescription className="text-slate-500 font-medium">{t("settings.usageDashboardDesc")}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 p-6">
+                {usageError && <p className="text-sm font-medium text-red-600">{usageError}</p>}
+                {!usageData && !usageError && (
+                  <p className="text-sm font-medium text-slate-500">{t("settings.loadingUsage")}</p>
+                )}
+                {(usageData?.items ?? []).map((item) => {
+                  const percent =
+                    item.limit === null ? 100 : Math.min(Math.round((item.used / Math.max(item.limit, 1)) * 100), 100);
+
+                  return (
+                    <div key={item.feature} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">
+                            {t(`settings.usageFeature_${item.feature}`)}
+                          </p>
+                          <p className="mt-1 text-xs font-medium text-slate-500">
+                            {usageRemainingLabel(item.remaining)}
+                          </p>
+                        </div>
+                        <Badge
+                          variant="outline"
+                          className={`w-fit ${
+                            item.isLimited ? "border-amber-200 bg-amber-50 text-amber-800" : "border-slate-200 bg-white text-slate-700"
+                          }`}
+                        >
+                          {item.used} / {usageLimitLabel(item.limit)}
+                        </Badge>
+                      </div>
+                      <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
+                        <div
+                          className={`h-full rounded-full ${item.isLimited ? "bg-amber-500" : "bg-emerald-600"}`}
+                          style={{ width: `${percent}%` }}
+                        />
+                      </div>
+                      {item.isLimited && item.requiredTier && (
+                        <p className="mt-2 text-xs font-semibold text-amber-800">
+                          {t("settings.usageUpgradePrompt").replace(
+                            "{tier}",
+                            ACCOUNT_TIER_LABELS[item.requiredTier],
+                          )}
                         </p>
                       )}
                     </div>

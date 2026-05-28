@@ -11,11 +11,15 @@ describe("settings page", () => {
     expect(page).toContain("lockedFeatureMessage");
     expect(page).toContain("settings.currentPlan");
     expect(page).toContain("settings.featureAccess");
+    expect(page).toContain("settings.usageDashboard");
+    expect(page).toContain("settings.usageRemaining");
+    expect(page).toContain("usageData");
     expect(page).toContain("updateAccountProfile");
     expect(page).toContain("changePassword");
     expect(page).toContain("exportAccountData");
     expect(page).toContain("deleteAccount");
     expect(page).toContain("fetchAccountSubscription");
+    expect(page).toContain("fetchAccountUsage");
     expect(page).toContain("fetchBillingInvoices");
     expect(page).toContain("createBillingPortalSession");
     expect(page).toContain("createCheckoutSession");

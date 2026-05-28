@@ -1,6 +1,7 @@
 import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlements";
 import type { AccountExportData } from "@/server/account/lifecycle";
 import type { WorkspaceRole } from "@/server/account/workspace";
+import type { AccountUsageResponse } from "@/server/account/usage";
 
 export type SubscriptionStatus = "none" | "trialing" | "active" | "past_due" | "canceled";
 export type SubscriptionSource = "admin_override" | "local_checkout" | "billing_provider";
@@ -47,6 +48,8 @@ export interface AccountSubscriptionResponse {
   subscription: AccountSubscription;
   plans: SubscriptionPlan[];
 }
+
+export type AccountUsageData = AccountUsageResponse;
 
 export interface CheckoutSession {
   id: string;
@@ -298,6 +301,12 @@ export async function fetchAccountSubscription(): Promise<AccountSubscriptionRes
   const response = await fetch("/api/account/subscription");
 
   return parseResponse<AccountSubscriptionResponse>(response);
+}
+
+export async function fetchAccountUsage(): Promise<AccountUsageData> {
+  const response = await fetch("/api/account/usage");
+
+  return parseResponse<AccountUsageData>(response);
 }
 
 export async function createCheckoutSession(input: { tier: AccountTier }): Promise<CheckoutSessionResponse> {
