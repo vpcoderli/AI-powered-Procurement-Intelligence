@@ -4,6 +4,12 @@ import type {
   IntentResponse,
   IntentStatus,
 } from "@/server/intents/types";
+import type {
+  CreateSubmissionConfirmationInput,
+  SubmissionConfirmationResponse,
+  SubmissionGuidanceResponse,
+  UpdateSubmissionGuidanceInput,
+} from "@/server/submission/types";
 import { ApiError } from "./bids";
 
 function isApiErrorResponse(body: unknown): body is IntentApiErrorResponse {
@@ -76,4 +82,36 @@ export async function updateIntentStatus(id: string, status: IntentStatus) {
   });
 
   return parseResponse<IntentResponse>(response);
+}
+
+export async function fetchSubmissionGuidance(id: string) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/submission`);
+
+  return parseResponse<SubmissionGuidanceResponse>(response);
+}
+
+export async function updateSubmissionGuidance(
+  id: string,
+  input: UpdateSubmissionGuidanceInput,
+) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/submission`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<SubmissionGuidanceResponse>(response);
+}
+
+export async function confirmSubmission(
+  id: string,
+  input: CreateSubmissionConfirmationInput,
+) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/submission/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<SubmissionConfirmationResponse>(response);
 }

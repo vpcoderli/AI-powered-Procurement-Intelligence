@@ -128,6 +128,8 @@ describe("database schema", () => {
 
       expect(tables).toContain("supplier_profiles");
       expect(tables).toContain("intent_to_bid");
+      expect(tables).toContain("submission_paths");
+      expect(tables).toContain("submission_confirmations");
     } finally {
       await testDb.cleanup();
     }

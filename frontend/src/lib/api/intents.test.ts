@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "./bids";
-import { createIntent, fetchIntent, fetchIntents, updateIntentStatus } from "./intents";
+import {
+  confirmSubmission,
+  createIntent,
+  fetchIntent,
+  fetchIntents,
+  fetchSubmissionGuidance,
+  updateIntentStatus,
+  updateSubmissionGuidance,
+} from "./intents";
 
 const mockFetch = vi.fn<typeof fetch>();
 
@@ -71,6 +79,51 @@ describe("intent API client", () => {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "needs_review" }),
+    });
+  });
+
+  it("fetches submission guidance with an encoded intent id", async () => {
+    const body = { submission: { id: "submission_path_1", method: "external_portal" } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await fetchSubmissionGuidance("intent/with space");
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/submission");
+  });
+
+  it("patches submission guidance fields", async () => {
+    const payload = { method: "email" as const, requiresRegistration: false };
+    const body = { submission: { id: "submission_path_1", ...payload } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await updateSubmissionGuidance("intent/with space", payload);
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/submission", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  });
+
+  it("posts a submission confirmation", async () => {
+    const payload = {
+      submittedAt: "2026-05-29T15:30:00.000Z",
+      method: "external_portal" as const,
+      confirmationReference: "CONF-123",
+      confirmationNotes: "Receipt downloaded.",
+    };
+    const body = { confirmation: { id: "submission_confirmation_1", ...payload } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body, { status: 201 }));
+
+    const result = await confirmSubmission("intent/with space", payload);
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/submission/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
     });
   });
 

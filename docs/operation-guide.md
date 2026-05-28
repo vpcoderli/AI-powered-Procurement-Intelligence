@@ -107,6 +107,28 @@ http://localhost:3000
 5. 打开 `/intents`，选择新生成的投标意向工作台。
 6. 查看 AI 摘要、检查清单、风险提示和关键日期。
 
+## Submission Guidance Lite
+
+该阶段为每个投标意向生成轻量提交指导，帮助确认外部门户、联系人、注册、纸质提交、补遗确认和提交复杂度。
+
+本地数据库需要先执行迁移：
+
+```bash
+npm run db:migrate
+```
+
+已支持的接口：
+
+- `GET /api/intents/:id/submission`：读取或生成提交指导。
+- `PATCH /api/intents/:id/submission`：更新提交方式、门户地址、联系人和提交要求标记。
+- `POST /api/intents/:id/submission/confirm`：保存外部提交后的人工确认记录。
+
+注意：
+
+- WinBids 不直接提交投标。
+- 第三方门户登录、上传文件和最终提交仍需要用户在外部系统完成。
+- 当前提交指导使用确定性规则生成，不调用 LLM。
+
 ## 5. 管理后台与爬虫
 
 打开管理后台：
@@ -282,3 +304,4 @@ npm run db:seed
 8. 运行全部州级爬虫。
 9. 查看数据源状态和爬虫日志。
 10. 打开 `/generative-art-static` 评审新 UI/UE 方向。
+11. 打开任一 Intent 工作台，调用 Submission Guidance 接口验证提交指导基础层。
