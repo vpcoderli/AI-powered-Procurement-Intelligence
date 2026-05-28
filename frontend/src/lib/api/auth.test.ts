@@ -13,7 +13,9 @@ import {
   fetchAccountWorkspace,
   inviteWorkspaceMember,
   removeWorkspaceMember,
+  resendWorkspaceInvitation,
   requestPasswordReset,
+  revokeWorkspaceInvitation,
   setWorkspaceMemberStatus,
   transferWorkspaceOwnership,
   updateAccountWorkspace,
@@ -433,6 +435,47 @@ describe("auth API client", () => {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "disabled" }),
+    });
+  });
+
+  it("resends a workspace invitation", async () => {
+    const body = {
+      member: {
+        userId: "user_2",
+        email: "member@example.com",
+        displayName: "Member One",
+        workspaceRole: "member",
+        status: "invited",
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      },
+      inviteToken: "invite_new",
+      inviteUrl: "/accept-invite?token=invite_new",
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(resendWorkspaceInvitation("user_2")).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/workspace/invitations/user_2/resend", {
+      method: "POST",
+    });
+  });
+
+  it("revokes a workspace invitation", async () => {
+    const body = {
+      organization: {
+        id: "org_1",
+        name: "Acme Federal Team",
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      },
+      currentUserRole: "owner",
+      members: [],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(revokeWorkspaceInvitation("user_2")).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/workspace/invitations/user_2", {
+      method: "DELETE",
     });
   });
 

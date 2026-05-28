@@ -143,6 +143,7 @@ type AuthErrorCode =
   | "INVALID_INVITATION_TOKEN"
   | "INVALID_REQUEST"
   | "INVALID_RESET_TOKEN"
+  | "INVITATION_NOT_FOUND"
   | "INTERNAL_ERROR"
   | "LAST_OWNER_REQUIRED"
   | "MEMBER_NOT_FOUND"
@@ -189,6 +190,7 @@ function isApiErrorResponse(body: unknown): body is ApiErrorResponse {
       code === "INVALID_INVITATION_TOKEN" ||
       code === "INVALID_REQUEST" ||
       code === "INVALID_RESET_TOKEN" ||
+      code === "INVITATION_NOT_FOUND" ||
       code === "INTERNAL_ERROR" ||
       code === "LAST_OWNER_REQUIRED" ||
       code === "MEMBER_NOT_FOUND" ||
@@ -422,6 +424,22 @@ export async function setWorkspaceMemberStatus(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+  });
+
+  return parseResponse<AccountWorkspaceResponse>(response);
+}
+
+export async function resendWorkspaceInvitation(userId: string): Promise<InviteWorkspaceMemberResponse> {
+  const response = await fetch(`/api/account/workspace/invitations/${userId}/resend`, {
+    method: "POST",
+  });
+
+  return parseResponse<InviteWorkspaceMemberResponse>(response);
+}
+
+export async function revokeWorkspaceInvitation(userId: string): Promise<AccountWorkspaceResponse> {
+  const response = await fetch(`/api/account/workspace/invitations/${userId}`, {
+    method: "DELETE",
   });
 
   return parseResponse<AccountWorkspaceResponse>(response);

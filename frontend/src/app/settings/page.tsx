@@ -38,6 +38,8 @@ import {
   fetchAccountWorkspace,
   inviteWorkspaceMember,
   removeWorkspaceMember,
+  resendWorkspaceInvitation,
+  revokeWorkspaceInvitation,
   setWorkspaceMemberStatus,
   transferWorkspaceOwnership,
   updateAccountWorkspace,
@@ -408,6 +410,47 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleResendInvitation(member: AccountWorkspaceMember) {
+    setTeamActionMessage("");
+    setTeamActionError("");
+    setInviteUrl("");
+    setMemberActionUserId(member.userId);
+
+    try {
+      const invite = await resendWorkspaceInvitation(member.userId);
+      const data = await fetchAccountWorkspace();
+      setWorkspaceData(data);
+      setInviteUrl(invite.inviteUrl);
+      setTeamActionMessage(t("settings.inviteResent"));
+    } catch (error) {
+      setTeamActionError(teamErrorMessage(error));
+    } finally {
+      setMemberActionUserId(null);
+    }
+  }
+
+  async function handleRevokeInvitation(member: AccountWorkspaceMember) {
+    setTeamActionMessage("");
+    setTeamActionError("");
+
+    if (!window.confirm(t("settings.revokeInviteConfirm"))) {
+      return;
+    }
+
+    setInviteUrl("");
+    setMemberActionUserId(member.userId);
+
+    try {
+      const data = await revokeWorkspaceInvitation(member.userId);
+      setWorkspaceData(data);
+      setTeamActionMessage(t("settings.inviteRevoked"));
+    } catch (error) {
+      setTeamActionError(teamErrorMessage(error));
+    } finally {
+      setMemberActionUserId(null);
+    }
+  }
+
   async function handleExportAccountData() {
     setAccountActionMessage("");
     setAccountActionError("");
@@ -749,6 +792,26 @@ export default function SettingsPage() {
                             className="h-9 border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
                           >
                             {member.status === "disabled" ? t("settings.restoreMember") : t("settings.disableMember")}
+                          </Button>
+                        )}
+                        {canManageWorkspace && member.status === "invited" && (
+                          <Button
+                            variant="outline"
+                            onClick={() => handleResendInvitation(member)}
+                            disabled={memberActionUserId === member.userId}
+                            className="h-9 border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          >
+                            {t("settings.resendInvite")}
+                          </Button>
+                        )}
+                        {canManageWorkspace && member.status === "invited" && (
+                          <Button
+                            variant="outline"
+                            onClick={() => handleRevokeInvitation(member)}
+                            disabled={memberActionUserId === member.userId}
+                            className="h-9 border-red-200 px-3 text-sm font-medium text-red-700 hover:bg-red-50 hover:text-red-800"
+                          >
+                            {t("settings.revokeInvite")}
                           </Button>
                         )}
                         {canManageWorkspace && (

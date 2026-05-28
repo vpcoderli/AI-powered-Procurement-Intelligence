@@ -23,6 +23,8 @@ describe("settings page", () => {
     expect(page).toContain("fetchAccountWorkspace");
     expect(page).toContain("updateAccountWorkspace");
     expect(page).toContain("inviteWorkspaceMember");
+    expect(page).toContain("resendWorkspaceInvitation");
+    expect(page).toContain("revokeWorkspaceInvitation");
     expect(page).toContain("updateWorkspaceMemberRole");
     expect(page).toContain("setWorkspaceMemberStatus");
     expect(page).toContain("transferWorkspaceOwnership");
@@ -36,6 +38,10 @@ describe("settings page", () => {
     expect(page).toContain("settings.removeMember");
     expect(page).toContain("settings.disableMember");
     expect(page).toContain("settings.restoreMember");
+    expect(page).toContain("settings.resendInvite");
+    expect(page).toContain("settings.revokeInvite");
+    expect(page).toContain("settings.inviteResent");
+    expect(page).toContain("settings.inviteRevoked");
     expect(page).toContain("settings.inviteUrl");
     expect(page).toContain("settings.memberUpdated");
     expect(page).toContain("settings.memberRemoved");
