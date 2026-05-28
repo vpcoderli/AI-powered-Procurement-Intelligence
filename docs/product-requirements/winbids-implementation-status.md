@@ -22,6 +22,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs. |
 | Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin-only console access. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, and tier-aware locked states for gated features. |
+| Usage limits | Central saved bid and intent workspace quota checks by tier; APIs return `USAGE_LIMIT_REACHED` before creating over-limit resources. |
 | Subscription foundation | `account_subscriptions`, `subscription_events`, plan catalog, account subscription API, Settings Billing tab. |
 | Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, CA/TX/NY/FL/IL runner wiring. |
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
@@ -37,8 +38,8 @@ This document is the working checklist for local development. Update it after ea
 | Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; admin can enable/disable users, search/filter users, and review access audit logs | Password reset, admin-created accounts, account deletion/export |
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users | Route-level friendly forbidden UI, admin page redirect/empty state for non-admin users |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
-| Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab | Billing provider sync, real checkout, usage limits, invoices, cancellation |
-| Feature access control | Central feature map, server guard, client helper, and visible locked states | Apply guards to every future gated API and add usage limits |
+| Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab | Billing provider sync, real checkout, invoices, cancellation |
+| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits | Apply guards/limits to every future gated API and add richer usage dashboards |
 | Submission Guidance UI | Static Submission Path preview in Intent workspace; backend API exists; API is Pro-gated | Fetch real submission guidance, editable fields, confirmation form, saved confirmation state |
 | Search alerts | API/service foundation exists | Full alert management UI, digest configuration, real email delivery |
 | Notifications | Notification outbox foundation exists | Provider configuration, delivery retries, user notification preferences |
@@ -67,7 +68,7 @@ Prioritize **Submission Guidance UI** or **Billing Provider Sync** depending on 
 Reason:
 
 - The data model, session payload, account settings, subscription foundation, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
-- The remaining account gap is not basic self-service; it is real billing provider sync, usage limits, password reset, and organization/team support.
+- The remaining account gap is not basic self-service; it is real billing provider sync, broader usage dashboards, password reset, and organization/team support.
 - Advanced features such as Compliance Manifest, Submission Guidance editing, and Knowledge Station can now rely on the same feature gate.
 
 ## Account / Role / Tier Direction
@@ -111,6 +112,15 @@ Start with a central feature map:
 | `quote_workflow` | No | No | Yes | Yes |
 | `knowledge_station` | No | No | Limited | Yes |
 | `admin_console` | Admin only | Admin only | Admin only | Admin only |
+
+### Usage Limits
+
+Current local limits:
+
+| Feature key | Free | Pro | Business | Enterprise |
+|---|---:|---:|---:|---:|
+| `saved_bids` | 5 | 50 | 250 | Unlimited |
+| `intent_workspace` | 2 | 20 | 100 | Unlimited |
 
 ## Suggested Implementation Order
 
@@ -199,7 +209,24 @@ Start with a central feature map:
 
 当前还剩：
 1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
-2. Usage limits：按套餐限制 saved bids、intents、alerts、AI/高级功能调用次数。
+2. Usage limits：继续覆盖 alerts、AI/高级功能调用次数，并增加使用量仪表盘。
+3. Password reset 邮件 token 流程。
+4. Admin 创建账号 / 邀请用户流程。
+5. Organization/workspace 多用户公司账户模型。
+6. Submission Guidance 真实编辑与确认 UI。
+
+## Completed Phase: Usage Limits Foundation
+
+本阶段完成：
+- 新增中心化 `usage-limits` 服务，定义 Free/Pro/Business/Enterprise 的 saved bids 与 intent workspace 额度。
+- `/api/saved-bids` 在新增保存前检查额度；已保存的同一 bid 可幂等通过。
+- `/api/bids/[id]/intent` 在新增 Intent 前检查额度；已有同一 bid 的 Intent 可幂等通过。
+- 超额时 API 返回 `USAGE_LIMIT_REACHED`、当前用量、额度和推荐升级套餐。
+- 前端 API client 识别 `USAGE_LIMIT_REACHED`；Bid Detail 的 Intent 创建失败会展示升级到 Pro 的提示。
+
+当前还剩：
+1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
+2. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
 3. Password reset 邮件 token 流程。
 4. Admin 创建账号 / 邀请用户流程。
 5. Organization/workspace 多用户公司账户模型。

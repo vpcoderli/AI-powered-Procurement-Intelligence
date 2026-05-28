@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
+import { UsageLimitError, enforceUsageLimit } from "@/server/auth/usage-limits";
 import * as bidService from "@/server/bids/service";
 import { BidNotFoundError } from "@/server/bids/types";
 import { db } from "@/server/db/client";
@@ -38,6 +39,23 @@ function internalError(principal: RequestPrincipal) {
   );
 }
 
+function usageLimitError(error: UsageLimitError, principal: RequestPrincipal) {
+  return jsonWithPrincipalCookie(
+    {
+      error: {
+        code: error.code,
+        message: "Upgrade your plan to save more bids.",
+        feature: error.feature,
+        limit: error.limit,
+        used: error.used,
+        requiredTier: error.requiredTier,
+      },
+    },
+    principal,
+    { status: 402 },
+  );
+}
+
 export async function GET(request: Request) {
   const principal = await resolvePrincipal(db, request);
 
@@ -70,8 +88,19 @@ export async function POST(request: Request) {
   const principal = await resolvePrincipal(db, request);
 
   try {
+    enforceUsageLimit(db, {
+      userId: principal.userId,
+      tier: principal.tier ?? "free",
+      feature: "saved_bids",
+      resourceId: body.bidId,
+    });
+
     return jsonWithPrincipalCookie(await bidService.saveBid(principal.userId, body.bidId), principal);
   } catch (error) {
+    if (error instanceof UsageLimitError) {
+      return usageLimitError(error, principal);
+    }
+
     if (error instanceof BidNotFoundError) {
       return jsonWithPrincipalCookie(
         { error: { code: "BID_NOT_FOUND", message: "Bid not found" } },

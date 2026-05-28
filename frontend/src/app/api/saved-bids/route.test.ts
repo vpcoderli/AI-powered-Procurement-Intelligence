@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MOCK_BIDS } from "@/lib/mock-data";
 import * as principal from "@/server/auth/principal";
+import * as usageLimits from "@/server/auth/usage-limits";
 import * as bidService from "@/server/bids/service";
 import { BidNotFoundError } from "@/server/bids/types";
 import { ANONYMOUS_USER_COOKIE_NAME } from "@/server/bids/user";
@@ -10,12 +11,21 @@ vi.mock("@/server/db/client", () => ({ db: {} }));
 vi.mock("@/server/auth/principal", () => ({
   resolvePrincipal: vi.fn(),
 }));
+vi.mock("@/server/auth/usage-limits", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/auth/usage-limits")>();
+
+  return {
+    ...actual,
+    enforceUsageLimit: vi.fn(),
+  };
+});
 vi.mock("@/server/bids/service", () => ({
   getSavedBids: vi.fn(),
   saveBid: vi.fn(),
 }));
 
 const resolvePrincipal = vi.mocked(principal.resolvePrincipal);
+const enforceUsageLimit = vi.mocked(usageLimits.enforceUsageLimit);
 const getSavedBids = vi.mocked(bidService.getSavedBids);
 const saveBid = vi.mocked(bidService.saveBid);
 
@@ -147,7 +157,43 @@ describe("POST /api/saved-bids", () => {
 
     expect(response.status).toBe(200);
     expect(body.savedBidIds).toEqual(["1"]);
+    expect(enforceUsageLimit).toHaveBeenCalledWith(expect.anything(), {
+      userId: "anon_existing",
+      tier: "free",
+      feature: "saved_bids",
+      resourceId: "1",
+    });
     expect(saveBid).toHaveBeenCalledWith("anon_existing", "1");
+  });
+
+  it("returns USAGE_LIMIT_REACHED when the current plan cannot save more bids", async () => {
+    enforceUsageLimit.mockImplementationOnce(() => {
+      throw new usageLimits.UsageLimitError({
+        feature: "saved_bids",
+        tier: "free",
+        used: 5,
+        limit: 5,
+      });
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/saved-bids", {
+        method: "POST",
+        headers: { cookie: `${ANONYMOUS_USER_COOKIE_NAME}=anon_existing` },
+        body: JSON.stringify({ bidId: "6" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(402);
+    expect(body.error).toMatchObject({
+      code: "USAGE_LIMIT_REACHED",
+      limit: 5,
+      used: 5,
+      feature: "saved_bids",
+      requiredTier: "pro",
+    });
+    expect(saveBid).not.toHaveBeenCalled();
   });
 
   it("persists saved bids for the same anonymous user only", async () => {

@@ -30,7 +30,8 @@ function isApiErrorResponse(body: unknown): body is IntentApiErrorResponse {
       code === "FEATURE_NOT_AVAILABLE" ||
       code === "INTENT_NOT_FOUND" ||
       code === "INVALID_REQUEST" ||
-      code === "INTERNAL_ERROR") &&
+      code === "INTERNAL_ERROR" ||
+      code === "USAGE_LIMIT_REACHED") &&
     typeof message === "string"
   );
 }

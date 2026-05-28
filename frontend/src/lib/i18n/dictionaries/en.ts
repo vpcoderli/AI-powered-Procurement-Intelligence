@@ -172,6 +172,7 @@ export const en = {
     intentCreated: "Intent workspace created.",
     openIntent: "Open Intent Workspace",
     pursuitError: "Unable to update the pursuit workflow. Please try again.",
+    intentLimitReached: "Free plan limit reached. Upgrade to Pro to create more intent workspaces.",
     pursuitUnavailable: "Match details are unavailable for this opportunity.",
     noGeneratedRiskFlags: "No generated risk flags.",
   },

@@ -46,7 +46,10 @@ function isApiErrorResponse(body: unknown): body is ApiErrorResponse {
   const { code, message } = error as { code?: unknown; message?: unknown };
 
   return (
-    (code === "BID_NOT_FOUND" || code === "INVALID_REQUEST" || code === "INTERNAL_ERROR") &&
+    (code === "BID_NOT_FOUND" ||
+      code === "INVALID_REQUEST" ||
+      code === "INTERNAL_ERROR" ||
+      code === "USAGE_LIMIT_REACHED") &&
     typeof message === "string"
   );
 }
