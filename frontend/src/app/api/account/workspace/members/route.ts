@@ -1,0 +1,72 @@
+import { NextResponse } from "next/server";
+import { readSessionToken } from "@/server/auth/session";
+import { getSessionUser } from "@/server/auth/service";
+import {
+  InvalidWorkspaceInputError,
+  WorkspaceEmailExistsError,
+  WorkspacePermissionError,
+  inviteWorkspaceMember,
+} from "@/server/account/workspace";
+import { db } from "@/server/db/client";
+
+function errorResponse(code: string, message: string, status: number) {
+  return NextResponse.json({ error: { code, message } }, { status });
+}
+
+async function readBody(request: Request) {
+  try {
+    return await request.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function POST(request: Request) {
+  const sessionToken = readSessionToken(request);
+
+  if (!sessionToken) {
+    return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
+  }
+
+  const user = await getSessionUser(db, sessionToken);
+
+  if (!user) {
+    return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
+  }
+
+  const body = await readBody(request);
+
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    typeof body.email !== "string" ||
+    ("displayName" in body && typeof body.displayName !== "string") ||
+    ("role" in body && body.role !== "owner" && body.role !== "member")
+  ) {
+    return errorResponse("INVALID_REQUEST", "Request body must include email", 400);
+  }
+
+  try {
+    const result = await inviteWorkspaceMember(db, user.id, {
+      email: body.email,
+      displayName: body.displayName,
+      role: body.role,
+    });
+
+    return NextResponse.json(result, { status: 201 });
+  } catch (error) {
+    if (error instanceof WorkspaceEmailExistsError) {
+      return errorResponse("EMAIL_ALREADY_REGISTERED", error.message, 409);
+    }
+
+    if (error instanceof WorkspacePermissionError) {
+      return errorResponse("FORBIDDEN", error.message, 403);
+    }
+
+    if (error instanceof InvalidWorkspaceInputError) {
+      return errorResponse("INVALID_REQUEST", error.message, 400);
+    }
+
+    return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
+  }
+}

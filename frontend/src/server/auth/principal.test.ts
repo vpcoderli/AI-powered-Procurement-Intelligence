@@ -38,6 +38,11 @@ describe("principal resolution", () => {
       role: "user",
       tier: "free",
       features: expect.arrayContaining(["bid_search", "supplier_profile"]),
+      workspace: {
+        organizationId: expect.stringMatching(/^org_/),
+        organizationName: "buyer's Workspace",
+        role: "owner",
+      },
     });
     expect(
       testDb.db.select().from(users).where(eq(users.id, "anon_existing")).limit(1).get(),

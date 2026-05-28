@@ -123,6 +123,34 @@ export const passwordResetTokens = sqliteTable(
   }),
 );
 
+export const organizations = sqliteTable("organizations", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const organizationMemberships = sqliteTable(
+  "organization_memberships",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").notNull().default("member"),
+    status: text("status").notNull().default("active"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.organizationId, table.userId] }),
+    userIdx: index("idx_organization_memberships_user_id").on(table.userId),
+    organizationIdx: index("idx_organization_memberships_organization_id").on(table.organizationId),
+  }),
+);
+
 export const bids = sqliteTable(
   "bids",
   {

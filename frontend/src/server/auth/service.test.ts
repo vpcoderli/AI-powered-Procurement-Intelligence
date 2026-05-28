@@ -40,6 +40,11 @@ describe("auth service", () => {
       role: "user",
       tier: "free",
       features: expect.arrayContaining(["bid_search", "supplier_profile"]),
+      workspace: {
+        organizationId: expect.stringMatching(/^org_/),
+        organizationName: "Buyer One's Workspace",
+        role: "owner",
+      },
     });
     expect(result.sessionToken).toMatch(/^sess_/);
     expect(await getSessionUser(testDb.db, result.sessionToken)).toMatchObject({

@@ -14,7 +14,14 @@ describe("settings page", () => {
     expect(page).toContain("updateAccountProfile");
     expect(page).toContain("changePassword");
     expect(page).toContain("fetchAccountSubscription");
+    expect(page).toContain("fetchAccountWorkspace");
+    expect(page).toContain("updateAccountWorkspace");
+    expect(page).toContain("inviteWorkspaceMember");
     expect(page).toContain("user?.email");
+    expect(page).toContain("workspaceData");
+    expect(page).toContain("settings.team");
+    expect(page).toContain("settings.inviteMember");
+    expect(page).toContain("settings.temporaryPassword");
     expect(page).toContain("displayName");
     expect(page).toContain("refreshSession");
     expect(page).toContain("settings.billing");

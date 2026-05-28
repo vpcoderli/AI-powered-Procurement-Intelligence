@@ -4,7 +4,15 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDatabase } from "./client";
 import { runMigrations } from "./migrate";
-import { bids, crawlerLocks, notificationOutbox, passwordResetTokens, users } from "./schema";
+import {
+  bids,
+  crawlerLocks,
+  notificationOutbox,
+  organizationMemberships,
+  organizations,
+  passwordResetTokens,
+  users,
+} from "./schema";
 import { createTestDatabase } from "./test-utils";
 
 describe("database schema", () => {
@@ -134,6 +142,8 @@ describe("database schema", () => {
       expect(tables).toContain("account_subscriptions");
       expect(tables).toContain("subscription_events");
       expect(tables).toContain("password_reset_tokens");
+      expect(tables).toContain("organizations");
+      expect(tables).toContain("organization_memberships");
 
       const userColumns = testDb.db.$client
         .prepare("PRAGMA table_info(users)")
@@ -160,6 +170,23 @@ describe("database schema", () => {
           createdAt: "2026-05-19T00:00:00.000Z",
         }).run(),
       ).not.toThrow();
+
+      expect(() => {
+        testDb.db.insert(organizations).values({
+          id: "org_1",
+          name: "Acme Federal Team",
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        }).run();
+        testDb.db.insert(organizationMemberships).values({
+          organizationId: "org_1",
+          userId: "user_1",
+          role: "owner",
+          status: "active",
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        }).run();
+      }).not.toThrow();
     } finally {
       await testDb.cleanup();
     }

@@ -3,7 +3,10 @@ import {
   changePassword,
   confirmPasswordReset,
   fetchAccountSubscription,
+  fetchAccountWorkspace,
+  inviteWorkspaceMember,
   requestPasswordReset,
+  updateAccountWorkspace,
   updateAccountProfile,
 } from "./auth";
 
@@ -119,6 +122,77 @@ describe("auth API client", () => {
       body: JSON.stringify({
         token: "reset_local",
         password: "new-strong-password",
+      }),
+    });
+  });
+
+  it("fetches the current account workspace", async () => {
+    const body = {
+      organization: {
+        id: "org_1",
+        name: "Acme Federal Team",
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      },
+      currentUserRole: "owner",
+      members: [],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(fetchAccountWorkspace()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/workspace");
+  });
+
+  it("updates the current account workspace", async () => {
+    const body = {
+      organization: {
+        id: "org_1",
+        name: "Acme Federal Team",
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      },
+      currentUserRole: "owner",
+      members: [],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(updateAccountWorkspace({ name: "Acme Federal Team" })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/workspace", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Acme Federal Team" }),
+    });
+  });
+
+  it("invites a workspace member", async () => {
+    const body = {
+      member: {
+        userId: "user_2",
+        email: "member@example.com",
+        displayName: "Member One",
+        workspaceRole: "member",
+        status: "active",
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      },
+      temporaryPassword: "Temp-secret",
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body, { status: 201 }));
+
+    await expect(
+      inviteWorkspaceMember({
+        email: "member@example.com",
+        displayName: "Member One",
+        role: "member",
+      }),
+    ).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/workspace/members", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: "member@example.com",
+        displayName: "Member One",
+        role: "member",
       }),
     });
   });

@@ -40,6 +40,11 @@ describe("GET /api/auth/session", () => {
       role: "user",
       tier: "pro",
       features: ["bid_search", "submission_guidance"],
+      workspace: {
+        organizationId: "org_1",
+        organizationName: "Acme Federal Team",
+        role: "owner",
+      },
     });
 
     const response = await GET(
@@ -58,6 +63,11 @@ describe("GET /api/auth/session", () => {
         role: "user",
         tier: "pro",
         features: ["bid_search", "submission_guidance"],
+        workspace: {
+          organizationId: "org_1",
+          organizationName: "Acme Federal Team",
+          role: "owner",
+        },
       },
     });
   });
