@@ -50,6 +50,8 @@ import {
   type AdminUserFeatureOverridesResponse,
   type AdminNotificationsResponse,
   type AdminUserAuditLog,
+  type AdminUserAuditAction,
+  type AdminUserAuditActorKind,
   type AdminUserFilterStatus,
   type AdminUser,
   type UpdateAdminUserInput,
@@ -77,6 +79,13 @@ type UserFilters = {
   status?: AdminUserFilterStatus;
 };
 
+type UserAuditFilters = {
+  actorKind?: AdminUserAuditActorKind;
+  action?: AdminUserAuditAction;
+  target?: string;
+  featureKey?: FeatureKey;
+};
+
 type InvitationDraft = {
   email: string;
   displayName: string;
@@ -87,6 +96,8 @@ type InvitationDraft = {
 const USER_ROLES: UserRole[] = ["user", "admin", "operator", "support"];
 const ADMIN_CONSOLE_USER_ROLES: UserRole[] = ["admin", "operator", "support"];
 const ACCOUNT_TIERS: AccountTier[] = ["free", "pro", "business", "enterprise"];
+const AUDIT_ACTOR_KINDS: AdminUserAuditActorKind[] = ["admin", "local-bypass", "self-service"];
+const AUDIT_ACTIONS: AdminUserAuditAction[] = ["user_access_updated", "user_invited", "user_self_deleted"];
 const OVERRIDABLE_FEATURES: FeatureKey[] = [
   "submission_guidance",
   "compliance_manifest",
@@ -255,6 +266,7 @@ export default function AdminPage() {
   const [pendingSourceId, setPendingSourceId] = useState<string | null>(null);
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [userFilters, setUserFilters] = useState<UserFilters>({});
+  const [userAuditFilters, setUserAuditFilters] = useState<UserAuditFilters>({});
   const [isRunning, setIsRunning] = useState(false);
   const [runningSourceId, setRunningSourceId] = useState<string | null>(null);
   const [runMessage, setRunMessage] = useState<string | null>(null);
@@ -277,6 +289,14 @@ export default function AdminPage() {
   const canManageUsers = isAdmin;
   const canRunOperations = isAdmin || isOperator;
 
+  const auditLogRequest = useCallback(() => ({
+    limit: 10,
+    actorKind: userAuditFilters.actorKind,
+    action: userAuditFilters.action,
+    target: userAuditFilters.target?.trim() || undefined,
+    featureKey: userAuditFilters.featureKey,
+  }), [userAuditFilters]);
+
   const load = useCallback(() => {
     if (!canAccessAdminConsole) return;
 
@@ -285,7 +305,7 @@ export default function AdminPage() {
       listAdminDataSources(),
       listAdminCrawlerLogs(),
       canManageUsers ? listAdminUsers(userFilters) : Promise.resolve({ users: [] }),
-      canManageUsers ? listAdminUserAuditLogs({ limit: 10 }) : Promise.resolve({ logs: [] }),
+      canManageUsers ? listAdminUserAuditLogs(auditLogRequest()) : Promise.resolve({ logs: [] }),
       listAdminNotifications({ limit: 10 }),
     ])
       .then(([data, logsResponse, usersResponse, userAuditLogsResponse, notificationsResponse]) => {
@@ -301,7 +321,7 @@ export default function AdminPage() {
       .catch(() => {
         setState({ status: "error" });
       });
-  }, [canAccessAdminConsole, canManageUsers, userFilters]);
+  }, [auditLogRequest, canAccessAdminConsole, canManageUsers, userFilters]);
 
   useEffect(() => {
     if (isAuthLoading) return;
@@ -395,7 +415,7 @@ export default function AdminPage() {
             users: current.users.map((item) => (item.id === updated.id ? updated : item)),
           };
         });
-        return listAdminUserAuditLogs({ limit: 10 });
+        return listAdminUserAuditLogs(auditLogRequest());
       })
       .then((response) => {
         if (!response) return;
@@ -462,7 +482,7 @@ export default function AdminPage() {
         setFeatureOverrideData(response);
         syncFeatureOverrideForm(response, featureOverrideFeature);
         setRunMessage(t("admin.featureOverrideUpdated"));
-        return listAdminUserAuditLogs({ limit: 10 });
+        return listAdminUserAuditLogs(auditLogRequest());
       })
       .then((response) => {
         setState((current) => {
@@ -510,7 +530,7 @@ export default function AdminPage() {
             users: [...current.users, response.user],
           };
         });
-        return listAdminUserAuditLogs({ limit: 10 });
+        return listAdminUserAuditLogs(auditLogRequest());
       })
       .then((response) => {
         if (!response) return;
@@ -1108,6 +1128,81 @@ export default function AdminPage() {
           <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 font-semibold text-slate-950">
             <History size={18} />
             {t("admin.userAuditLogs")}
+          </div>
+          <div className="grid gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-3 md:grid-cols-[minmax(180px,1fr)_160px_180px_190px_auto]">
+            <div className="relative">
+              <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={userAuditFilters.target ?? ""}
+                onChange={(event) =>
+                  setUserAuditFilters((current) => ({ ...current, target: event.target.value || undefined }))
+                }
+                placeholder={t("admin.auditFilterTarget")}
+                className="h-9 rounded-lg border-slate-200 pl-9"
+              />
+            </div>
+            <select
+              value={userAuditFilters.actorKind ?? "all"}
+              onChange={(event) =>
+                setUserAuditFilters((current) => ({
+                  ...current,
+                  actorKind: event.target.value === "all" ? undefined : event.target.value as AdminUserAuditActorKind,
+                }))
+              }
+              aria-label={t("admin.allAuditActors")}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
+            >
+              <option value="all">{t("admin.allAuditActors")}</option>
+              {AUDIT_ACTOR_KINDS.map((actorKind) => (
+                <option key={actorKind} value={actorKind}>
+                  {t(`admin.auditActor_${actorKind.replace("-", "_")}`)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={userAuditFilters.action ?? "all"}
+              onChange={(event) =>
+                setUserAuditFilters((current) => ({
+                  ...current,
+                  action: event.target.value === "all" ? undefined : event.target.value as AdminUserAuditAction,
+                }))
+              }
+              aria-label={t("admin.allAuditActions")}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
+            >
+              <option value="all">{t("admin.allAuditActions")}</option>
+              {AUDIT_ACTIONS.map((action) => (
+                <option key={action} value={action}>
+                  {t(`admin.auditAction_${action}`)}
+                </option>
+              ))}
+            </select>
+            <select
+              value={userAuditFilters.featureKey ?? "all"}
+              onChange={(event) =>
+                setUserAuditFilters((current) => ({
+                  ...current,
+                  featureKey: event.target.value === "all" ? undefined : event.target.value as FeatureKey,
+                }))
+              }
+              aria-label={t("admin.auditFilterFeature")}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
+            >
+              <option value="all">{t("admin.allAuditFeatures")}</option>
+              {OVERRIDABLE_FEATURES.map((feature) => (
+                <option key={feature} value={feature}>
+                  {t(`admin.feature_${feature}`)}
+                </option>
+              ))}
+            </select>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setUserAuditFilters({})}
+              className="h-9 rounded-lg px-3 text-slate-600"
+            >
+              {t("admin.clearAuditFilters")}
+            </Button>
           </div>
           <div className="divide-y divide-slate-100">
             {userAuditLogs.length === 0 && (

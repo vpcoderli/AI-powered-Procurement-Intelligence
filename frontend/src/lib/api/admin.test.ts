@@ -85,8 +85,18 @@ describe("admin API client", () => {
     const body = { logs: [{ id: "audit_1", targetEmail: "buyer@example.com" }] };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));
 
-    await expect(listAdminUserAuditLogs({ limit: 10 })).resolves.toEqual(body);
-    expect(mockFetch).toHaveBeenCalledWith("/api/admin/users/audit-logs?limit=10");
+    await expect(
+      listAdminUserAuditLogs({
+        limit: 10,
+        actorKind: "admin",
+        action: "user_access_updated",
+        target: "buyer",
+        featureKey: "compliance_manifest",
+      }),
+    ).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/admin/users/audit-logs?limit=10&actorKind=admin&action=user_access_updated&target=buyer&featureKey=compliance_manifest",
+    );
   });
 
   it("lists admin user feature overrides", async () => {

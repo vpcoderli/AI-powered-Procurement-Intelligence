@@ -58,7 +58,7 @@ This document is the working checklist for local development. Update it after ea
 | 普通账户基础管理 | Done | `/settings` supports display name update, password change, password reset request/confirm, versioned account data export, and soft account deletion/deactivation with admin-visible audit. |
 | 普通账户团队空间 | Partial | Default organization/workspace exists with organization-level tier ownership; Team tab can rename workspace, invite local members, enqueue local invitation email notifications, show invitation delivery status, resend/revoke pending invitations, accept invitations, transfer owner, update member role, disable/restore members, and remove members. |
 | Admin 账户基础分离 | Done | `role=admin` is distinct from `role=user`; operator/support are separate low-privilege back-office roles; `requireAdmin()` protects full-admin APIs; `/admin` is hidden/blocked for ordinary users. |
-| Admin 用户管理 | Done | Full admin can list/search/filter users, create invited accounts with temporary passwords, update role/tier/enabled state, manage organization feature overrides, and view access/deletion/override audit logs. |
+| Admin 用户管理 | Done | Full admin can list/search/filter users, create invited accounts with temporary passwords, update role/tier/enabled state, manage organization feature overrides, and filter access/deletion/override audit logs by actor/action/target/feature. |
 | 细粒度后台角色 | Done | `operator` can access operational admin tools and run crawler/notification/dunning actions without user-management permission; `support` can access read-only operational admin views without mutation/run controls. |
 | 用户等级模型 | Done | `account_tier` supports `free`, `pro`, `business`, `enterprise`. |
 | 功能与等级关联 | Done | Central entitlement map controls feature keys such as `submission_guidance`, `compliance_manifest`, `pursue_no_bid`, `quote_workflow`, `knowledge_station`. |
@@ -79,6 +79,7 @@ This document is the working checklist for local development. Update it after ea
 | P0 | Production Billing Provider Hardening | Add end-to-end Stripe sandbox verification, provider dashboard setup notes, and production credential/deployment runbook. | The SDK/API adapter exists; the remaining work is environment hardening and live sandbox proof. |
 | P1 | Trial / Dunning Lifecycle | Add production scheduling for dunning worker and provider-specific dunning event handling. | Prevents stale paid access when payment state changes. |
 | P1 | Advanced Usage Metrics | Add future quote workflow, Knowledge Station, and AI-call usage metrics after those resources exist. | Users need to understand why an upgrade is required for advanced paid features. |
+| P2 | Custom Enterprise Permission Rules | Add a concrete rule model only after enterprise/customer-specific cases are known. | Avoids over-building a permissions engine before real enterprise policy needs are clear. |
 
 ### Current Tier-To-Feature Direction
 
@@ -101,7 +102,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin vs user separation | Admin APIs enforce full-admin role for account management and feature overrides; disabled admins are rejected; admin/operator/support can access `/admin`; operator/support receive lower-permission controls; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | Optional per-route permission audit UI and custom enterprise back-office roles |
 | User role model | `user`/`admin`/`operator`/`support` role enum, role update API, audit trail, role-aware frontend session payload | Optional company-level owner/member unification with global role model |
 | Subscription / tier model | `account_tier` on users, organization-level `account_tier` for workspace/team entitlement, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, Stripe SDK/API checkout and portal sessions, Stripe webhook mapping/signature verification, cancellation scheduling, subscription lifecycle reconciliation, filtered invoice history with summary totals/PDF links, payment retry links, payment-failed notification outbox entries, staged dunning reminders with resolved-payment suppression, and optional generic webhook signature verification | Stripe sandbox verification/runbook and production scheduled dunning worker deployment |
-| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid/intent/search alert/team invite quota enforcement, team member usage counting, Settings usage dashboard, organization-level feature overrides with reason/expiry metadata, and manifest-backed static coverage tests; session entitlements and workspace quotas now use organization tier; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated; Quote Workflow and Knowledge Station are explicitly marked as not-yet-implemented API surfaces | Optional richer beta program workflow, audit filters, and custom enterprise permission rules |
+| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid/intent/search alert/team invite quota enforcement, team member usage counting, Settings usage dashboard, organization-level feature overrides with reason/expiry metadata, audit filtering by actor/action/target/feature, and manifest-backed static coverage tests; session entitlements and workspace quotas now use organization tier; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated; Quote Workflow and Knowledge Station are explicitly marked as not-yet-implemented API surfaces | Optional richer beta program workflow and custom enterprise permission rules |
 | Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails; creation is quota-gated by tier | Full alert management UI, per-alert digest configuration, real email delivery provider |
 | Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, user preferences, billing dunning reminders, deployable notification/dunning worker command, invite delivery status, admin notification history, and admin delivery trigger exist | Production cron/process deployment and production email provider hardening |
 | Admin data QA | Source status and logs exist | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
@@ -121,12 +122,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Stripe Sandbox E2E Verification** if the next sprint focuses on production readiness. If the next sprint stays on product workflow completeness, prioritize Full Search Alerts UI. If the next sprint continues account/tier design, prioritize admin permission audit filters or custom enterprise permission rules.
+Prioritize **Stripe Sandbox E2E Verification** if the next sprint focuses on production readiness. If the next sprint stays on product workflow completeness, prioritize Full Search Alerts UI. If the next sprint continues account/tier design, prioritize custom enterprise permission rules only after a concrete enterprise use case exists.
 
 Reason:
 
 - The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Business-gated Compliance Manifest, and Pro-gated Pursue / No-Bid Decision now exist.
-- The remaining account gap is not basic registration; it is Stripe sandbox/deployment hardening, production worker deployment runbook, admin permission audit filters/custom enterprise rules, broader advanced usage metrics, and future compliance polish.
+- The remaining account gap is not basic registration; it is Stripe sandbox/deployment hardening, production worker deployment runbook, custom enterprise rules when concrete use cases appear, broader advanced usage metrics, and future compliance polish.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
@@ -1091,11 +1092,11 @@ Current local limits:
 1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
 3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
-4. Admin Permission Audit Filters：按 actor/action/target/feature 筛选权限审计日志。
+4. Custom Enterprise Permission Rules：按真实企业客户需求扩展组织/账号级权限规则。
 5. Advanced Usage Metrics：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
 
 建议下一步：
-- 如果继续权限/账户模型，做 Admin Permission Audit Filters 或 Custom Enterprise Permission Rules；如果继续生产商业化链路，做 Stripe Sandbox E2E Verification；如果继续产品体验，做 Full Search Alerts UI。
+- 如果继续权限/账户模型，等出现明确企业用例后做 Custom Enterprise Permission Rules；如果继续生产商业化链路，做 Stripe Sandbox E2E Verification；如果继续产品体验，做 Full Search Alerts UI。
 
 ## Completed Phase: Override Expiry / Audit Polish
 
@@ -1113,11 +1114,33 @@ Current local limits:
 1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
 3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
-4. Admin Permission Audit Filters：按 actor/action/target/feature 筛选权限审计日志。
+4. Custom Enterprise Permission Rules：按真实企业客户需求扩展组织/账号级权限规则。
 5. Advanced Usage Metrics：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
 
 建议下一步：
-- 如果继续生产商业化链路，优先做 Stripe Sandbox E2E Verification；如果继续产品体验，做 Full Search Alerts UI；如果继续权限/账户模型，做 Admin Permission Audit Filters。
+- 如果继续生产商业化链路，优先做 Stripe Sandbox E2E Verification；如果继续产品体验，做 Full Search Alerts UI；如果继续权限/账户模型，等出现明确企业用例后做 Custom Enterprise Permission Rules。
+
+## Completed Phase: Admin Permission Audit Filters
+
+本阶段完成：
+- `listAdminUserAuditLogs()` 支持按 `actorKind`、`action`、目标用户邮箱/姓名/ID、`featureKey` 过滤权限审计日志。
+- `/api/admin/users/audit-logs` 支持对应 query 参数，并会拒绝无效 actor/action/feature。
+- 前端 admin API client 支持审计筛选参数拼接。
+- `/admin` 用户权限审计区新增目标搜索、操作者、动作、功能筛选和清除按钮。
+- 用户角色/套餐/启用状态、邀请、功能覆盖更新后，会按当前审计筛选条件刷新审计日志。
+
+验证：
+- `npm test -- src/server/admin/users-repository.test.ts src/app/api/admin/users/audit-logs/route.test.ts src/lib/api/admin.test.ts src/app/admin/page.test.ts`
+
+当前还剩：
+1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
+2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
+3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+4. Advanced Usage Metrics：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
+5. Custom Enterprise Permission Rules：等有明确企业客户场景后，再扩展组织/账号级规则模型。
+
+建议下一步：
+- 账号权限主线已经比较完整；下一阶段建议转向 Stripe Sandbox E2E Verification 或 Full Search Alerts UI。
 
 ## Status Update Template
 

@@ -29,6 +29,11 @@ describe("admin page", () => {
     expect(page).toContain("invitationDraft");
     expect(page).toContain("handleCreateAdminUser");
     expect(page).toContain('t("admin.userAuditLogs")');
+    expect(page).toContain('t("admin.auditFilterTarget")');
+    expect(page).toContain('t("admin.auditFilterFeature")');
+    expect(page).toContain('t("admin.allAuditActors")');
+    expect(page).toContain('t("admin.allAuditActions")');
+    expect(page).toContain("userAuditFilters");
     expect(page).toContain('t("admin.featureOverrides")');
     expect(page).toContain('t("admin.overrideReason")');
     expect(page).toContain('t("admin.overrideExpiresAt")');

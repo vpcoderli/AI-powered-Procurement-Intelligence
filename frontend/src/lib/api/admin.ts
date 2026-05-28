@@ -5,6 +5,8 @@ import type {
 } from "@/server/admin/data-sources-repository";
 import type {
   AdminUserAuditLog,
+  AdminUserAuditAction,
+  AdminUserAuditActorKind,
   AdminUserAuditLogsResponse,
   AdminUserFeatureOverridesResponse,
   AdminUserFilterStatus,
@@ -12,6 +14,7 @@ import type {
   AdminUsersResponse,
   CreateAdminUserInviteInput,
   CreateAdminUserInviteResponse,
+  ListAdminUserAuditLogsOptions,
   ListAdminUsersFilters,
   UpdateAdminUserInput,
   UpdateAdminUserFeatureOverrideInput,
@@ -25,6 +28,8 @@ export type {
   AdminDataSource,
   AdminDataSourcesResponse,
   AdminUserAuditLog,
+  AdminUserAuditAction,
+  AdminUserAuditActorKind,
   AdminUserAuditLogsResponse,
   AdminUserFeatureOverridesResponse,
   AdminUserFilterStatus,
@@ -32,6 +37,7 @@ export type {
   AdminUsersResponse,
   CreateAdminUserInviteInput,
   CreateAdminUserInviteResponse,
+  ListAdminUserAuditLogsOptions,
   ListAdminUsersFilters,
   UpdateAdminUserInput,
   UpdateAdminUserFeatureOverrideInput,
@@ -158,8 +164,16 @@ export async function listAdminUsers(filters: ListAdminUsersFilters = {}) {
   return parseResponse<AdminUsersResponse>(response);
 }
 
-export async function listAdminUserAuditLogs(input: { limit?: number } = {}) {
-  const response = await fetch(`/api/admin/users/audit-logs${buildQueryString(input)}`);
+export async function listAdminUserAuditLogs(input: ListAdminUserAuditLogsOptions = {}) {
+  const response = await fetch(
+    `/api/admin/users/audit-logs${buildQueryString({
+      limit: input.limit,
+      actorKind: input.actorKind,
+      action: input.action,
+      target: input.target,
+      featureKey: input.featureKey,
+    })}`,
+  );
 
   return parseResponse<AdminUserAuditLogsResponse>(response);
 }

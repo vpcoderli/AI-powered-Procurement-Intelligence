@@ -35,12 +35,31 @@ describe("GET /api/admin/users/audit-logs", () => {
       ],
     });
 
-    const response = await GET(new Request("http://localhost/api/admin/users/audit-logs?limit=10"));
+    const response = await GET(
+      new Request(
+        "http://localhost/api/admin/users/audit-logs?limit=10&actorKind=admin&action=user_access_updated&target=buyer&featureKey=compliance_manifest",
+      ),
+    );
     const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(body.logs[0]).toEqual(expect.objectContaining({ id: "audit_1", targetEmail: "buyer@example.com" }));
-    expect(usersRepository.listAdminUserAuditLogs).toHaveBeenCalledWith(expect.anything(), { limit: 10 });
+    expect(usersRepository.listAdminUserAuditLogs).toHaveBeenCalledWith(expect.anything(), {
+      limit: 10,
+      actorKind: "admin",
+      action: "user_access_updated",
+      target: "buyer",
+      featureKey: "compliance_manifest",
+    });
+  });
+
+  it("rejects invalid audit log filters", async () => {
+    const response = await GET(new Request("http://localhost/api/admin/users/audit-logs?actorKind=operator"));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("INVALID_REQUEST");
+    expect(usersRepository.listAdminUserAuditLogs).not.toHaveBeenCalled();
   });
 
   it("denies non-admin requests", async () => {

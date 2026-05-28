@@ -15,6 +15,8 @@ import {
 } from "@/server/auth/entitlements";
 
 export type AdminUserFilterStatus = "enabled" | "disabled";
+export type AdminUserAuditActorKind = "admin" | "local-bypass" | "self-service";
+export type AdminUserAuditAction = "user_access_updated" | "user_invited" | "user_self_deleted";
 
 export interface AdminUser {
   id: string;
@@ -79,7 +81,7 @@ export interface UpdateAdminUserFeatureOverrideInput {
 }
 
 export interface AdminUserAuditActor {
-  actorKind: "admin" | "local-bypass" | "self-service";
+  actorKind: AdminUserAuditActorKind;
   actorUserId: string | null;
 }
 
@@ -99,11 +101,11 @@ export type AdminUserAuditChange =
 
 export interface AdminUserAuditLog {
   id: string;
-  actorKind: "admin" | "local-bypass" | "self-service";
+  actorKind: AdminUserAuditActorKind;
   actorUserId: string | null;
   targetUserId: string;
   targetEmail: string | null;
-  action: "user_access_updated" | "user_invited" | "user_self_deleted";
+  action: AdminUserAuditAction;
   changes: AdminUserAuditChange[];
   createdAt: string;
 }
@@ -120,6 +122,10 @@ export interface AdminUserAuditLogsResponse {
 
 export interface ListAdminUserAuditLogsOptions {
   limit?: number;
+  actorKind?: AdminUserAuditActorKind;
+  action?: AdminUserAuditAction;
+  target?: string;
+  featureKey?: FeatureKey;
 }
 
 export class AdminUserNotFoundError extends Error {
@@ -202,6 +208,10 @@ function toAuditLog(row: {
     changes: parseAuditChanges(row.changesJson),
     createdAt: row.createdAt,
   };
+}
+
+function auditLogMatchesFeature(log: AdminUserAuditLog, featureKey: FeatureKey) {
+  return log.changes.some((change) => change.field === "featureOverride" && change.featureKey === featureKey);
 }
 
 function validateFeatureOverrideKey(featureKey: FeatureKey) {
@@ -549,24 +559,48 @@ export function listAdminUserAuditLogs(
   options: ListAdminUserAuditLogsOptions = {},
 ): AdminUserAuditLogsResponse {
   const limit = Math.max(1, Math.min(options.limit ?? 20, 100));
+  const target = options.target?.trim();
+  const conditions: SQL[] = [];
+
+  if (options.actorKind) {
+    conditions.push(eq(adminUserAuditLogs.actorKind, options.actorKind));
+  }
+
+  if (options.action) {
+    conditions.push(eq(adminUserAuditLogs.action, options.action));
+  }
+
+  if (target) {
+    const targetPattern = `%${target}%`;
+    conditions.push(or(
+      like(adminUserAuditLogs.targetUserId, targetPattern),
+      like(users.email, targetPattern),
+      like(users.displayName, targetPattern),
+    ) as SQL);
+  }
+
+  const query = db
+    .select({
+      id: adminUserAuditLogs.id,
+      actorKind: adminUserAuditLogs.actorKind,
+      actorUserId: adminUserAuditLogs.actorUserId,
+      targetUserId: adminUserAuditLogs.targetUserId,
+      targetEmail: users.email,
+      action: adminUserAuditLogs.action,
+      changesJson: adminUserAuditLogs.changesJson,
+      createdAt: adminUserAuditLogs.createdAt,
+    })
+    .from(adminUserAuditLogs)
+    .leftJoin(users, eq(adminUserAuditLogs.targetUserId, users.id));
+
+  const rows = (conditions.length > 0 ? query.where(and(...conditions)) : query)
+    .orderBy(desc(adminUserAuditLogs.createdAt), desc(adminUserAuditLogs.id))
+    .all()
+    .map(toAuditLog)
+    .filter((log) => (options.featureKey ? auditLogMatchesFeature(log, options.featureKey) : true))
+    .slice(0, limit);
 
   return {
-    logs: db
-      .select({
-        id: adminUserAuditLogs.id,
-        actorKind: adminUserAuditLogs.actorKind,
-        actorUserId: adminUserAuditLogs.actorUserId,
-        targetUserId: adminUserAuditLogs.targetUserId,
-        targetEmail: users.email,
-        action: adminUserAuditLogs.action,
-        changesJson: adminUserAuditLogs.changesJson,
-        createdAt: adminUserAuditLogs.createdAt,
-      })
-      .from(adminUserAuditLogs)
-      .leftJoin(users, eq(adminUserAuditLogs.targetUserId, users.id))
-      .orderBy(desc(adminUserAuditLogs.createdAt), desc(adminUserAuditLogs.id))
-      .limit(limit)
-      .all()
-      .map(toAuditLog),
+    logs: rows,
   };
 }
