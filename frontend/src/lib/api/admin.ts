@@ -14,6 +14,7 @@ import type {
   ListAdminUsersFilters,
   UpdateAdminUserInput,
 } from "@/server/admin/users-repository";
+import type { NotificationOutboxRow, NotificationStatus } from "@/server/notifications/types";
 
 export type {
   AdminCrawlerLog,
@@ -48,6 +49,17 @@ export interface UpdateAdminDataSourceResponse {
 
 export interface UpdateAdminUserResponse {
   user: AdminUser;
+}
+
+export interface AdminNotificationsResponse {
+  notifications: NotificationOutboxRow[];
+}
+
+export interface AdminNotificationDeliveryResponse {
+  attempted: number;
+  sent: number;
+  failed: number;
+  skipped: number;
 }
 
 export class AdminApiError extends Error {
@@ -177,6 +189,22 @@ export async function listAdminCrawlerLogs() {
   const response = await fetch("/api/admin/crawler-logs");
 
   return parseResponse<AdminCrawlerLogsResponse>(response);
+}
+
+export async function listAdminNotifications(input: { limit?: number; status?: NotificationStatus } = {}) {
+  const response = await fetch(`/api/admin/notifications${buildQueryString(input)}`);
+
+  return parseResponse<AdminNotificationsResponse>(response);
+}
+
+export async function deliverAdminNotifications(input: { limit?: number; maxAttempts?: number } = {}) {
+  const response = await fetch("/api/admin/notifications/deliver", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<AdminNotificationDeliveryResponse>(response);
 }
 
 export async function runSamGovCrawlerNow() {

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { getAccountNotificationPreferences } from "@/server/account/notification-preferences";
 import type { AppDatabase } from "@/server/db/client";
 import { alerts, users } from "@/server/db/schema";
 import type { SearchAlertMatchResult } from "@/server/search-alerts/matcher";
@@ -56,6 +57,11 @@ export async function sendMatchedAlertNotifications(
 
     const email = findUserEmail(db, match.userId);
     if (!email) {
+      result.skipped += 1;
+      continue;
+    }
+
+    if (!getAccountNotificationPreferences(db, match.userId).savedSearchAlertsEnabled) {
       result.skipped += 1;
       continue;
     }

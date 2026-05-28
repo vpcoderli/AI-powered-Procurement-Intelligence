@@ -8,6 +8,8 @@ describe("admin page", () => {
     expect(page).toContain("listAdminUsers");
     expect(page).toContain("createAdminUser");
     expect(page).toContain("listAdminUserAuditLogs");
+    expect(page).toContain("listAdminNotifications");
+    expect(page).toContain("deliverAdminNotifications");
     expect(page).toContain("updateAdminUserAccess");
     expect(page).toContain("useAuth");
     expect(page).toContain("isAdmin");
@@ -24,5 +26,7 @@ describe("admin page", () => {
     expect(page).toContain("userFilters");
     expect(page).toContain("USER_ROLES");
     expect(page).toContain("ACCOUNT_TIERS");
+    expect(page).toContain('t("admin.notificationDelivery")');
+    expect(page).toContain('t("admin.deliverNotifications")');
   });
 });

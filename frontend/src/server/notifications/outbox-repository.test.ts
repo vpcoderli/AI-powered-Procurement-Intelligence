@@ -4,6 +4,7 @@ import { createTestDatabase } from "@/server/db/test-utils";
 import {
   enqueueNotification,
   listDeliverableNotifications,
+  listRecentNotifications,
   markNotificationFailed,
   markNotificationSent,
 } from "./outbox-repository";
@@ -109,6 +110,42 @@ describe("notification outbox repository", () => {
       expect(listDeliverableNotifications(testDb.db, { maxAttempts: 3 }).map((row) => row.id)).toEqual([
         "notification_1",
         "notification_retry",
+      ]);
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("lists recent notifications for admin delivery inspection", async () => {
+    const testDb = await createTestDatabase();
+
+    try {
+      enqueueNotification(testDb.db, {
+        ...input,
+        id: "notification_sent",
+        dedupeKey: "alert_1:2026-05-20:email",
+        createdAt: "2026-05-19T00:00:00.000Z",
+      });
+      markNotificationSent(testDb.db, "notification_sent", "2026-05-19T00:01:00.000Z");
+      enqueueNotification(testDb.db, {
+        ...input,
+        id: "notification_failed",
+        dedupeKey: "alert_1:2026-05-21:email",
+        createdAt: "2026-05-19T00:02:00.000Z",
+      });
+      markNotificationFailed(
+        testDb.db,
+        "notification_failed",
+        "Provider unavailable",
+        "2026-05-19T00:03:00.000Z",
+      );
+
+      expect(listRecentNotifications(testDb.db, { limit: 10 }).map((row) => row.id)).toEqual([
+        "notification_failed",
+        "notification_sent",
+      ]);
+      expect(listRecentNotifications(testDb.db, { status: "failed" }).map((row) => row.id)).toEqual([
+        "notification_failed",
       ]);
     } finally {
       await testDb.cleanup();

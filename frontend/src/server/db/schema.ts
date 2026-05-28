@@ -178,6 +178,17 @@ export const passwordResetTokens = sqliteTable(
   }),
 );
 
+export const userNotificationPreferences = sqliteTable("user_notification_preferences", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  savedSearchAlertsEnabled: integer("saved_search_alerts_enabled").notNull().default(1),
+  defaultAlertFrequency: text("default_alert_frequency", { enum: ["daily", "weekly"] }).notNull().default("daily"),
+  marketingUpdatesEnabled: integer("marketing_updates_enabled").notNull().default(0),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
 export const workspaceInvitations = sqliteTable(
   "workspace_invitations",
   {

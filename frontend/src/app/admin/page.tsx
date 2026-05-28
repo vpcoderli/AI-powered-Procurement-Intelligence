@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   Activity,
   AlertTriangle,
+  Bell,
   Database,
   History,
   Play,
@@ -31,8 +32,10 @@ import {
 } from "@/components/ui/table";
 import {
   createAdminUser,
+  deliverAdminNotifications,
   listAdminCrawlerLogs,
   listAdminDataSources,
+  listAdminNotifications,
   listAdminUserAuditLogs,
   listAdminUsers,
   runStateCrawlersNow,
@@ -41,6 +44,7 @@ import {
   type AdminCrawlerLog,
   type AdminDataSource,
   type AdminDataSourcesResponse,
+  type AdminNotificationsResponse,
   type AdminUserAuditLog,
   type AdminUserFilterStatus,
   type AdminUser,
@@ -59,6 +63,7 @@ type LoadState =
       logs: AdminCrawlerLog[];
       users: AdminUser[];
       userAuditLogs: AdminUserAuditLog[];
+      notifications: AdminNotificationsResponse["notifications"];
     };
 
 type UserFilters = {
@@ -199,6 +204,7 @@ export default function AdminPage() {
   const [invitedTemporaryPassword, setInvitedTemporaryPassword] = useState<string | null>(null);
   const [isInvitingUser, setIsInvitingUser] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
+  const [isDeliveringNotifications, setIsDeliveringNotifications] = useState(false);
   const isAdmin = user?.role === "admin";
 
   const load = useCallback(() => {
@@ -210,14 +216,16 @@ export default function AdminPage() {
       listAdminCrawlerLogs(),
       listAdminUsers(userFilters),
       listAdminUserAuditLogs({ limit: 10 }),
+      listAdminNotifications({ limit: 10 }),
     ])
-      .then(([data, logsResponse, usersResponse, userAuditLogsResponse]) => {
+      .then(([data, logsResponse, usersResponse, userAuditLogsResponse, notificationsResponse]) => {
         setState({
           status: "ready",
           data,
           logs: logsResponse.logs,
           users: usersResponse.users,
           userAuditLogs: userAuditLogsResponse.logs,
+          notifications: notificationsResponse.notifications,
         });
       })
       .catch(() => {
@@ -237,6 +245,7 @@ export default function AdminPage() {
   const logs = state.status === "ready" ? state.logs : [];
   const users = state.status === "ready" ? state.users : [];
   const userAuditLogs = state.status === "ready" ? state.userAuditLogs : [];
+  const notifications = state.status === "ready" ? state.notifications : [];
 
   const toggleSource = (source: AdminDataSource) => {
     setPendingSourceId(source.id);
@@ -385,6 +394,37 @@ export default function AdminPage() {
       })
       .finally(() => {
         setIsInvitingUser(false);
+      });
+  };
+
+  const deliverNotifications = () => {
+    setIsDeliveringNotifications(true);
+    setRunMessage(null);
+    deliverAdminNotifications({ limit: 25, maxAttempts: 3 })
+      .then((result) => {
+        setRunMessage(
+          t("admin.notificationDeliveryResult")
+            .replace("{sent}", String(result.sent))
+            .replace("{failed}", String(result.failed))
+            .replace("{skipped}", String(result.skipped)),
+        );
+        return listAdminNotifications({ limit: 10 });
+      })
+      .then((response) => {
+        setState((current) => {
+          if (current.status !== "ready") return current;
+
+          return {
+            ...current,
+            notifications: response.notifications,
+          };
+        });
+      })
+      .catch(() => {
+        setRunMessage(t("admin.notificationDeliveryFailed"));
+      })
+      .finally(() => {
+        setIsDeliveringNotifications(false);
       });
   };
 
@@ -722,6 +762,52 @@ export default function AdminPage() {
               })}
             </TableBody>
           </Table>
+        </section>
+      )}
+
+      {state.status === "ready" && (
+        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2 font-semibold text-slate-950">
+              <Bell size={18} />
+              {t("admin.notificationDelivery")}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={deliverNotifications}
+              disabled={isDeliveringNotifications}
+              className="h-9 rounded-lg border-slate-200 px-3"
+            >
+              <Play size={14} />
+              {isDeliveringNotifications ? t("admin.deliveringNotifications") : t("admin.deliverNotifications")}
+            </Button>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {notifications.length === 0 && (
+              <div className="px-4 py-5 text-sm text-slate-500">{t("admin.noNotifications")}</div>
+            )}
+            {notifications.map((notification) => (
+              <div key={notification.id} className="grid gap-2 px-4 py-3 md:grid-cols-[1fr_auto] md:items-center">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium text-slate-900">{notification.recipient}</span>
+                    <Badge variant="outline" className={statusTone(notification.status)}>
+                      {t(`admin.notificationStatus_${notification.status}`)}
+                    </Badge>
+                    <span className="text-xs text-slate-500">{formatDate(notification.sentAt ?? notification.createdAt)}</span>
+                  </div>
+                  <div className="mt-1 text-sm text-slate-600">{notification.subject}</div>
+                  {notification.lastError && (
+                    <div className="mt-1 text-sm text-rose-700">{compactErrorMessage(notification.lastError)}</div>
+                  )}
+                </div>
+                <div className="text-xs font-medium text-slate-500">
+                  {t("admin.notificationAttempts").replace("{count}", String(notification.attemptCount))}
+                </div>
+              </div>
+            ))}
+          </div>
         </section>
       )}
 

@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
+import { updateAccountNotificationPreferences } from "@/server/account/notification-preferences";
 import { alerts, notificationOutbox, users } from "@/server/db/schema";
 import { createTestDatabase } from "@/server/db/test-utils";
 import { sendMatchedAlertNotifications } from "./service";
@@ -207,6 +208,71 @@ describe("notification service", () => {
       const notification = testDb.db.select().from(notificationOutbox).get();
       expect(notification?.status).toBe("failed");
       expect(notification?.lastError).toBe("Provider unavailable");
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("skips matched alert email when the user disables saved search notifications", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      testDb.db
+        .insert(users)
+        .values({
+          id: "user_email",
+          email: "buyer@example.com",
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        })
+        .run();
+      testDb.db
+        .insert(alerts)
+        .values({
+          id: "alert_email",
+          userId: "user_email",
+          name: "Cloud alerts",
+          query: JSON.stringify({ q: "cloud" }),
+          frequency: "daily",
+          notificationChannel: "email",
+          isEnabled: 1,
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        })
+        .run();
+      updateAccountNotificationPreferences(testDb.db, "user_email", {
+        savedSearchAlertsEnabled: false,
+      });
+
+      const provider = {
+        send: vi.fn().mockResolvedValue({ ok: true }),
+      };
+      const result = await sendMatchedAlertNotifications(
+        testDb.db,
+        {
+          evaluatedAlerts: 1,
+          matchedAlerts: 1,
+          updatedAlerts: 1,
+          matches: [
+            {
+              alertId: "alert_email",
+              userId: "user_email",
+              alertName: "Cloud alerts",
+              frequency: "daily",
+              notificationChannel: "email",
+              bidIds: ["bid_1"],
+              bids: [],
+              query: { q: "cloud" },
+            },
+          ],
+        },
+        provider,
+        { now: "2026-05-19T12:00:00.000Z" },
+      );
+
+      expect(result).toEqual({ queued: 0, sent: 0, skipped: 1, failed: 0 });
+      expect(provider.send).not.toHaveBeenCalled();
+      expect(testDb.db.select().from(notificationOutbox).all()).toHaveLength(0);
     } finally {
       await testDb.cleanup();
     }

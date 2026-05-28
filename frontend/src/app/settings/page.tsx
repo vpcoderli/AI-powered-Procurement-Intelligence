@@ -35,6 +35,7 @@ import {
   exportAccountData,
   fetchAccountSubscription,
   fetchAccountUsage,
+  fetchAccountNotificationPreferences,
   fetchBillingInvoices,
   fetchAccountWorkspace,
   inviteWorkspaceMember,
@@ -44,8 +45,10 @@ import {
   setWorkspaceMemberStatus,
   transferWorkspaceOwnership,
   updateAccountWorkspace,
+  updateAccountNotificationPreferences,
   updateAccountProfile,
   updateWorkspaceMemberRole,
+  type AccountNotificationPreferencesResponse,
   type AccountWorkspaceMember,
   type AccountSubscriptionResponse,
   type AccountUsageData,
@@ -86,6 +89,11 @@ export default function SettingsPage() {
   const [subscriptionError, setSubscriptionError] = useState("");
   const [usageData, setUsageData] = useState<AccountUsageData | null>(null);
   const [usageError, setUsageError] = useState("");
+  const [notificationPreferences, setNotificationPreferences] =
+    useState<AccountNotificationPreferencesResponse | null>(null);
+  const [notificationPreferencesMessage, setNotificationPreferencesMessage] = useState("");
+  const [notificationPreferencesError, setNotificationPreferencesError] = useState("");
+  const [isSavingNotificationPreferences, setIsSavingNotificationPreferences] = useState(false);
   const [billingMessage, setBillingMessage] = useState("");
   const [billingActionTier, setBillingActionTier] = useState<AccountTier | "cancel" | "portal" | null>(null);
   const [billingInvoicesData, setBillingInvoicesData] = useState<BillingInvoicesResponse | null>(null);
@@ -148,6 +156,19 @@ export default function SettingsPage() {
       .catch((error) => {
         if (isCancelled) return;
         setUsageError(error instanceof Error ? error.message : t("settings.usageLoadError"));
+      });
+
+    fetchAccountNotificationPreferences()
+      .then((data) => {
+        if (isCancelled) return;
+        setNotificationPreferences(data);
+        setNotificationPreferencesError("");
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        setNotificationPreferencesError(
+          error instanceof Error ? error.message : t("settings.notificationPreferencesLoadError"),
+        );
       });
 
     return () => {
@@ -298,6 +319,28 @@ export default function SettingsPage() {
       setPasswordError(error instanceof Error ? error.message : t("settings.passwordSaveError"));
     } finally {
       setIsChangingPassword(false);
+    }
+  }
+
+  async function handleNotificationPreferencesChange(input: {
+    savedSearchAlertsEnabled?: boolean;
+    defaultAlertFrequency?: "daily" | "weekly";
+    marketingUpdatesEnabled?: boolean;
+  }) {
+    setNotificationPreferencesMessage("");
+    setNotificationPreferencesError("");
+    setIsSavingNotificationPreferences(true);
+
+    try {
+      const data = await updateAccountNotificationPreferences(input);
+      setNotificationPreferences(data);
+      setNotificationPreferencesMessage(t("settings.notificationPreferencesSaved"));
+    } catch (error) {
+      setNotificationPreferencesError(
+        error instanceof Error ? error.message : t("settings.notificationPreferencesSaveError"),
+      );
+    } finally {
+      setIsSavingNotificationPreferences(false);
     }
   }
 
@@ -814,6 +857,27 @@ export default function SettingsPage() {
                         <Badge variant="outline" className="mt-2 w-fit border-slate-200 bg-slate-50 text-slate-700">
                           {t(`settings.memberStatus_${member.status}`)}
                         </Badge>
+                        {member.status === "invited" && member.invitationDelivery && (
+                          <div className="mt-2 space-y-1">
+                            <Badge
+                              variant="outline"
+                              className={`w-fit ${
+                                member.invitationDelivery.status === "sent"
+                                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                  : member.invitationDelivery.status === "failed"
+                                    ? "border-rose-200 bg-rose-50 text-rose-700"
+                                    : "border-amber-200 bg-amber-50 text-amber-800"
+                              }`}
+                            >
+                              {t(`settings.inviteDelivery_${member.invitationDelivery.status}`)}
+                            </Badge>
+                            {member.invitationDelivery.lastError && (
+                              <p className="text-xs font-medium text-rose-700">
+                                {member.invitationDelivery.lastError}
+                              </p>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                         {canManageWorkspace ? (
@@ -921,12 +985,28 @@ export default function SettingsPage() {
                 <CardDescription className="text-slate-500 font-medium">{t("settings.emailPreferencesDesc")}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6 p-6">
+                {notificationPreferencesError && (
+                  <p className="text-sm font-medium text-red-600">{notificationPreferencesError}</p>
+                )}
+                {notificationPreferencesMessage && (
+                  <p className="text-sm font-medium text-emerald-700">{notificationPreferencesMessage}</p>
+                )}
+                {!notificationPreferences && !notificationPreferencesError && (
+                  <p className="text-sm font-medium text-slate-500">{t("settings.loadingNotificationPreferences")}</p>
+                )}
                 <div className="flex flex-row items-center justify-between gap-4">
                   <div className="flex flex-col space-y-1">
                     <Label className="text-slate-900 font-medium text-base">{t("settings.savedSearchAlerts")}</Label>
                     <span className="text-sm text-slate-500">{t("settings.savedSearchAlertsDesc")}</span>
                   </div>
-                  <Switch defaultChecked className="data-[state=checked]:bg-slate-900 shrink-0" />
+                  <Switch
+                    checked={notificationPreferences?.savedSearchAlertsEnabled ?? false}
+                    disabled={!notificationPreferences || isSavingNotificationPreferences}
+                    onCheckedChange={(checked) =>
+                      handleNotificationPreferencesChange({ savedSearchAlertsEnabled: checked })
+                    }
+                    className="data-[state=checked]:bg-slate-900 shrink-0"
+                  />
                 </div>
                 <Separator className="bg-slate-100" />
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -934,12 +1014,19 @@ export default function SettingsPage() {
                     <Label className="text-slate-900 font-medium text-base">{t("settings.alertFrequency")}</Label>
                     <span className="text-sm text-slate-500">{t("settings.alertFrequencyDesc")}</span>
                   </div>
-                  <Select defaultValue="daily">
+                  <Select
+                    value={notificationPreferences?.defaultAlertFrequency ?? "daily"}
+                    disabled={!notificationPreferences || isSavingNotificationPreferences}
+                    onValueChange={(value) =>
+                      handleNotificationPreferencesChange({
+                        defaultAlertFrequency: value === "weekly" ? "weekly" : "daily",
+                      })
+                    }
+                  >
                     <SelectTrigger className="w-full sm:w-[180px] shrink-0 border-slate-200 focus:ring-slate-900 rounded-lg h-10">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent className="rounded-lg border-slate-200 shadow-md">
-                      <SelectItem value="realtime" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">{t("settings.asTheyArrive")}</SelectItem>
                       <SelectItem value="daily" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">{t("settings.dailyDigest")}</SelectItem>
                       <SelectItem value="weekly" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">{t("settings.weeklySummary")}</SelectItem>
                     </SelectContent>
@@ -951,7 +1038,14 @@ export default function SettingsPage() {
                     <Label className="text-slate-900 font-medium text-base">{t("settings.marketingUpdates")}</Label>
                     <span className="text-sm text-slate-500">{t("settings.marketingUpdatesDesc")}</span>
                   </div>
-                  <Switch className="data-[state=checked]:bg-slate-900 shrink-0" />
+                  <Switch
+                    checked={notificationPreferences?.marketingUpdatesEnabled ?? false}
+                    disabled={!notificationPreferences || isSavingNotificationPreferences}
+                    onCheckedChange={(checked) =>
+                      handleNotificationPreferencesChange({ marketingUpdatesEnabled: checked })
+                    }
+                    className="data-[state=checked]:bg-slate-900 shrink-0"
+                  />
                 </div>
               </CardContent>
             </Card>
