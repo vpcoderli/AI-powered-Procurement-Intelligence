@@ -11,12 +11,14 @@
     "db:migrate": "tsx scripts/migrate-db.ts",
     "db:seed": "tsx scripts/seed-db.ts",
     "db:migrate-saved-bids": "tsx scripts/migrate-saved-bids.ts",
+    "billing:stripe:sandbox": "tsx scripts/stripe-sandbox-e2e.ts",
     "crawler:once": "tsx scripts/run-crawler-once.ts",
     "worker:crawler": "tsx scripts/crawler-worker.ts",
     "worker:notifications": "tsx scripts/notification-worker.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
+    "@next/env": "16.2.6",
     "better-sqlite3": "^12.10.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
