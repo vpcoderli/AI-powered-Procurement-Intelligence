@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { asc, eq, inArray, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { notificationOutbox } from "@/server/db/schema";
 import type {
@@ -109,4 +109,22 @@ export function markNotificationFailed(
   const row = findById(db, id);
   if (!row) throw new Error(`Notification not found: ${id} at ${attemptedAt}`);
   return toOutboxRow(row);
+}
+
+export function listDeliverableNotifications(
+  db: AppDatabase,
+  options: { limit?: number; maxAttempts?: number } = {},
+): NotificationOutboxRow[] {
+  const limit = Math.max(1, Math.min(options.limit ?? 25, 100));
+  const maxAttempts = Math.max(1, options.maxAttempts ?? 3);
+
+  return db
+    .select()
+    .from(notificationOutbox)
+    .where(inArray(notificationOutbox.status, ["pending", "failed"]))
+    .orderBy(asc(notificationOutbox.createdAt), asc(notificationOutbox.id))
+    .all()
+    .filter((row) => row.attemptCount < maxAttempts)
+    .slice(0, limit)
+    .map(toOutboxRow);
 }
