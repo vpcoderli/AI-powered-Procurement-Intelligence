@@ -28,7 +28,7 @@ This document is the working checklist for local development. Update it after ea
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
 | Intent to Bid | Add intent from bid detail, idempotent intent creation, intent list, intent detail workspace, status update. |
 | AI-like bid brief | Deterministic brief, key dates, initial checklist, risk flags. |
-| Submission Guidance foundation | `submission_paths`, `submission_confirmations`, generator, service, API routes, API client. |
+| Submission Guidance | `submission_paths`, `submission_confirmations`, generator, service, Pro-gated API routes, API client, Intent workspace UI for generated guidance, editable submission fields, readiness/risk lists, and manual submission confirmation. |
 | Static product demo | `/winbids-demo` isolated prototype page from Drive frontend references. |
 
 ### Partially Implemented
@@ -40,7 +40,6 @@ This document is the working checklist for local development. Update it after ea
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab | Billing provider sync, real checkout, invoices, cancellation |
 | Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits | Apply guards/limits to every future gated API and add richer usage dashboards |
-| Submission Guidance UI | Static Submission Path preview in Intent workspace; backend API exists; API is Pro-gated | Fetch real submission guidance, editable fields, confirmation form, saved confirmation state |
 | Search alerts | API/service foundation exists | Full alert management UI, digest configuration, real email delivery |
 | Notifications | Notification outbox foundation exists | Provider configuration, delivery retries, user notification preferences |
 | Admin data QA | Source status and logs exist | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
@@ -63,13 +62,13 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Submission Guidance UI** or **Billing Provider Sync** depending on whether the next sprint should improve bid workflow depth or connect real monetization.
+Prioritize **Compliance Manifest Lite** or **Billing Provider Sync** depending on whether the next sprint should deepen bid execution workflow or connect real monetization.
 
 Reason:
 
 - The data model, session payload, account settings, subscription foundation, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
 - The remaining account gap is not basic self-service; it is real billing provider sync, broader usage dashboards, password reset, and organization/team support.
-- Advanced features such as Compliance Manifest, Submission Guidance editing, and Knowledge Station can now rely on the same feature gate.
+- Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
 
@@ -125,7 +124,6 @@ Current local limits:
 ## Suggested Implementation Order
 
 1. **Product workflow depth**
-   - Connect real Submission Guidance UI.
    - Build Compliance Manifest Lite.
    - Build Pursue / No-Bid Decision Lite.
 
@@ -230,7 +228,34 @@ Current local limits:
 3. Password reset 邮件 token 流程。
 4. Admin 创建账号 / 邀请用户流程。
 5. Organization/workspace 多用户公司账户模型。
-6. Submission Guidance 真实编辑与确认 UI。
+
+## Completed Phase: Submission Guidance UI
+
+本阶段完成：
+- Intent 详情页从静态 Submission Path 预览改为真实读取 `/api/intents/[id]/submission`。
+- Pro 及以上用户可编辑提交方式、门户链接、联系邮箱、注册/纸质递交/补遗确认要求。
+- 页面展示生成的提交指导、复杂度、准备清单和提交风险提示。
+- 新增手动“确认已提交”表单，写入 `/api/intents/[id]/submission/confirm`。
+- 补齐中英文文案和页面静态检查测试。
+
+验证：
+- `npm test -- src/app/intents/page.test.ts src/lib/api/intents.test.ts 'src/app/api/intents/[id]/submission/route.test.ts' 'src/app/api/intents/[id]/submission/confirm/route.test.ts'`
+- `npm test`
+- `npm run lint`
+- `npm run build`
+- 浏览器烟测：打开 Intent 工作台，保存提交指导成功，确认已提交成功。
+
+当前还剩：
+1. Compliance Manifest Lite：结构化需求、人工完成状态、备注和证据状态。
+2. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
+3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
+4. Password reset 邮件 token 流程。
+5. Admin 创建账号 / 邀请用户流程。
+6. Organization/workspace 多用户公司账户模型。
+7. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
+
+建议下一步：
+- 优先开发 Compliance Manifest Lite，因为它直接承接 Submission Guidance，让用户开始把投标要求转成可执行清单。
 
 ## Status Update Template
 

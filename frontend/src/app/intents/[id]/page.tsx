@@ -6,13 +6,25 @@ import { useParams, useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchIntent, updateIntentStatus } from "@/lib/api/intents";
+import {
+  confirmSubmission,
+  fetchIntent,
+  fetchSubmissionGuidance,
+  updateIntentStatus,
+  updateSubmissionGuidance,
+} from "@/lib/api/intents";
 import { lockedFeatureMessage, useFeature } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import type { IntentDetail, IntentStatus } from "@/server/intents/types";
 import { INTENT_STATUSES } from "@/server/intents/types";
+import type {
+  SubmissionConfirmation,
+  SubmissionGuidance,
+  SubmissionMethod,
+} from "@/server/submission/types";
 import {
   ArrowLeft,
   ArrowRight,
@@ -45,13 +57,63 @@ function metricLabel(key: string) {
 const prototypeWorkspace = "Intent Workspace";
 const submissionPath = "Submission Path";
 
-const submissionReadinessItems = [
-  "reviewSolicitation",
-  "confirmPortal",
-  "checkAddenda",
-  "verifyDocuments",
-  "captureReceipt",
-] as const;
+const submissionMethods: SubmissionMethod[] = [
+  "external_portal",
+  "email",
+  "physical_delivery",
+  "mixed",
+  "unknown",
+];
+
+type SubmissionDraft = Pick<
+  SubmissionGuidance,
+  | "method"
+  | "portalUrl"
+  | "contactEmail"
+  | "requiresRegistration"
+  | "requiresPhysicalDelivery"
+  | "requiresAddendaAcknowledgement"
+>;
+
+interface ConfirmationDraft {
+  submittedAt: string;
+  method: SubmissionMethod;
+  confirmationReference: string;
+  confirmationNotes: string;
+}
+
+const defaultSubmissionDraft: SubmissionDraft = {
+  method: "unknown",
+  portalUrl: "",
+  contactEmail: "",
+  requiresRegistration: false,
+  requiresPhysicalDelivery: false,
+  requiresAddendaAcknowledgement: false,
+};
+
+function currentDatetimeLocal() {
+  const now = new Date();
+  const offsetMs = now.getTimezoneOffset() * 60_000;
+
+  return new Date(now.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
+function toSubmissionDraft(submission: SubmissionGuidance): SubmissionDraft {
+  return {
+    method: submission.method,
+    portalUrl: submission.portalUrl,
+    contactEmail: submission.contactEmail,
+    requiresRegistration: submission.requiresRegistration,
+    requiresPhysicalDelivery: submission.requiresPhysicalDelivery,
+    requiresAddendaAcknowledgement: submission.requiresAddendaAcknowledgement,
+  };
+}
+
+function toIsoFromDatetimeLocal(value: string) {
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+}
 
 const pursuitLanes = [
   { key: "intent", count: "1", items: ["match", "brief"] },
@@ -72,6 +134,20 @@ export default function IntentWorkspacePage() {
   const [saveError, setSaveError] = useState<Error | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
+  const [submissionGuidance, setSubmissionGuidance] = useState<SubmissionGuidance | null>(null);
+  const [submissionDraft, setSubmissionDraft] = useState<SubmissionDraft>(defaultSubmissionDraft);
+  const [submissionConfirmation, setSubmissionConfirmation] = useState<SubmissionConfirmation | null>(null);
+  const [confirmationDraft, setConfirmationDraft] = useState<ConfirmationDraft>({
+    submittedAt: currentDatetimeLocal(),
+    method: "unknown",
+    confirmationReference: "",
+    confirmationNotes: "",
+  });
+  const [isSubmissionLoading, setIsSubmissionLoading] = useState(false);
+  const [isSubmissionSaving, setIsSubmissionSaving] = useState(false);
+  const [isConfirmationSaving, setIsConfirmationSaving] = useState(false);
+  const [submissionError, setSubmissionError] = useState<Error | null>(null);
+  const [submissionNotice, setSubmissionNotice] = useState("");
   const submissionGuidanceFeature = useFeature("submission_guidance");
 
   const intentId = typeof params?.id === "string" ? params.id : Array.isArray(params?.id) ? params.id[0] : "";
@@ -113,6 +189,53 @@ export default function IntentWorkspacePage() {
     };
   }, [intentId]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled || !mountedRef.current) return;
+
+      setSubmissionGuidance(null);
+      setSubmissionDraft(defaultSubmissionDraft);
+      setSubmissionConfirmation(null);
+      setSubmissionNotice("");
+      setSubmissionError(null);
+
+      if (!intentId || !submissionGuidanceFeature.enabled) {
+        setIsSubmissionLoading(false);
+        return;
+      }
+
+      setIsSubmissionLoading(true);
+
+      fetchSubmissionGuidance(intentId)
+        .then((response) => {
+          if (cancelled || !mountedRef.current) return;
+
+          setSubmissionGuidance(response.submission);
+          setSubmissionDraft(toSubmissionDraft(response.submission));
+          setConfirmationDraft({
+            submittedAt: currentDatetimeLocal(),
+            method: response.submission.method,
+            confirmationReference: "",
+            confirmationNotes: "",
+          });
+        })
+        .catch((err) => {
+          if (cancelled || !mountedRef.current) return;
+          setSubmissionError(err instanceof Error ? err : new Error("Failed to load submission guidance"));
+        })
+        .finally(() => {
+          if (cancelled || !mountedRef.current) return;
+          setIsSubmissionLoading(false);
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [intentId, submissionGuidanceFeature.enabled]);
+
   const matchComponents = useMemo(() => {
     if (!intent) return [];
     return Object.entries(intent.match.components);
@@ -145,6 +268,65 @@ export default function IntentWorkspacePage() {
     } finally {
       if (mountedRef.current && saveRequestRef.current === requestId) {
         setIsSaving(false);
+      }
+    }
+  };
+
+  const handleSaveSubmissionGuidance = async () => {
+    if (!intent || !submissionGuidanceFeature.enabled || isSubmissionSaving) return;
+
+    setIsSubmissionSaving(true);
+    setSubmissionNotice("");
+    setSubmissionError(null);
+
+    try {
+      const response = await updateSubmissionGuidance(intent.id, submissionDraft);
+      if (!mountedRef.current) return;
+
+      setSubmissionGuidance(response.submission);
+      setSubmissionDraft(toSubmissionDraft(response.submission));
+      setConfirmationDraft((current) => ({ ...current, method: response.submission.method }));
+      setSubmissionNotice(t("intentsPage.submissionGuidanceSaved"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setSubmissionError(err instanceof Error ? err : new Error("Failed to save submission guidance"));
+    } finally {
+      if (mountedRef.current) {
+        setIsSubmissionSaving(false);
+      }
+    }
+  };
+
+  const handleConfirmSubmission = async () => {
+    if (!intent || !submissionGuidanceFeature.enabled || isConfirmationSaving) return;
+
+    setIsConfirmationSaving(true);
+    setSubmissionNotice("");
+    setSubmissionError(null);
+
+    try {
+      const response = await confirmSubmission(intent.id, {
+        submittedAt: toIsoFromDatetimeLocal(confirmationDraft.submittedAt),
+        method: confirmationDraft.method,
+        confirmationReference: confirmationDraft.confirmationReference.trim(),
+        confirmationNotes: confirmationDraft.confirmationNotes.trim(),
+      });
+      if (!mountedRef.current) return;
+
+      setSubmissionConfirmation(response.confirmation);
+      setConfirmationDraft({
+        submittedAt: currentDatetimeLocal(),
+        method: response.confirmation.method,
+        confirmationReference: "",
+        confirmationNotes: "",
+      });
+      setSubmissionNotice(t("intentsPage.submissionConfirmationSaved"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setSubmissionError(err instanceof Error ? err : new Error("Failed to confirm submission"));
+    } finally {
+      if (mountedRef.current) {
+        setIsConfirmationSaving(false);
       }
     }
   };
@@ -410,7 +592,9 @@ export default function IntentWorkspacePage() {
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-700">
-              {t("intentsPage.nextPhasePreview")}
+              {submissionGuidanceFeature.enabled
+                ? t("intentsPage.submissionGuidance")
+                : t("intentsPage.nextPhasePreview")}
             </p>
             <h2 className="mt-1 flex items-center gap-2 text-2xl font-black text-slate-950">
               <Route size={21} className="text-blue-700" aria-hidden="true" />
@@ -419,32 +603,264 @@ export default function IntentWorkspacePage() {
           </div>
           <span className="w-fit rounded-full border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-700">
             {submissionGuidanceFeature.enabled
-              ? t("intentsPage.mediumComplexity")
+              ? submissionGuidance
+                ? `${submissionGuidance.complexityScore}/100 ${t("intentsPage.complexityScore")}`
+                : t("intentsPage.mediumComplexity")
               : lockedFeatureMessage("submission_guidance")}
           </span>
         </div>
-        <div
-          className={`mt-5 flex flex-wrap items-center gap-3 rounded-lg p-4 text-sm font-bold ${
-            submissionGuidanceFeature.enabled ? "bg-slate-50 text-slate-600" : "bg-white/70 text-amber-800"
-          }`}
-        >
-          <Landmark size={18} className="text-blue-700" aria-hidden="true" />
-          <span>{t("intentsPage.externalPortal")}</span>
-          <ArrowRight size={15} className="text-slate-400" aria-hidden="true" />
-          <ShieldAlert size={18} className="text-blue-700" aria-hidden="true" />
-          <span>{t("intentsPage.registrationCheck")}</span>
-          <ArrowRight size={15} className="text-slate-400" aria-hidden="true" />
-          <Truck size={18} className="text-blue-700" aria-hidden="true" />
-          <span>{t("intentsPage.receiptCapture")}</span>
-        </div>
-        <ul className="mt-5 grid gap-3 md:grid-cols-2">
-          {submissionReadinessItems.map((item) => (
-            <li key={item} className="flex gap-2 text-sm font-semibold leading-6 text-slate-700">
-              <CheckCircle2 size={16} className="mt-1 shrink-0 text-emerald-600" aria-hidden="true" />
-              <span>{t(`intentsPage.submissionReadiness.${item}`)}</span>
-            </li>
-          ))}
-        </ul>
+
+        {!submissionGuidanceFeature.enabled ? (
+          <>
+            <div className="mt-5 flex flex-wrap items-center gap-3 rounded-lg bg-white/70 p-4 text-sm font-bold text-amber-800">
+              <Landmark size={18} className="text-blue-700" aria-hidden="true" />
+              <span>{t("intentsPage.externalPortal")}</span>
+              <ArrowRight size={15} className="text-slate-400" aria-hidden="true" />
+              <ShieldAlert size={18} className="text-blue-700" aria-hidden="true" />
+              <span>{t("intentsPage.registrationCheck")}</span>
+              <ArrowRight size={15} className="text-slate-400" aria-hidden="true" />
+              <Truck size={18} className="text-blue-700" aria-hidden="true" />
+              <span>{t("intentsPage.receiptCapture")}</span>
+            </div>
+            <p className="mt-4 text-sm font-semibold leading-6 text-amber-800">
+              {lockedFeatureMessage("submission_guidance")}
+            </p>
+          </>
+        ) : (
+          <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.05fr)_minmax(300px,0.95fr)]">
+            <div className="space-y-4">
+              <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm font-black text-slate-950">{t("intentsPage.generatedGuidance")}</p>
+                    <p className="mt-1 text-sm leading-6 text-slate-600">
+                      {isSubmissionLoading
+                        ? t("intentsPage.submissionLoading")
+                        : submissionGuidance?.guidanceText ?? t("intentsPage.submissionUnavailable")}
+                    </p>
+                  </div>
+                  {submissionDraft.portalUrl ? (
+                    <Link
+                      href={submissionDraft.portalUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={buttonVariants({
+                        variant: "outline",
+                        className: "h-9 w-fit rounded-lg border-slate-200 bg-white text-slate-700",
+                      })}
+                    >
+                      <ExternalLink className="mr-2 h-4 w-4" />
+                      {t("intentsPage.openPortal")}
+                    </Link>
+                  ) : null}
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                  {t("intentsPage.method")}
+                  <Select
+                    value={submissionDraft.method}
+                    onValueChange={(value) =>
+                      setSubmissionDraft((current) => ({
+                        ...current,
+                        method: value as SubmissionMethod,
+                      }))
+                    }
+                    disabled={isSubmissionLoading || isSubmissionSaving}
+                  >
+                    <SelectTrigger className="h-9 rounded-lg border-slate-200 bg-white shadow-sm focus:ring-slate-900">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="rounded-lg border-slate-200 shadow-lg">
+                      {submissionMethods.map((method) => (
+                        <SelectItem key={method} value={method}>
+                          {t(`intentsPage.submissionMethods.${method}`)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+
+                <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                  {t("intentsPage.portalUrl")}
+                  <Input
+                    value={submissionDraft.portalUrl}
+                    onChange={(event) =>
+                      setSubmissionDraft((current) => ({ ...current, portalUrl: event.target.value }))
+                    }
+                    disabled={isSubmissionLoading || isSubmissionSaving}
+                    placeholder="https://"
+                    className="h-9 border-slate-200 bg-white"
+                  />
+                </label>
+
+                <label className="grid gap-1.5 text-sm font-bold text-slate-700 md:col-span-2">
+                  {t("intentsPage.contactEmail")}
+                  <Input
+                    value={submissionDraft.contactEmail}
+                    onChange={(event) =>
+                      setSubmissionDraft((current) => ({ ...current, contactEmail: event.target.value }))
+                    }
+                    disabled={isSubmissionLoading || isSubmissionSaving}
+                    placeholder="procurement@example.gov"
+                    className="h-9 border-slate-200 bg-white"
+                  />
+                </label>
+              </div>
+
+              <div className="grid gap-2">
+                {[
+                  ["requiresRegistration", "registrationCheck"],
+                  ["requiresPhysicalDelivery", "physicalDeliveryRequired"],
+                  ["requiresAddendaAcknowledgement", "addendaAcknowledgementRequired"],
+                ].map(([field, label]) => (
+                  <label
+                    key={field}
+                    className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={Boolean(submissionDraft[field as keyof SubmissionDraft])}
+                      onChange={(event) =>
+                        setSubmissionDraft((current) => ({
+                          ...current,
+                          [field]: event.target.checked,
+                        }))
+                      }
+                      disabled={isSubmissionLoading || isSubmissionSaving}
+                      className="size-4 rounded border-slate-300 text-blue-700"
+                    />
+                    <span>{t(`intentsPage.${label}`)}</span>
+                  </label>
+                ))}
+              </div>
+
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Button
+                  onClick={() => void handleSaveSubmissionGuidance()}
+                  disabled={isSubmissionLoading || isSubmissionSaving}
+                  className="w-fit rounded-lg bg-slate-950 text-white hover:bg-slate-800"
+                >
+                  {isSubmissionSaving ? t("intentsPage.submissionSaving") : t("intentsPage.saveSubmissionGuidance")}
+                </Button>
+                <p className="min-h-5 text-sm font-semibold text-slate-500">
+                  {submissionError
+                    ? t("intentsPage.submissionSaveError")
+                    : submissionNotice}
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <p className="text-sm font-black text-slate-950">{t("intentsPage.readinessChecklist")}</p>
+                <ul className="mt-3 space-y-2">
+                  {(submissionGuidance?.readinessChecklist ?? []).map((item) => (
+                    <li key={item} className="flex gap-2 text-sm font-semibold leading-6 text-slate-700">
+                      <CheckCircle2 size={16} className="mt-1 shrink-0 text-emerald-600" aria-hidden="true" />
+                      <span className="break-words">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <p className="text-sm font-black text-slate-950">{t("intentsPage.submissionRiskFlags")}</p>
+                <ul className="mt-3 space-y-2">
+                  {(submissionGuidance?.riskFlags.length ? submissionGuidance.riskFlags : [t("intentsPage.noMajorRisks")]).map((item) => (
+                    <li key={item} className="flex gap-2 text-sm font-semibold leading-6 text-slate-700">
+                      <ShieldAlert size={16} className="mt-1 shrink-0 text-amber-600" aria-hidden="true" />
+                      <span className="break-words">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="rounded-lg border border-blue-100 bg-blue-50/50 p-4">
+                <p className="text-sm font-black text-slate-950">{t("intentsPage.confirmSubmission")}</p>
+                <div className="mt-3 grid gap-3">
+                  <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                    {t("intentsPage.submittedAt")}
+                    <Input
+                      type="datetime-local"
+                      value={confirmationDraft.submittedAt}
+                      onChange={(event) =>
+                        setConfirmationDraft((current) => ({ ...current, submittedAt: event.target.value }))
+                      }
+                      disabled={isConfirmationSaving}
+                      className="h-9 border-slate-200 bg-white"
+                    />
+                  </label>
+                  <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                    {t("intentsPage.method")}
+                    <Select
+                      value={confirmationDraft.method}
+                      onValueChange={(value) =>
+                        setConfirmationDraft((current) => ({
+                          ...current,
+                          method: value as SubmissionMethod,
+                        }))
+                      }
+                      disabled={isConfirmationSaving}
+                    >
+                      <SelectTrigger className="h-9 rounded-lg border-slate-200 bg-white shadow-sm focus:ring-slate-900">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-lg border-slate-200 shadow-lg">
+                        {submissionMethods.map((method) => (
+                          <SelectItem key={method} value={method}>
+                            {t(`intentsPage.submissionMethods.${method}`)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                  <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                    {t("intentsPage.confirmationReference")}
+                    <Input
+                      value={confirmationDraft.confirmationReference}
+                      onChange={(event) =>
+                        setConfirmationDraft((current) => ({
+                          ...current,
+                          confirmationReference: event.target.value,
+                        }))
+                      }
+                      disabled={isConfirmationSaving}
+                      className="h-9 border-slate-200 bg-white"
+                    />
+                  </label>
+                  <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                    {t("intentsPage.confirmationNotes")}
+                    <textarea
+                      value={confirmationDraft.confirmationNotes}
+                      onChange={(event) =>
+                        setConfirmationDraft((current) => ({
+                          ...current,
+                          confirmationNotes: event.target.value,
+                        }))
+                      }
+                      disabled={isConfirmationSaving}
+                      className="min-h-20 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                    />
+                  </label>
+                  <Button
+                    onClick={() => void handleConfirmSubmission()}
+                    disabled={isConfirmationSaving || !confirmationDraft.submittedAt}
+                    className="w-fit rounded-lg bg-blue-700 text-white hover:bg-blue-800"
+                  >
+                    {isConfirmationSaving ? t("intentsPage.submissionSaving") : t("intentsPage.confirmSubmission")}
+                  </Button>
+                  {submissionConfirmation ? (
+                    <p className="text-sm font-semibold text-blue-900">
+                      {t("intentsPage.latestConfirmation")}: {submissionConfirmation.confirmationReference || submissionConfirmation.method}
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="grid gap-3 md:grid-cols-4">
