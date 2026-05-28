@@ -14,6 +14,7 @@ import {
   stripePriceIdForTier,
   type BillingProviderAdapter,
 } from "./providers";
+import { enqueueNotification } from "@/server/notifications/outbox-repository";
 
 export { InvalidSubscriptionInputError } from "./errors";
 
@@ -467,7 +468,7 @@ function invoiceStatusForProviderEvent(event: BillingProviderEvent): BillingInvo
 }
 
 function upsertBillingInvoice(db: AppDatabase, userId: string, event: BillingProviderEvent) {
-  if (!providerEventIsInvoice(event)) return;
+  if (!providerEventIsInvoice(event)) return null;
   if (!event.providerInvoiceId) {
     throw new InvalidSubscriptionInputError("Invoice event must include providerInvoiceId");
   }
@@ -502,7 +503,9 @@ function upsertBillingInvoice(db: AppDatabase, userId: string, event: BillingPro
       .set(invoiceValues)
       .where(eq(billingInvoices.id, existing.id))
       .run();
-    return;
+    return invoiceFromRow(
+      db.select().from(billingInvoices).where(eq(billingInvoices.id, existing.id)).limit(1).get()!,
+    );
   }
 
   db.insert(billingInvoices)
@@ -512,6 +515,45 @@ function upsertBillingInvoice(db: AppDatabase, userId: string, event: BillingPro
       createdAt: timestamp,
     })
     .run();
+
+  return invoiceFromRow(
+    db.select().from(billingInvoices).where(eq(billingInvoices.providerInvoiceId, event.providerInvoiceId)).limit(1).get()!,
+  );
+}
+
+function enqueuePaymentFailedNotification(db: AppDatabase, userId: string, invoice: BillingInvoiceView) {
+  if (invoice.status !== "payment_failed") return;
+
+  const user = getUserOrThrow(db, userId);
+  const recipient = user.email?.trim();
+
+  if (!recipient) return;
+
+  const invoiceLabel = invoice.invoiceNumber ?? invoice.providerInvoiceId;
+  const amountLabel = `${invoice.currency} ${(invoice.amountDueCents / 100).toFixed(2)}`;
+  const retryLine = invoice.invoiceUrl
+    ? `Pay or update your payment method here: ${invoice.invoiceUrl}`
+    : "Open WinBids Settings > Billing to update your payment method.";
+
+  enqueueNotification(db, {
+    id: `notification_${randomUUID()}`,
+    alertId: `billing_invoice:${invoice.providerInvoiceId}`,
+    userId,
+    channel: "email",
+    recipient,
+    frequency: "daily",
+    dedupeKey: `billing:payment_failed:${invoice.providerInvoiceId}`,
+    subject: `Payment failed for invoice ${invoiceLabel}`,
+    bodyText: [
+      `We could not collect payment for invoice ${invoiceLabel}.`,
+      `Amount due: ${amountLabel}.`,
+      invoice.dueAt ? `Due date: ${invoice.dueAt}.` : null,
+      retryLine,
+      "Your paid WinBids access may be limited if the invoice remains unpaid after the grace period.",
+    ].filter(Boolean).join("\n"),
+    matchedBidIds: [],
+    createdAt: nowIso(),
+  });
 }
 
 export function getAccountSubscription(db: AppDatabase, userId: string): AccountSubscriptionResponse {
@@ -998,7 +1040,10 @@ export function applyBillingProviderEvent(
 
   const tier = normalizedProviderEventTierForUser(db, user.id, event);
   const status = normalizedProviderEventStatus(event);
-  upsertBillingInvoice(db, user.id, event);
+  const invoice = upsertBillingInvoice(db, user.id, event);
+  if (invoice?.status === "payment_failed") {
+    enqueuePaymentFailedNotification(db, user.id, invoice);
+  }
   const result = upsertAccountSubscription(
     db,
     user.id,

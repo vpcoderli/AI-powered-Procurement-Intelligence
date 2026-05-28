@@ -118,6 +118,9 @@ export default function SettingsPage() {
   const displayName =
     profileDraft.userId === user?.id ? profileDraft.displayName : (user?.displayName ?? "");
   const currentSubscription = user ? subscriptionData?.subscription : null;
+  const latestFailedInvoice = (billingInvoicesData?.invoices ?? []).find(
+    (invoice) => invoice.status === "payment_failed",
+  );
   const canManageWorkspace = workspaceData?.currentUserRole === "owner";
 
   useEffect(() => {
@@ -1103,6 +1106,34 @@ export default function SettingsPage() {
                     </p>
                   </div>
                 </div>
+                {currentSubscription?.status === "past_due" && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                    <p className="text-sm font-semibold text-amber-950">{t("settings.pastDueBillingTitle")}</p>
+                    <p className="mt-1 text-sm font-medium text-amber-800">
+                      {t("settings.pastDueBillingWarning")}
+                    </p>
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      {latestFailedInvoice?.invoiceUrl && (
+                        <a
+                          href={latestFailedInvoice.invoiceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex h-9 w-full items-center justify-center rounded-lg bg-amber-900 px-3 text-sm font-semibold text-white transition-colors hover:bg-amber-800 sm:w-auto"
+                        >
+                          {t("settings.retryPayment")}
+                        </a>
+                      )}
+                      <Button
+                        variant="outline"
+                        disabled={billingActionTier === "portal" || !user}
+                        onClick={handleBillingPortal}
+                        className="h-9 w-full rounded-lg border-amber-300 bg-white text-amber-900 hover:bg-amber-100 sm:w-auto"
+                      >
+                        {billingActionTier === "portal" ? t("settings.openingPortal") : t("settings.updatePaymentMethod")}
+                      </Button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   <div>
@@ -1226,9 +1257,15 @@ export default function SettingsPage() {
                             href={invoice.invoiceUrl}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex h-8 w-full items-center justify-center rounded-lg border border-slate-200 px-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 sm:w-auto"
+                            className={`inline-flex h-8 w-full items-center justify-center rounded-lg border px-2.5 text-sm font-medium transition-colors sm:w-auto ${
+                              invoice.status === "payment_failed"
+                                ? "border-amber-300 bg-amber-50 text-amber-900 hover:bg-amber-100"
+                                : "border-slate-200 text-slate-700 hover:bg-slate-50"
+                            }`}
                           >
-                            {t("settings.viewInvoice")}
+                            {invoice.status === "payment_failed"
+                              ? t("settings.retryPayment")
+                              : t("settings.viewInvoice")}
                           </a>
                         )}
                       </div>
