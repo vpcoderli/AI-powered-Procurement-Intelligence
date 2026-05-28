@@ -10,6 +10,7 @@ import {
   exportAccountData,
   fetchBillingInvoices,
   fetchAccountSubscription,
+  fetchAccountUsage,
   fetchAccountWorkspace,
   inviteWorkspaceMember,
   removeWorkspaceMember,
@@ -145,6 +146,27 @@ describe("auth API client", () => {
 
     await expect(fetchAccountSubscription()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/account/subscription");
+  });
+
+  it("fetches account usage limits", async () => {
+    const body = {
+      tier: "free",
+      workspaceUserIds: ["user_1"],
+      items: [
+        {
+          feature: "saved_bids",
+          used: 2,
+          limit: 5,
+          remaining: 3,
+          isLimited: false,
+          requiredTier: "pro",
+        },
+      ],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(fetchAccountUsage()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/usage");
   });
 
   it("creates a checkout session for a paid account tier", async () => {

@@ -29,8 +29,8 @@ This document is the working checklist for local development. Update it after ea
 | Admin user access console | `/admin` lists registered users, creates invited accounts with temporary passwords, filters/searches accounts, changes role/tier/enabled state, shows access audit logs, and presents login/forbidden states for non-admin access. |
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs. |
 | Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin-only console access. |
-| Feature access guards | Reusable server `requireFeature`, client `useFeature`, and tier-aware locked states for gated features. |
-| Usage limits | Central saved bid and intent workspace quota checks by tier; authenticated users are counted at workspace scope; APIs return `USAGE_LIMIT_REACHED` before creating over-limit resources. |
+| Feature access guards | Reusable server `requireFeature`, client `useFeature`, tier-aware locked states for gated features, and static coverage tests for current advanced feature API routes. |
+| Usage limits | Central saved bid and intent workspace quota checks by tier; authenticated users are counted at workspace scope; APIs return `USAGE_LIMIT_REACHED` before creating over-limit resources; Settings shows current workspace usage vs plan limits. |
 | Subscription foundation | `account_subscriptions`, `subscription_events`, plan catalog, account subscription API, Settings Billing tab. |
 | Billing provider sync foundation | `billing_checkout_sessions`, checkout creation API, provider webhook intake, provider event idempotency, subscription status reconciliation, and Settings self-service upgrade/cancel controls. |
 | Invoice / payment history foundation | `billing_invoices`, provider invoice event sync, payment-failed status handling, account invoice API, Settings invoice history UI, and optional HMAC webhook signature verification via `BILLING_WEBHOOK_SECRET`. |
@@ -60,9 +60,9 @@ This document is the working checklist for local development. Update it after ea
 | Admin 用户管理 | Done | Admin can list/search/filter users, create invited accounts with temporary passwords, update role/tier/enabled state, and view audit logs. |
 | 用户等级模型 | Done | `account_tier` supports `free`, `pro`, `business`, `enterprise`. |
 | 功能与等级关联 | Done | Central entitlement map controls feature keys such as `submission_guidance`, `compliance_manifest`, `pursue_no_bid`, `quote_workflow`, `knowledge_station`. |
-| 服务端功能拦截 | Partial | `requireFeature()` exists and is already used by Submission Guidance, Compliance Manifest, and Pursue / No-Bid APIs. |
+| 服务端功能拦截 | Partial | `requireFeature()` exists and is already used by Submission Guidance, Compliance Manifest, and Pursue / No-Bid APIs; coverage test protects the current gated route list. |
 | 前端锁定态 | Partial | `useFeature()` and locked messages exist on key workspace modules and Settings feature overview. |
-| 使用额度限制 | Partial | Saved bids and intent workspace limits exist by tier. |
+| 使用额度限制 | Partial | Saved bids and intent workspace limits exist by tier; `/api/account/usage` and Settings Usage Dashboard show current usage, remaining quota, and upgrade prompt. |
 | 订阅数据基础 | Partial | `account_subscriptions`, `subscription_events`, plan catalog, and Settings Billing tab exist. |
 | 自助升级/取消基础 | Partial | Settings Billing can start Pro/Business checkout sessions, receive provider-compatible webhook updates, sync account tier/status, dedupe provider events, and schedule cancellation at period end. |
 | 发票/支付历史基础 | Partial | Provider invoice paid/payment-failed events write `billing_invoices`; users can read invoice history in Settings; signed webhook verification is supported when `BILLING_WEBHOOK_SECRET` is configured. |
@@ -77,8 +77,8 @@ This document is the working checklist for local development. Update it after ea
 | P1 | Trial / Dunning Lifecycle | Add trial expiration, past-due reminders, payment failure states, and downgrade rules. | Prevents stale paid access when payment state changes. |
 | P1 | Account Deletion / Export Polish | Add admin-facing deletion audit review and richer export format/version metadata. | Required for serious account management and compliance readiness. |
 | P1 | Team Lifecycle Completion | Replace local invitation outbox with production email provider delivery, delivery retries, and user-facing delivery status. | Business/Enterprise accounts need real team administration. |
-| P1 | Entitlement Coverage Audit | Ensure every gated future API and UI action uses the central feature map and consistent locked states. | Prevents paid features from leaking to lower tiers. |
-| P1 | Usage Dashboard | Show current usage vs tier limits for saved bids, intents, and future quote/workspace limits. | Users need to understand why an upgrade is required. |
+| P1 | Entitlement Coverage Expansion | Extend coverage tests as future gated APIs such as quote workflow and Knowledge Station are implemented. | Prevents paid features from leaking to lower tiers. |
+| P1 | Usage Dashboard Expansion | Add future quote/workspace/AI-call usage metrics after those resources exist. | Users need to understand why an upgrade is required. |
 | P2 | Granular Operator Roles | Add support/operator roles separate from full admin. | Useful once support operations grow. |
 | P2 | Advanced Feature Flags | Add configurable feature flags or per-account overrides beyond tier defaults. | Enables beta features and enterprise custom access. |
 
@@ -101,7 +101,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, provider-compatible webhook sync, cancellation scheduling, invoice history, and optional webhook signature verification | Real payment provider SDK/API calls, provider-specific event mapping, sandbox credentials, trial/dunning lifecycle |
-| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated | Apply guards/limits to every future gated API and add richer usage dashboards |
+| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits, Settings usage dashboard, and static coverage test; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated | Extend guards/limits as future gated APIs are added |
 | Search alerts | API/service foundation exists | Full alert management UI, digest configuration, real email delivery |
 | Notifications | Notification outbox foundation exists | Provider configuration, delivery retries, user notification preferences |
 | Admin data QA | Source status and logs exist | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
@@ -690,11 +690,36 @@ Current local limits:
 3. Trial / Dunning Lifecycle：试用到期、扣款失败重试、逾期提醒、自动降级规则。
 4. Invoice / Payment History Polish：PDF 下载体验、筛选、支付重试链接、更完整的发票详情。
 5. Production Notification Delivery：把 notification outbox 接到真实邮件服务、投递重试、投递状态展示与偏好。
-6. Usage Dashboard：展示当前使用量与套餐额度。
-7. Entitlement Coverage Audit：确认所有未来高级功能 API 与 UI 都走统一 feature gate。
+6. Usage Dashboard Expansion：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
+7. Entitlement Coverage Expansion：未来新增高级功能 API 时继续加入 coverage 审计。
 
 建议下一步：
-- 如果继续权限/账户主线，做 Usage Dashboard + entitlement coverage audit；如果继续商业化主线，做 Production Billing Provider SDK/API Adapter。
+- 如果继续权限/账户主线，做 Production Notification Delivery；如果继续商业化主线，做 Production Billing Provider SDK/API Adapter。
+
+## Completed Phase: Usage Dashboard + Entitlement Coverage Audit
+
+本阶段完成：
+- 新增 `getAccountUsage()` 服务，复用现有 `usage-limits`，按 workspace scope 返回 saved bids 与 intent workspace 的 used/limit/remaining。
+- 新增 `/api/account/usage`，登录用户可读取当前套餐下的工作区用量。
+- 前端 API client 新增 `fetchAccountUsage()`。
+- `/settings` Profile 区新增 Usage Dashboard，展示已用量、上限、剩余额度和升级提示。
+- 新增 `feature-gate-coverage.test.ts`，静态检查 Submission Guidance、Submission Confirm、Compliance Manifest、Pursue / No-Bid 这些高级 API 继续包含 `requireFeature()` 和对应 feature key。
+- 补齐中英文用量仪表盘文案。
+
+验证：
+- `npm test -- src/server/account/usage.test.ts src/app/api/account/usage/route.test.ts src/server/auth/feature-gate-coverage.test.ts src/lib/api/auth.test.ts src/app/settings/page.test.ts`
+
+当前还剩：
+1. Production Billing Provider SDK/API：接真实 Stripe/其他 provider SDK、真实 hosted checkout/customer portal session 创建、sandbox credentials。
+2. Provider-specific event mapping：把真实 provider payload 转换为当前内部 `BillingProviderEvent`。
+3. Trial / Dunning Lifecycle：试用到期、扣款失败重试、逾期提醒、自动降级规则。
+4. Invoice / Payment History Polish：PDF 下载体验、筛选、支付重试链接、更完整的发票详情。
+5. Production Notification Delivery：把 notification outbox 接到真实邮件服务、投递重试、投递状态展示与偏好。
+6. Usage Dashboard Expansion：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
+7. Entitlement Coverage Expansion：未来新增高级功能 API 时继续加入 coverage 审计。
+
+建议下一步：
+- 如果继续权限/账户主线，做 Production Notification Delivery；如果继续商业化主线，做 Production Billing Provider SDK/API Adapter。
 
 ## Status Update Template
 

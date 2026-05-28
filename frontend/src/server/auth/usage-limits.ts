@@ -4,7 +4,7 @@ import type { AppDatabase } from "@/server/db/client";
 import { intentToBid, savedBids } from "@/server/db/schema";
 import type { AccountTier, FeatureKey } from "./entitlements";
 
-type LimitedFeature = Extract<FeatureKey, "saved_bids" | "intent_workspace">;
+export type LimitedFeature = Extract<FeatureKey, "saved_bids" | "intent_workspace">;
 
 type TierUsageLimits = Record<LimitedFeature, number | null>;
 
