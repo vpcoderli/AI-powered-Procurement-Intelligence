@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { and, asc, eq, ne } from "drizzle-orm";
 import {
   WorkspaceMemberNotFoundError,
@@ -24,10 +25,37 @@ import {
   subscriptionEvents,
   supplierProfiles,
   users,
+  adminUserAuditLogs,
 } from "@/server/db/schema";
+
+const ACCOUNT_EXPORT_INCLUDED_SECTIONS = [
+  "account",
+  "workspace",
+  "subscription",
+  "billingCheckoutSessions",
+  "billingInvoices",
+  "subscriptionEvents",
+  "savedBids",
+  "supplierProfile",
+  "intents",
+  "submissionPaths",
+  "submissionConfirmations",
+  "complianceManifestItems",
+  "pursuitDecisions",
+  "searchAlerts",
+] as const;
 
 export interface AccountExportData {
   generatedAt: string;
+  metadata: {
+    formatVersion: 1;
+    product: "WinBids";
+    generatedAt: string;
+    subjectUserId: string;
+    subjectEmail: string;
+    retentionNotice: string;
+    includedSections: typeof ACCOUNT_EXPORT_INCLUDED_SECTIONS[number][];
+  };
   account: {
     id: string;
     email: string;
@@ -127,8 +155,19 @@ export function exportAccountData(db: AppDatabase, userId: string): AccountExpor
     throw new AccountLifecycleUserNotFoundError();
   }
 
+  const generatedAt = nowIso();
+
   return {
-    generatedAt: nowIso(),
+    generatedAt,
+    metadata: {
+      formatVersion: 1,
+      product: "WinBids",
+      generatedAt,
+      subjectUserId: user.id,
+      subjectEmail: user.email,
+      retentionNotice: "Business records, audit logs, and billing records may be retained for legal and operational continuity.",
+      includedSections: [...ACCOUNT_EXPORT_INCLUDED_SECTIONS],
+    },
     account: {
       id: user.id,
       email: user.email,
@@ -200,20 +239,37 @@ export function softDeleteAccount(db: AppDatabase, userId: string) {
 
   ensureCanDeleteMemberships(db, userId);
 
+  const timestamp = nowIso();
+  const anonymizedEmail = `deleted-${userId}@deleted.local`;
   db.delete(sessions).where(eq(sessions.userId, userId)).run();
   db.delete(passwordResetTokens).where(eq(passwordResetTokens.userId, userId)).run();
   db.delete(organizationMemberships).where(eq(organizationMemberships.userId, userId)).run();
 
-  const timestamp = nowIso();
   db.update(users)
     .set({
-      email: `deleted-${userId}@deleted.local`,
+      email: anonymizedEmail,
       passwordHash: null,
       displayName: null,
       isDisabled: 1,
       updatedAt: timestamp,
     })
     .where(eq(users.id, userId))
+    .run();
+
+  db.insert(adminUserAuditLogs)
+    .values({
+      id: `audit_${crypto.randomUUID()}`,
+      actorKind: "self-service",
+      actorUserId: userId,
+      targetUserId: userId,
+      action: "user_self_deleted",
+      changesJson: JSON.stringify([
+        { field: "email", before: user.email, after: anonymizedEmail },
+        { field: "isDisabled", before: user.isDisabled === 1, after: true },
+        { field: "workspaceAccess", before: "active", after: "removed" },
+      ]),
+      createdAt: timestamp,
+    })
     .run();
 
   return { ok: true as const };

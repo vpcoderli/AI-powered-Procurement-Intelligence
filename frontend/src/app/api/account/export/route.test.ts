@@ -38,6 +38,30 @@ describe("GET /api/account/export", () => {
     });
     vi.mocked(lifecycleService.exportAccountData).mockReturnValueOnce({
       generatedAt: "2026-05-28T00:00:00.000Z",
+      metadata: {
+        formatVersion: 1,
+        product: "WinBids",
+        generatedAt: "2026-05-28T00:00:00.000Z",
+        subjectUserId: "user_1",
+        subjectEmail: "buyer@example.com",
+        retentionNotice: "Business records, audit logs, and billing records may be retained for legal and operational continuity.",
+        includedSections: [
+          "account",
+          "workspace",
+          "subscription",
+          "billingCheckoutSessions",
+          "billingInvoices",
+          "subscriptionEvents",
+          "savedBids",
+          "supplierProfile",
+          "intents",
+          "submissionPaths",
+          "submissionConfirmations",
+          "complianceManifestItems",
+          "pursuitDecisions",
+          "searchAlerts",
+        ],
+      },
       account: {
         id: "user_1",
         email: "buyer@example.com",
