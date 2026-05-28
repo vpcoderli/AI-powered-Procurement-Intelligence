@@ -43,6 +43,7 @@ describe("settings page", () => {
     expect(page).toContain("workspaceData");
     expect(page).toContain("settings.team");
     expect(page).toContain("settings.inviteMember");
+    expect(page).toContain("settings.teamSeatLimitReached");
     expect(page).toContain("settings.inviteUrl");
     expect(page).toContain("settings.inviteDelivery");
     expect(page).toContain("invitationDelivery");

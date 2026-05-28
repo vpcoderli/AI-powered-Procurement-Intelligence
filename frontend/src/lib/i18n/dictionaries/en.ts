@@ -61,6 +61,7 @@ export const en = {
     inviting: "Inviting...",
     memberInvited: "Member invited. Share the invite link securely.",
     memberInviteError: "Unable to invite member.",
+    teamSeatLimitReached: "Your current plan has reached its team member limit.",
     temporaryPassword: "Temporary password",
     inviteUrl: "Invite link",
     workspaceRole_owner: "Owner",
@@ -220,6 +221,7 @@ export const en = {
     accepted: "Invitation accepted. Redirecting to settings.",
     passwordMismatch: "Password and confirmation do not match.",
     error: "Unable to accept invitation.",
+    teamSeatLimitReached: "This workspace has reached its team member limit. Ask an owner to upgrade or free a seat.",
   },
   header: {
     initials: "JD",

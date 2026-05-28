@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { readSessionToken } from "@/server/auth/session";
 import { getSessionUser } from "@/server/auth/service";
+import { UsageLimitError } from "@/server/auth/usage-limits";
 import {
   InvalidWorkspaceInputError,
   WorkspaceEmailExistsError,
@@ -11,6 +12,19 @@ import { db } from "@/server/db/client";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
+}
+
+function usageLimitResponse(error: UsageLimitError) {
+  return NextResponse.json({
+    error: {
+      code: error.code,
+      message: "Upgrade your plan to add more team members.",
+      feature: error.feature,
+      limit: error.limit,
+      used: error.used,
+      requiredTier: error.requiredTier,
+    },
+  }, { status: 402 });
 }
 
 async function readBody(request: Request) {
@@ -55,6 +69,10 @@ export async function POST(request: Request) {
 
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
+    if (error instanceof UsageLimitError) {
+      return usageLimitResponse(error);
+    }
+
     if (error instanceof WorkspaceEmailExistsError) {
       return errorResponse("EMAIL_ALREADY_REGISTERED", error.message, 409);
     }
