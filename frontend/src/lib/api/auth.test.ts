@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   changePassword,
   confirmPasswordReset,
+  cancelAccountSubscription,
+  createCheckoutSession,
   fetchAccountSubscription,
   fetchAccountWorkspace,
   inviteWorkspaceMember,
@@ -91,6 +93,51 @@ describe("auth API client", () => {
 
     await expect(fetchAccountSubscription()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/account/subscription");
+  });
+
+  it("creates a checkout session for a paid account tier", async () => {
+    const body = {
+      checkoutSession: {
+        id: "checkout_1",
+        userId: "user_1",
+        tier: "pro",
+        status: "open",
+        provider: "local_checkout",
+        providerSessionId: "local_cs_1",
+        checkoutUrl: "/settings?checkoutSession=checkout_1",
+        expiresAt: "2026-05-28T01:00:00.000Z",
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(createCheckoutSession({ tier: "pro" })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/subscription/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tier: "pro" }),
+    });
+  });
+
+  it("cancels the current account subscription", async () => {
+    const body = {
+      subscription: {
+        userId: "user_1",
+        tier: "pro",
+        status: "active",
+        source: "local_checkout",
+        currentPeriodEnd: "2026-06-28T00:00:00.000Z",
+        cancelAtPeriodEnd: true,
+      },
+      plans: [],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(cancelAccountSubscription()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/subscription/cancel", {
+      method: "POST",
+    });
   });
 
   it("requests a password reset token", async () => {

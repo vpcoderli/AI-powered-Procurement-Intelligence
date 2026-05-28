@@ -125,6 +125,60 @@ describe("database schema", () => {
     ).toThrow();
   });
 
+  it("migrates legacy subscription events before creating provider event index", async () => {
+    directory = await mkdtemp(path.join(os.tmpdir(), "apsi-db-"));
+    const databasePath = path.join(directory, "apsi.sqlite");
+    db = createDatabase(databasePath);
+
+    db.$client.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        email TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE account_subscriptions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        tier TEXT NOT NULL DEFAULT 'free',
+        status TEXT NOT NULL DEFAULT 'none',
+        source TEXT NOT NULL DEFAULT 'admin_override',
+        provider TEXT,
+        provider_customer_id TEXT,
+        provider_subscription_id TEXT,
+        current_period_end TEXT,
+        cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE subscription_events (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        subscription_id TEXT REFERENCES account_subscriptions(id) ON DELETE SET NULL,
+        event_type TEXT NOT NULL,
+        source TEXT NOT NULL,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+      );
+    `);
+
+    expect(() => runMigrations(db!)).not.toThrow();
+
+    const subscriptionEventColumns = db.$client
+      .prepare("PRAGMA table_info(subscription_events)")
+      .all()
+      .map((row) => (row as { name: string }).name);
+
+    expect(subscriptionEventColumns).toContain("provider_event_id");
+    expect(
+      db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
+        .get("idx_subscription_events_provider_event_id"),
+    ).toEqual({ name: "idx_subscription_events_provider_event_id" });
+  });
+
   it("creates supplier profile and intent tables", async () => {
     const testDb = await createTestDatabase({ seed: false });
 
@@ -143,6 +197,7 @@ describe("database schema", () => {
       expect(tables).toContain("admin_user_audit_logs");
       expect(tables).toContain("account_subscriptions");
       expect(tables).toContain("subscription_events");
+      expect(tables).toContain("billing_checkout_sessions");
       expect(tables).toContain("password_reset_tokens");
       expect(tables).toContain("organizations");
       expect(tables).toContain("organization_memberships");
@@ -154,6 +209,13 @@ describe("database schema", () => {
 
       expect(userColumns).toContain("account_tier");
       expect(userColumns).toContain("is_disabled");
+
+      const subscriptionEventColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(subscription_events)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(subscriptionEventColumns).toContain("provider_event_id");
 
       testDb.db.insert(users).values({
         id: "user_1",

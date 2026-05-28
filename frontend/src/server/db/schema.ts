@@ -63,10 +63,34 @@ export const accountSubscriptions = sqliteTable(
   }),
 );
 
+export const billingCheckoutSessions = sqliteTable(
+  "billing_checkout_sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tier: text("tier").notNull(),
+    status: text("status").notNull().default("open"),
+    provider: text("provider").notNull().default("local_checkout"),
+    providerSessionId: text("provider_session_id").notNull(),
+    checkoutUrl: text("checkout_url").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    completedAt: text("completed_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    userIdx: index("idx_billing_checkout_sessions_user_id").on(table.userId),
+    providerSessionIdx: uniqueIndex("idx_billing_checkout_sessions_provider_session_id").on(table.providerSessionId),
+  }),
+);
+
 export const subscriptionEvents = sqliteTable(
   "subscription_events",
   {
     id: text("id").primaryKey(),
+    providerEventId: text("provider_event_id"),
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -81,6 +105,7 @@ export const subscriptionEvents = sqliteTable(
     createdAt: text("created_at").notNull(),
   },
   (table) => ({
+    providerEventIdx: uniqueIndex("idx_subscription_events_provider_event_id").on(table.providerEventId),
     userIdx: index("idx_subscription_events_user_id").on(table.userId),
     subscriptionIdx: index("idx_subscription_events_subscription_id").on(table.subscriptionId),
     createdIdx: index("idx_subscription_events_created").on(table.createdAt),
