@@ -17,12 +17,20 @@ describe("intent pages", () => {
     const detailPage = readFileSync(new URL("[id]/page.tsx", import.meta.url), "utf8");
 
     expect(detailPage).toContain("fetchIntent");
+    expect(detailPage).toContain("fetchSubmissionGuidance");
+    expect(detailPage).toContain("updateSubmissionGuidance");
+    expect(detailPage).toContain("confirmSubmission");
     expect(detailPage).toContain("updateIntentStatus");
     expect(detailPage).toContain("mountedRef");
     expect(detailPage).toContain("saveRequestRef");
+    expect(detailPage).toContain("submissionGuidance");
+    expect(detailPage).toContain("handleSaveSubmissionGuidance");
+    expect(detailPage).toContain("handleConfirmSubmission");
+    expect(detailPage).toContain("intentsPage.submissionGuidanceSaved");
+    expect(detailPage).toContain("intentsPage.submissionConfirmationSaved");
     expect(detailPage).toContain("onValueChange={(value)");
     expect(detailPage).toContain("prototypeWorkspace");
-    expect(detailPage).toContain("submissionReadinessItems");
+    expect(detailPage).toContain("readinessChecklist");
     expect(detailPage).toContain("submissionPath");
     expect(detailPage).toContain("useFeature");
     expect(detailPage).toContain("submission_guidance");
