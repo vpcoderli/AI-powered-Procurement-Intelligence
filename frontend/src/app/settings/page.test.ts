@@ -13,8 +13,11 @@ describe("settings page", () => {
     expect(page).toContain("settings.featureAccess");
     expect(page).toContain("updateAccountProfile");
     expect(page).toContain("changePassword");
+    expect(page).toContain("fetchAccountSubscription");
     expect(page).toContain("user?.email");
     expect(page).toContain("displayName");
     expect(page).toContain("refreshSession");
+    expect(page).toContain("settings.billing");
+    expect(page).toContain("settings.availablePlans");
   });
 });

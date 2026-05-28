@@ -22,6 +22,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs. |
 | Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin-only console access. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, and tier-aware locked states for gated features. |
+| Subscription foundation | `account_subscriptions`, `subscription_events`, plan catalog, account subscription API, Settings Billing tab. |
 | Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, CA/TX/NY/FL/IL runner wiring. |
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
 | Intent to Bid | Add intent from bid detail, idempotent intent creation, intent list, intent detail workspace, status update. |
@@ -36,7 +37,7 @@ This document is the working checklist for local development. Update it after ea
 | Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; admin can enable/disable users, search/filter users, and review access audit logs | Password reset, admin-created accounts, account deletion/export |
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users | Route-level friendly forbidden UI, admin page redirect/empty state for non-admin users |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
-| Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map | Billing provider sync, usage limits, paywall/upgrade UI, subscription history |
+| Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab | Billing provider sync, real checkout, usage limits, invoices, cancellation |
 | Feature access control | Central feature map, server guard, client helper, and visible locked states | Apply guards to every future gated API and add usage limits |
 | Submission Guidance UI | Static Submission Path preview in Intent workspace; backend API exists; API is Pro-gated | Fetch real submission guidance, editable fields, confirmation form, saved confirmation state |
 | Search alerts | API/service foundation exists | Full alert management UI, digest configuration, real email delivery |
@@ -47,7 +48,6 @@ This document is the working checklist for local development. Update it after ea
 
 | Area | Needed capability |
 |---|---|
-| Paid plan lifecycle | Checkout, trial, cancellation, renewal, invoices, and subscription status sync. |
 | Billing integration | Checkout, subscription status sync, invoices, cancellation, trial expiration. |
 | Organization/workspace model | Company account, multiple users under one company, shared bids/intents, team roles. |
 | Password reset | Email token flow, reset page, expiry and invalidation. |
@@ -62,12 +62,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Billing / Subscription Foundation** or **Submission Guidance UI** depending on whether the next sprint should improve monetization infrastructure or bid workflow depth.
+Prioritize **Submission Guidance UI** or **Billing Provider Sync** depending on whether the next sprint should improve bid workflow depth or connect real monetization.
 
 Reason:
 
-- The data model, session payload, account settings, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
-- The remaining account gap is not basic self-service; it is paid-plan lifecycle, usage limits, password reset, and organization/team support.
+- The data model, session payload, account settings, subscription foundation, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
+- The remaining account gap is not basic self-service; it is real billing provider sync, usage limits, password reset, and organization/team support.
 - Advanced features such as Compliance Manifest, Submission Guidance editing, and Knowledge Station can now rely on the same feature gate.
 
 ## Account / Role / Tier Direction
@@ -114,15 +114,15 @@ Start with a central feature map:
 
 ## Suggested Implementation Order
 
-1. **Billing / subscription foundation**
-   - Add subscription status fields and plan history.
-   - Add upgrade/paywall UI for locked features.
-   - Keep admin tier override for local/manual operations.
-
-2. **Product workflow depth**
+1. **Product workflow depth**
    - Connect real Submission Guidance UI.
    - Build Compliance Manifest Lite.
    - Build Pursue / No-Bid Decision Lite.
+
+2. **Billing provider sync**
+   - Connect checkout/customer/subscription webhooks.
+   - Reconcile provider subscription state to `account_subscriptions`.
+   - Add invoice/cancel/trial UI.
 
 3. **Account lifecycle**
    - Add password reset.
@@ -139,7 +139,7 @@ Start with a central feature map:
 - `/admin` 接入用户权限表，普通用户侧边栏不再显示 Admin 入口。
 
 当前还剩：
-1. Billing/订阅同步与真实付费状态接入。
+1. Billing provider 同步与真实 checkout/发票/取消订阅。
 2. Password reset 邮件 token 流程。
 3. Submission Guidance 真实编辑与确认 UI。
 
@@ -154,7 +154,7 @@ Start with a central feature map:
 - Settings/Profile 区域显示当前套餐和功能可用/锁定状态。
 
 当前还剩：
-1. Billing/订阅同步与真实付费状态接入。
+1. Billing provider 同步与真实 checkout/发票/取消订阅。
 2. Password reset 邮件 token 流程。
 3. Submission Guidance 真实编辑与确认 UI。
 
@@ -168,7 +168,7 @@ Start with a central feature map:
 - `/admin` 用户权限区增加搜索/筛选控件与“用户权限审计”视图。
 
 当前还剩：
-1. Billing/订阅同步与真实付费状态接入。
+1. Billing provider 同步与真实 checkout/发票/取消订阅。
 2. Password reset 邮件 token 流程。
 3. Submission Guidance 真实编辑与确认 UI。
 
@@ -182,11 +182,28 @@ Start with a central feature map:
 - 新增服务、API route、前端 API client、Settings 静态检查测试。
 
 当前还剩：
-1. Billing/订阅同步、付费状态、套餐变更历史、发票/取消订阅。
+1. Billing provider 同步与真实 checkout/发票/取消订阅。
 2. Password reset 邮件 token 流程。
 3. Admin 创建账号 / 邀请用户流程。
 4. Organization/workspace 多用户公司账户模型。
 5. Submission Guidance 真实编辑与确认 UI。
+
+## Completed Phase: Billing / Subscription Foundation
+
+本阶段完成：
+- 新增 `account_subscriptions` 与 `subscription_events` 表，支持当前订阅状态和套餐变更事件历史。
+- 新增订阅服务：默认读取 admin/manual 当前套餐，也支持本地 checkout/provider 同步入口更新有效 `account_tier`。
+- 新增 `/api/account/subscription`，登录用户可读取当前订阅、来源、状态、周期结束时间和套餐目录。
+- `/settings` 新增 Billing 标签页，展示当前套餐、订阅状态、来源、可用套餐和升级入口占位。
+- 新增订阅服务、API route、前端 API client、Settings 静态检查和 schema 测试。
+
+当前还剩：
+1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
+2. Usage limits：按套餐限制 saved bids、intents、alerts、AI/高级功能调用次数。
+3. Password reset 邮件 token 流程。
+4. Admin 创建账号 / 邀请用户流程。
+5. Organization/workspace 多用户公司账户模型。
+6. Submission Guidance 真实编辑与确认 UI。
 
 ## Status Update Template
 

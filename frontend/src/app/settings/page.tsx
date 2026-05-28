@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { Bell, CheckCircle2, Key, LockKeyhole, PaintBucket, Settings, Shield, User } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Bell, CheckCircle2, CreditCard, Key, LockKeyhole, PaintBucket, Settings, Shield, User } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,10 +12,15 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/context/AuthContext";
-import { updateAccountProfile, changePassword } from "@/lib/api/auth";
+import {
+  changePassword,
+  fetchAccountSubscription,
+  updateAccountProfile,
+  type AccountSubscriptionResponse,
+} from "@/lib/api/auth";
 import { canUseFeature, lockedFeatureMessage } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
-import { ACCOUNT_TIER_LABELS, type FeatureKey } from "@/server/auth/entitlements";
+import { ACCOUNT_TIER_LABELS, type AccountTier, type FeatureKey } from "@/server/auth/entitlements";
 
 const FEATURE_ACCESS_ITEMS: Array<{ key: FeatureKey; label: string }> = [
   { key: "bid_search", label: "Bid search" },
@@ -43,9 +48,48 @@ export default function SettingsPage() {
   const [passwordMessage, setPasswordMessage] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [subscriptionData, setSubscriptionData] = useState<AccountSubscriptionResponse | null>(null);
+  const [subscriptionError, setSubscriptionError] = useState("");
   const currentTier = user ? ACCOUNT_TIER_LABELS[user.tier] : ACCOUNT_TIER_LABELS.free;
   const displayName =
     profileDraft.userId === user?.id ? profileDraft.displayName : (user?.displayName ?? "");
+  const currentSubscription = user ? subscriptionData?.subscription : null;
+
+  useEffect(() => {
+    if (!user) return;
+
+    let isCancelled = false;
+
+    fetchAccountSubscription()
+      .then((data) => {
+        if (isCancelled) return;
+        setSubscriptionData(data);
+        setSubscriptionError("");
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        setSubscriptionError(error instanceof Error ? error.message : t("settings.subscriptionLoadError"));
+      });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [t, user]);
+
+  function localizedPlanFeatures(tier: AccountTier) {
+    return [
+      t(`settings.plan_${tier}_feature1`),
+      t(`settings.plan_${tier}_feature2`),
+      t(`settings.plan_${tier}_feature3`),
+    ];
+  }
+
+  function planPriceLabel(priceMonthlyUsd: number | null) {
+    if (priceMonthlyUsd === null) return t("settings.customPricing");
+    if (priceMonthlyUsd === 0) return t("settings.freePrice");
+
+    return t("settings.priceMonthly").replace("{price}", String(priceMonthlyUsd));
+  }
 
   async function handleProfileSave() {
     setProfileMessage("");
@@ -108,6 +152,9 @@ export default function SettingsPage() {
           </TabsTrigger>
           <TabsTrigger value="notifications" className="w-full justify-start text-left data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded-lg text-slate-500 font-medium py-2.5 px-3">
             <Bell className="mr-2.5 h-4 w-4" /> {t("settings.notifications")}
+          </TabsTrigger>
+          <TabsTrigger value="billing" className="w-full justify-start text-left data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded-lg text-slate-500 font-medium py-2.5 px-3">
+            <CreditCard className="mr-2.5 h-4 w-4" /> {t("settings.billing")}
           </TabsTrigger>
           <TabsTrigger value="security" className="w-full justify-start text-left data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm rounded-lg text-slate-500 font-medium py-2.5 px-3">
             <Shield className="mr-2.5 h-4 w-4" /> {t("settings.security")}
@@ -246,6 +293,108 @@ export default function SettingsPage() {
                     <span className="text-sm text-slate-500">{t("settings.marketingUpdatesDesc")}</span>
                   </div>
                   <Switch className="data-[state=checked]:bg-slate-900 shrink-0" />
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="billing" className="m-0 space-y-6">
+            <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
+              <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <CardTitle className="text-lg font-semibold text-slate-900">{t("settings.billing")}</CardTitle>
+                    <CardDescription className="text-slate-500 font-medium">{t("settings.billingDesc")}</CardDescription>
+                  </div>
+                  <Badge variant="outline" className="w-fit border-slate-200 bg-white text-slate-700">
+                    {currentTier}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-5 p-6">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">{t("settings.subscriptionStatus")}</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">
+                      {currentSubscription
+                        ? t(`settings.subscriptionStatus_${currentSubscription.status}`)
+                        : t("settings.loadingPlans")}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">{t("settings.subscriptionSource")}</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">
+                      {currentSubscription
+                        ? t(`settings.subscriptionSource_${currentSubscription.source}`)
+                        : t("settings.loadingPlans")}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">{t("settings.currentPeriodEnd")}</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">
+                      {currentSubscription?.currentPeriodEnd ?? t("settings.notScheduled")}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">{t("settings.availablePlans")}</h3>
+                    <p className="text-sm font-medium text-slate-500">{t("settings.availablePlansDesc")}</p>
+                  </div>
+                  {subscriptionError && <p className="text-sm font-medium text-red-600">{subscriptionError}</p>}
+                  {!subscriptionData && !subscriptionError && (
+                    <p className="text-sm font-medium text-slate-500">{t("settings.loadingPlans")}</p>
+                  )}
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {(subscriptionData?.plans ?? []).map((plan) => {
+                      const isCurrentPlan = user?.tier === plan.tier;
+
+                      return (
+                        <div
+                          key={plan.tier}
+                          className={`rounded-lg border p-4 ${
+                            isCurrentPlan ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <h4 className="text-base font-semibold text-slate-900">{plan.label}</h4>
+                              <p className="mt-1 text-sm font-semibold text-slate-600">
+                                {planPriceLabel(plan.priceMonthlyUsd)}
+                              </p>
+                            </div>
+                            {isCurrentPlan && (
+                              <Badge variant="outline" className="border-slate-300 bg-white text-slate-700">
+                                {t("settings.current")}
+                              </Badge>
+                            )}
+                          </div>
+                          <ul className="mt-4 space-y-2">
+                            {localizedPlanFeatures(plan.tier).map((feature) => (
+                              <li key={feature} className="flex items-start gap-2 text-sm font-medium text-slate-600">
+                                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
+                                <span>{feature}</span>
+                              </li>
+                            ))}
+                          </ul>
+                          <Button
+                            variant={isCurrentPlan ? "outline" : "default"}
+                            disabled
+                            className={`mt-4 w-full rounded-lg ${
+                              isCurrentPlan ? "border-slate-200 text-slate-700" : "bg-slate-900 text-white"
+                            }`}
+                          >
+                            {isCurrentPlan
+                              ? t("settings.current")
+                              : plan.tier === "enterprise"
+                                ? t("settings.contactSales")
+                                : t("settings.upgradeSoon")}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </CardContent>
             </Card>
