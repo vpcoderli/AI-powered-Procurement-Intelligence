@@ -18,7 +18,9 @@ describe("intent pages", () => {
 
     expect(detailPage).toContain("fetchIntent");
     expect(detailPage).toContain("fetchSubmissionGuidance");
+    expect(detailPage).toContain("fetchComplianceManifest");
     expect(detailPage).toContain("updateSubmissionGuidance");
+    expect(detailPage).toContain("updateComplianceManifestItem");
     expect(detailPage).toContain("confirmSubmission");
     expect(detailPage).toContain("updateIntentStatus");
     expect(detailPage).toContain("mountedRef");
@@ -34,6 +36,11 @@ describe("intent pages", () => {
     expect(detailPage).toContain("submissionPath");
     expect(detailPage).toContain("useFeature");
     expect(detailPage).toContain("submission_guidance");
+    expect(detailPage).toContain("compliance_manifest");
+    expect(detailPage).toContain("complianceManifest");
+    expect(detailPage).toContain("handleComplianceItemUpdate");
+    expect(detailPage).toContain("intentsPage.complianceManifest");
+    expect(detailPage).toContain("intentsPage.complianceManifestSaved");
     expect(detailPage).toContain("lockedFeatureMessage");
     expect(detailPage).toContain("Intent Workspace");
     expect(detailPage).toContain("Submission Path");

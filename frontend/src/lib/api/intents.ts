@@ -10,6 +10,10 @@ import type {
   SubmissionGuidanceResponse,
   UpdateSubmissionGuidanceInput,
 } from "@/server/submission/types";
+import type {
+  ComplianceManifestResponse,
+  UpdateComplianceManifestItemInput,
+} from "@/server/compliance/types";
 import { ApiError } from "./bids";
 
 function isApiErrorResponse(body: unknown): body is IntentApiErrorResponse {
@@ -116,4 +120,23 @@ export async function confirmSubmission(
   });
 
   return parseResponse<SubmissionConfirmationResponse>(response);
+}
+
+export async function fetchComplianceManifest(id: string) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/compliance`);
+
+  return parseResponse<ComplianceManifestResponse>(response);
+}
+
+export async function updateComplianceManifestItem(
+  id: string,
+  input: UpdateComplianceManifestItemInput,
+) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/compliance`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<ComplianceManifestResponse>(response);
 }

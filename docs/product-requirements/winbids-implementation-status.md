@@ -29,6 +29,7 @@ This document is the working checklist for local development. Update it after ea
 | Intent to Bid | Add intent from bid detail, idempotent workspace-scoped intent creation, shared intent list/detail for organization members, status update. |
 | AI-like bid brief | Deterministic brief, key dates, initial checklist, risk flags. |
 | Submission Guidance | `submission_paths`, `submission_confirmations`, generator, service, Pro-gated API routes, API client, Intent workspace UI for generated guidance, editable submission fields, readiness/risk lists, and manual submission confirmation. |
+| Compliance Manifest Lite | `compliance_manifest_items`, generator, service, Business-gated API route, API client, and Intent workspace UI for requirement status, evidence status, and notes. |
 | Static product demo | `/winbids-demo` isolated prototype page from Drive frontend references. |
 
 ### Partially Implemented
@@ -40,7 +41,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab | Billing provider sync, real checkout, invoices, cancellation |
-| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits | Apply guards/limits to every future gated API and add richer usage dashboards |
+| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits; Submission Guidance is Pro-gated and Compliance Manifest is Business-gated | Apply guards/limits to every future gated API and add richer usage dashboards |
 | Search alerts | API/service foundation exists | Full alert management UI, digest configuration, real email delivery |
 | Notifications | Notification outbox foundation exists | Provider configuration, delivery retries, user notification preferences |
 | Admin data QA | Source status and logs exist | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
@@ -51,7 +52,6 @@ This document is the working checklist for local development. Update it after ea
 |---|---|
 | Billing integration | Checkout, subscription status sync, invoices, cancellation, trial expiration. |
 | Organization team lifecycle | Ownership transfer flow, member disable/reactivation, pending invitation acceptance. |
-| Compliance Manifest Lite | Structured bid requirements, manual completion, notes, evidence status. |
 | Pursue / No-Bid Decision Lite | Recommendation, decision capture, reasons, decision history. |
 | Response Workspace | Tasks, artifacts, internal checkpoints, reusable documents. |
 | Sourcing / quote workflow | Partner database, quote requests, quote comparison, attachment storage. |
@@ -62,11 +62,11 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Compliance Manifest Lite** next, then choose between **Pursue / No-Bid Decision Lite** and **Billing Provider Sync** depending on whether the following sprint should deepen bid execution workflow or connect real monetization.
+Prioritize **Pursue / No-Bid Decision Lite** next, then choose between **Billing Provider Sync** and **Account Lifecycle** depending on whether the following sprint should deepen bid execution workflow or connect real monetization.
 
 Reason:
 
-- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
+- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, and Business-gated Compliance Manifest now exist.
 - The remaining account gap is not basic self-service; it is owner transfer/member reactivation, real billing provider sync, broader usage dashboards, and account deletion/export.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
@@ -124,7 +124,6 @@ Current local limits:
 ## Suggested Implementation Order
 
 1. **Product workflow depth**
-   - Build Compliance Manifest Lite.
    - Build Pursue / No-Bid Decision Lite.
 
 2. **Billing provider sync**
@@ -412,6 +411,36 @@ Current local limits:
 
 建议下一步：
 - 优先开发 Compliance Manifest Lite，把 Submission Guidance 生成的提交要求沉淀为可勾选、可备注、可追踪证据状态的执行清单。
+
+## Completed Phase: Compliance Manifest Lite
+
+本阶段完成：
+- 新增 `compliance_manifest_items` 表与迁移，用于保存 Intent 维度的结构化合规清单。
+- 新增 Compliance Manifest 生成器：基于 Intent 初始清单、风险提示和基础投标准备项生成合规条目。
+- 新增 Compliance service/repository，支持按可访问 Intent 创建清单、读取清单、更新条目状态、证据状态和备注。
+- 新增 `/api/intents/[id]/compliance` GET/PATCH，并使用 `compliance_manifest` feature gate；Business/Enterprise 可访问，Pro/Free 会返回 `FEATURE_NOT_AVAILABLE`。
+- 前端 API client 新增 `fetchComplianceManifest()` 与 `updateComplianceManifestItem()`。
+- Intent 工作台新增 Compliance Manifest 面板：低套餐显示锁定说明；Business+ 显示完成概览、条目状态、证据状态和备注编辑。
+- 补齐中英文文案和静态页面检查。
+
+验证：
+- `npm test -- src/server/compliance/service.test.ts 'src/app/api/intents/[id]/compliance/route.test.ts' src/lib/api/intents.test.ts src/server/db/schema.test.ts src/app/intents/page.test.ts`
+- `npm test`
+- `npm run lint`
+- `npm run db:migrate`
+- `npm run build`
+- 浏览器烟测：从 bid detail 创建 Intent，打开 Intent 工作台，确认 Compliance Manifest 面板渲染 8 条清单、完成概览和证据备注输入。
+
+当前还剩：
+1. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
+2. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
+3. Account deletion/export 账号数据导出与删除。
+4. Organization team lifecycle：owner 转移流程、成员禁用/恢复、邀请接受/邮件投递。
+5. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
+6. Response Workspace：任务、文档、内部检查点和附件/证据管理。
+
+建议下一步：
+- 开发 Pursue / No-Bid Decision Lite，让 Pro+ 用户能基于匹配、风险、合规清单进度记录是否继续投标及原因。
 
 ## Status Update Template
 

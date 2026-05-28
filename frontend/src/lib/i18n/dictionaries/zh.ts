@@ -301,6 +301,36 @@ export const zh: Dictionary = {
     confirmationReference: "确认编号",
     confirmationNotes: "确认备注",
     latestConfirmation: "最新确认",
+    complianceManifest: "合规清单",
+    complianceLoading: "正在加载合规清单...",
+    complianceComplete: "已完成",
+    complianceManifestSaved: "合规清单已保存。",
+    complianceSaveError: "无法保存合规清单。",
+    complianceNotesPlaceholder: "添加内部备注或证据引用...",
+    complianceSummary: {
+      total: "总项数",
+      completed: "已完成",
+      blocked: "阻塞",
+      evidenceAttached: "证据",
+    },
+    complianceStatuses: {
+      not_started: "未开始",
+      in_progress: "进行中",
+      complete: "已完成",
+      blocked: "阻塞",
+    },
+    complianceEvidenceStatuses: {
+      needed: "需要证据",
+      attached: "证据已附",
+      not_required: "无需证据",
+    },
+    complianceCategories: {
+      eligibility: "资格",
+      documents: "文件",
+      pricing: "报价",
+      submission: "提交",
+      risk: "风险",
+    },
     submissionMethods: {
       external_portal: "外部门户",
       email: "邮件",
@@ -320,6 +350,10 @@ export const zh: Dictionary = {
       submission: {
         title: "提交路径",
         description: "预览外部门户、注册步骤和回执流程。",
+      },
+      compliance: {
+        title: "合规清单",
+        description: "跟踪要求、完成状态、备注和证据准备情况。",
       },
       award: {
         title: "状态追踪",

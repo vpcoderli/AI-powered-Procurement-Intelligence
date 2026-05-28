@@ -3,8 +3,10 @@ import { ApiError } from "./bids";
 import {
   confirmSubmission,
   createIntent,
+  fetchComplianceManifest,
   fetchIntent,
   fetchIntents,
+  updateComplianceManifestItem,
   fetchSubmissionGuidance,
   updateIntentStatus,
   updateSubmissionGuidance,
@@ -141,6 +143,36 @@ describe("intent API client", () => {
     expect(result).toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/submission/confirm", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  });
+
+  it("fetches compliance manifest with an encoded intent id", async () => {
+    const body = { manifest: { intentId: "intent/with space", items: [] } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await fetchComplianceManifest("intent/with space");
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/compliance");
+  });
+
+  it("updates a compliance manifest item", async () => {
+    const payload = {
+      itemId: "compliance_item_1",
+      status: "complete" as const,
+      evidenceStatus: "attached" as const,
+      notes: "Capability statement uploaded.",
+    };
+    const body = { manifest: { intentId: "intent/with space", items: [{ id: payload.itemId }] } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await updateComplianceManifestItem("intent/with space", payload);
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/compliance", {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
