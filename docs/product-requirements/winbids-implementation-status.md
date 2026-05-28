@@ -29,7 +29,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin user access console | `/admin` lists registered users, creates invited accounts with temporary passwords, filters/searches accounts, changes role/tier/enabled state, shows access audit logs including self-service account deletion, and presents login/forbidden states for non-admin access. |
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs. |
 | Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin-only console access. |
-| Feature access guards | Reusable server `requireFeature`, client `useFeature`, tier-aware locked states for gated features, and static coverage tests for current advanced feature API routes. |
+| Feature access guards | Reusable server `requireFeature`, client `useFeature`, tier-aware locked states for gated features, and manifest-backed static coverage tests for current/future advanced feature API routes. |
 | Usage limits | Central saved bid and intent workspace quota checks by tier; authenticated users are counted at workspace scope; APIs return `USAGE_LIMIT_REACHED` before creating over-limit resources; Settings shows current workspace usage vs plan limits. |
 | Notification delivery foundation | `notification_outbox`, file/console/http providers, retryable delivery worker, deployable notification/dunning worker command, user notification preferences, billing dunning reminders, invitation delivery status, admin notification history UI, and admin delivery trigger API/UI. |
 | Subscription foundation | `account_subscriptions`, `subscription_events`, plan catalog, account subscription API, Settings Billing tab. |
@@ -61,7 +61,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin 用户管理 | Done | Admin can list/search/filter users, create invited accounts with temporary passwords, update role/tier/enabled state, and view access/deletion audit logs. |
 | 用户等级模型 | Done | `account_tier` supports `free`, `pro`, `business`, `enterprise`. |
 | 功能与等级关联 | Done | Central entitlement map controls feature keys such as `submission_guidance`, `compliance_manifest`, `pursue_no_bid`, `quote_workflow`, `knowledge_station`. |
-| 服务端功能拦截 | Partial | `requireFeature()` exists and is already used by Submission Guidance, Compliance Manifest, and Pursue / No-Bid APIs; coverage test protects the current gated route list. |
+| 服务端功能拦截 | Done | `requireFeature()` exists and is already used by Submission Guidance, Compliance Manifest, and Pursue / No-Bid APIs; manifest-backed coverage tests protect every registered gated API and explicitly track not-yet-implemented paid feature APIs. |
 | 前端锁定态 | Partial | `useFeature()` and locked messages exist on key workspace modules and Settings feature overview. |
 | 使用额度限制 | Partial | Saved bids and intent workspace limits exist by tier; `/api/account/usage` and Settings Usage Dashboard show current usage, remaining quota, and upgrade prompt. |
 | 通知偏好与投递状态 | Partial | Users can persist saved-search alert and marketing preferences; disabled saved-search alerts are skipped by the notification service; invited members show latest delivery status; Admin can view notification outbox rows and manually trigger delivery. |
@@ -77,7 +77,6 @@ This document is the working checklist for local development. Update it after ea
 | P0 | Production Billing Provider Hardening | Add end-to-end Stripe sandbox verification, provider dashboard setup notes, and production credential/deployment runbook. | The SDK/API adapter exists; the remaining work is environment hardening and live sandbox proof. |
 | P1 | Invoice / Payment History Polish | Add PDF/download affordances, invoice filters, and richer invoice detail. | Paid users need a complete billing record experience. |
 | P1 | Trial / Dunning Lifecycle | Add production scheduling for dunning worker and provider-specific dunning event handling. | Prevents stale paid access when payment state changes. |
-| P1 | Entitlement Coverage Expansion | Extend coverage tests as future gated APIs such as quote workflow and Knowledge Station are implemented. | Prevents paid features from leaking to lower tiers. |
 | P1 | Usage Dashboard Expansion | Add future quote/workspace/AI-call usage metrics after those resources exist. | Users need to understand why an upgrade is required. |
 | P2 | Granular Operator Roles | Add support/operator roles separate from full admin. | Useful once support operations grow. |
 | P2 | Advanced Feature Flags | Add configurable feature flags or per-account overrides beyond tier defaults. | Enables beta features and enterprise custom access. |
@@ -101,7 +100,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, Stripe SDK/API checkout and portal sessions, Stripe webhook mapping/signature verification, cancellation scheduling, subscription lifecycle reconciliation, invoice history, payment retry links, payment-failed notification outbox entries, staged dunning reminders with resolved-payment suppression, and optional generic webhook signature verification | Stripe sandbox verification/runbook and production scheduled dunning worker deployment |
-| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits, Settings usage dashboard, and static coverage test; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated | Extend guards/limits as future gated APIs are added |
+| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits, Settings usage dashboard, and manifest-backed static coverage tests; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated; Quote Workflow and Knowledge Station are explicitly marked as not-yet-implemented API surfaces | Per-account feature overrides and beta flags |
 | Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails | Full alert management UI, per-alert digest configuration, real email delivery provider |
 | Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, user preferences, billing dunning reminders, deployable notification/dunning worker command, invite delivery status, admin notification history, and admin delivery trigger exist | Production cron/process deployment and production email provider hardening |
 | Admin data QA | Source status and logs exist | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
@@ -924,6 +923,31 @@ Current local limits:
 
 建议下一步：
 - 如果继续权限/账户主线，做 Entitlement Coverage Expansion；如果要稳定商业化链路，做 Stripe Sandbox E2E Verification 和 Production Worker Deployment Runbook。
+
+## Completed Phase: Entitlement Coverage Manifest
+
+本阶段完成：
+- 新增 `feature-gate-routes.ts`，把当前高级功能 API 的权限覆盖集中登记为 `FEATURE_API_COVERAGE`。
+- 明确登记当前尚未实现 API 的付费功能：`quote_workflow`、`knowledge_station`。
+- `feature-gate-coverage.test.ts` 从手写路径升级为 manifest-backed coverage audit。
+- 覆盖测试现在会检查：
+  - 每个登记路由都包含 `requireFeature()`、对应 feature key、`FeatureAccessError`。
+  - 所有导入 `@/server/auth/feature-gate` 的 API route 都必须登记在 manifest。
+  - 每个付费功能必须处于“已有受保护 API”或“明确未实现 API”两种状态之一。
+  - 明确未实现的付费功能不能悄悄暴露 API route。
+
+验证：
+- `npm test -- src/server/auth/feature-gate-coverage.test.ts`
+
+当前还剩：
+1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
+2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
+3. Invoice / Payment History Polish：PDF 下载体验、筛选、更完整的发票详情。
+4. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+5. Usage Dashboard Expansion：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
+
+建议下一步：
+- 如果继续产品/账户完整度，做 Invoice / Payment History Polish；如果稳定商业化链路，做 Stripe Sandbox E2E Verification 和 Production Worker Deployment Runbook。
 
 ## Status Update Template
 
