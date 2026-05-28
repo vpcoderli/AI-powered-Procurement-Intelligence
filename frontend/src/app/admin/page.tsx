@@ -113,7 +113,7 @@ const DEFAULT_INVITATION_DRAFT: InvitationDraft = {
 };
 
 function stateCrawlerSourceIdFor(source: AdminDataSource) {
-  return stateCrawlerSourceIdForAdminSource(source);
+  return source.crawlerSourceId ?? stateCrawlerSourceIdForAdminSource(source);
 }
 
 function formatDate(value: string | null) {
@@ -166,6 +166,43 @@ function statusTone(status: string | null | undefined) {
   if (status === "running" || status === "locked") return "border-sky-200 bg-sky-50 text-sky-700";
   if (status) return "border-rose-200 bg-rose-50 text-rose-700";
   return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function crawlerTone(value: string | null | undefined) {
+  if (value === "dedicated" || value === "verified") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (value === "generic") return "border-slate-200 bg-slate-50 text-slate-600";
+  if (value === "beta") return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-slate-200 bg-white text-slate-500";
+}
+
+function crawlerAdapterLabel(t: (key: string) => string, adapterKind: AdminDataSource["crawlerAdapterKind"]) {
+  if (adapterKind === "dedicated") return t("admin.crawlerAdapter_dedicated");
+  if (adapterKind === "generic") return t("admin.crawlerAdapter_generic");
+  return t("admin.crawlerAdapter_none");
+}
+
+function crawlerMaturityLabel(t: (key: string) => string, maturity: AdminDataSource["crawlerMaturity"]) {
+  if (maturity === "verified") return t("admin.crawlerMaturity_verified");
+  if (maturity === "beta") return t("admin.crawlerMaturity_beta");
+  if (maturity === "generic") return t("admin.crawlerMaturity_generic");
+  return t("admin.crawlerMaturity_none");
+}
+
+function crawlerCapabilityLabel(t: (key: string) => string, capability: AdminDataSource["crawlerCapabilities"][number]) {
+  if (capability === "attachments") return t("admin.crawlerCapability_attachments");
+  if (capability === "detail_pages") return t("admin.crawlerCapability_detail_pages");
+  if (capability === "pagination") return t("admin.crawlerCapability_pagination");
+  return t("admin.crawlerCapability_query");
+}
+
+function formatCrawlerBaseUrl(value: string | null) {
+  if (!value) return null;
+
+  try {
+    return new URL(value).hostname.replace(/^www\./, "");
+  } catch {
+    return value;
+  }
 }
 
 function compactErrorMessage(message: string) {
@@ -1240,6 +1277,7 @@ export default function AdminPage() {
               <TableRow>
                 <TableHead>{t("admin.source")}</TableHead>
                 <TableHead>{t("admin.type")}</TableHead>
+                <TableHead>{t("admin.crawler")}</TableHead>
                 <TableHead>{t("admin.cadence")}</TableHead>
                 <TableHead>{t("admin.lastRun")}</TableHead>
                 <TableHead>{t("admin.status")}</TableHead>
@@ -1256,6 +1294,26 @@ export default function AdminPage() {
                     <div className="text-xs text-slate-500">{source.stateCode}</div>
                   </TableCell>
                   <TableCell className="capitalize">{source.issuerType}</TableCell>
+                  <TableCell>
+                    <div className="flex max-w-64 flex-wrap gap-1">
+                      <Badge variant="outline" className={crawlerTone(source.crawlerAdapterKind)}>
+                        {crawlerAdapterLabel(t, source.crawlerAdapterKind)}
+                      </Badge>
+                      <Badge variant="outline" className={crawlerTone(source.crawlerMaturity)}>
+                        {crawlerMaturityLabel(t, source.crawlerMaturity)}
+                      </Badge>
+                      {source.crawlerCapabilities.slice(0, 3).map((capability) => (
+                        <Badge key={capability} variant="outline" className="border-slate-200 bg-white text-slate-600">
+                          {crawlerCapabilityLabel(t, capability)}
+                        </Badge>
+                      ))}
+                    </div>
+                    {source.crawlerBaseUrl && (
+                      <div className="mt-1 max-w-64 truncate text-xs text-slate-500" title={source.crawlerBaseUrl}>
+                        {source.crawlerSourceId} - {formatCrawlerBaseUrl(source.crawlerBaseUrl)}
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell>{source.cadence}</TableCell>
                   <TableCell>{formatDate(latestRunAt(source))}</TableCell>
                   <TableCell>

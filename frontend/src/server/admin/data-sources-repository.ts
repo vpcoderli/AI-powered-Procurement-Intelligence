@@ -1,5 +1,11 @@
 import { desc, eq } from "drizzle-orm";
-import { STATE_CRAWLER_SOURCE_IDS_BY_STATE } from "@/lib/state-crawler-sources";
+import {
+  getStateCrawlerSourceMetadata,
+  STATE_CRAWLER_SOURCE_IDS_BY_STATE,
+  type CrawlerAdapterKind,
+  type CrawlerCapability,
+  type CrawlerMaturity,
+} from "@/lib/state-crawler-sources";
 import type { AppDatabase } from "@/server/db/client";
 import { crawlerLogs, dataSources } from "@/server/db/schema";
 
@@ -35,6 +41,11 @@ export interface AdminDataSource {
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
   consecutiveFailures: number;
+  crawlerSourceId: string | null;
+  crawlerAdapterKind: CrawlerAdapterKind;
+  crawlerMaturity: CrawlerMaturity;
+  crawlerCapabilities: CrawlerCapability[];
+  crawlerBaseUrl: string | null;
   createdAt: string;
   updatedAt: string;
   latestLog: AdminCrawlerLog | null;
@@ -142,6 +153,8 @@ function toAdminSource(
   row: typeof dataSources.$inferSelect,
   latestLog: AdminCrawlerLog | null,
 ): AdminDataSource {
+  const crawlerMetadata = row.issuerType === "state" ? getStateCrawlerSourceMetadata(row.stateCode) : null;
+
   return {
     id: row.id,
     label: row.label,
@@ -153,6 +166,11 @@ function toAdminSource(
     lastSuccessAt: row.lastSuccessAt,
     lastFailureAt: row.lastFailureAt,
     consecutiveFailures: row.consecutiveFailures,
+    crawlerSourceId: crawlerMetadata?.id ?? null,
+    crawlerAdapterKind: crawlerMetadata?.adapterKind ?? "none",
+    crawlerMaturity: crawlerMetadata?.maturity ?? "none",
+    crawlerCapabilities: [...(crawlerMetadata?.capabilities ?? [])],
+    crawlerBaseUrl: crawlerMetadata?.baseUrl ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     latestLog,

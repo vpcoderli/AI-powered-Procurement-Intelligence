@@ -33,15 +33,15 @@ describe("GET /api/admin/data-sources", () => {
     expect(body).toEqual({ error: { code: "FORBIDDEN", message: "Admin access is required." } });
   });
 
-  it("returns data source summaries for local bypass", async () => {
+  it("returns data source summaries with crawler metadata for local bypass", async () => {
     process.env.ADMIN_UI_LOCAL_BYPASS = "true";
     testDb.db
       .insert(dataSources)
       .values({
-        id: "sam_gov",
-        label: "SAM.gov",
-        issuerType: "federal",
-        stateCode: "US",
+        id: "california_caleprocure",
+        label: "California Cal eProcure",
+        issuerType: "state",
+        stateCode: "CA",
         isEnabled: 1,
         cadence: "daily",
         createdAt: NOW,
@@ -57,7 +57,17 @@ describe("GET /api/admin/data-sources", () => {
     expect(body).toEqual(
       expect.objectContaining({
         summary: expect.objectContaining({ totalSources: 1 }),
-        sources: [expect.objectContaining({ id: "sam_gov", isEnabled: true })],
+        sources: [
+          expect.objectContaining({
+            id: "california_caleprocure",
+            isEnabled: true,
+            crawlerSourceId: "ca_caleprocure",
+            crawlerAdapterKind: "dedicated",
+            crawlerMaturity: "verified",
+            crawlerCapabilities: expect.arrayContaining(["query", "pagination"]),
+            crawlerBaseUrl: "https://caleprocure.ca.gov",
+          }),
+        ],
       }),
     );
   });

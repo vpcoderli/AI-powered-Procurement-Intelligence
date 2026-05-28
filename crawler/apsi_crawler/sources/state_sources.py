@@ -4,6 +4,9 @@ from apsi_crawler.spiders.fl_mfmp import fetch_fl_mfmp_opportunities
 from apsi_crawler.spiders.generic_state import fetch_generic_state_opportunities
 from apsi_crawler.spiders.il_bidbuy import fetch_il_bidbuy_opportunities
 from apsi_crawler.spiders.ny_contract_reporter import fetch_ny_contract_reporter_opportunities
+from apsi_crawler.spiders.or_oregonbuys import fetch_or_oregonbuys_opportunities
+from apsi_crawler.spiders.pa_emarketplace import fetch_pa_emarketplace_opportunities
+from apsi_crawler.spiders.sc_business_opportunities import fetch_sc_business_opportunities
 from apsi_crawler.spiders.state_fixture import load_state_fixture_opportunities
 from apsi_crawler.spiders.tx_esbd import fetch_tx_esbd_opportunities
 
@@ -67,6 +70,9 @@ SPECIAL_FETCHERS = {
     "ny_contract_reporter": fetch_ny_contract_reporter_opportunities,
     "fl_mfmp": fetch_fl_mfmp_opportunities,
     "il_bidbuy": fetch_il_bidbuy_opportunities,
+    "pa_state_procurement": fetch_pa_emarketplace_opportunities,
+    "sc_state_procurement": fetch_sc_business_opportunities,
+    "or_state_procurement": fetch_or_oregonbuys_opportunities,
 }
 
 

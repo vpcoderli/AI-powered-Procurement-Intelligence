@@ -1194,6 +1194,33 @@ Current local limits:
 建议下一步：
 - 如果继续数据覆盖主线，优先做 50-State Crawler Quality Batch 1；如果继续用户工作流，做 Full Search Alerts UI；如果继续投标准备深度，做 Sourcing Partner + Quote Inquiry Lite。
 
+## Completed Phase: 50-State Crawler Quality Batch 1
+
+本阶段完成：
+- 新增 PA / SC / OR 三个州级 beta 专用 crawler adapter，替代原来的 generic fetcher 入口。
+- 三个 adapter 均支持 `fixture_html` / `fixture_json`，可解析 source bid id、标题、机构、发布日期、截止日期、详情 URL 和附件链接元数据。
+- `STATE_SOURCES` 已把 `pa_state_procurement`、`sc_state_procurement`、`or_state_procurement` 接入专用 fetcher；CA/TX/NY/FL/IL 继续保留已有专用 adapter。
+- 前端 `STATE_CRAWLER_SOURCES` 增加 crawler 能力元数据：adapter kind、maturity、capabilities 和 base URL。
+- Admin Data Sources API 增加 `crawlerSourceId`、`crawlerAdapterKind`、`crawlerMaturity`、`crawlerCapabilities`、`crawlerBaseUrl`。
+- Admin 数据源表新增 Crawler 可见性，能区分 dedicated / generic、verified / beta / generic，以及 query、attachments、detail、pagination 等能力标签。
+
+验证：
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_sources.py crawler/tests/test_state_live_cli.py crawler/tests/test_state_dedicated_spiders.py`
+- `npm test -- src/lib/state-crawler-sources.test.ts src/server/admin/data-sources-repository.test.ts src/app/api/admin/data-sources src/app/admin/page.test.ts`
+- `npx eslint src/lib/state-crawler-sources.ts src/lib/state-crawler-sources.test.ts src/server/admin/data-sources-repository.ts src/server/admin/data-sources-repository.test.ts src/app/api/admin/data-sources/route.test.ts src/app/admin/page.tsx src/app/admin/page.test.ts src/lib/i18n/dictionaries/en.ts src/lib/i18n/dictionaries/zh.ts`
+
+当前还剩：
+1. 50-State Crawler Quality Batch 2：继续选择 5-8 个州做专用 adapter，并补分页、详情页深抓、附件链接覆盖。
+2. Dedicated Adapter Live Validation：对 beta adapter 做真实州站点连通、字段稳定性、失败回退和限流验证。
+3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
+4. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+5. Sourcing Partner + Quote Inquiry Lite：partner DB、quote request、quote comparison。
+6. Response Workspace Lite：tasks、artifacts、internal checkpoints。
+7. Award / Tabulation Tracking Lite。
+
+建议下一步：
+- 继续数据覆盖主线时，优先做 50-State Crawler Quality Batch 2；如果想让现有 crawler 产出的附件真正可归档下载，优先做 Attachment Download Archival；如果转用户工作流，做 Full Search Alerts UI。
+
 ## Status Update Template
 
 Use this after every phase:
