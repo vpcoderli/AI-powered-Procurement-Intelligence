@@ -32,6 +32,15 @@ export interface RegisterUserInput {
   displayName?: string;
 }
 
+export interface UpdateUserProfileInput {
+  displayName?: string;
+}
+
+export interface ChangeUserPasswordInput {
+  currentPassword: string;
+  newPassword: string;
+}
+
 export class DuplicateEmailError extends Error {
   constructor() {
     super("Email is already registered");
@@ -208,6 +217,70 @@ export async function loginUser(db: AppDatabase, emailInput: string, password: s
     user: toPublicUser(user),
     sessionToken: await createSession(db, user.id),
   };
+}
+
+export async function updateUserProfile(
+  db: AppDatabase,
+  userId: string,
+  input: UpdateUserProfileInput,
+) {
+  const user = db.select().from(users).where(eq(users.id, userId)).limit(1).get();
+
+  if (!user) {
+    throw new InvalidAuthInputError("User not found");
+  }
+
+  const nextValues: Partial<typeof users.$inferInsert> = {
+    updatedAt: nowIso(),
+  };
+
+  if ("displayName" in input) {
+    nextValues.displayName = normalizeDisplayName(input.displayName);
+  }
+
+  db.update(users).set(nextValues).where(eq(users.id, userId)).run();
+
+  const updatedUser = db.select().from(users).where(eq(users.id, userId)).limit(1).get();
+
+  if (!updatedUser) {
+    throw new InvalidAuthInputError("User not found");
+  }
+
+  return toPublicUser(updatedUser);
+}
+
+export async function changeUserPassword(
+  db: AppDatabase,
+  userId: string,
+  input: ChangeUserPasswordInput,
+) {
+  if (input.newPassword.length < 8) {
+    throw new WeakPasswordError();
+  }
+
+  const user = db.select().from(users).where(eq(users.id, userId)).limit(1).get();
+
+  if (!user?.passwordHash) {
+    throw new InvalidCredentialsError();
+  }
+
+  if (user.isDisabled === 1) {
+    throw new AccountDisabledError();
+  }
+
+  if (!(await verifyPassword(input.currentPassword, user.passwordHash))) {
+    throw new InvalidCredentialsError();
+  }
+
+  db.update(users)
+    .set({
+      passwordHash: await hashPassword(input.newPassword),
+      updatedAt: nowIso(),
+    })
+    .where(eq(users.id, userId))
+    .run();
+
+  return { ok: true as const };
 }
 
 export async function getSessionUser(db: AppDatabase, sessionToken: string) {

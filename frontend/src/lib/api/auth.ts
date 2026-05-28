@@ -19,6 +19,7 @@ export interface SessionResponse {
 
 type AuthErrorCode =
   | "ACCOUNT_DISABLED"
+  | "AUTH_REQUIRED"
   | "EMAIL_ALREADY_REGISTERED"
   | "INVALID_CREDENTIALS"
   | "INVALID_REQUEST"
@@ -58,6 +59,7 @@ function isApiErrorResponse(body: unknown): body is ApiErrorResponse {
   return (
     typeof message === "string" &&
     (code === "ACCOUNT_DISABLED" ||
+      code === "AUTH_REQUIRED" ||
       code === "EMAIL_ALREADY_REGISTERED" ||
       code === "INVALID_CREDENTIALS" ||
       code === "INVALID_REQUEST" ||
@@ -122,4 +124,27 @@ export async function logout(): Promise<void> {
   });
 
   await parseResponse<{ ok: true }>(response);
+}
+
+export async function updateAccountProfile(input: { displayName: string }): Promise<AuthResponse> {
+  const response = await fetch("/api/account/profile", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<AuthResponse>(response);
+}
+
+export async function changePassword(input: {
+  currentPassword: string;
+  newPassword: string;
+}): Promise<{ ok: true }> {
+  const response = await fetch("/api/account/password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<{ ok: true }>(response);
 }
