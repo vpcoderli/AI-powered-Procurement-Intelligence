@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { AdminAuthError, requireAdmin } from "@/server/admin/auth";
-import { listAdminUserAuditLogs } from "@/server/admin/users-repository";
+import {
+  listAdminUserAuditLogs,
+  type AdminUserAuditAction,
+  type AdminUserAuditActorKind,
+  type ListAdminUserAuditLogsOptions,
+} from "@/server/admin/users-repository";
+import { isFeatureKey, type FeatureKey } from "@/server/auth/entitlements";
 import { db } from "@/server/db/client";
 
 function errorResponse(code: string, message: string, status: number) {
@@ -23,16 +29,60 @@ function parseLimit(request: Request) {
   return Number.isInteger(value) && value > 0 ? value : null;
 }
 
-export async function GET(request: Request) {
-  const limit = parseLimit(request);
+function parseActorKind(value: string | null): AdminUserAuditActorKind | null | undefined {
+  if (!value) return undefined;
+  if (value === "admin" || value === "local-bypass" || value === "self-service") return value;
 
-  if (limit === null) {
-    return errorResponse("INVALID_REQUEST", "Limit must be a positive integer.", 400);
+  return null;
+}
+
+function parseAction(value: string | null): AdminUserAuditAction | null | undefined {
+  if (!value) return undefined;
+  if (value === "user_access_updated" || value === "user_invited" || value === "user_self_deleted") return value;
+
+  return null;
+}
+
+function parseAuditLogOptions(request: Request): ListAdminUserAuditLogsOptions | null {
+  const searchParams = new URL(request.url).searchParams;
+  const limit = parseLimit(request);
+  const actorKind = parseActorKind(searchParams.get("actorKind"));
+  const action = parseAction(searchParams.get("action"));
+  const rawTarget = searchParams.get("target")?.trim();
+  const rawFeatureKey = searchParams.get("featureKey");
+  let featureKey: FeatureKey | undefined;
+
+  if (limit === null || actorKind === null || action === null) {
+    return null;
+  }
+
+  if (rawFeatureKey) {
+    if (!isFeatureKey(rawFeatureKey) || rawFeatureKey === "admin_console") {
+      return null;
+    }
+
+    featureKey = rawFeatureKey;
+  }
+
+  return {
+    limit,
+    actorKind,
+    action,
+    target: rawTarget || undefined,
+    featureKey,
+  };
+}
+
+export async function GET(request: Request) {
+  const options = parseAuditLogOptions(request);
+
+  if (!options) {
+    return errorResponse("INVALID_REQUEST", "Audit log filters are invalid.", 400);
   }
 
   try {
     await requireAdmin(db, request);
-    return NextResponse.json(listAdminUserAuditLogs(db, { limit }));
+    return NextResponse.json(listAdminUserAuditLogs(db, options));
   } catch (error) {
     return routeError(error);
   }

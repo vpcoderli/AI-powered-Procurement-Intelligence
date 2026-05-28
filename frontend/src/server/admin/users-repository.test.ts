@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { organizationFeatureOverrides, organizationMemberships, organizations, users } from "@/server/db/schema";
+import {
+  adminUserAuditLogs,
+  organizationFeatureOverrides,
+  organizationMemberships,
+  organizations,
+  users,
+} from "@/server/db/schema";
 import { createTestDatabase } from "@/server/db/test-utils";
 import { verifyPassword } from "@/server/auth/password";
 import {
@@ -236,7 +242,10 @@ describe("admin users repository", () => {
 
       expect(cleared.overrides).toEqual([]);
       expect(listAdminUserFeatureOverrides(testDb.db, "user_1").overrides).toEqual([]);
-      expect(listAdminUserAuditLogs(testDb.db, { limit: 5 }).logs[0].changes[0]).toEqual({
+      const clearOverrideChange = listAdminUserAuditLogs(testDb.db, { limit: 5 }).logs
+        .flatMap((log) => log.changes)
+        .find((change) => change.field === "featureOverride" && change.after === null);
+      expect(clearOverrideChange).toEqual({
         field: "featureOverride",
         featureKey: "compliance_manifest",
         before: { isEnabled: false, reason: null, expiresAt: null },
@@ -283,6 +292,99 @@ describe("admin users repository", () => {
         targetUserId: result.user.id,
         targetEmail: "newbuyer@example.com",
       }));
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("filters user audit logs by actor, action, target, and feature", async () => {
+    const testDb = await createTestDatabase();
+
+    try {
+      testDb.db.insert(users).values([
+        {
+          id: "admin_1",
+          email: "admin@example.com",
+          role: "admin",
+          accountTier: "free",
+          isDisabled: 0,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          id: "buyer_1",
+          email: "buyer@example.com",
+          displayName: "Buyer One",
+          role: "user",
+          accountTier: "free",
+          isDisabled: 0,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          id: "seller_1",
+          email: "seller@example.com",
+          displayName: "Seller One",
+          role: "user",
+          accountTier: "free",
+          isDisabled: 0,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ]).run();
+      testDb.db.insert(adminUserAuditLogs).values([
+        {
+          id: "audit_match",
+          actorKind: "admin",
+          actorUserId: "admin_1",
+          targetUserId: "buyer_1",
+          action: "user_access_updated",
+          changesJson: JSON.stringify([
+            {
+              field: "featureOverride",
+              featureKey: "compliance_manifest",
+              before: null,
+              after: { isEnabled: true, reason: "Pilot", expiresAt: null },
+            },
+          ]),
+          createdAt: "2026-05-28T03:00:00.000Z",
+        },
+        {
+          id: "audit_other_feature",
+          actorKind: "admin",
+          actorUserId: "admin_1",
+          targetUserId: "buyer_1",
+          action: "user_access_updated",
+          changesJson: JSON.stringify([
+            {
+              field: "featureOverride",
+              featureKey: "knowledge_station",
+              before: null,
+              after: { isEnabled: true, reason: null, expiresAt: null },
+            },
+          ]),
+          createdAt: "2026-05-28T02:00:00.000Z",
+        },
+        {
+          id: "audit_other_target",
+          actorKind: "admin",
+          actorUserId: "admin_1",
+          targetUserId: "seller_1",
+          action: "user_access_updated",
+          changesJson: JSON.stringify([{ field: "tier", before: "free", after: "pro" }]),
+          createdAt: "2026-05-28T01:00:00.000Z",
+        },
+      ]).run();
+
+      const filtered = listAdminUserAuditLogs(testDb.db, {
+        limit: 10,
+        actorKind: "admin",
+        action: "user_access_updated",
+        target: "buyer",
+        featureKey: "compliance_manifest",
+      });
+
+      expect(filtered.logs.map((log) => log.id)).toEqual(["audit_match"]);
     } finally {
       await testDb.cleanup();
     }
