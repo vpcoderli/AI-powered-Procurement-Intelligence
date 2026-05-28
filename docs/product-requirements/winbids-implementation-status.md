@@ -31,7 +31,7 @@ This document is the working checklist for local development. Update it after ea
 | Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin-only console access. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, tier-aware locked states for gated features, and static coverage tests for current advanced feature API routes. |
 | Usage limits | Central saved bid and intent workspace quota checks by tier; authenticated users are counted at workspace scope; APIs return `USAGE_LIMIT_REACHED` before creating over-limit resources; Settings shows current workspace usage vs plan limits. |
-| Notification delivery foundation | `notification_outbox`, file/console/http providers, retryable delivery worker, user notification preferences, billing dunning reminders, invitation delivery status, admin notification history UI, and admin delivery trigger API/UI. |
+| Notification delivery foundation | `notification_outbox`, file/console/http providers, retryable delivery worker, deployable notification/dunning worker command, user notification preferences, billing dunning reminders, invitation delivery status, admin notification history UI, and admin delivery trigger API/UI. |
 | Subscription foundation | `account_subscriptions`, `subscription_events`, plan catalog, account subscription API, Settings Billing tab. |
 | Billing provider sync foundation | `billing_checkout_sessions`, checkout creation API, Stripe SDK/API adapter, Stripe webhook signature verification/mapping, provider event idempotency, subscription status reconciliation, lifecycle reconciliation, and Settings self-service upgrade/cancel controls. |
 | Invoice / payment history foundation | `billing_invoices`, provider invoice event sync, payment-failed status handling, payment retry links, payment-failed notification outbox entries, account invoice API, Settings invoice history UI, and optional HMAC webhook signature verification via `BILLING_WEBHOOK_SECRET`. |
@@ -104,14 +104,14 @@ This document is the working checklist for local development. Update it after ea
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, Stripe SDK/API checkout and portal sessions, Stripe webhook mapping/signature verification, cancellation scheduling, subscription lifecycle reconciliation, invoice history, payment retry links, payment-failed notification outbox entries, staged dunning reminders with resolved-payment suppression, and optional generic webhook signature verification | Stripe sandbox verification/runbook and production scheduled dunning worker deployment |
 | Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits, Settings usage dashboard, and static coverage test; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated | Extend guards/limits as future gated APIs are added |
 | Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails | Full alert management UI, per-alert digest configuration, real email delivery provider |
-| Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, user preferences, billing dunning reminders, invite delivery status, admin notification history, and admin delivery trigger exist | Scheduled worker deployment and production email provider hardening |
+| Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, user preferences, billing dunning reminders, deployable notification/dunning worker command, invite delivery status, admin notification history, and admin delivery trigger exist | Production cron/process deployment and production email provider hardening |
 | Admin data QA | Source status and logs exist | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
 
 ### Not Implemented
 
 | Area | Needed capability |
 |---|---|
-| Production billing polish | Stripe sandbox verification/runbook, scheduled dunning worker deployment, and richer provider dashboard setup notes. |
+| Production billing polish | Stripe sandbox verification/runbook, production worker deployment, and richer provider dashboard setup notes. |
 | Organization team lifecycle | Invite acceptance analytics, richer team audit history, and granular operator/support roles. |
 | Response Workspace | Tasks, artifacts, internal checkpoints, reusable documents. |
 | Sourcing / quote workflow | Partner database, quote requests, quote comparison, attachment storage. |
@@ -122,12 +122,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Scheduled Notification / Dunning Worker** next if the next sprint stays on monetization. If the next sprint focuses on production readiness, prioritize Stripe sandbox end-to-end verification and deployment runbook.
+Prioritize **Stripe Sandbox E2E Verification** next if the next sprint focuses on production readiness. If the next sprint stays on product completeness, prioritize Invoice History Polish or Full Search Alerts UI.
 
 Reason:
 
 - The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Business-gated Compliance Manifest, and Pro-gated Pursue / No-Bid Decision now exist.
-- The remaining account gap is not basic registration; it is Stripe sandbox/deployment hardening, scheduled notification/dunning worker deployment, broader usage dashboards, and account export/deletion polish.
+- The remaining account gap is not basic registration; it is Stripe sandbox/deployment hardening, production worker deployment runbook, broader usage dashboards, and account export/deletion polish.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
@@ -183,13 +183,13 @@ Current local limits:
 
 ## Suggested Implementation Order
 
-1. **Scheduled notification / dunning worker**
-   - Add a deployable worker command that runs dunning scheduling and pending notification delivery.
-   - Add production cron/runbook guidance for worker frequency and limits.
-
-2. **Billing provider hardening**
+1. **Billing provider hardening**
    - Run Stripe sandbox checkout/portal/webhook end to end with real test credentials.
    - Add deployment runbook for provider dashboard webhook endpoints, price ids, and secrets.
+
+2. **Production operations**
+   - Add cron/process deployment notes for `worker:notifications`.
+   - Decide production email provider configuration and monitoring.
 
 3. **Account lifecycle**
    - Add richer account export/deletion audit metadata.
@@ -876,6 +876,36 @@ Current local limits:
 
 建议下一步：
 - 如果继续商业化/通知主线，做 Scheduled Notification / Dunning Worker；如果要先稳定生产环境，做 Stripe Sandbox E2E Verification 和部署 runbook。
+
+## Completed Phase: Scheduled Notification / Dunning Worker
+
+本阶段完成：
+- 新增 `runNotificationWorkerOnce()`，统一编排 billing dunning 调度和 pending notification 投递。
+- 新增 `scripts/notification-worker.ts`，可作为长期 worker 循环运行，也可用 `NOTIFICATION_WORKER_RUN_ONCE=1` 单次运行。
+- 新增 npm 命令：`npm run worker:notifications`。
+- worker 支持环境变量：
+  - `NOTIFICATION_WORKER_INTERVAL_MS`
+  - `NOTIFICATION_WORKER_DUNNING_LIMIT`
+  - `NOTIFICATION_WORKER_DELIVERY_LIMIT`
+  - `NOTIFICATION_WORKER_MAX_ATTEMPTS`
+  - `NOTIFICATION_WORKER_RUN_ONCE`
+- README 增加 notification worker 运行说明。
+- 本地已用 `NOTIFICATION_WORKER_RUN_ONCE=1 NOTIFICATION_PROVIDER=console npm run worker:notifications` 验证脚本可执行。
+
+验证：
+- `npm test -- src/server/notifications/worker.test.ts scripts/notification-worker.test.ts`
+- `NOTIFICATION_WORKER_RUN_ONCE=1 NOTIFICATION_PROVIDER=console npm run worker:notifications`
+
+当前还剩：
+1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
+2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
+3. Invoice / Payment History Polish：PDF 下载体验、筛选、更完整的发票详情。
+4. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+5. Usage Dashboard Expansion：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
+6. Entitlement Coverage Expansion：未来新增高级功能 API 时继续加入 coverage 审计。
+
+建议下一步：
+- 如果要稳定生产商业化链路，做 Stripe Sandbox E2E Verification；如果继续产品完整度，做 Invoice / Payment History Polish。
 
 ## Status Update Template
 
