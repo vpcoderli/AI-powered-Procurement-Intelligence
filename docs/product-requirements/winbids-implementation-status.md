@@ -33,6 +33,7 @@ This document is the working checklist for local development. Update it after ea
 | Usage limits | Central saved bid and intent workspace quota checks by tier; authenticated users are counted at workspace scope; APIs return `USAGE_LIMIT_REACHED` before creating over-limit resources. |
 | Subscription foundation | `account_subscriptions`, `subscription_events`, plan catalog, account subscription API, Settings Billing tab. |
 | Billing provider sync foundation | `billing_checkout_sessions`, checkout creation API, provider webhook intake, provider event idempotency, subscription status reconciliation, and Settings self-service upgrade/cancel controls. |
+| Invoice / payment history foundation | `billing_invoices`, provider invoice event sync, payment-failed status handling, account invoice API, Settings invoice history UI, and optional HMAC webhook signature verification via `BILLING_WEBHOOK_SECRET`. |
 | Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, CA/TX/NY/FL/IL runner wiring. |
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
 | Intent to Bid | Add intent from bid detail, idempotent workspace-scoped intent creation, shared intent list/detail for organization members, status update. |
@@ -63,13 +64,14 @@ This document is the working checklist for local development. Update it after ea
 | 使用额度限制 | Partial | Saved bids and intent workspace limits exist by tier. |
 | 订阅数据基础 | Partial | `account_subscriptions`, `subscription_events`, plan catalog, and Settings Billing tab exist. |
 | 自助升级/取消基础 | Partial | Settings Billing can start Pro/Business checkout sessions, receive provider-compatible webhook updates, sync account tier/status, dedupe provider events, and schedule cancellation at period end. |
+| 发票/支付历史基础 | Partial | Provider invoice paid/payment-failed events write `billing_invoices`; users can read invoice history in Settings; signed webhook verification is supported when `BILLING_WEBHOOK_SECRET` is configured. |
 
 ### Still Needed
 
 | Priority | Capability | Needed Work | Why It Matters |
 |---:|---|---|---|
-| P0 | Production Billing Provider Hardening | Add real provider credentials/config, signature verification, hosted checkout redirect, customer portal, and provider-specific event mapping. | The current boundary is provider-compatible, but not yet production payment processing. |
-| P0 | Invoice / Payment History UI | Store/display provider invoice links or local invoice records. | Paid users need billing records. |
+| P0 | Production Billing Provider Hardening | Add real provider credentials/config, hosted checkout redirect, customer portal, provider-specific SDK/event mapping, and deployment env guidance. | The current boundary is provider-compatible, but not yet production payment processing. |
+| P1 | Invoice / Payment History Polish | Add PDF/download affordances, invoice filters, customer-facing payment retry links, and richer invoice detail. | Paid users need a complete billing record experience. |
 | P1 | Trial / Dunning Lifecycle | Add trial expiration, past-due reminders, payment failure states, and downgrade rules. | Prevents stale paid access when payment state changes. |
 | P1 | Account Deletion / Export | Add user self-service export and deletion/deactivation flow with admin audit. | Required for serious account management and compliance readiness. |
 | P1 | Team Lifecycle Completion | Add ownership transfer, member disable/reactivation, pending invitation acceptance, and email delivery later. | Business/Enterprise accounts need real team administration. |
@@ -96,7 +98,7 @@ This document is the working checklist for local development. Update it after ea
 | Organization/workspace model | Registered users get a default organization, session payload includes current workspace and owner/member role, Settings Team tab can rename workspace, invite local members, change member roles, remove members, and saved bids/intents are shared across organization members | Ownership transfer flow, member disable/reactivation, invitation acceptance/email delivery |
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
-| Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab, checkout sessions, provider-compatible webhook sync, and cancellation scheduling | Real payment provider configuration/signature checks, invoices, hosted customer portal, trial/dunning lifecycle |
+| Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab, checkout sessions, provider-compatible webhook sync, cancellation scheduling, invoice history, and optional webhook signature verification | Real payment provider SDK/configuration, hosted customer portal, trial/dunning lifecycle |
 | Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated | Apply guards/limits to every future gated API and add richer usage dashboards |
 | Search alerts | API/service foundation exists | Full alert management UI, digest configuration, real email delivery |
 | Notifications | Notification outbox foundation exists | Provider configuration, delivery retries, user notification preferences |
@@ -106,7 +108,7 @@ This document is the working checklist for local development. Update it after ea
 
 | Area | Needed capability |
 |---|---|
-| Production billing polish | Real provider credentials/signature verification, hosted payment/customer portal, invoice history, trial expiration, and dunning. |
+| Production billing polish | Real provider credentials, hosted payment/customer portal, provider-specific event mapping, trial expiration, and dunning. |
 | Organization team lifecycle | Ownership transfer flow, member disable/reactivation, pending invitation acceptance. |
 | Response Workspace | Tasks, artifacts, internal checkpoints, reusable documents. |
 | Sourcing / quote workflow | Partner database, quote requests, quote comparison, attachment storage. |
@@ -117,7 +119,7 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Invoice / Payment History + Production Billing Provider Hardening** next if the next sprint stays on monetization. If the next sprint shifts back to account lifecycle, prioritize account deletion/export and workspace ownership transfer.
+Prioritize **Production Billing Provider Hardening + Customer Portal** next if the next sprint stays on monetization. If the next sprint shifts back to account lifecycle, prioritize account deletion/export and workspace ownership transfer.
 
 Reason:
 
@@ -549,6 +551,29 @@ Current local limits:
 
 建议下一步：
 - 继续做 Invoice / Payment History UI + Production Billing Provider Hardening；如果先补账户完整性，则做 Account deletion/export 与 owner 转移。
+
+## Completed Phase: Invoice / Payment History + Webhook Signature Foundation
+
+本阶段完成：
+- 新增 `billing_invoices` 表，记录 provider invoice id、invoice number、金额、币种、状态、发票链接、PDF 链接、到期/支付时间。
+- `applyBillingProviderEvent()` 支持 `invoice.paid` 与 `invoice.payment_failed`，能写入发票历史，并在支付失败时把订阅状态同步为 `past_due`。
+- 新增 `listAccountInvoices()` 服务和 `/api/account/billing/invoices`，登录用户可读取自己的账单/发票历史。
+- `/api/billing/webhook` 支持 `invoice.*` event，并在配置 `BILLING_WEBHOOK_SECRET` 时要求 `x-billing-signature` HMAC-SHA256 校验。
+- 前端 API client 新增 `fetchBillingInvoices()`。
+- `/settings` Billing 标签页新增 Invoice history 区域，展示发票编号、状态、金额、日期和发票链接。
+
+验证：
+- `npm test -- src/server/billing/subscriptions.test.ts src/server/db/schema.test.ts src/app/api/account/billing/invoices/route.test.ts src/app/api/billing/webhook/route.test.ts src/lib/api/auth.test.ts src/app/settings/page.test.ts`
+
+当前还剩：
+1. Production Billing Provider Hardening：真实 provider SDK/config、hosted checkout redirect、customer portal、provider-specific event mapping、部署环境变量说明。
+2. Trial / Dunning Lifecycle：试用到期、扣款失败重试、逾期提醒、自动降级规则。
+3. Invoice / Payment History Polish：PDF 下载体验、筛选、支付重试链接、更完整的发票详情。
+4. Account deletion/export 账号数据导出与删除。
+5. Organization team lifecycle：owner 转移、成员禁用/恢复、邀请接受/邮件投递。
+
+建议下一步：
+- 如果继续商业化主线，做 Production Billing Provider Hardening + Customer Portal；如果补账户闭环，做 Account deletion/export + owner 转移。
 
 ## Status Update Template
 

@@ -64,6 +64,28 @@ export interface CheckoutSessionResponse {
   checkoutSession: CheckoutSession;
 }
 
+export interface BillingInvoice {
+  id: string;
+  userId: string;
+  provider: string;
+  providerInvoiceId: string;
+  invoiceNumber: string | null;
+  status: "open" | "paid" | "payment_failed" | "void" | "uncollectible";
+  currency: string;
+  amountDueCents: number;
+  amountPaidCents: number;
+  invoiceUrl: string | null;
+  invoicePdfUrl: string | null;
+  dueAt: string | null;
+  paidAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BillingInvoicesResponse {
+  invoices: BillingInvoice[];
+}
+
 export interface PasswordResetRequestResponse {
   ok: true;
   resetToken?: string;
@@ -258,6 +280,12 @@ export async function cancelAccountSubscription(): Promise<AccountSubscriptionRe
   });
 
   return parseResponse<AccountSubscriptionResponse>(response);
+}
+
+export async function fetchBillingInvoices(): Promise<BillingInvoicesResponse> {
+  const response = await fetch("/api/account/billing/invoices");
+
+  return parseResponse<BillingInvoicesResponse>(response);
 }
 
 export async function requestPasswordReset(input: {

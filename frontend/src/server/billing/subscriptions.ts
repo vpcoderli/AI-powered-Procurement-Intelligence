@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { eq, or } from "drizzle-orm";
+import { desc, eq, or } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
-import { accountSubscriptions, billingCheckoutSessions, subscriptionEvents, users } from "@/server/db/schema";
+import { accountSubscriptions, billingCheckoutSessions, billingInvoices, subscriptionEvents, users } from "@/server/db/schema";
 import {
   isAccountTier,
   ACCOUNT_TIER_LABELS,
@@ -53,6 +53,30 @@ export interface CheckoutSessionResponse {
   checkoutSession: CheckoutSessionView;
 }
 
+export type BillingInvoiceStatus = "open" | "paid" | "payment_failed" | "void" | "uncollectible";
+
+export interface BillingInvoiceView {
+  id: string;
+  userId: string;
+  provider: string;
+  providerInvoiceId: string;
+  invoiceNumber: string | null;
+  status: BillingInvoiceStatus;
+  currency: string;
+  amountDueCents: number;
+  amountPaidCents: number;
+  invoiceUrl: string | null;
+  invoicePdfUrl: string | null;
+  dueAt: string | null;
+  paidAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BillingInvoicesResponse {
+  invoices: BillingInvoiceView[];
+}
+
 export interface UpsertAccountSubscriptionInput {
   tier: AccountTier;
   status: SubscriptionStatus;
@@ -72,7 +96,12 @@ export interface CreateCheckoutSessionInput {
 
 export interface BillingProviderEvent {
   id: string;
-  type: "checkout.completed" | "subscription.updated" | "subscription.deleted";
+  type:
+    | "checkout.completed"
+    | "subscription.updated"
+    | "subscription.deleted"
+    | "invoice.paid"
+    | "invoice.payment_failed";
   provider?: string;
   userId?: string;
   email?: string;
@@ -83,6 +112,15 @@ export interface BillingProviderEvent {
   status?: SubscriptionStatus;
   currentPeriodEnd?: string | null;
   cancelAtPeriodEnd?: boolean;
+  providerInvoiceId?: string | null;
+  invoiceNumber?: string | null;
+  invoiceUrl?: string | null;
+  invoicePdfUrl?: string | null;
+  amountDueCents?: number | null;
+  amountPaidCents?: number | null;
+  currency?: string | null;
+  dueAt?: string | null;
+  paidAt?: string | null;
   metadata?: Record<string, unknown>;
 }
 
@@ -210,6 +248,102 @@ function checkoutSessionFromRow(row: typeof billingCheckoutSessions.$inferSelect
   };
 }
 
+function normalizeInvoiceStatus(value: unknown): BillingInvoiceStatus {
+  return value === "paid" ||
+    value === "payment_failed" ||
+    value === "void" ||
+    value === "uncollectible"
+    ? value
+    : "open";
+}
+
+function invoiceFromRow(row: typeof billingInvoices.$inferSelect): BillingInvoiceView {
+  return {
+    id: row.id,
+    userId: row.userId,
+    provider: row.provider,
+    providerInvoiceId: row.providerInvoiceId,
+    invoiceNumber: row.invoiceNumber,
+    status: normalizeInvoiceStatus(row.status),
+    currency: row.currency,
+    amountDueCents: row.amountDueCents,
+    amountPaidCents: row.amountPaidCents,
+    invoiceUrl: row.invoiceUrl,
+    invoicePdfUrl: row.invoicePdfUrl,
+    dueAt: row.dueAt,
+    paidAt: row.paidAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function existingSubscriptionForUser(db: AppDatabase, userId: string) {
+  return db
+    .select()
+    .from(accountSubscriptions)
+    .where(eq(accountSubscriptions.userId, userId))
+    .limit(1)
+    .get();
+}
+
+function providerEventIsInvoice(event: BillingProviderEvent) {
+  return event.type === "invoice.paid" || event.type === "invoice.payment_failed";
+}
+
+function invoiceStatusForProviderEvent(event: BillingProviderEvent): BillingInvoiceStatus {
+  if (event.type === "invoice.paid") return "paid";
+  if (event.type === "invoice.payment_failed") return "payment_failed";
+  return "open";
+}
+
+function upsertBillingInvoice(db: AppDatabase, userId: string, event: BillingProviderEvent) {
+  if (!providerEventIsInvoice(event)) return;
+  if (!event.providerInvoiceId) {
+    throw new InvalidSubscriptionInputError("Invoice event must include providerInvoiceId");
+  }
+
+  const timestamp = nowIso();
+  const existing = db
+    .select()
+    .from(billingInvoices)
+    .where(eq(billingInvoices.providerInvoiceId, event.providerInvoiceId))
+    .limit(1)
+    .get();
+  const invoiceValues = {
+    userId,
+    provider: event.provider ?? "billing_provider",
+    providerCustomerId: event.providerCustomerId ?? null,
+    providerSubscriptionId: event.providerSubscriptionId ?? null,
+    providerInvoiceId: event.providerInvoiceId,
+    invoiceNumber: event.invoiceNumber ?? null,
+    status: invoiceStatusForProviderEvent(event),
+    currency: (event.currency ?? "USD").toUpperCase(),
+    amountDueCents: event.amountDueCents ?? 0,
+    amountPaidCents: event.amountPaidCents ?? 0,
+    invoiceUrl: event.invoiceUrl ?? null,
+    invoicePdfUrl: event.invoicePdfUrl ?? null,
+    dueAt: event.dueAt ?? null,
+    paidAt: event.paidAt ?? null,
+    updatedAt: timestamp,
+  };
+
+  if (existing) {
+    db.update(billingInvoices)
+      .set(invoiceValues)
+      .where(eq(billingInvoices.id, existing.id))
+      .run();
+    return;
+  }
+
+  db.insert(billingInvoices)
+    .values({
+      id: `invoice_${randomUUID()}`,
+      ...invoiceValues,
+      createdAt: timestamp,
+    })
+    .run();
+}
+
 export function getAccountSubscription(db: AppDatabase, userId: string): AccountSubscriptionResponse {
   const user = getUserOrThrow(db, userId);
   const row = db
@@ -246,6 +380,20 @@ export function getAccountSubscription(db: AppDatabase, userId: string): Account
       cancelAtPeriodEnd: row.cancelAtPeriodEnd === 1,
     },
     plans: listSubscriptionPlans(),
+  };
+}
+
+export function listAccountInvoices(db: AppDatabase, userId: string): BillingInvoicesResponse {
+  getUserOrThrow(db, userId);
+
+  return {
+    invoices: db
+      .select()
+      .from(billingInvoices)
+      .where(eq(billingInvoices.userId, userId))
+      .orderBy(desc(billingInvoices.createdAt))
+      .all()
+      .map(invoiceFromRow),
   };
 }
 
@@ -429,21 +577,35 @@ function findUserForProviderEvent(db: AppDatabase, event: BillingProviderEvent) 
   throw new InvalidSubscriptionInputError("Provider event must identify a user");
 }
 
-function normalizedProviderEventTier(event: BillingProviderEvent): AccountTier {
-  if (event.type === "subscription.deleted") {
-    return "free";
+function normalizedProviderEventTierForUser(
+  db: AppDatabase,
+  userId: string,
+  event: BillingProviderEvent,
+): AccountTier {
+  if (event.type === "subscription.deleted") return "free";
+  if (isAccountTier(event.tier)) return event.tier;
+
+  if (providerEventIsInvoice(event)) {
+    const existing = existingSubscriptionForUser(db, userId);
+    if (existing) return normalizeAccountTier(existing.tier);
+
+    return normalizeAccountTier(getUserOrThrow(db, userId).accountTier);
   }
 
-  if (!isAccountTier(event.tier)) {
-    throw new InvalidSubscriptionInputError("Provider event must include a valid tier");
-  }
-
-  return event.tier;
+  throw new InvalidSubscriptionInputError("Provider event must include a valid tier");
 }
 
 function normalizedProviderEventStatus(event: BillingProviderEvent): SubscriptionStatus {
   if (event.type === "subscription.deleted") {
     return "canceled";
+  }
+
+  if (event.type === "invoice.paid") {
+    return isSubscriptionStatus(event.status) ? event.status : "active";
+  }
+
+  if (event.type === "invoice.payment_failed") {
+    return "past_due";
   }
 
   if (!isSubscriptionStatus(event.status)) {
@@ -468,8 +630,9 @@ export function applyBillingProviderEvent(
     return getAccountSubscription(db, user.id);
   }
 
-  const tier = normalizedProviderEventTier(event);
+  const tier = normalizedProviderEventTierForUser(db, user.id, event);
   const status = normalizedProviderEventStatus(event);
+  upsertBillingInvoice(db, user.id, event);
   const result = upsertAccountSubscription(
     db,
     user.id,
