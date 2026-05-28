@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AdminApiError,
   createAdminUser,
+  deliverAdminNotifications,
+  listAdminNotifications,
   listAdminCrawlerLogs,
   listAdminDataSources,
   listAdminUserAuditLogs,
@@ -162,6 +164,28 @@ describe("admin API client", () => {
 
     await expect(listAdminCrawlerLogs()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/admin/crawler-logs");
+  });
+
+  it("lists admin notification outbox rows", async () => {
+    const body = {
+      notifications: [{ id: "notification_1", status: "failed" }],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(listAdminNotifications({ limit: 10, status: "failed" })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/notifications?limit=10&status=failed");
+  });
+
+  it("triggers admin notification delivery", async () => {
+    const body = { attempted: 2, sent: 1, failed: 1, skipped: 0 };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(deliverAdminNotifications({ limit: 25, maxAttempts: 3 })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/notifications/deliver", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limit: 25, maxAttempts: 3 }),
+    });
   });
 
   it("runs SAM.gov crawler now", async () => {

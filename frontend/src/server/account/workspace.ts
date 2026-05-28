@@ -14,7 +14,14 @@ import {
   type UserRole,
 } from "@/server/auth/entitlements";
 import type { AppDatabase } from "@/server/db/client";
-import { organizationMemberships, organizations, sessions, users, workspaceInvitations } from "@/server/db/schema";
+import {
+  notificationOutbox,
+  organizationMemberships,
+  organizations,
+  sessions,
+  users,
+  workspaceInvitations,
+} from "@/server/db/schema";
 import { enqueueNotification } from "@/server/notifications/outbox-repository";
 
 export const WORKSPACE_ROLES = ["owner", "member"] as const;
@@ -40,7 +47,16 @@ export interface AccountWorkspaceMember {
   displayName: string | null;
   workspaceRole: WorkspaceRole;
   status: WorkspaceMemberStatus;
+  invitationDelivery?: WorkspaceInvitationDelivery | null;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceInvitationDelivery {
+  status: "pending" | "sent" | "failed";
+  attemptCount: number;
+  lastError: string | null;
+  sentAt: string | null;
   updatedAt: string;
 }
 
@@ -235,6 +251,7 @@ function toWorkspaceMember(row: {
   displayName: string | null;
   role: string;
   status: string;
+  invitationDelivery?: WorkspaceInvitationDelivery | null;
   createdAt: string;
   updatedAt: string;
 }): AccountWorkspaceMember {
@@ -244,6 +261,7 @@ function toWorkspaceMember(row: {
     displayName: row.displayName,
     workspaceRole: normalizeWorkspaceRole(row.role),
     status: normalizeWorkspaceMemberStatus(row.status),
+    invitationDelivery: row.invitationDelivery ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -355,6 +373,37 @@ export function getAccountWorkspace(db: AppDatabase, userId: string): AccountWor
     throw new WorkspaceNotFoundError();
   }
 
+  const invitationDeliveryByUserId = new Map<string, WorkspaceInvitationDelivery>();
+  const invitations = db
+    .select()
+    .from(workspaceInvitations)
+    .where(and(
+      eq(workspaceInvitations.organizationId, organization.id),
+      isNull(workspaceInvitations.acceptedAt),
+      isNull(workspaceInvitations.revokedAt),
+    ))
+    .all();
+
+  for (const invitation of invitations) {
+    const latest = db
+      .select()
+      .from(notificationOutbox)
+      .where(eq(notificationOutbox.alertId, `workspace_invite:${invitation.id}`))
+      .orderBy(desc(notificationOutbox.createdAt), desc(notificationOutbox.id))
+      .limit(1)
+      .get();
+
+    if (!latest) continue;
+
+    invitationDeliveryByUserId.set(invitation.invitedUserId, {
+      status: latest.status,
+      attemptCount: latest.attemptCount,
+      lastError: latest.lastError,
+      sentAt: latest.sentAt,
+      updatedAt: latest.sentAt ?? latest.createdAt,
+    });
+  }
+
   return {
     organization: {
       id: organization.id,
@@ -380,7 +429,12 @@ export function getAccountWorkspace(db: AppDatabase, userId: string): AccountWor
       ))
       .orderBy(desc(organizationMemberships.role), asc(organizationMemberships.createdAt), asc(users.email))
       .all()
-      .map(toWorkspaceMember),
+      .map((member) =>
+        toWorkspaceMember({
+          ...member,
+          invitationDelivery: invitationDeliveryByUserId.get(member.userId) ?? null,
+        }),
+      ),
   };
 }
 

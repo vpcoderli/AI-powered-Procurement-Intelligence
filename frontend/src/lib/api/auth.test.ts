@@ -8,6 +8,7 @@ import {
   createCheckoutSession,
   deleteAccount,
   exportAccountData,
+  fetchAccountNotificationPreferences,
   fetchBillingInvoices,
   fetchAccountSubscription,
   fetchAccountUsage,
@@ -20,6 +21,7 @@ import {
   setWorkspaceMemberStatus,
   transferWorkspaceOwnership,
   updateAccountWorkspace,
+  updateAccountNotificationPreferences,
   updateAccountProfile,
   updateWorkspaceMemberRole,
 } from "./auth";
@@ -167,6 +169,50 @@ describe("auth API client", () => {
 
     await expect(fetchAccountUsage()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/account/usage");
+  });
+
+  it("fetches account notification preferences", async () => {
+    const body = {
+      userId: "user_1",
+      savedSearchAlertsEnabled: true,
+      defaultAlertFrequency: "daily",
+      marketingUpdatesEnabled: false,
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(fetchAccountNotificationPreferences()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/notification-preferences");
+  });
+
+  it("updates account notification preferences", async () => {
+    const body = {
+      userId: "user_1",
+      savedSearchAlertsEnabled: false,
+      defaultAlertFrequency: "weekly",
+      marketingUpdatesEnabled: true,
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T01:00:00.000Z",
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(
+      updateAccountNotificationPreferences({
+        savedSearchAlertsEnabled: false,
+        defaultAlertFrequency: "weekly",
+        marketingUpdatesEnabled: true,
+      }),
+    ).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/notification-preferences", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        savedSearchAlertsEnabled: false,
+        defaultAlertFrequency: "weekly",
+        marketingUpdatesEnabled: true,
+      }),
+    });
   });
 
   it("creates a checkout session for a paid account tier", async () => {

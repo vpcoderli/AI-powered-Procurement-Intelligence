@@ -20,6 +20,8 @@ describe("settings page", () => {
     expect(page).toContain("deleteAccount");
     expect(page).toContain("fetchAccountSubscription");
     expect(page).toContain("fetchAccountUsage");
+    expect(page).toContain("fetchAccountNotificationPreferences");
+    expect(page).toContain("updateAccountNotificationPreferences");
     expect(page).toContain("fetchBillingInvoices");
     expect(page).toContain("createBillingPortalSession");
     expect(page).toContain("createCheckoutSession");
@@ -38,6 +40,8 @@ describe("settings page", () => {
     expect(page).toContain("settings.team");
     expect(page).toContain("settings.inviteMember");
     expect(page).toContain("settings.inviteUrl");
+    expect(page).toContain("settings.inviteDelivery");
+    expect(page).toContain("invitationDelivery");
     expect(page).toContain("settings.changeRole");
     expect(page).toContain("settings.removeMember");
     expect(page).toContain("settings.disableMember");
@@ -65,5 +69,7 @@ describe("settings page", () => {
     expect(page).toContain("settings.viewInvoice");
     expect(page).toContain("settings.manageBilling");
     expect(page).toContain("settings.portalStarted");
+    expect(page).toContain("notificationPreferences");
+    expect(page).toContain("settings.notificationPreferencesSaved");
   });
 });

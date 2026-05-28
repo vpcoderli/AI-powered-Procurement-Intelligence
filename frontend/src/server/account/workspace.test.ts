@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerUser } from "@/server/auth/service";
 import { notificationOutbox, organizationMemberships, organizations, users, workspaceInvitations } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
+import { markNotificationFailed, markNotificationSent } from "@/server/notifications/outbox-repository";
 import {
   WorkspaceLastOwnerError,
   WorkspaceEmailExistsError,
@@ -126,6 +127,52 @@ describe("workspace account service", () => {
         role: "member",
       }),
     ).rejects.toBeInstanceOf(WorkspacePermissionError);
+  });
+
+  it("returns invitation notification delivery status for pending workspace invites", async () => {
+    const owner = await registerUser(testDb.db, {
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+
+    const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "member@example.com",
+      role: "member",
+    });
+    const notification = testDb.db.select().from(notificationOutbox).get();
+    expect(notification).toBeTruthy();
+    markNotificationFailed(testDb.db, notification!.id, "Provider unavailable", "2026-05-28T00:05:00.000Z");
+
+    const failedMember = getAccountWorkspace(testDb.db, owner.user.id).members.find(
+      (member) => member.userId === invite.member.userId,
+    );
+
+    expect(failedMember?.invitationDelivery).toMatchObject({
+      status: "failed",
+      attemptCount: 1,
+      lastError: "Provider unavailable",
+      sentAt: null,
+    });
+
+    const resent = resendWorkspaceInvitation(testDb.db, owner.user.id, invite.member.userId);
+    const resentNotification = testDb.db
+      .select()
+      .from(notificationOutbox)
+      .all()
+      .find((row) => row.dedupeKey.includes(resent.inviteToken) === false && row.id !== notification!.id);
+    expect(resentNotification).toBeTruthy();
+    markNotificationSent(testDb.db, resentNotification!.id, "2026-05-28T00:10:00.000Z");
+
+    const sentMember = getAccountWorkspace(testDb.db, owner.user.id).members.find(
+      (member) => member.userId === invite.member.userId,
+    );
+
+    expect(sentMember?.invitationDelivery).toMatchObject({
+      status: "sent",
+      attemptCount: 1,
+      lastError: null,
+      sentAt: "2026-05-28T00:10:00.000Z",
+    });
   });
 
   it("lets owners resend pending invitations with a rotated token and notification", async () => {

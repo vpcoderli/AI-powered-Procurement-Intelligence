@@ -2,6 +2,10 @@ import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlemen
 import type { AccountExportData } from "@/server/account/lifecycle";
 import type { WorkspaceRole } from "@/server/account/workspace";
 import type { AccountUsageResponse } from "@/server/account/usage";
+import type {
+  AccountNotificationPreferences,
+  UpdateAccountNotificationPreferencesInput,
+} from "@/server/account/notification-preferences";
 
 export type SubscriptionStatus = "none" | "trialing" | "active" | "past_due" | "canceled";
 export type SubscriptionSource = "admin_override" | "local_checkout" | "billing_provider";
@@ -50,6 +54,7 @@ export interface AccountSubscriptionResponse {
 }
 
 export type AccountUsageData = AccountUsageResponse;
+export type AccountNotificationPreferencesResponse = AccountNotificationPreferences;
 
 export interface CheckoutSession {
   id: string;
@@ -116,6 +121,13 @@ export interface AccountWorkspaceMember {
   displayName: string | null;
   workspaceRole: WorkspaceRole;
   status: "active" | "invited" | "disabled";
+  invitationDelivery?: {
+    status: "pending" | "sent" | "failed";
+    attemptCount: number;
+    lastError: string | null;
+    sentAt: string | null;
+    updatedAt: string;
+  } | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -307,6 +319,24 @@ export async function fetchAccountUsage(): Promise<AccountUsageData> {
   const response = await fetch("/api/account/usage");
 
   return parseResponse<AccountUsageData>(response);
+}
+
+export async function fetchAccountNotificationPreferences(): Promise<AccountNotificationPreferencesResponse> {
+  const response = await fetch("/api/account/notification-preferences");
+
+  return parseResponse<AccountNotificationPreferencesResponse>(response);
+}
+
+export async function updateAccountNotificationPreferences(
+  input: UpdateAccountNotificationPreferencesInput,
+): Promise<AccountNotificationPreferencesResponse> {
+  const response = await fetch("/api/account/notification-preferences", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<AccountNotificationPreferencesResponse>(response);
 }
 
 export async function createCheckoutSession(input: { tier: AccountTier }): Promise<CheckoutSessionResponse> {

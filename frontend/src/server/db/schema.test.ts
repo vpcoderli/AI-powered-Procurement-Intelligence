@@ -11,6 +11,7 @@ import {
   organizationMemberships,
   organizations,
   passwordResetTokens,
+  userNotificationPreferences,
   users,
   workspaceInvitations,
 } from "./schema";
@@ -204,6 +205,7 @@ describe("database schema", () => {
       expect(tables).toContain("workspace_invitations");
       expect(tables).toContain("organizations");
       expect(tables).toContain("organization_memberships");
+      expect(tables).toContain("user_notification_preferences");
 
       const userColumns = testDb.db.$client
         .prepare("PRAGMA table_info(users)")
@@ -272,6 +274,17 @@ describe("database schema", () => {
         }).run(),
       ).not.toThrow();
 
+      expect(() =>
+        testDb.db.insert(userNotificationPreferences).values({
+          userId: "user_1",
+          savedSearchAlertsEnabled: 1,
+          defaultAlertFrequency: "daily",
+          marketingUpdatesEnabled: 0,
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
+
       const workspaceInvitationColumns = testDb.db.$client
         .prepare("PRAGMA table_info(workspace_invitations)")
         .all()
@@ -279,6 +292,15 @@ describe("database schema", () => {
 
       expect(workspaceInvitationColumns).toContain("revoked_at");
       expect(workspaceInvitationColumns).toContain("last_sent_at");
+
+      const notificationPreferenceColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(user_notification_preferences)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(notificationPreferenceColumns).toContain("saved_search_alerts_enabled");
+      expect(notificationPreferenceColumns).toContain("default_alert_frequency");
+      expect(notificationPreferenceColumns).toContain("marketing_updates_enabled");
     } finally {
       await testDb.cleanup();
     }

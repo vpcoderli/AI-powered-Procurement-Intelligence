@@ -1,4 +1,4 @@
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { notificationOutbox } from "@/server/db/schema";
 import type {
@@ -127,4 +127,27 @@ export function listDeliverableNotifications(
     .filter((row) => row.attemptCount < maxAttempts)
     .slice(0, limit)
     .map(toOutboxRow);
+}
+
+export function listRecentNotifications(
+  db: AppDatabase,
+  options: { limit?: number; status?: NotificationOutboxRow["status"] } = {},
+): NotificationOutboxRow[] {
+  const limit = Math.max(1, Math.min(options.limit ?? 25, 100));
+  const rows = options.status
+    ? db
+        .select()
+        .from(notificationOutbox)
+        .where(eq(notificationOutbox.status, options.status))
+        .orderBy(desc(notificationOutbox.createdAt), desc(notificationOutbox.id))
+        .limit(limit)
+        .all()
+    : db
+        .select()
+        .from(notificationOutbox)
+        .orderBy(desc(notificationOutbox.createdAt), desc(notificationOutbox.id))
+        .limit(limit)
+        .all();
+
+  return rows.map(toOutboxRow);
 }
