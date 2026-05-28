@@ -101,6 +101,37 @@ export function runMigrations(db: AppDatabase) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS submission_paths (
+      id TEXT PRIMARY KEY,
+      intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
+      bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      method TEXT NOT NULL DEFAULT 'unknown',
+      portal_url TEXT NOT NULL DEFAULT '',
+      contact_email TEXT NOT NULL DEFAULT '',
+      requires_registration INTEGER NOT NULL DEFAULT 0,
+      requires_physical_delivery INTEGER NOT NULL DEFAULT 0,
+      requires_addenda_acknowledgement INTEGER NOT NULL DEFAULT 0,
+      complexity_score INTEGER NOT NULL DEFAULT 0,
+      guidance_text TEXT NOT NULL DEFAULT '',
+      readiness_checklist_json TEXT NOT NULL DEFAULT '[]',
+      risk_flags_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS submission_confirmations (
+      id TEXT PRIMARY KEY,
+      intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      submitted_at TEXT NOT NULL,
+      method TEXT NOT NULL,
+      confirmation_reference TEXT NOT NULL DEFAULT '',
+      confirmation_notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS alerts (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -193,6 +224,11 @@ export function runMigrations(db: AppDatabase) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_intent_to_bid_user_bid ON intent_to_bid(user_id, bid_id);
     CREATE INDEX IF NOT EXISTS idx_intent_to_bid_user_id ON intent_to_bid(user_id);
     CREATE INDEX IF NOT EXISTS idx_intent_to_bid_bid_id ON intent_to_bid(bid_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_submission_paths_intent_id ON submission_paths(intent_id);
+    CREATE INDEX IF NOT EXISTS idx_submission_paths_user_id ON submission_paths(user_id);
+    CREATE INDEX IF NOT EXISTS idx_submission_paths_bid_id ON submission_paths(bid_id);
+    CREATE INDEX IF NOT EXISTS idx_submission_confirmations_intent_id ON submission_confirmations(intent_id);
+    CREATE INDEX IF NOT EXISTS idx_submission_confirmations_user_id ON submission_confirmations(user_id);
     CREATE INDEX IF NOT EXISTS idx_alerts_user_id ON alerts(user_id);
     CREATE INDEX IF NOT EXISTS idx_crawler_logs_source_started ON crawler_logs(source, started_at);
     CREATE INDEX IF NOT EXISTS idx_crawler_logs_run_id ON crawler_logs(run_id);

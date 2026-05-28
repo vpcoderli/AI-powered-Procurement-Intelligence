@@ -156,6 +156,62 @@ export const intentToBid = sqliteTable(
   }),
 );
 
+export const submissionPaths = sqliteTable(
+  "submission_paths",
+  {
+    id: text("id").primaryKey(),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intentToBid.id, { onDelete: "cascade" }),
+    bidId: text("bid_id")
+      .notNull()
+      .references(() => bids.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    method: text("method").notNull().default("unknown"),
+    portalUrl: text("portal_url").notNull().default(""),
+    contactEmail: text("contact_email").notNull().default(""),
+    requiresRegistration: integer("requires_registration").notNull().default(0),
+    requiresPhysicalDelivery: integer("requires_physical_delivery").notNull().default(0),
+    requiresAddendaAcknowledgement: integer("requires_addenda_acknowledgement").notNull().default(0),
+    complexityScore: integer("complexity_score").notNull().default(0),
+    guidanceText: text("guidance_text").notNull().default(""),
+    readinessChecklistJson: text("readiness_checklist_json").notNull().default("[]"),
+    riskFlagsJson: text("risk_flags_json").notNull().default("[]"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    intentIdx: uniqueIndex("idx_submission_paths_intent_id").on(table.intentId),
+    userIdx: index("idx_submission_paths_user_id").on(table.userId),
+    bidIdx: index("idx_submission_paths_bid_id").on(table.bidId),
+  }),
+);
+
+export const submissionConfirmations = sqliteTable(
+  "submission_confirmations",
+  {
+    id: text("id").primaryKey(),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intentToBid.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    submittedAt: text("submitted_at").notNull(),
+    method: text("method").notNull(),
+    confirmationReference: text("confirmation_reference").notNull().default(""),
+    confirmationNotes: text("confirmation_notes").notNull().default(""),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    intentIdx: index("idx_submission_confirmations_intent_id").on(table.intentId),
+    userIdx: index("idx_submission_confirmations_user_id").on(table.userId),
+  }),
+);
+
 export const alerts = sqliteTable(
   "alerts",
   {
