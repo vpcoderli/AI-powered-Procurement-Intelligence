@@ -174,6 +174,7 @@ type AuthErrorCode =
   | "LAST_OWNER_REQUIRED"
   | "MEMBER_NOT_FOUND"
   | "OWNER_TRANSFER_REQUIRED"
+  | "USAGE_LIMIT_REACHED"
   | "WEAK_PASSWORD";
 
 interface ApiErrorResponse {
@@ -221,6 +222,7 @@ function isApiErrorResponse(body: unknown): body is ApiErrorResponse {
       code === "LAST_OWNER_REQUIRED" ||
       code === "MEMBER_NOT_FOUND" ||
       code === "OWNER_TRANSFER_REQUIRED" ||
+      code === "USAGE_LIMIT_REACHED" ||
       code === "WEAK_PASSWORD")
   );
 }

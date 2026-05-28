@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { intentToBid } from "@/server/db/schema";
+import { intentToBid, users } from "@/server/db/schema";
 import { inviteWorkspaceMember, listWorkspaceMemberUserIds } from "@/server/account/workspace";
 import { registerUser } from "@/server/auth/service";
 import { createTestDatabase } from "@/server/db/test-utils";
@@ -142,6 +142,10 @@ describe("intent service", () => {
         email: "owner@example.com",
         password: "strong-password",
       });
+      testDb.db.update(users)
+        .set({ accountTier: "business" })
+        .where(eq(users.id, owner.user.id))
+        .run();
       const member = await inviteWorkspaceMember(testDb.db, owner.user.id, {
         email: "member@example.com",
         role: "member",

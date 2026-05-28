@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AuthApiError,
   acceptWorkspaceInvitation,
   changePassword,
   confirmPasswordReset,
@@ -440,6 +441,26 @@ describe("auth API client", () => {
         role: "member",
       }),
     });
+  });
+
+  it("surfaces team member usage limit errors", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({
+      error: {
+        code: "USAGE_LIMIT_REACHED",
+        message: "Upgrade your plan to add more team members.",
+      },
+    }, { status: 402 }));
+
+    await expect(
+      inviteWorkspaceMember({
+        email: "member@example.com",
+        role: "member",
+      }),
+    ).rejects.toMatchObject({
+      name: "AuthApiError",
+      status: 402,
+      code: "USAGE_LIMIT_REACHED",
+    } satisfies Partial<AuthApiError>);
   });
 
   it("accepts a workspace invitation", async () => {

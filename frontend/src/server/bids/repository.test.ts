@@ -1,5 +1,7 @@
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
+import { users } from "@/server/db/schema";
 import {
   acceptWorkspaceInvitation,
   inviteWorkspaceMember,
@@ -65,6 +67,10 @@ describe("bid repository", () => {
       email: "owner@example.com",
       password: "strong-password",
     });
+    testDb.db.update(users)
+      .set({ accountTier: "business" })
+      .where(eq(users.id, owner.user.id))
+      .run();
     const member = await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "member@example.com",
       role: "member",

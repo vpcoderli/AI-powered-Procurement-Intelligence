@@ -10,6 +10,7 @@ describe("accept invite page", () => {
     expect(page).toContain("acceptInvite.password");
     expect(page).toContain("acceptInvite.confirmPassword");
     expect(page).toContain("acceptInvite.accept");
+    expect(page).toContain("acceptInvite.teamSeatLimitReached");
     expect(page).toContain("refreshSession");
   });
 });

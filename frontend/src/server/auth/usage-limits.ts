@@ -150,7 +150,7 @@ function usedCount(
     .from(organizationMemberships)
     .where(and(
       inArray(organizationMemberships.userId, userIds),
-      eq(organizationMemberships.status, "active"),
+      inArray(organizationMemberships.status, ["active", "invited"]),
     ))
     .all().length;
 }
@@ -205,7 +205,7 @@ function hasExistingResource(
       .where(and(
         inArray(organizationMemberships.userId, userIds),
         eq(organizationMemberships.userId, resourceId),
-        eq(organizationMemberships.status, "active"),
+        inArray(organizationMemberships.status, ["active", "invited"]),
       ))
       .limit(1)
       .get(),

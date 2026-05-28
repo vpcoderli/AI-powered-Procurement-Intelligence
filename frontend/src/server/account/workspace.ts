@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
-import { and, asc, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { hashPassword } from "@/server/auth/password";
+import { UsageLimitError, getUsageLimitStatus } from "@/server/auth/usage-limits";
 import {
   SESSION_MAX_AGE_SECONDS,
   createSessionToken,
@@ -148,6 +149,13 @@ export class WorkspaceInvitationNotFoundError extends InvalidWorkspaceInvitation
     this.message = "Pending invitation not found";
   }
 }
+
+const TIER_RANK: Record<AccountTier, number> = {
+  free: 0,
+  pro: 1,
+  business: 2,
+  enterprise: 3,
+};
 
 function nowIso() {
   return new Date().toISOString();
@@ -476,6 +484,73 @@ function countActiveWorkspaceOwners(db: AppDatabase, organizationId: string) {
     .all().length;
 }
 
+function workspaceSeatUserIds(db: AppDatabase, organizationId: string) {
+  return db
+    .select({ userId: organizationMemberships.userId })
+    .from(organizationMemberships)
+    .where(and(
+      eq(organizationMemberships.organizationId, organizationId),
+      inArray(organizationMemberships.status, ["active", "invited"]),
+    ))
+    .orderBy(asc(organizationMemberships.createdAt), asc(organizationMemberships.userId))
+    .all()
+    .map((row) => row.userId);
+}
+
+function highestTier(tiers: AccountTier[]) {
+  return tiers.reduce<AccountTier>(
+    (highest, tier) => (TIER_RANK[tier] > TIER_RANK[highest] ? tier : highest),
+    "free",
+  );
+}
+
+function workspaceBillingTier(db: AppDatabase, organizationId: string, fallbackUserId: string) {
+  const ownerTiers = db
+    .select({ accountTier: users.accountTier })
+    .from(organizationMemberships)
+    .innerJoin(users, eq(organizationMemberships.userId, users.id))
+    .where(and(
+      eq(organizationMemberships.organizationId, organizationId),
+      eq(organizationMemberships.role, "owner"),
+      eq(organizationMemberships.status, "active"),
+    ))
+    .all()
+    .map((row) => normalizeAccountTier(row.accountTier));
+
+  if (ownerTiers.length > 0) {
+    return highestTier(ownerTiers);
+  }
+
+  const fallbackUser = db.select().from(users).where(eq(users.id, fallbackUserId)).limit(1).get();
+  return normalizeAccountTier(fallbackUser?.accountTier);
+}
+
+function enforceWorkspaceSeatLimit(
+  db: AppDatabase,
+  organizationId: string,
+  fallbackUserId: string,
+  mode: "create" | "activateReserved" = "create",
+) {
+  const scopeUserIds = workspaceSeatUserIds(db, organizationId);
+  const status = getUsageLimitStatus(
+    db,
+    fallbackUserId,
+    workspaceBillingTier(db, organizationId, fallbackUserId),
+    "team_members",
+    { scopeUserIds },
+  );
+
+  if (status.limit !== null && (mode === "create" ? status.used >= status.limit : status.used > status.limit)) {
+    throw new UsageLimitError({
+      feature: status.feature,
+      tier: status.tier,
+      used: status.used,
+      limit: status.limit,
+      requiredTier: status.requiredTier,
+    });
+  }
+}
+
 function requireManageableMember(db: AppDatabase, organizationId: string, targetUserId: string) {
   const membership = getWorkspaceMembership(db, organizationId, targetUserId);
 
@@ -567,6 +642,8 @@ export async function inviteWorkspaceMember(
   if (db.select().from(users).where(eq(users.email, email)).limit(1).get()) {
     throw new WorkspaceEmailExistsError();
   }
+
+  enforceWorkspaceSeatLimit(db, workspace.organizationId, inviterUserId);
 
   const timestamp = nowIso();
   const token = createInviteToken();
@@ -679,6 +756,8 @@ export async function acceptWorkspaceInvitation(db: AppDatabase, input: AcceptWo
   if (!membership || membership.status !== "invited") {
     throw new WorkspaceInvitationNotFoundError();
   }
+
+  enforceWorkspaceSeatLimit(db, invitation.organizationId, invitation.invitedByUserId, "activateReserved");
 
   const timestamp = nowIso();
   db.update(users)

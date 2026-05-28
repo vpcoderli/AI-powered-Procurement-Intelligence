@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerUser } from "@/server/auth/service";
+import { UsageLimitError } from "@/server/auth/usage-limits";
 import { notificationOutbox, organizationMemberships, organizations, users, workspaceInvitations } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { markNotificationFailed, markNotificationSent } from "@/server/notifications/outbox-repository";
@@ -33,6 +34,20 @@ describe("workspace account service", () => {
   afterEach(async () => {
     await testDb.cleanup();
   });
+
+  async function registerBusinessOwner(input: {
+    email: string;
+    password: string;
+    displayName?: string;
+  }) {
+    const registered = await registerUser(testDb.db, input);
+    testDb.db.update(users)
+      .set({ accountTier: "business" })
+      .where(eq(users.id, registered.user.id))
+      .run();
+
+    return registered;
+  }
 
   it("creates a default organization with owner membership for registered users", async () => {
     const registered = await registerUser(testDb.db, {
@@ -93,7 +108,7 @@ describe("workspace account service", () => {
   });
 
   it("lets owners invite pending members but blocks ordinary members", async () => {
-    const owner = await registerUser(testDb.db, {
+    const owner = await registerBusinessOwner({
       email: "owner@example.com",
       password: "strong-password",
     });
@@ -129,8 +144,83 @@ describe("workspace account service", () => {
     ).rejects.toBeInstanceOf(WorkspacePermissionError);
   });
 
-  it("returns invitation notification delivery status for pending workspace invites", async () => {
+  it("rejects free owners when inviting beyond the team member limit", async () => {
     const owner = await registerUser(testDb.db, {
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+
+    await expect(
+      inviteWorkspaceMember(testDb.db, owner.user.id, {
+        email: "member@example.com",
+        role: "member",
+      }),
+    ).rejects.toBeInstanceOf(UsageLimitError);
+    expect(testDb.db.select().from(organizationMemberships).all()).toHaveLength(1);
+  });
+
+  it("reserves team seats for pending invitations", async () => {
+    const owner = await registerBusinessOwner({
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+    testDb.db.update(users)
+      .set({ accountTier: "pro" })
+      .where(eq(users.id, owner.user.id))
+      .run();
+
+    await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "first@example.com",
+      role: "member",
+    });
+    await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "second@example.com",
+      role: "member",
+    });
+
+    await expect(
+      inviteWorkspaceMember(testDb.db, owner.user.id, {
+        email: "third@example.com",
+        role: "member",
+      }),
+    ).rejects.toBeInstanceOf(UsageLimitError);
+  });
+
+  it("allows accepting an invitation that already reserved the final team seat", async () => {
+    const owner = await registerUser(testDb.db, {
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+    testDb.db.update(users)
+      .set({ accountTier: "pro" })
+      .where(eq(users.id, owner.user.id))
+      .run();
+
+    const first = await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "first@example.com",
+      role: "member",
+    });
+    const second = await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "second@example.com",
+      role: "member",
+    });
+
+    await expect(
+      acceptWorkspaceInvitation(testDb.db, {
+        token: first.inviteToken,
+        password: "member-strong-password",
+      }),
+    ).resolves.toMatchObject({ user: { email: "first@example.com" } });
+    await expect(
+      acceptWorkspaceInvitation(testDb.db, {
+        token: second.inviteToken,
+        password: "member-strong-password",
+      }),
+    ).resolves.toMatchObject({ user: { email: "second@example.com" } });
+  });
+
+  it("returns invitation notification delivery status for pending workspace invites", async () => {
+    const owner = await registerBusinessOwner({
       email: "owner@example.com",
       password: "strong-password",
     });
@@ -176,7 +266,7 @@ describe("workspace account service", () => {
   });
 
   it("lets owners resend pending invitations with a rotated token and notification", async () => {
-    const owner = await registerUser(testDb.db, {
+    const owner = await registerBusinessOwner({
       email: "owner@example.com",
       password: "strong-password",
     });
@@ -204,7 +294,7 @@ describe("workspace account service", () => {
   });
 
   it("lets owners revoke pending invitations and blocks later acceptance", async () => {
-    const owner = await registerUser(testDb.db, {
+    const owner = await registerBusinessOwner({
       email: "owner@example.com",
       password: "strong-password",
     });
@@ -232,7 +322,7 @@ describe("workspace account service", () => {
   });
 
   it("activates an invited member after accepting the invitation and setting a password", async () => {
-    const owner = await registerUser(testDb.db, {
+    const owner = await registerBusinessOwner({
       email: "owner@example.com",
       password: "strong-password",
     });
@@ -258,8 +348,33 @@ describe("workspace account service", () => {
     });
   });
 
+  it("rejects invitation acceptance when the workspace has no remaining team seats", async () => {
+    const owner = await registerBusinessOwner({
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+    const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "member@example.com",
+      role: "member",
+    });
+    testDb.db.update(users)
+      .set({ accountTier: "free" })
+      .where(eq(users.id, owner.user.id))
+      .run();
+
+    await expect(
+      acceptWorkspaceInvitation(testDb.db, {
+        token: invite.inviteToken,
+        password: "member-strong-password",
+      }),
+    ).rejects.toBeInstanceOf(UsageLimitError);
+    expect(
+      testDb.db.select().from(organizationMemberships).where(eq(organizationMemberships.userId, invite.member.userId)).get(),
+    ).toMatchObject({ status: "invited" });
+  });
+
   it("returns a workspace summary with members", async () => {
-    const owner = await registerUser(testDb.db, {
+    const owner = await registerBusinessOwner({
       email: "owner@example.com",
       password: "strong-password",
     });
@@ -286,7 +401,7 @@ describe("workspace account service", () => {
   });
 
   it("rejects duplicate invited member emails", async () => {
-    const owner = await registerUser(testDb.db, {
+    const owner = await registerBusinessOwner({
       email: "owner@example.com",
       password: "strong-password",
     });
@@ -305,7 +420,7 @@ describe("workspace account service", () => {
   });
 
   it("lets workspace owners update member roles", async () => {
-    const owner = await registerUser(testDb.db, {
+    const owner = await registerBusinessOwner({
       email: "owner@example.com",
       password: "strong-password",
     });
@@ -328,7 +443,7 @@ describe("workspace account service", () => {
   });
 
   it("blocks non-owners from updating or removing workspace members", async () => {
-    const owner = await registerUser(testDb.db, {
+    const owner = await registerBusinessOwner({
       email: "owner@example.com",
       password: "strong-password",
     });
@@ -350,7 +465,7 @@ describe("workspace account service", () => {
   });
 
   it("keeps at least one active workspace owner", async () => {
-    const owner = await registerUser(testDb.db, {
+    const owner = await registerBusinessOwner({
       email: "owner@example.com",
       password: "strong-password",
     });
@@ -364,7 +479,7 @@ describe("workspace account service", () => {
   });
 
   it("lets owners remove members from shared workspace access", async () => {
-    const owner = await registerUser(testDb.db, {
+    const owner = await registerBusinessOwner({
       email: "owner@example.com",
       password: "strong-password",
     });
@@ -387,7 +502,7 @@ describe("workspace account service", () => {
   });
 
   it("lets owners disable and restore active members without deleting the membership", async () => {
-    const owner = await registerUser(testDb.db, {
+    const owner = await registerBusinessOwner({
       email: "owner@example.com",
       password: "strong-password",
     });

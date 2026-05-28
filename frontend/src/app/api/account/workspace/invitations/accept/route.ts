@@ -5,10 +5,24 @@ import {
   acceptWorkspaceInvitation,
 } from "@/server/account/workspace";
 import { createSessionCookie } from "@/server/auth/session";
+import { UsageLimitError } from "@/server/auth/usage-limits";
 import { db } from "@/server/db/client";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
+}
+
+function usageLimitResponse(error: UsageLimitError) {
+  return NextResponse.json({
+    error: {
+      code: error.code,
+      message: "This workspace has reached its team member limit.",
+      feature: error.feature,
+      limit: error.limit,
+      used: error.used,
+      requiredTier: error.requiredTier,
+    },
+  }, { status: 402 });
 }
 
 async function readBody(request: Request) {
@@ -43,6 +57,10 @@ export async function POST(request: Request) {
 
     return response;
   } catch (error) {
+    if (error instanceof UsageLimitError) {
+      return usageLimitResponse(error);
+    }
+
     if (error instanceof InvalidWorkspaceInvitationTokenError) {
       return errorResponse("INVALID_INVITATION_TOKEN", error.message, 400);
     }

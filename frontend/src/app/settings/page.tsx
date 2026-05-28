@@ -422,7 +422,11 @@ export default function SettingsPage() {
       setInviteUrl(invite.inviteUrl);
       setInviteMessage(t("settings.memberInvited"));
     } catch (error) {
-      setInviteError(error instanceof Error ? error.message : t("settings.memberInviteError"));
+      setInviteError(
+        error instanceof AuthApiError && error.code === "USAGE_LIMIT_REACHED"
+          ? t("settings.teamSeatLimitReached")
+          : error instanceof Error ? error.message : t("settings.memberInviteError"),
+      );
     } finally {
       setIsInvitingMember(false);
     }

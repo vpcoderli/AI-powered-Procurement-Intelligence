@@ -63,6 +63,7 @@ export const zh: Dictionary = {
     inviting: "邀请中...",
     memberInvited: "成员已邀请。请安全分享邀请链接。",
     memberInviteError: "无法邀请成员。",
+    teamSeatLimitReached: "当前套餐的团队成员席位已达上限。",
     temporaryPassword: "临时密码",
     inviteUrl: "邀请链接",
     workspaceRole_owner: "Owner",
@@ -222,6 +223,7 @@ export const zh: Dictionary = {
     accepted: "邀请已接受，正在跳转到设置页。",
     passwordMismatch: "密码与确认密码不一致。",
     error: "无法接受邀请。",
+    teamSeatLimitReached: "该工作区的团队成员席位已达上限，请联系 Owner 升级套餐或释放席位。",
   },
   header: {
     initials: "JD",

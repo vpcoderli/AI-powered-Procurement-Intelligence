@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SESSION_COOKIE_NAME } from "@/server/auth/session";
+import { UsageLimitError } from "@/server/auth/usage-limits";
 import * as authService from "@/server/auth/service";
 import * as workspaceService from "@/server/account/workspace";
 import { POST } from "./route";
@@ -108,5 +109,48 @@ describe("POST /api/account/workspace/members", () => {
 
     expect(response.status).toBe(409);
     expect(body.error.code).toBe("EMAIL_ALREADY_REGISTERED");
+  });
+
+  it("returns USAGE_LIMIT_REACHED when the workspace has no remaining team seats", async () => {
+    vi.mocked(authService.getSessionUser).mockResolvedValueOnce({
+      id: "user_1",
+      email: "owner@example.com",
+      displayName: "Owner",
+      role: "user",
+      tier: "free",
+      features: ["bid_search"],
+      workspace: {
+        organizationId: "org_1",
+        organizationName: "Acme Federal Team",
+        role: "owner",
+      },
+    });
+    vi.mocked(workspaceService.inviteWorkspaceMember).mockRejectedValueOnce(
+      new UsageLimitError({
+        feature: "team_members",
+        tier: "free",
+        used: 1,
+        limit: 1,
+        requiredTier: "business",
+      }),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/account/workspace/members", {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE_NAME}=sess_valid` },
+        body: JSON.stringify({ email: "member@example.com", role: "member" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(402);
+    expect(body.error).toMatchObject({
+      code: "USAGE_LIMIT_REACHED",
+      feature: "team_members",
+      limit: 1,
+      used: 1,
+      requiredTier: "business",
+    });
   });
 });

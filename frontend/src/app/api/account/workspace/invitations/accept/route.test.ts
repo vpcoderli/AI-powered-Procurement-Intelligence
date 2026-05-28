@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { UsageLimitError } from "@/server/auth/usage-limits";
 import * as workspaceService from "@/server/account/workspace";
 import { POST } from "./route";
 
@@ -75,5 +76,37 @@ describe("POST /api/account/workspace/invitations/accept", () => {
 
     expect(response.status).toBe(400);
     expect(body.error.code).toBe("INVALID_INVITATION_TOKEN");
+  });
+
+  it("returns USAGE_LIMIT_REACHED when the workspace has no remaining team seats", async () => {
+    vi.mocked(workspaceService.acceptWorkspaceInvitation).mockRejectedValueOnce(
+      new UsageLimitError({
+        feature: "team_members",
+        tier: "free",
+        used: 1,
+        limit: 1,
+        requiredTier: "business",
+      }),
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/account/workspace/invitations/accept", {
+        method: "POST",
+        body: JSON.stringify({
+          token: "invite_secret",
+          password: "member-strong-password",
+        }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(402);
+    expect(body.error).toMatchObject({
+      code: "USAGE_LIMIT_REACHED",
+      feature: "team_members",
+      limit: 1,
+      used: 1,
+      requiredTier: "business",
+    });
   });
 });

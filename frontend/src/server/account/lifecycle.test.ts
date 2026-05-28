@@ -100,6 +100,10 @@ describe("account lifecycle service", () => {
       email: "owner@example.com",
       password: "strong-password",
     });
+    testDb.db.update(users)
+      .set({ accountTier: "business" })
+      .where(eq(users.id, owner.user.id))
+      .run();
     const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "member@example.com",
       role: "member",
@@ -144,6 +148,10 @@ describe("account lifecycle service", () => {
       email: "owner@example.com",
       password: "strong-password",
     });
+    testDb.db.update(users)
+      .set({ accountTier: "business" })
+      .where(eq(users.id, owner.user.id))
+      .run();
     const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "member@example.com",
       role: "member",
@@ -161,6 +169,10 @@ describe("account lifecycle service", () => {
       email: "owner@example.com",
       password: "strong-password",
     });
+    testDb.db.update(users)
+      .set({ accountTier: "business" })
+      .where(eq(users.id, owner.user.id))
+      .run();
     const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "member@example.com",
       role: "member",
