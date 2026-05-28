@@ -3,9 +3,11 @@ import {
   AdminApiError,
   listAdminCrawlerLogs,
   listAdminDataSources,
+  listAdminUsers,
   runSamGovCrawlerNow,
   runStateCrawlersNow,
   updateAdminDataSource,
+  updateAdminUser,
 } from "./admin";
 
 const mockFetch = vi.fn<typeof fetch>();
@@ -37,6 +39,52 @@ describe("admin API client", () => {
 
     await expect(listAdminDataSources()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources");
+  });
+
+  it("lists admin users", async () => {
+    const body = {
+      users: [
+        {
+          id: "user_1",
+          email: "buyer@example.com",
+          displayName: "Buyer",
+          role: "user",
+          tier: "free",
+          isDisabled: false,
+          createdAt: "2026-05-20T00:00:00.000Z",
+          updatedAt: "2026-05-20T00:00:00.000Z",
+          lastLoginAt: null,
+        },
+      ],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(listAdminUsers()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/users");
+  });
+
+  it("updates admin user access", async () => {
+    const body = {
+      user: {
+        id: "user 1",
+        email: "buyer@example.com",
+        displayName: "Buyer",
+        role: "admin",
+        tier: "business",
+        isDisabled: false,
+        createdAt: "2026-05-20T00:00:00.000Z",
+        updatedAt: "2026-05-21T00:00:00.000Z",
+        lastLoginAt: null,
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(updateAdminUser("user 1", { role: "admin", tier: "business" })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/users/user%201", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role: "admin", tier: "business" }),
+    });
   });
 
   it("updates data source enablement", async () => {

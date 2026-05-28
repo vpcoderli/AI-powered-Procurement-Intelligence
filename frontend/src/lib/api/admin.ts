@@ -3,13 +3,26 @@ import type {
   AdminDataSource,
   AdminDataSourcesResponse,
 } from "@/server/admin/data-sources-repository";
+import type {
+  AdminUser,
+  AdminUsersResponse,
+  UpdateAdminUserInput,
+} from "@/server/admin/users-repository";
 
-export type { AdminCrawlerLog, AdminDataSource, AdminDataSourcesResponse };
+export type {
+  AdminCrawlerLog,
+  AdminDataSource,
+  AdminDataSourcesResponse,
+  AdminUser,
+  AdminUsersResponse,
+  UpdateAdminUserInput,
+};
 
 type AdminApiErrorCode =
   | "FORBIDDEN"
   | "INVALID_REQUEST"
   | "DATA_SOURCE_NOT_FOUND"
+  | "USER_NOT_FOUND"
   | "INTERNAL_ERROR";
 
 export interface AdminCrawlerLogsResponse {
@@ -18,6 +31,10 @@ export interface AdminCrawlerLogsResponse {
 
 export interface UpdateAdminDataSourceResponse {
   source: AdminDataSource;
+}
+
+export interface UpdateAdminUserResponse {
+  user: AdminUser;
 }
 
 export class AdminApiError extends Error {
@@ -48,6 +65,7 @@ function isAdminErrorResponse(body: unknown): body is { error: { code: AdminApiE
     (code === "FORBIDDEN" ||
       code === "INVALID_REQUEST" ||
       code === "DATA_SOURCE_NOT_FOUND" ||
+      code === "USER_NOT_FOUND" ||
       code === "INTERNAL_ERROR") &&
     typeof message === "string"
   );
@@ -77,6 +95,22 @@ export async function listAdminDataSources() {
   const response = await fetch("/api/admin/data-sources");
 
   return parseResponse<AdminDataSourcesResponse>(response);
+}
+
+export async function listAdminUsers() {
+  const response = await fetch("/api/admin/users");
+
+  return parseResponse<AdminUsersResponse>(response);
+}
+
+export async function updateAdminUser(id: string, input: UpdateAdminUserInput) {
+  const response = await fetch(`/api/admin/users/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<UpdateAdminUserResponse>(response);
 }
 
 export async function updateAdminDataSource(id: string, input: { isEnabled: boolean }) {

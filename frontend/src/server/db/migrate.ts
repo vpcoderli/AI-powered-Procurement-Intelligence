@@ -10,6 +10,8 @@ export function runMigrations(db: AppDatabase) {
       password_hash TEXT,
       display_name TEXT,
       role TEXT NOT NULL DEFAULT 'user',
+      account_tier TEXT NOT NULL DEFAULT 'free',
+      is_disabled INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       last_login_at TEXT
@@ -237,4 +239,19 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_notification_outbox_alert_id ON notification_outbox(alert_id);
     CREATE INDEX IF NOT EXISTS idx_notification_outbox_user_id ON notification_outbox(user_id);
   `);
+
+  const userColumns = new Set(
+    sqlite
+      .prepare("PRAGMA table_info(users)")
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+
+  if (!userColumns.has("account_tier")) {
+    sqlite.exec("ALTER TABLE users ADD COLUMN account_tier TEXT NOT NULL DEFAULT 'free'");
+  }
+
+  if (!userColumns.has("is_disabled")) {
+    sqlite.exec("ALTER TABLE users ADD COLUMN is_disabled INTEGER NOT NULL DEFAULT 0");
+  }
 }

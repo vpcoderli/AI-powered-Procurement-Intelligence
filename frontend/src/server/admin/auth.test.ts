@@ -108,4 +108,34 @@ describe("requireAdmin", () => {
       code: "FORBIDDEN",
     });
   });
+
+  it("rejects disabled admin users", async () => {
+    const token = "session_token";
+    testDb.db
+      .insert(users)
+      .values({
+        id: "user_disabled_admin",
+        email: "disabled-admin@example.com",
+        role: "admin",
+        isDisabled: 1,
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+      .run();
+    testDb.db
+      .insert(sessions)
+      .values({
+        id: "session_1",
+        userId: "user_disabled_admin",
+        tokenHash: hashSessionToken(token),
+        expiresAt: "2099-05-20T00:00:00.000Z",
+        createdAt: NOW,
+        lastSeenAt: NOW,
+      })
+      .run();
+
+    await expect(requireAdmin(testDb.db, requestWithSession(token))).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+  });
 });

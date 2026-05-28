@@ -9,6 +9,7 @@ import {
   RefreshCw,
   ServerCog,
   ShieldCheck,
+  UserCog,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,19 +27,27 @@ import {
 import {
   listAdminCrawlerLogs,
   listAdminDataSources,
+  listAdminUsers,
   runStateCrawlersNow,
   updateAdminDataSource,
+  updateAdminUser as updateAdminUserAccess,
   type AdminCrawlerLog,
   type AdminDataSource,
   type AdminDataSourcesResponse,
+  type AdminUser,
+  type UpdateAdminUserInput,
 } from "@/lib/api/admin";
+import type { AccountTier, UserRole } from "@/server/auth/entitlements";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { stateCrawlerSourceIdForAdminSource } from "@/lib/state-crawler-sources";
 
 type LoadState =
   | { status: "loading" }
   | { status: "error" }
-  | { status: "ready"; data: AdminDataSourcesResponse; logs: AdminCrawlerLog[] };
+  | { status: "ready"; data: AdminDataSourcesResponse; logs: AdminCrawlerLog[]; users: AdminUser[] };
+
+const USER_ROLES: UserRole[] = ["user", "admin"];
+const ACCOUNT_TIERS: AccountTier[] = ["free", "pro", "business", "enterprise"];
 
 function stateCrawlerSourceIdFor(source: AdminDataSource) {
   return stateCrawlerSourceIdForAdminSource(source);
@@ -100,15 +109,16 @@ export default function AdminPage() {
   const { t } = useLanguage();
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [pendingSourceId, setPendingSourceId] = useState<string | null>(null);
+  const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [runningSourceId, setRunningSourceId] = useState<string | null>(null);
   const [runMessage, setRunMessage] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setState({ status: "loading" });
-    Promise.all([listAdminDataSources(), listAdminCrawlerLogs()])
-      .then(([data, logsResponse]) => {
-        setState({ status: "ready", data, logs: logsResponse.logs });
+    Promise.all([listAdminDataSources(), listAdminCrawlerLogs(), listAdminUsers()])
+      .then(([data, logsResponse, usersResponse]) => {
+        setState({ status: "ready", data, logs: logsResponse.logs, users: usersResponse.users });
       })
       .catch(() => {
         setState({ status: "error" });
@@ -122,6 +132,7 @@ export default function AdminPage() {
   const summary = state.status === "ready" ? state.data.summary : null;
   const sources = state.status === "ready" ? state.data.sources : [];
   const logs = state.status === "ready" ? state.logs : [];
+  const users = state.status === "ready" ? state.users : [];
 
   const toggleSource = (source: AdminDataSource) => {
     setPendingSourceId(source.id);
@@ -189,6 +200,27 @@ export default function AdminPage() {
       });
   };
 
+  const updateUserAccess = (user: AdminUser, input: UpdateAdminUserInput) => {
+    setPendingUserId(user.id);
+    updateAdminUserAccess(user.id, input)
+      .then(({ user: updated }) => {
+        setState((current) => {
+          if (current.status !== "ready") return current;
+
+          return {
+            ...current,
+            users: current.users.map((item) => (item.id === updated.id ? updated : item)),
+          };
+        });
+      })
+      .catch(() => {
+        setRunMessage(t("admin.userUpdateFailed"));
+      })
+      .finally(() => {
+        setPendingUserId(null);
+      });
+  };
+
   return (
     <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 pb-8">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -251,6 +283,97 @@ export default function AdminPage() {
           <SummaryCard label={t("admin.healthySources")} value={summary.healthySources} icon={Activity} />
           <SummaryCard label={t("admin.failingSources")} value={summary.failingSources} icon={AlertTriangle} />
         </div>
+      )}
+
+      {state.status === "ready" && (
+        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+            <div className="flex items-center gap-2 font-semibold text-slate-950">
+              <UserCog size={18} />
+              {t("admin.users")}
+            </div>
+            <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+              {users.length}
+            </Badge>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t("admin.account")}</TableHead>
+                <TableHead>{t("admin.role")}</TableHead>
+                <TableHead>{t("admin.tier")}</TableHead>
+                <TableHead>{t("admin.lastLogin")}</TableHead>
+                <TableHead className="text-right">{t("admin.enabled")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {users.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-6 text-center text-sm text-slate-500">
+                    {t("admin.noUsers")}
+                  </TableCell>
+                </TableRow>
+              )}
+              {users.map((user) => {
+                const isPending = pendingUserId === user.id;
+
+                return (
+                  <TableRow key={user.id}>
+                    <TableCell>
+                      <div className="font-medium text-slate-900">{user.displayName || user.email || user.id}</div>
+                      <div className="text-xs text-slate-500">{user.email ?? user.id}</div>
+                    </TableCell>
+                    <TableCell>
+                      <select
+                        value={user.role}
+                        disabled={isPending}
+                        onChange={(event) => updateUserAccess(user, { role: event.target.value as UserRole })}
+                        aria-label={t("admin.role")}
+                        className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+                      >
+                        {USER_ROLES.map((role) => (
+                          <option key={role} value={role}>
+                            {t(`admin.role_${role}`)}
+                          </option>
+                        ))}
+                      </select>
+                    </TableCell>
+                    <TableCell>
+                      <select
+                        value={user.tier}
+                        disabled={isPending}
+                        onChange={(event) => updateUserAccess(user, { tier: event.target.value as AccountTier })}
+                        aria-label={t("admin.tier")}
+                        className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+                      >
+                        {ACCOUNT_TIERS.map((tier) => (
+                          <option key={tier} value={tier}>
+                            {t(`admin.tier_${tier}`)}
+                          </option>
+                        ))}
+                      </select>
+                    </TableCell>
+                    <TableCell>{formatDate(user.lastLoginAt)}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-3">
+                        <Label htmlFor={`user-${user.id}`} className="text-xs font-medium text-slate-500">
+                          {user.isDisabled ? t("admin.disabled") : t("admin.enabled")}
+                        </Label>
+                        <Switch
+                          id={`user-${user.id}`}
+                          checked={!user.isDisabled}
+                          disabled={isPending}
+                          onCheckedChange={(checked) => updateUserAccess(user, { isDisabled: !checked })}
+                          className="data-checked:bg-slate-900"
+                        />
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </section>
       )}
 
       {state.status === "ready" && (

@@ -31,4 +31,34 @@ describe("GET /api/auth/session", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({ user: null });
   });
+
+  it("returns the authenticated user's role, tier, and features", async () => {
+    vi.mocked(authService.getSessionUser).mockResolvedValueOnce({
+      id: "user_1",
+      email: "buyer@example.com",
+      displayName: "Buyer",
+      role: "user",
+      tier: "pro",
+      features: ["bid_search", "submission_guidance"],
+    });
+
+    const response = await GET(
+      new Request("http://localhost/api/auth/session", {
+        headers: { cookie: `${SESSION_COOKIE_NAME}=sess_valid` },
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      user: {
+        id: "user_1",
+        email: "buyer@example.com",
+        displayName: "Buyer",
+        role: "user",
+        tier: "pro",
+        features: ["bid_search", "submission_guidance"],
+      },
+    });
+  });
 });

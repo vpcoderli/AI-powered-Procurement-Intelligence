@@ -2,6 +2,14 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { sessions, users } from "@/server/db/schema";
+import {
+  featuresForUser,
+  normalizeAccountTier,
+  normalizeUserRole,
+  type AccountTier,
+  type FeatureKey,
+  type UserRole,
+} from "./entitlements";
 import { hashPassword, verifyPassword } from "./password";
 import {
   SESSION_MAX_AGE_SECONDS,
@@ -13,6 +21,9 @@ export interface PublicUser {
   id: string;
   email: string;
   displayName: string | null;
+  role: UserRole;
+  tier: AccountTier;
+  features: FeatureKey[];
 }
 
 export interface RegisterUserInput {
@@ -32,6 +43,13 @@ export class InvalidCredentialsError extends Error {
   constructor() {
     super("Invalid email or password");
     this.name = "InvalidCredentialsError";
+  }
+}
+
+export class AccountDisabledError extends Error {
+  constructor() {
+    super("Account is disabled");
+    this.name = "AccountDisabledError";
   }
 }
 
@@ -67,15 +85,28 @@ function toPublicUser(row: {
   id: string;
   email: string | null;
   displayName: string | null;
+  role?: string | null;
+  accountTier?: string | null;
+  isDisabled?: number | boolean | null;
 }): PublicUser {
   if (!row.email) {
     throw new InvalidAuthInputError("Authenticated users must have an email");
   }
 
+  if (row.isDisabled === 1 || row.isDisabled === true) {
+    throw new AccountDisabledError();
+  }
+
+  const role = normalizeUserRole(row.role);
+  const tier = normalizeAccountTier(row.accountTier);
+
   return {
     id: row.id,
     email: row.email,
     displayName: row.displayName,
+    role,
+    tier,
+    features: featuresForUser({ role, tier }),
   };
 }
 
@@ -130,6 +161,9 @@ export async function registerUser(db: AppDatabase, input: RegisterUserInput) {
     email,
     passwordHash: await hashPassword(input.password),
     displayName: normalizeDisplayName(input.displayName),
+    role: "user",
+    accountTier: "free",
+    isDisabled: 0,
     createdAt: timestamp,
     updatedAt: timestamp,
   };
@@ -158,6 +192,10 @@ export async function loginUser(db: AppDatabase, emailInput: string, password: s
     throw new InvalidCredentialsError();
   }
 
+  if (user.isDisabled === 1) {
+    throw new AccountDisabledError();
+  }
+
   db.update(users)
     .set({
       lastLoginAt: nowIso(),
@@ -180,6 +218,9 @@ export async function getSessionUser(db: AppDatabase, sessionToken: string) {
       userId: users.id,
       email: users.email,
       displayName: users.displayName,
+      role: users.role,
+      accountTier: users.accountTier,
+      isDisabled: users.isDisabled,
     })
     .from(sessions)
     .innerJoin(users, eq(sessions.userId, users.id))
@@ -201,15 +242,19 @@ export async function getSessionUser(db: AppDatabase, sessionToken: string) {
     .where(eq(sessions.id, row.sessionId))
     .run();
 
-  if (!row.email) {
+  if (!row.email || row.isDisabled === 1) {
+    db.delete(sessions).where(eq(sessions.id, row.sessionId)).run();
     return null;
   }
 
-  return {
+  return toPublicUser({
     id: row.userId,
     email: row.email,
     displayName: row.displayName,
-  } satisfies PublicUser;
+    role: row.role,
+    accountTier: row.accountTier,
+    isDisabled: row.isDisabled,
+  });
 }
 
 export async function logoutSession(db: AppDatabase, sessionToken: string) {

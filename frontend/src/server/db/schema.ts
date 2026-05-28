@@ -8,6 +8,8 @@ export const users = sqliteTable(
     passwordHash: text("password_hash"),
     displayName: text("display_name"),
     role: text("role").notNull().default("user"),
+    accountTier: text("account_tier").notNull().default("free"),
+    isDisabled: integer("is_disabled").notNull().default(0),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
     lastLoginAt: text("last_login_at"),

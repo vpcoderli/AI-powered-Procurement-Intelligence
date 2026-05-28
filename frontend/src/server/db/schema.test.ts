@@ -130,6 +130,14 @@ describe("database schema", () => {
       expect(tables).toContain("intent_to_bid");
       expect(tables).toContain("submission_paths");
       expect(tables).toContain("submission_confirmations");
+
+      const userColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(users)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(userColumns).toContain("account_tier");
+      expect(userColumns).toContain("is_disabled");
     } finally {
       await testDb.cleanup();
     }

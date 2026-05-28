@@ -1,7 +1,12 @@
+import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlements";
+
 export interface PublicUser {
   id: string;
   email: string;
   displayName: string | null;
+  role: UserRole;
+  tier: AccountTier;
+  features: FeatureKey[];
 }
 
 export interface AuthResponse {
@@ -13,6 +18,7 @@ export interface SessionResponse {
 }
 
 type AuthErrorCode =
+  | "ACCOUNT_DISABLED"
   | "EMAIL_ALREADY_REGISTERED"
   | "INVALID_CREDENTIALS"
   | "INVALID_REQUEST"
@@ -51,7 +57,8 @@ function isApiErrorResponse(body: unknown): body is ApiErrorResponse {
   const { code, message } = error as { code?: unknown; message?: unknown };
   return (
     typeof message === "string" &&
-    (code === "EMAIL_ALREADY_REGISTERED" ||
+    (code === "ACCOUNT_DISABLED" ||
+      code === "EMAIL_ALREADY_REGISTERED" ||
       code === "INVALID_CREDENTIALS" ||
       code === "INVALID_REQUEST" ||
       code === "INTERNAL_ERROR" ||

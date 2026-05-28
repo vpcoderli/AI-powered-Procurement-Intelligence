@@ -25,7 +25,14 @@ describe("POST /api/auth/login", () => {
 
   it("sets the session cookie", async () => {
     vi.mocked(authService.loginUser).mockResolvedValueOnce({
-      user: { id: "user_1", email: "buyer@example.com", displayName: null },
+      user: {
+        id: "user_1",
+        email: "buyer@example.com",
+        displayName: null,
+        role: "user",
+        tier: "free",
+        features: ["bid_search"],
+      },
       sessionToken: "sess_login",
     });
 
@@ -44,7 +51,14 @@ describe("POST /api/auth/login", () => {
 
   it("merges anonymous saved bids and clears the anonymous cookie", async () => {
     vi.mocked(authService.loginUser).mockResolvedValueOnce({
-      user: { id: "user_1", email: "buyer@example.com", displayName: null },
+      user: {
+        id: "user_1",
+        email: "buyer@example.com",
+        displayName: null,
+        role: "user",
+        tier: "free",
+        features: ["bid_search"],
+      },
       sessionToken: "sess_login",
     });
     vi.mocked(bidRepository.mergeSavedBidIds).mockResolvedValueOnce(["1", "2"]);
@@ -78,6 +92,21 @@ describe("POST /api/auth/login", () => {
 
     expect(response.status).toBe(401);
     expect(body.error.code).toBe("INVALID_CREDENTIALS");
+  });
+
+  it("returns 403 for disabled accounts", async () => {
+    vi.mocked(authService.loginUser).mockRejectedValueOnce(new authService.AccountDisabledError());
+
+    const response = await POST(
+      new Request("http://localhost/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email: "buyer@example.com", password: "strong-password" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("ACCOUNT_DISABLED");
   });
 
   it("does not expose internal error details", async () => {

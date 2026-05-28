@@ -14,10 +14,12 @@ This document is the working checklist for local development. Update it after ea
 | Bid discovery | `/search`, filters, sort, bid cards, bid detail page, source links, attachments. |
 | Saved bids | Anonymous and authenticated saved bids, merge anonymous saved bids on register/login. |
 | Supplier profile | `/profile`, profile API, completion score, deterministic matching inputs. |
-| Auth basics | Register, login, logout, session cookie, session lookup, login/register pages. |
-| User data model basics | `users` table, `sessions` table, `role` column with default `user`. |
-| Admin auth helper | `requireAdmin()` checks authenticated session with `users.role = admin`; local bypass for development. |
+| Auth basics | Register, login, logout, session cookie, session lookup, login/register pages, session payload with role/tier/features. |
+| User data model basics | `users` table, `sessions` table, `role`, `account_tier`, and `is_disabled` account state. |
+| Admin auth helper | `requireAdmin()` checks authenticated non-disabled admin sessions; local bypass for development. |
+| Admin user access console | `/admin` lists registered users and lets admins change role, tier, and enabled/disabled state. |
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs. |
+| Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin-only console access. |
 | Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, CA/TX/NY/FL/IL runner wiring. |
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
 | Intent to Bid | Add intent from bid detail, idempotent intent creation, intent list, intent detail workspace, status update. |
@@ -29,11 +31,11 @@ This document is the working checklist for local development. Update it after ea
 
 | Area | What exists | Missing to be useful |
 |---|---|---|
-| Account management | Register/login/logout/session APIs and pages | Account settings, password change/reset, user list, user editing, admin-created accounts |
-| Admin vs user separation | Admin APIs enforce `role = admin`; sidebar currently exposes admin entry | Route-level UI gating, admin user management, ordinary users should not see/enter admin surfaces |
-| User role model | `users.role` supports `user` and admin checks | Role enum, role update API, audit trail, role-aware frontend session payload |
-| Subscription / tier model | Mentioned in PRD only | Database fields/tables, tier assignment, feature matrix, usage limits, paywall/upgrade UI |
-| Feature access control | None centralized | `feature_key -> tier/role` mapping and reusable server/client guards |
+| Account management | Register/login/logout/session APIs and pages; admin can enable/disable users | Account settings, password change/reset, admin-created accounts, user search/filtering |
+| Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users | Route-level friendly forbidden UI, admin page redirect/empty state for non-admin users |
+| User role model | `user`/`admin` role enum, role update API, role-aware frontend session payload | Audit trail, more granular operator roles such as support/owner/member |
+| Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map | Billing provider sync, usage limits, paywall/upgrade UI, subscription history |
+| Feature access control | Central `feature_key -> tier/role` mapping and client-visible enabled feature list | Reusable server `requireFeature` guard, client `useFeature` helper, locked states across pages |
 | Submission Guidance UI | Static Submission Path preview in Intent workspace; backend API exists | Fetch real submission guidance, editable fields, confirmation form, saved confirmation state |
 | Search alerts | API/service foundation exists | Full alert management UI, digest configuration, real email delivery |
 | Notifications | Notification outbox foundation exists | Provider configuration, delivery retries, user notification preferences |
@@ -43,9 +45,7 @@ This document is the working checklist for local development. Update it after ea
 
 | Area | Needed capability |
 |---|---|
-| User management console | Admin page to list users, search users, view account state, change role, change tier, disable account. |
 | User tiers / paid plans | Free, Pro, Business/Team, Enterprise tier model with feature and usage limits. |
-| Feature matrix | Central list of feature keys, required tier, required role, and UI/API guard behavior. |
 | Billing integration | Checkout, subscription status sync, invoices, cancellation, trial expiration. |
 | Organization/workspace model | Company account, multiple users under one company, shared bids/intents, team roles. |
 | Password reset | Email token flow, reset page, expiry and invalidation. |
@@ -60,13 +60,13 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Account, Role, Tier, and Feature Access Foundation** before continuing advanced bid features.
+Prioritize **Reusable Feature Guards and Tier-Aware UI States** before continuing advanced bid features.
 
 Reason:
 
-- Admin/user separation is a platform prerequisite.
-- Paid tiers will affect which future features should appear in UI.
-- Advanced features such as Compliance Manifest, Submission Guidance editing, and Knowledge Station need a reusable feature gate instead of one-off checks.
+- The data model, session payload, admin user management, and feature map now exist.
+- The next gap is making feature checks reusable across API routes and pages.
+- Advanced features such as Compliance Manifest, Submission Guidance editing, and Knowledge Station should rely on the same feature gate instead of one-off checks.
 
 ## Account / Role / Tier Direction
 
@@ -112,34 +112,40 @@ Start with a central feature map:
 
 ## Suggested Implementation Order
 
-1. **Auth session payload upgrade**
-   - Include `role`, `tier`, and enabled feature keys in `/api/auth/session`.
-   - Update `AuthContext` and `PublicUser`.
-
-2. **Schema and migration**
-   - Add `account_tier` to users.
-   - Add `is_disabled` or equivalent account state.
-   - Keep billing integration out of scope for this slice.
-
-3. **Admin user management**
-   - Add admin API: list users, update role, update tier, disable/enable user.
-   - Add `/admin/users` or a tab in `/admin`.
-   - Protect with `requireAdmin()`.
-
-4. **Frontend access guards**
-   - Hide admin nav for non-admin users.
-   - Show locked/upgrade states for tier-gated features.
-   - Keep API-side checks authoritative.
-
-5. **Feature gate helper**
+1. **Feature gate helper**
    - Server helper: `requireFeature(principal, featureKey)`.
    - Client helper/hook: `useFeature(featureKey)`.
    - Add tests for role/tier combinations.
 
-6. **Then resume product features**
+2. **Tier-aware frontend states**
+   - Show locked/upgrade states for tier-gated features.
+   - Keep API-side checks authoritative.
+   - Add feature indicators in account/settings.
+
+3. **Admin user management polish**
+   - Add user search/filtering.
+   - Add audit events for role/tier/disabled changes.
+   - Add admin-created account flow when needed.
+
+4. **Then resume product features**
    - Connect real Submission Guidance UI.
    - Build Compliance Manifest Lite.
    - Build Pursue / No-Bid Decision Lite.
+
+## Completed Phase: Account / Role / Tier Foundation
+
+本阶段完成：
+- `users` 增加 `account_tier` 与 `is_disabled`，迁移会兼容已有本地库。
+- `/api/auth/session`、注册、登录返回 `role`、`tier`、`features`。
+- 新增中心化 entitlement map，覆盖 Free/Pro/Business/Enterprise 与 admin-only 功能。
+- 新增 Admin 用户管理 API：注册用户列表、改角色、改套餐、启用/禁用。
+- `/admin` 接入用户权限表，普通用户侧边栏不再显示 Admin 入口。
+
+当前还剩：
+1. 复用型 `requireFeature` / `useFeature` 守卫。
+2. 各页面按套餐显示 locked/upgrade 状态。
+3. Admin 用户搜索、筛选、审计日志。
+4. 密码重置、账户设置页完善、billing 集成。
 
 ## Status Update Template
 
