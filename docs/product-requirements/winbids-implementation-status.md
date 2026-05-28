@@ -23,10 +23,10 @@ This document is the working checklist for local development. Update it after ea
 | Saved bids | Anonymous saved bids and authenticated workspace-shared saved bids, merge anonymous saved bids on register/login. |
 | Supplier profile | `/profile`, profile API, completion score, deterministic matching inputs. |
 | Auth basics | Register, login, logout, session cookie, session lookup, login/register pages, session payload with role/tier/features. |
-| Account self-service | `/settings` shows authenticated email/display name, updates display name, changes password after validating current password, exports account data, and soft-deletes accounts; `/forgot-password` and `/reset-password` support local token-based password recovery; `/accept-invite` supports workspace invitation acceptance; Settings Team tab manages workspace name, member invites, invitation delivery status, invitation resend/revoke, owner transfer, member role changes, member disable/restore, and member removal; Settings Notifications tab persists saved-search and marketing preferences. |
+| Account self-service | `/settings` shows authenticated email/display name, updates display name, changes password after validating current password, exports account data with versioned metadata, and soft-deletes accounts with admin-visible deletion audit; `/forgot-password` and `/reset-password` support local token-based password recovery; `/accept-invite` supports workspace invitation acceptance; Settings Team tab manages workspace name, member invites, invitation delivery status, invitation resend/revoke, owner transfer, member role changes, member disable/restore, and member removal; Settings Notifications tab persists saved-search and marketing preferences. |
 | User data model basics | `users` table, `sessions` table, `organizations`, `organization_memberships`, `role`, `account_tier`, `is_disabled`, and workspace owner/member state. |
 | Admin auth helper | `requireAdmin()` checks authenticated non-disabled admin sessions; local bypass for development. |
-| Admin user access console | `/admin` lists registered users, creates invited accounts with temporary passwords, filters/searches accounts, changes role/tier/enabled state, shows access audit logs, and presents login/forbidden states for non-admin access. |
+| Admin user access console | `/admin` lists registered users, creates invited accounts with temporary passwords, filters/searches accounts, changes role/tier/enabled state, shows access audit logs including self-service account deletion, and presents login/forbidden states for non-admin access. |
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs. |
 | Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin-only console access. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, tier-aware locked states for gated features, and static coverage tests for current advanced feature API routes. |
@@ -55,10 +55,10 @@ This document is the working checklist for local development. Update it after ea
 |---|---|---|
 | 普通账户注册 | Done | `/register` and `/api/auth/register` create local user accounts, default `role=user`, default `account_tier=free`, and create sessions. |
 | 普通账户登录/退出/session | Done | `/login`, logout API, session cookie, `/api/auth/session`, disabled account rejection. |
-| 普通账户基础管理 | Done | `/settings` supports display name update, password change, password reset request/confirm, account data export, and soft account deletion/deactivation. |
+| 普通账户基础管理 | Done | `/settings` supports display name update, password change, password reset request/confirm, versioned account data export, and soft account deletion/deactivation with admin-visible audit. |
 | 普通账户团队空间 | Partial | Default organization/workspace exists; Team tab can rename workspace, invite local members, enqueue local invitation email notifications, show invitation delivery status, resend/revoke pending invitations, accept invitations, transfer owner, update member role, disable/restore members, and remove members. |
 | Admin 账户基础分离 | Done | `role=admin` is distinct from `role=user`; `requireAdmin()` protects admin APIs; `/admin` is hidden/blocked for ordinary users. |
-| Admin 用户管理 | Done | Admin can list/search/filter users, create invited accounts with temporary passwords, update role/tier/enabled state, and view audit logs. |
+| Admin 用户管理 | Done | Admin can list/search/filter users, create invited accounts with temporary passwords, update role/tier/enabled state, and view access/deletion audit logs. |
 | 用户等级模型 | Done | `account_tier` supports `free`, `pro`, `business`, `enterprise`. |
 | 功能与等级关联 | Done | Central entitlement map controls feature keys such as `submission_guidance`, `compliance_manifest`, `pursue_no_bid`, `quote_workflow`, `knowledge_station`. |
 | 服务端功能拦截 | Partial | `requireFeature()` exists and is already used by Submission Guidance, Compliance Manifest, and Pursue / No-Bid APIs; coverage test protects the current gated route list. |
@@ -77,7 +77,6 @@ This document is the working checklist for local development. Update it after ea
 | P0 | Production Billing Provider Hardening | Add end-to-end Stripe sandbox verification, provider dashboard setup notes, and production credential/deployment runbook. | The SDK/API adapter exists; the remaining work is environment hardening and live sandbox proof. |
 | P1 | Invoice / Payment History Polish | Add PDF/download affordances, invoice filters, and richer invoice detail. | Paid users need a complete billing record experience. |
 | P1 | Trial / Dunning Lifecycle | Add production scheduling for dunning worker and provider-specific dunning event handling. | Prevents stale paid access when payment state changes. |
-| P1 | Account Deletion / Export Polish | Add admin-facing deletion audit review and richer export format/version metadata. | Required for serious account management and compliance readiness. |
 | P1 | Entitlement Coverage Expansion | Extend coverage tests as future gated APIs such as quote workflow and Knowledge Station are implemented. | Prevents paid features from leaking to lower tiers. |
 | P1 | Usage Dashboard Expansion | Add future quote/workspace/AI-call usage metrics after those resources exist. | Users need to understand why an upgrade is required. |
 | P2 | Granular Operator Roles | Add support/operator roles separate from full admin. | Useful once support operations grow. |
@@ -97,7 +96,7 @@ This document is the working checklist for local development. Update it after ea
 
 | Area | What exists | Missing to be useful |
 |---|---|---|
-| Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; password reset token flow; users can export account data and soft-delete/deactivate their account; admin can create invited accounts, enable/disable users, search/filter users, and review access audit logs | Admin-facing deletion audit review and richer export format/version metadata |
+| Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; password reset token flow; users can export account data with versioned metadata and soft-delete/deactivate their account with admin-visible deletion audit; admin can create invited accounts, enable/disable users, search/filter users, and review access/deletion audit logs | Future compliance polish such as export file signing or retention-policy configuration |
 | Organization/workspace model | Registered users get a default organization, session payload includes current workspace and owner/member role, Settings Team tab can rename workspace, invite local members, queue invitation email notifications, show latest invite delivery status, resend/revoke pending invitations, accept invitations, transfer owner, change member roles, disable/restore members, remove members, and saved bids/intents are shared across organization members | Invite acceptance analytics, richer team audit history, and granular operator/support roles |
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
@@ -127,7 +126,7 @@ Prioritize **Stripe Sandbox E2E Verification** next if the next sprint focuses o
 Reason:
 
 - The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Business-gated Compliance Manifest, and Pro-gated Pursue / No-Bid Decision now exist.
-- The remaining account gap is not basic registration; it is Stripe sandbox/deployment hardening, production worker deployment runbook, broader usage dashboards, and account export/deletion polish.
+- The remaining account gap is not basic registration; it is Stripe sandbox/deployment hardening, production worker deployment runbook, broader usage dashboards, and future compliance polish.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
@@ -191,10 +190,7 @@ Current local limits:
    - Add cron/process deployment notes for `worker:notifications`.
    - Decide production email provider configuration and monitoring.
 
-3. **Account lifecycle**
-   - Add richer account export/deletion audit metadata.
-
-4. **Product workflow depth**
+3. **Product workflow depth**
    - Build Response Workspace.
 
 ## Completed Phase: Account / Role / Tier Foundation
@@ -906,6 +902,28 @@ Current local limits:
 
 建议下一步：
 - 如果要稳定生产商业化链路，做 Stripe Sandbox E2E Verification；如果继续产品完整度，做 Invoice / Payment History Polish。
+
+## Completed Phase: Account Export / Deletion Audit Polish
+
+本阶段完成：
+- Account export 新增 `metadata`，包含 `formatVersion`、`product`、`generatedAt`、`subjectUserId`、`subjectEmail`、retention notice 和导出 section 清单。
+- `softDeleteAccount()` 在匿名化邮箱、清 session、移除 workspace access 后写入 `admin_user_audit_logs`。
+- Admin user audit 现在支持 `actorKind=self-service` 和 `action=user_self_deleted`。
+- 删除审计记录会保留邮箱匿名化变化、禁用状态变化、workspace access removal，方便 admin 追踪普通账户自助删除事件。
+
+验证：
+- `npm test -- src/server/account/lifecycle.test.ts src/server/admin/users-repository.test.ts src/app/api/account/export/route.test.ts src/app/api/account/route.test.ts src/app/api/admin/users/audit-logs/route.test.ts`
+
+当前还剩：
+1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
+2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
+3. Invoice / Payment History Polish：PDF 下载体验、筛选、更完整的发票详情。
+4. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+5. Usage Dashboard Expansion：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
+6. Entitlement Coverage Expansion：未来新增高级功能 API 时继续加入 coverage 审计。
+
+建议下一步：
+- 如果继续权限/账户主线，做 Entitlement Coverage Expansion；如果要稳定商业化链路，做 Stripe Sandbox E2E Verification 和 Production Worker Deployment Runbook。
 
 ## Status Update Template
 

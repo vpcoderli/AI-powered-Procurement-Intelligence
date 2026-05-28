@@ -5,6 +5,7 @@ import {
   inviteWorkspaceMember,
   updateWorkspaceMemberRole,
 } from "@/server/account/workspace";
+import { listAdminUserAuditLogs } from "@/server/admin/users-repository";
 import { getSessionUser, registerUser } from "@/server/auth/service";
 import { alerts, organizationMemberships, savedBids, sessions, supplierProfiles, users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
@@ -56,6 +57,30 @@ describe("account lifecycle service", () => {
     const exportData = exportAccountData(testDb.db, registered.user.id);
 
     expect(exportData.generatedAt).toEqual(expect.any(String));
+    expect(exportData.metadata).toEqual({
+      formatVersion: 1,
+      product: "WinBids",
+      generatedAt: exportData.generatedAt,
+      subjectUserId: registered.user.id,
+      subjectEmail: "buyer@example.com",
+      retentionNotice: "Business records, audit logs, and billing records may be retained for legal and operational continuity.",
+      includedSections: [
+        "account",
+        "workspace",
+        "subscription",
+        "billingCheckoutSessions",
+        "billingInvoices",
+        "subscriptionEvents",
+        "savedBids",
+        "supplierProfile",
+        "intents",
+        "submissionPaths",
+        "submissionConfirmations",
+        "complianceManifestItems",
+        "pursuitDecisions",
+        "searchAlerts",
+      ],
+    });
     expect(exportData.account).toMatchObject({
       id: registered.user.id,
       email: "buyer@example.com",
@@ -95,6 +120,23 @@ describe("account lifecycle service", () => {
     expect(
       testDb.db.select().from(organizationMemberships).where(eq(organizationMemberships.userId, invite.member.userId)).all(),
     ).toEqual([]);
+
+    const auditLogs = listAdminUserAuditLogs(testDb.db, { limit: 5 });
+    expect(auditLogs.logs[0]).toEqual(expect.objectContaining({
+      action: "user_self_deleted",
+      actorKind: "self-service",
+      actorUserId: invite.member.userId,
+      targetUserId: invite.member.userId,
+      changes: expect.arrayContaining([
+        {
+          field: "email",
+          before: "member@example.com",
+          after: `deleted-${invite.member.userId}@deleted.local`,
+        },
+        { field: "isDisabled", before: false, after: true },
+        { field: "workspaceAccess", before: "active", after: "removed" },
+      ]),
+    }));
   });
 
   it("requires a sole owner to transfer ownership before deleting when other active members remain", async () => {

@@ -55,7 +55,7 @@ export interface CreateAdminUserInviteResponse {
 }
 
 export interface AdminUserAuditActor {
-  actorKind: "admin" | "local-bypass";
+  actorKind: "admin" | "local-bypass" | "self-service";
   actorUserId: string | null;
 }
 
@@ -63,15 +63,17 @@ export type AdminUserAuditChange =
   | { field: "role"; before: UserRole; after: UserRole }
   | { field: "tier"; before: AccountTier; after: AccountTier }
   | { field: "isDisabled"; before: boolean; after: boolean }
-  | { field: "created"; before: null; after: string };
+  | { field: "created"; before: null; after: string }
+  | { field: "email"; before: string | null; after: string | null }
+  | { field: "workspaceAccess"; before: "active"; after: "removed" };
 
 export interface AdminUserAuditLog {
   id: string;
-  actorKind: "admin" | "local-bypass";
+  actorKind: "admin" | "local-bypass" | "self-service";
   actorUserId: string | null;
   targetUserId: string;
   targetEmail: string | null;
-  action: "user_access_updated" | "user_invited";
+  action: "user_access_updated" | "user_invited" | "user_self_deleted";
   changes: AdminUserAuditChange[];
   createdAt: string;
 }
@@ -125,6 +127,18 @@ function parseAuditChanges(value: string): AdminUserAuditChange[] {
   }
 }
 
+function normalizeAuditActorKind(value: string): AdminUserAuditLog["actorKind"] {
+  if (value === "admin") return "admin";
+  if (value === "self-service") return "self-service";
+  return "local-bypass";
+}
+
+function normalizeAuditAction(value: string): AdminUserAuditLog["action"] {
+  if (value === "user_invited") return "user_invited";
+  if (value === "user_self_deleted") return "user_self_deleted";
+  return "user_access_updated";
+}
+
 function toAuditLog(row: {
   id: string;
   actorKind: string;
@@ -137,11 +151,11 @@ function toAuditLog(row: {
 }): AdminUserAuditLog {
   return {
     id: row.id,
-    actorKind: row.actorKind === "admin" ? "admin" : "local-bypass",
+    actorKind: normalizeAuditActorKind(row.actorKind),
     actorUserId: row.actorUserId,
     targetUserId: row.targetUserId,
     targetEmail: row.targetEmail,
-    action: row.action === "user_invited" ? "user_invited" : "user_access_updated",
+    action: normalizeAuditAction(row.action),
     changes: parseAuditChanges(row.changesJson),
     createdAt: row.createdAt,
   };
