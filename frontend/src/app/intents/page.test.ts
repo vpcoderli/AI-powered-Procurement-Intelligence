@@ -24,6 +24,9 @@ describe("intent pages", () => {
     expect(detailPage).toContain("prototypeWorkspace");
     expect(detailPage).toContain("submissionReadinessItems");
     expect(detailPage).toContain("submissionPath");
+    expect(detailPage).toContain("useFeature");
+    expect(detailPage).toContain("submission_guidance");
+    expect(detailPage).toContain("lockedFeatureMessage");
     expect(detailPage).toContain("Intent Workspace");
     expect(detailPage).toContain("Submission Path");
     expect(detailPage).toContain("winbids-detail-workspace");

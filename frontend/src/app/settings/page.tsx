@@ -1,6 +1,7 @@
 "use client";
 
-import { Settings, User, Bell, Shield, PaintBucket, Key } from "lucide-react";
+import { Bell, CheckCircle2, Key, LockKeyhole, PaintBucket, Settings, Shield, User } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -9,10 +10,25 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useAuth } from "@/context/AuthContext";
+import { canUseFeature, lockedFeatureMessage } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import { ACCOUNT_TIER_LABELS, type FeatureKey } from "@/server/auth/entitlements";
+
+const FEATURE_ACCESS_ITEMS: Array<{ key: FeatureKey; label: string }> = [
+  { key: "bid_search", label: "Bid search" },
+  { key: "saved_bids", label: "Saved bids" },
+  { key: "intent_workspace", label: "Intent workspace" },
+  { key: "submission_guidance", label: "Submission guidance" },
+  { key: "compliance_manifest", label: "Compliance manifest" },
+  { key: "quote_workflow", label: "Quote workflow" },
+  { key: "knowledge_station", label: "Knowledge Station" },
+];
 
 export default function SettingsPage() {
   const { t } = useLanguage();
+  const { user } = useAuth();
+  const currentTier = user ? ACCOUNT_TIER_LABELS[user.tier] : ACCOUNT_TIER_LABELS.free;
 
   return (
     <div className="flex flex-col h-full gap-8 max-w-4xl mx-auto pb-12">
@@ -50,6 +66,48 @@ export default function SettingsPage() {
         <div className="flex-1">
           {/* Profile Settings */}
           <TabsContent value="profile" className="m-0 space-y-6">
+            <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
+              <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <CardTitle className="text-lg font-semibold text-slate-900">{t("settings.currentPlan")}</CardTitle>
+                    <CardDescription className="text-slate-500 font-medium">{t("settings.featureAccess")}</CardDescription>
+                  </div>
+                  <Badge variant="outline" className="w-fit border-slate-200 bg-white text-slate-700">
+                    {currentTier}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="grid gap-3 p-6 sm:grid-cols-2">
+                {FEATURE_ACCESS_ITEMS.map((feature) => {
+                  const enabled = canUseFeature(user, feature.key);
+
+                  return (
+                    <div
+                      key={feature.key}
+                      className={`rounded-lg border p-3 ${
+                        enabled ? "border-emerald-200 bg-emerald-50/60" : "border-slate-200 bg-slate-50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-semibold text-slate-900">{feature.label}</span>
+                        {enabled ? (
+                          <CheckCircle2 size={16} className="shrink-0 text-emerald-700" />
+                        ) : (
+                          <LockKeyhole size={16} className="shrink-0 text-slate-400" />
+                        )}
+                      </div>
+                      {!enabled && (
+                        <p className="mt-2 text-xs font-medium leading-5 text-slate-500">
+                          {lockedFeatureMessage(feature.key)}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+
             <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
               <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
                 <CardTitle className="text-lg font-semibold text-slate-900">{t('settings.personalInfo')}</CardTitle>

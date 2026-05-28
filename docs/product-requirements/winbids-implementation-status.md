@@ -20,6 +20,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin user access console | `/admin` lists registered users and lets admins change role, tier, and enabled/disabled state. |
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs. |
 | Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin-only console access. |
+| Feature access guards | Reusable server `requireFeature`, client `useFeature`, and tier-aware locked states for gated features. |
 | Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, CA/TX/NY/FL/IL runner wiring. |
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
 | Intent to Bid | Add intent from bid detail, idempotent intent creation, intent list, intent detail workspace, status update. |
@@ -35,8 +36,8 @@ This document is the working checklist for local development. Update it after ea
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users | Route-level friendly forbidden UI, admin page redirect/empty state for non-admin users |
 | User role model | `user`/`admin` role enum, role update API, role-aware frontend session payload | Audit trail, more granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map | Billing provider sync, usage limits, paywall/upgrade UI, subscription history |
-| Feature access control | Central `feature_key -> tier/role` mapping and client-visible enabled feature list | Reusable server `requireFeature` guard, client `useFeature` helper, locked states across pages |
-| Submission Guidance UI | Static Submission Path preview in Intent workspace; backend API exists | Fetch real submission guidance, editable fields, confirmation form, saved confirmation state |
+| Feature access control | Central feature map, server guard, client helper, and visible locked states | Apply guards to every future gated API and add usage limits |
+| Submission Guidance UI | Static Submission Path preview in Intent workspace; backend API exists; API is Pro-gated | Fetch real submission guidance, editable fields, confirmation form, saved confirmation state |
 | Search alerts | API/service foundation exists | Full alert management UI, digest configuration, real email delivery |
 | Notifications | Notification outbox foundation exists | Provider configuration, delivery retries, user notification preferences |
 | Admin data QA | Source status and logs exist | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
@@ -60,13 +61,13 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Reusable Feature Guards and Tier-Aware UI States** before continuing advanced bid features.
+Prioritize **Admin User Management Polish and Account Settings** before continuing advanced bid features.
 
 Reason:
 
-- The data model, session payload, admin user management, and feature map now exist.
-- The next gap is making feature checks reusable across API routes and pages.
-- Advanced features such as Compliance Manifest, Submission Guidance editing, and Knowledge Station should rely on the same feature gate instead of one-off checks.
+- The data model, session payload, admin user management, feature map, and reusable feature guards now exist.
+- The next gap is making account management usable day to day: search/filter users, audit changes, and start real account settings.
+- Advanced features such as Compliance Manifest, Submission Guidance editing, and Knowledge Station can now rely on the same feature gate.
 
 ## Account / Role / Tier Direction
 
@@ -112,22 +113,17 @@ Start with a central feature map:
 
 ## Suggested Implementation Order
 
-1. **Feature gate helper**
-   - Server helper: `requireFeature(principal, featureKey)`.
-   - Client helper/hook: `useFeature(featureKey)`.
-   - Add tests for role/tier combinations.
-
-2. **Tier-aware frontend states**
-   - Show locked/upgrade states for tier-gated features.
-   - Keep API-side checks authoritative.
-   - Add feature indicators in account/settings.
-
-3. **Admin user management polish**
+1. **Admin user management polish**
    - Add user search/filtering.
    - Add audit events for role/tier/disabled changes.
    - Add admin-created account flow when needed.
 
-4. **Then resume product features**
+2. **Account settings foundation**
+   - Show authenticated email/display name instead of placeholder profile values.
+   - Add password change flow.
+   - Add disabled/account-state messaging where needed.
+
+3. **Then resume product features**
    - Connect real Submission Guidance UI.
    - Build Compliance Manifest Lite.
    - Build Pursue / No-Bid Decision Lite.
@@ -142,10 +138,25 @@ Start with a central feature map:
 - `/admin` 接入用户权限表，普通用户侧边栏不再显示 Admin 入口。
 
 当前还剩：
-1. 复用型 `requireFeature` / `useFeature` 守卫。
-2. 各页面按套餐显示 locked/upgrade 状态。
-3. Admin 用户搜索、筛选、审计日志。
-4. 密码重置、账户设置页完善、billing 集成。
+1. Admin 用户搜索、筛选、审计日志。
+2. 密码重置、账户设置页完善、billing 集成。
+3. Submission Guidance 真实编辑 UI。
+
+## Completed Phase: Feature Guards / Tier-Aware UI
+
+本阶段完成：
+- 新增 server `requireFeature()` / `FeatureAccessError`，API 可统一按功能键拦截。
+- `resolvePrincipal()` 现在为匿名和登录用户都携带 `role`、`tier`、`features`。
+- 新增 client `useFeature()` / `canUseFeature()` / `lockedFeatureMessage()`。
+- Submission Guidance GET/PATCH/confirm API 已按 `submission_guidance` 做 Pro 门槛。
+- Intent Workspace 的 Submission Path 模块会按套餐显示锁定态。
+- Settings/Profile 区域显示当前套餐和功能可用/锁定状态。
+
+当前还剩：
+1. Admin 用户搜索、筛选、审计日志。
+2. 账户设置从静态表单升级为真实资料与密码修改。
+3. Billing/订阅同步与真实付费状态接入。
+4. Submission Guidance 真实编辑与确认 UI。
 
 ## Status Update Template
 

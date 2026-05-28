@@ -44,6 +44,13 @@ const minimumTierByFeature: Record<Exclude<FeatureKey, "admin_console">, Account
   knowledge_station: "enterprise",
 };
 
+export const ACCOUNT_TIER_LABELS: Record<AccountTier, string> = {
+  free: "Free",
+  pro: "Pro",
+  business: "Business",
+  enterprise: "Enterprise",
+};
+
 export function isUserRole(value: unknown): value is UserRole {
   return typeof value === "string" && USER_ROLES.includes(value as UserRole);
 }
@@ -70,4 +77,18 @@ export function hasFeature(subject: EntitlementSubject, feature: FeatureKey): bo
 
 export function featuresForUser(subject: EntitlementSubject): FeatureKey[] {
   return FEATURE_KEYS.filter((feature) => hasFeature(subject, feature));
+}
+
+export function minimumTierForFeature(feature: FeatureKey): AccountTier | null {
+  if (feature === "admin_console") {
+    return null;
+  }
+
+  return minimumTierByFeature[feature];
+}
+
+export function minimumTierLabelForFeature(feature: FeatureKey): string {
+  const tier = minimumTierForFeature(feature);
+
+  return tier ? ACCOUNT_TIER_LABELS[tier] : "Admin";
 }

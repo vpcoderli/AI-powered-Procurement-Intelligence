@@ -44,7 +44,7 @@ export interface IntentListResponse {
 
 export interface IntentApiErrorResponse {
   error: {
-    code: "BID_NOT_FOUND" | "INTENT_NOT_FOUND" | "INVALID_REQUEST" | "INTERNAL_ERROR";
+    code: "BID_NOT_FOUND" | "FEATURE_NOT_AVAILABLE" | "INTENT_NOT_FOUND" | "INVALID_REQUEST" | "INTERNAL_ERROR";
     message: string;
   };
 }

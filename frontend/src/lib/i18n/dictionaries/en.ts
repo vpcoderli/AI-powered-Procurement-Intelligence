@@ -21,6 +21,8 @@ export const en = {
     notifications: "Notifications",
     security: "Security",
     appearance: "Appearance",
+    currentPlan: "Current plan",
+    featureAccess: "Feature access by account tier.",
     personalInfo: "Personal Information",
     personalInfoDesc: "Update your personal details and how others see you.",
     firstName: "First name",

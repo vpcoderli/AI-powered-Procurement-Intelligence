@@ -23,6 +23,22 @@ const resolvePrincipal = vi.mocked(principal.resolvePrincipal);
 const getOrCreateSubmissionGuidance = vi.mocked(submissionService.getOrCreateSubmissionGuidance);
 const updateSubmissionGuidance = vi.mocked(submissionService.updateSubmissionGuidance);
 
+const proPrincipal = {
+  kind: "authenticated" as const,
+  userId: "user_1",
+  role: "user" as const,
+  tier: "pro" as const,
+  features: ["bid_search", "submission_guidance"] as const,
+};
+
+const freePrincipal = {
+  kind: "authenticated" as const,
+  userId: "user_free",
+  role: "user" as const,
+  tier: "free" as const,
+  features: ["bid_search"] as const,
+};
+
 const guidance: SubmissionGuidance = {
   id: "submission_path_1",
   intentId: "intent_1",
@@ -45,7 +61,7 @@ const guidance: SubmissionGuidance = {
 describe("GET /api/intents/[id]/submission", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resolvePrincipal.mockResolvedValue({ kind: "authenticated", userId: "user_1" });
+    resolvePrincipal.mockResolvedValue(proPrincipal);
   });
 
   it("returns generated or existing submission guidance", async () => {
@@ -72,12 +88,25 @@ describe("GET /api/intents/[id]/submission", () => {
     expect(response.status).toBe(404);
     expect(body.error.code).toBe("INTENT_NOT_FOUND");
   });
+
+  it("returns FEATURE_NOT_AVAILABLE for users below Pro", async () => {
+    resolvePrincipal.mockResolvedValueOnce(freePrincipal);
+
+    const response = await GET(new Request("http://localhost/api/intents/intent_1/submission"), {
+      params: Promise.resolve({ id: "intent_1" }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("FEATURE_NOT_AVAILABLE");
+    expect(getOrCreateSubmissionGuidance).not.toHaveBeenCalled();
+  });
 });
 
 describe("PATCH /api/intents/[id]/submission", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resolvePrincipal.mockResolvedValue({ kind: "authenticated", userId: "user_1" });
+    resolvePrincipal.mockResolvedValue(proPrincipal);
   });
 
   it("updates editable submission guidance fields", async () => {
@@ -115,6 +144,23 @@ describe("PATCH /api/intents/[id]/submission", () => {
 
     expect(response.status).toBe(400);
     expect(body.error.code).toBe("INVALID_REQUEST");
+    expect(updateSubmissionGuidance).not.toHaveBeenCalled();
+  });
+
+  it("returns FEATURE_NOT_AVAILABLE before updating for users below Pro", async () => {
+    resolvePrincipal.mockResolvedValueOnce(freePrincipal);
+
+    const response = await PATCH(
+      new Request("http://localhost/api/intents/intent_1/submission", {
+        method: "PATCH",
+        body: JSON.stringify({ method: "email" }),
+      }),
+      { params: Promise.resolve({ id: "intent_1" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("FEATURE_NOT_AVAILABLE");
     expect(updateSubmissionGuidance).not.toHaveBeenCalled();
   });
 });
