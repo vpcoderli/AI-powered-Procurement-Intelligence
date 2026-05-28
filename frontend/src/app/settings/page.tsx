@@ -25,11 +25,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useAuth } from "@/context/AuthContext";
 import {
   changePassword,
+  AuthApiError,
   fetchAccountSubscription,
   fetchAccountWorkspace,
   inviteWorkspaceMember,
+  removeWorkspaceMember,
   updateAccountWorkspace,
   updateAccountProfile,
+  updateWorkspaceMemberRole,
+  type AccountWorkspaceMember,
   type AccountSubscriptionResponse,
   type AccountWorkspaceResponse,
 } from "@/lib/api/auth";
@@ -75,6 +79,9 @@ export default function SettingsPage() {
   const [inviteError, setInviteError] = useState("");
   const [temporaryPassword, setTemporaryPassword] = useState("");
   const [isInvitingMember, setIsInvitingMember] = useState(false);
+  const [teamActionMessage, setTeamActionMessage] = useState("");
+  const [teamActionError, setTeamActionError] = useState("");
+  const [memberActionUserId, setMemberActionUserId] = useState<string | null>(null);
   const currentTier = user ? ACCOUNT_TIER_LABELS[user.tier] : ACCOUNT_TIER_LABELS.free;
   const displayName =
     profileDraft.userId === user?.id ? profileDraft.displayName : (user?.displayName ?? "");
@@ -218,6 +225,53 @@ export default function SettingsPage() {
       setInviteError(error instanceof Error ? error.message : t("settings.memberInviteError"));
     } finally {
       setIsInvitingMember(false);
+    }
+  }
+
+  function teamErrorMessage(error: unknown) {
+    if (error instanceof AuthApiError && error.code === "LAST_OWNER_REQUIRED") {
+      return t("settings.lastOwnerRequired");
+    }
+
+    return error instanceof Error ? error.message : t("settings.memberUpdateError");
+  }
+
+  async function handleMemberRoleChange(
+    member: AccountWorkspaceMember,
+    role: AccountWorkspaceMember["workspaceRole"],
+  ) {
+    if (member.workspaceRole === role) return;
+
+    setTeamActionMessage("");
+    setTeamActionError("");
+    setMemberActionUserId(member.userId);
+
+    try {
+      const data = await updateWorkspaceMemberRole(member.userId, { role });
+      setWorkspaceData(data);
+      await refreshSession();
+      setTeamActionMessage(t("settings.memberUpdated"));
+    } catch (error) {
+      setTeamActionError(teamErrorMessage(error));
+    } finally {
+      setMemberActionUserId(null);
+    }
+  }
+
+  async function handleRemoveMember(member: AccountWorkspaceMember) {
+    setTeamActionMessage("");
+    setTeamActionError("");
+    setMemberActionUserId(member.userId);
+
+    try {
+      const data = await removeWorkspaceMember(member.userId);
+      setWorkspaceData(data);
+      await refreshSession();
+      setTeamActionMessage(t("settings.memberRemoved"));
+    } catch (error) {
+      setTeamActionError(teamErrorMessage(error));
+    } finally {
+      setMemberActionUserId(null);
     }
   }
 
@@ -444,6 +498,8 @@ export default function SettingsPage() {
                 )}
 
                 <div className="space-y-3">
+                  {teamActionMessage && <p className="text-sm font-medium text-emerald-700">{teamActionMessage}</p>}
+                  {teamActionError && <p className="text-sm font-medium text-red-600">{teamActionError}</p>}
                   {(workspaceData?.members ?? []).map((member) => (
                     <div
                       key={member.userId}
@@ -455,9 +511,46 @@ export default function SettingsPage() {
                         </p>
                         <p className="mt-1 text-xs font-medium text-slate-500">{member.email}</p>
                       </div>
-                      <Badge variant="outline" className="w-fit border-slate-200 bg-slate-50 text-slate-700">
-                        {t(`settings.workspaceRole_${member.workspaceRole}`)}
-                      </Badge>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        {canManageWorkspace ? (
+                          <Select
+                            value={member.workspaceRole}
+                            onValueChange={(role) =>
+                              handleMemberRoleChange(member, role as AccountWorkspaceMember["workspaceRole"])
+                            }
+                            disabled={memberActionUserId === member.userId}
+                          >
+                            <SelectTrigger
+                              aria-label={t("settings.changeRole")}
+                              className="h-9 w-full border-slate-200 text-sm font-medium focus:ring-slate-900 sm:w-[132px]"
+                            >
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="rounded-lg border-slate-200 shadow-md">
+                              <SelectItem value="owner" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                                {t("settings.workspaceRole_owner")}
+                              </SelectItem>
+                              <SelectItem value="member" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                                {t("settings.workspaceRole_member")}
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <Badge variant="outline" className="w-fit border-slate-200 bg-slate-50 text-slate-700">
+                            {t(`settings.workspaceRole_${member.workspaceRole}`)}
+                          </Badge>
+                        )}
+                        {canManageWorkspace && (
+                          <Button
+                            variant="outline"
+                            onClick={() => handleRemoveMember(member)}
+                            disabled={memberActionUserId === member.userId || member.userId === user?.id}
+                            className="h-9 border-red-200 px-3 text-sm font-medium text-red-700 hover:bg-red-50 hover:text-red-800"
+                          >
+                            {t("settings.removeMember")}
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   ))}
                   {!workspaceData && !workspaceError && (

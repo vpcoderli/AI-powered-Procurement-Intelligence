@@ -53,6 +53,10 @@ export interface InviteWorkspaceMemberInput {
   role?: WorkspaceRole;
 }
 
+export interface UpdateWorkspaceMemberRoleInput {
+  role: WorkspaceRole;
+}
+
 export interface InviteWorkspaceMemberResponse {
   member: AccountWorkspaceMember;
   temporaryPassword: string;
@@ -76,6 +80,20 @@ export class WorkspaceNotFoundError extends Error {
   constructor() {
     super("Workspace not found");
     this.name = "WorkspaceNotFoundError";
+  }
+}
+
+export class WorkspaceMemberNotFoundError extends Error {
+  constructor() {
+    super("Workspace member not found");
+    this.name = "WorkspaceMemberNotFoundError";
+  }
+}
+
+export class WorkspaceLastOwnerError extends Error {
+  constructor() {
+    super("A workspace must keep at least one owner");
+    this.name = "WorkspaceLastOwnerError";
   }
 }
 
@@ -280,7 +298,10 @@ export function getAccountWorkspace(db: AppDatabase, userId: string): AccountWor
       })
       .from(organizationMemberships)
       .innerJoin(users, eq(organizationMemberships.userId, users.id))
-      .where(eq(organizationMemberships.organizationId, organization.id))
+      .where(and(
+        eq(organizationMemberships.organizationId, organization.id),
+        eq(organizationMemberships.status, "active"),
+      ))
       .orderBy(desc(organizationMemberships.role), asc(organizationMemberships.createdAt), asc(users.email))
       .all()
       .map(toWorkspaceMember),
@@ -294,6 +315,41 @@ function requireOwner(db: AppDatabase, userId: string) {
   }
 
   return workspace;
+}
+
+function getActiveWorkspaceMembership(db: AppDatabase, organizationId: string, userId: string) {
+  return db
+    .select()
+    .from(organizationMemberships)
+    .where(and(
+      eq(organizationMemberships.organizationId, organizationId),
+      eq(organizationMemberships.userId, userId),
+      eq(organizationMemberships.status, "active"),
+    ))
+    .limit(1)
+    .get();
+}
+
+function countActiveWorkspaceOwners(db: AppDatabase, organizationId: string) {
+  return db
+    .select({ role: organizationMemberships.role })
+    .from(organizationMemberships)
+    .where(and(
+      eq(organizationMemberships.organizationId, organizationId),
+      eq(organizationMemberships.role, "owner"),
+      eq(organizationMemberships.status, "active"),
+    ))
+    .all().length;
+}
+
+function requireManageableMember(db: AppDatabase, organizationId: string, targetUserId: string) {
+  const membership = getActiveWorkspaceMembership(db, organizationId, targetUserId);
+
+  if (!membership) {
+    throw new WorkspaceMemberNotFoundError();
+  }
+
+  return membership;
 }
 
 export function updateOrganizationName(
@@ -380,6 +436,57 @@ export async function inviteWorkspaceMember(
     },
     temporaryPassword: password,
   };
+}
+
+export function updateWorkspaceMemberRole(
+  db: AppDatabase,
+  actorUserId: string,
+  targetUserId: string,
+  input: UpdateWorkspaceMemberRoleInput,
+): AccountWorkspaceResponse {
+  const workspace = requireOwner(db, actorUserId);
+  const membership = requireManageableMember(db, workspace.organizationId, targetUserId);
+  const role = normalizeWorkspaceRole(input.role);
+
+  if (
+    membership.role === "owner" &&
+    role !== "owner" &&
+    countActiveWorkspaceOwners(db, workspace.organizationId) <= 1
+  ) {
+    throw new WorkspaceLastOwnerError();
+  }
+
+  db.update(organizationMemberships)
+    .set({ role, updatedAt: nowIso() })
+    .where(and(
+      eq(organizationMemberships.organizationId, workspace.organizationId),
+      eq(organizationMemberships.userId, targetUserId),
+    ))
+    .run();
+
+  return getAccountWorkspace(db, actorUserId);
+}
+
+export function removeWorkspaceMember(
+  db: AppDatabase,
+  actorUserId: string,
+  targetUserId: string,
+): AccountWorkspaceResponse {
+  const workspace = requireOwner(db, actorUserId);
+  const membership = requireManageableMember(db, workspace.organizationId, targetUserId);
+
+  if (membership.role === "owner" && countActiveWorkspaceOwners(db, workspace.organizationId) <= 1) {
+    throw new WorkspaceLastOwnerError();
+  }
+
+  db.delete(organizationMemberships)
+    .where(and(
+      eq(organizationMemberships.organizationId, workspace.organizationId),
+      eq(organizationMemberships.userId, targetUserId),
+    ))
+    .run();
+
+  return getAccountWorkspace(db, actorUserId);
 }
 
 export function workspaceUserEntitlements(row: { role?: string | null; accountTier?: string | null }) {

@@ -88,6 +88,8 @@ type AuthErrorCode =
   | "INVALID_REQUEST"
   | "INVALID_RESET_TOKEN"
   | "INTERNAL_ERROR"
+  | "LAST_OWNER_REQUIRED"
+  | "MEMBER_NOT_FOUND"
   | "WEAK_PASSWORD";
 
 interface ApiErrorResponse {
@@ -130,6 +132,8 @@ function isApiErrorResponse(body: unknown): body is ApiErrorResponse {
       code === "INVALID_REQUEST" ||
       code === "INVALID_RESET_TOKEN" ||
       code === "INTERNAL_ERROR" ||
+      code === "LAST_OWNER_REQUIRED" ||
+      code === "MEMBER_NOT_FOUND" ||
       code === "WEAK_PASSWORD")
   );
 }
@@ -276,4 +280,25 @@ export async function inviteWorkspaceMember(input: {
   });
 
   return parseResponse<InviteWorkspaceMemberResponse>(response);
+}
+
+export async function updateWorkspaceMemberRole(
+  userId: string,
+  input: { role: WorkspaceRole },
+): Promise<AccountWorkspaceResponse> {
+  const response = await fetch(`/api/account/workspace/members/${userId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<AccountWorkspaceResponse>(response);
+}
+
+export async function removeWorkspaceMember(userId: string): Promise<AccountWorkspaceResponse> {
+  const response = await fetch(`/api/account/workspace/members/${userId}`, {
+    method: "DELETE",
+  });
+
+  return parseResponse<AccountWorkspaceResponse>(response);
 }

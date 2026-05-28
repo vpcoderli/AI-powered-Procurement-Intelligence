@@ -15,7 +15,7 @@ This document is the working checklist for local development. Update it after ea
 | Saved bids | Anonymous saved bids and authenticated workspace-shared saved bids, merge anonymous saved bids on register/login. |
 | Supplier profile | `/profile`, profile API, completion score, deterministic matching inputs. |
 | Auth basics | Register, login, logout, session cookie, session lookup, login/register pages, session payload with role/tier/features. |
-| Account self-service | `/settings` shows authenticated email/display name, updates display name, changes password after validating current password; `/forgot-password` and `/reset-password` support local token-based password recovery; Settings Team tab manages workspace name and member invites. |
+| Account self-service | `/settings` shows authenticated email/display name, updates display name, changes password after validating current password; `/forgot-password` and `/reset-password` support local token-based password recovery; Settings Team tab manages workspace name, member invites, member role changes, and member removal. |
 | User data model basics | `users` table, `sessions` table, `organizations`, `organization_memberships`, `role`, `account_tier`, `is_disabled`, and workspace owner/member state. |
 | Admin auth helper | `requireAdmin()` checks authenticated non-disabled admin sessions; local bypass for development. |
 | Admin user access console | `/admin` lists registered users, creates invited accounts with temporary passwords, filters/searches accounts, changes role/tier/enabled state, shows access audit logs, and presents login/forbidden states for non-admin access. |
@@ -36,7 +36,7 @@ This document is the working checklist for local development. Update it after ea
 | Area | What exists | Missing to be useful |
 |---|---|---|
 | Account management | Register/login/logout/session APIs and pages; account settings can update display name and password; password reset token flow; admin can create invited accounts, enable/disable users, search/filter users, and review access audit logs | Account deletion/export |
-| Organization/workspace model | Registered users get a default organization, session payload includes current workspace and owner/member role, Settings Team tab can rename workspace and invite local members, saved bids/intents are shared across organization members | Team role management beyond invite-only member creation, member removal/disable |
+| Organization/workspace model | Registered users get a default organization, session payload includes current workspace and owner/member role, Settings Team tab can rename workspace, invite local members, change member roles, remove members, and saved bids/intents are shared across organization members | Ownership transfer flow, member disable/reactivation, invitation acceptance/email delivery |
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab | Billing provider sync, real checkout, invoices, cancellation |
@@ -50,7 +50,7 @@ This document is the working checklist for local development. Update it after ea
 | Area | Needed capability |
 |---|---|
 | Billing integration | Checkout, subscription status sync, invoices, cancellation, trial expiration. |
-| Organization team management | Team role changes/removal, ownership transfer, member disable/reactivation. |
+| Organization team lifecycle | Ownership transfer flow, member disable/reactivation, pending invitation acceptance. |
 | Compliance Manifest Lite | Structured bid requirements, manual completion, notes, evidence status. |
 | Pursue / No-Bid Decision Lite | Recommendation, decision capture, reasons, decision history. |
 | Response Workspace | Tasks, artifacts, internal checkpoints, reusable documents. |
@@ -62,12 +62,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Organization Team Management** next, then choose between **Compliance Manifest Lite** and **Billing Provider Sync** depending on whether the following sprint should deepen bid execution workflow or connect real monetization.
+Prioritize **Compliance Manifest Lite** next, then choose between **Pursue / No-Bid Decision Lite** and **Billing Provider Sync** depending on whether the following sprint should deepen bid execution workflow or connect real monetization.
 
 Reason:
 
-- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, subscription foundation, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
-- The remaining account gap is not basic self-service; it is team role management/removal, real billing provider sync, broader usage dashboards, and account deletion/export.
+- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, and reusable feature guards now exist.
+- The remaining account gap is not basic self-service; it is owner transfer/member reactivation, real billing provider sync, broader usage dashboards, and account deletion/export.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
@@ -134,7 +134,7 @@ Current local limits:
 
 3. **Account lifecycle**
    - Add account deletion/export.
-   - Add team role changes/removal.
+   - Add ownership transfer and member reactivation.
 
 ## Completed Phase: Account / Role / Tier Foundation
 
@@ -385,6 +385,33 @@ Current local limits:
 
 建议下一步：
 - 继续做 Organization team management：先实现 owner 修改成员角色、移除成员、禁止移除最后一个 owner，再接 Settings Team UI。
+
+## Completed Phase: Organization Team Management
+
+本阶段完成：
+- Workspace service 新增成员角色调整与成员移除能力，只有 workspace owner 可以执行。
+- 系统会阻止降级或移除最后一个 active owner，避免团队失去管理者。
+- 被移除成员会退出原 organization；再次访问 workspace 时会回到自己的个人工作区。
+- 新增 `/api/account/workspace/members/[userId]` PATCH/DELETE，分别用于调整角色和移除成员。
+- 前端 API client 新增 `updateWorkspaceMemberRole()` 与 `removeWorkspaceMember()`。
+- `/settings` Team 标签页接入成员角色下拉和移除按钮，并补齐中英文状态文案。
+
+验证：
+- `npm test -- src/server/account/workspace.test.ts src/lib/api/auth.test.ts 'src/app/api/account/workspace/members/[userId]/route.test.ts' src/app/settings/page.test.ts`
+- `npm test`
+- `npm run lint`
+- `npm run build`
+
+当前还剩：
+1. Compliance Manifest Lite：结构化需求、人工完成状态、备注和证据状态。
+2. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
+3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
+4. Account deletion/export 账号数据导出与删除。
+5. Organization team lifecycle：owner 转移流程、成员禁用/恢复、邀请接受/邮件投递。
+6. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
+
+建议下一步：
+- 优先开发 Compliance Manifest Lite，把 Submission Guidance 生成的提交要求沉淀为可勾选、可备注、可追踪证据状态的执行清单。
 
 ## Status Update Template
 
