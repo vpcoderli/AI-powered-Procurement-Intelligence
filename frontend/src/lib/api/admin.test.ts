@@ -10,6 +10,7 @@ import {
   listAdminUsers,
   runSamGovCrawlerNow,
   runStateCrawlersNow,
+  reconcileAdminSubscriptions,
   updateAdminDataSource,
   updateAdminUser,
 } from "./admin";
@@ -185,6 +186,24 @@ describe("admin API client", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ limit: 25, maxAttempts: 3 }),
+    });
+  });
+
+  it("reconciles subscription lifecycle from the admin console", async () => {
+    const body = {
+      checked: 4,
+      canceledAtPeriodEnd: 1,
+      markedPastDue: 1,
+      downgradedPastDue: 1,
+      expiredTrials: 1,
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(reconcileAdminSubscriptions({ pastDueGraceDays: 10 })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/subscriptions/reconcile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pastDueGraceDays: 10 }),
     });
   });
 

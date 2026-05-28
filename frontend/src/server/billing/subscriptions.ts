@@ -89,6 +89,19 @@ export interface BillingInvoicesResponse {
   invoices: BillingInvoiceView[];
 }
 
+export interface SubscriptionLifecycleReconcileResult {
+  checked: number;
+  canceledAtPeriodEnd: number;
+  markedPastDue: number;
+  downgradedPastDue: number;
+  expiredTrials: number;
+}
+
+export interface SubscriptionLifecycleReconcileOptions {
+  now?: string;
+  pastDueGraceDays?: number;
+}
+
 export interface UpsertAccountSubscriptionInput {
   tier: AccountTier;
   status: SubscriptionStatus;
@@ -370,6 +383,68 @@ function existingSubscriptionForUser(db: AppDatabase, userId: string) {
     .get();
 }
 
+function subscriptionIsExpired(currentPeriodEnd: string | null, now: string) {
+  if (!currentPeriodEnd) return false;
+
+  return new Date(currentPeriodEnd).getTime() <= new Date(now).getTime();
+}
+
+function gracePeriodExpired(currentPeriodEnd: string | null, now: string, graceDays: number) {
+  if (!currentPeriodEnd) return false;
+
+  const graceEndsAt = new Date(currentPeriodEnd).getTime() + graceDays * 24 * 60 * 60 * 1000;
+  return graceEndsAt <= new Date(now).getTime();
+}
+
+function transitionSubscriptionLifecycle(
+  db: AppDatabase,
+  row: typeof accountSubscriptions.$inferSelect,
+  input: {
+    tier: AccountTier;
+    status: SubscriptionStatus;
+    eventType: string;
+    now: string;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  const fromTier = normalizeAccountTier(row.tier);
+  const fromStatus = normalizeSubscriptionStatus(row.status);
+  const source = normalizeSubscriptionSource(row.source);
+
+  db.update(accountSubscriptions)
+    .set({
+      tier: input.tier,
+      status: input.status,
+      cancelAtPeriodEnd: 0,
+      updatedAt: input.now,
+    })
+    .where(eq(accountSubscriptions.id, row.id))
+    .run();
+  db.update(users)
+    .set({
+      accountTier: input.tier,
+      updatedAt: input.now,
+    })
+    .where(eq(users.id, row.userId))
+    .run();
+  writeSubscriptionEvent(db, {
+    userId: row.userId,
+    subscriptionId: row.id,
+    eventType: input.eventType,
+    fromTier,
+    toTier: input.tier,
+    fromStatus,
+    toStatus: input.status,
+    source,
+    metadata: {
+      providerSubscriptionId: row.providerSubscriptionId,
+      currentPeriodEnd: row.currentPeriodEnd,
+      ...input.metadata,
+    },
+    createdAt: input.now,
+  });
+}
+
 function providerEventIsInvoice(event: BillingProviderEvent) {
   return event.type === "invoice.paid" || event.type === "invoice.payment_failed";
 }
@@ -465,6 +540,110 @@ export function getAccountSubscription(db: AppDatabase, userId: string): Account
     },
     plans: listSubscriptionPlans(),
   };
+}
+
+export function reconcileSubscriptionLifecycle(
+  db: AppDatabase,
+  options: SubscriptionLifecycleReconcileOptions = {},
+): SubscriptionLifecycleReconcileResult {
+  const now = options.now ?? nowIso();
+  const pastDueGraceDays = Math.max(0, options.pastDueGraceDays ?? 7);
+  const rows = db.select().from(accountSubscriptions).all();
+
+  return reconcileSubscriptionRows(db, rows, { now, pastDueGraceDays });
+}
+
+function reconcileSubscriptionRows(
+  db: AppDatabase,
+  rows: (typeof accountSubscriptions.$inferSelect)[],
+  options: { now: string; pastDueGraceDays: number },
+): SubscriptionLifecycleReconcileResult {
+  const { now, pastDueGraceDays } = options;
+  const result: SubscriptionLifecycleReconcileResult = {
+    checked: 0,
+    canceledAtPeriodEnd: 0,
+    markedPastDue: 0,
+    downgradedPastDue: 0,
+    expiredTrials: 0,
+  };
+
+  for (const row of rows) {
+    result.checked += 1;
+    const status = normalizeSubscriptionStatus(row.status);
+    const tier = normalizeAccountTier(row.tier);
+
+    if (tier === "free" || status === "none" || status === "canceled") {
+      continue;
+    }
+
+    if (status === "trialing" && subscriptionIsExpired(row.currentPeriodEnd, now)) {
+      transitionSubscriptionLifecycle(db, row, {
+        tier: "free",
+        status: "canceled",
+        eventType: "trial_expired",
+        now,
+      });
+      result.expiredTrials += 1;
+      continue;
+    }
+
+    if (row.cancelAtPeriodEnd === 1 && subscriptionIsExpired(row.currentPeriodEnd, now)) {
+      transitionSubscriptionLifecycle(db, row, {
+        tier: "free",
+        status: "canceled",
+        eventType: "subscription_canceled_at_period_end",
+        now,
+      });
+      result.canceledAtPeriodEnd += 1;
+      continue;
+    }
+
+    if (status === "past_due" && gracePeriodExpired(row.currentPeriodEnd, now, pastDueGraceDays)) {
+      transitionSubscriptionLifecycle(db, row, {
+        tier: "free",
+        status: "canceled",
+        eventType: "subscription_downgraded_past_due",
+        now,
+        metadata: { pastDueGraceDays },
+      });
+      result.downgradedPastDue += 1;
+      continue;
+    }
+
+    if (status === "active" && subscriptionIsExpired(row.currentPeriodEnd, now)) {
+      transitionSubscriptionLifecycle(db, row, {
+        tier,
+        status: "past_due",
+        eventType: "subscription_marked_past_due",
+        now,
+      });
+      result.markedPastDue += 1;
+    }
+  }
+
+  return result;
+}
+
+export function reconcileUserSubscriptionLifecycle(
+  db: AppDatabase,
+  userId: string,
+  options: SubscriptionLifecycleReconcileOptions = {},
+): SubscriptionLifecycleReconcileResult {
+  getUserOrThrow(db, userId);
+  const now = options.now ?? nowIso();
+  const pastDueGraceDays = Math.max(0, options.pastDueGraceDays ?? 7);
+  const result: SubscriptionLifecycleReconcileResult = {
+    checked: 0,
+    canceledAtPeriodEnd: 0,
+    markedPastDue: 0,
+    downgradedPastDue: 0,
+    expiredTrials: 0,
+  };
+  const row = existingSubscriptionForUser(db, userId);
+
+  if (!row) return result;
+
+  return reconcileSubscriptionRows(db, [row], { now, pastDueGraceDays });
 }
 
 export function listAccountInvoices(db: AppDatabase, userId: string): BillingInvoicesResponse {

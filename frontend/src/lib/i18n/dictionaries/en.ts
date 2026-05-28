@@ -607,6 +607,10 @@ export const en = {
     notificationStatus_pending: "Pending",
     notificationStatus_sent: "Sent",
     notificationStatus_failed: "Failed",
+    reconcileSubscriptions: "Reconcile subscriptions",
+    reconcilingSubscriptions: "Reconciling...",
+    subscriptionReconcileResult: "Subscription access reconciled: {checked} checked, {pastDue} marked past due, {downgraded} downgraded/canceled.",
+    subscriptionReconcileFailed: "Unable to reconcile subscriptions.",
   }
 };
 

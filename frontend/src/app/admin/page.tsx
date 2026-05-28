@@ -38,6 +38,7 @@ import {
   listAdminNotifications,
   listAdminUserAuditLogs,
   listAdminUsers,
+  reconcileAdminSubscriptions,
   runStateCrawlersNow,
   updateAdminDataSource,
   updateAdminUser as updateAdminUserAccess,
@@ -205,6 +206,7 @@ export default function AdminPage() {
   const [isInvitingUser, setIsInvitingUser] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [isDeliveringNotifications, setIsDeliveringNotifications] = useState(false);
+  const [isReconcilingSubscriptions, setIsReconcilingSubscriptions] = useState(false);
   const isAdmin = user?.role === "admin";
 
   const load = useCallback(() => {
@@ -428,6 +430,37 @@ export default function AdminPage() {
       });
   };
 
+  const reconcileSubscriptions = () => {
+    setIsReconcilingSubscriptions(true);
+    setRunMessage(null);
+    reconcileAdminSubscriptions({ pastDueGraceDays: 7 })
+      .then((result) => {
+        setRunMessage(
+          t("admin.subscriptionReconcileResult")
+            .replace("{checked}", String(result.checked))
+            .replace("{pastDue}", String(result.markedPastDue))
+            .replace("{downgraded}", String(result.downgradedPastDue + result.canceledAtPeriodEnd + result.expiredTrials)),
+        );
+        return listAdminUsers(userFilters);
+      })
+      .then((response) => {
+        setState((current) => {
+          if (current.status !== "ready") return current;
+
+          return {
+            ...current,
+            users: response.users,
+          };
+        });
+      })
+      .catch(() => {
+        setRunMessage(t("admin.subscriptionReconcileFailed"));
+      })
+      .finally(() => {
+        setIsReconcilingSubscriptions(false);
+      });
+  };
+
   if (isAuthLoading) {
     return (
       <AdminAccessState
@@ -484,6 +517,15 @@ export default function AdminPage() {
           >
             <Play size={16} />
             {isRunning ? t("admin.running") : t("admin.runStateCrawlers")}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={reconcileSubscriptions}
+            disabled={isReconcilingSubscriptions}
+            className="h-10 rounded-lg border-slate-200"
+          >
+            <RefreshCw size={16} />
+            {isReconcilingSubscriptions ? t("admin.reconcilingSubscriptions") : t("admin.reconcileSubscriptions")}
           </Button>
         </div>
       </div>
