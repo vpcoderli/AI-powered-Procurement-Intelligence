@@ -18,5 +18,10 @@ describe("intent pages", () => {
     expect(detailPage).toContain("mountedRef");
     expect(detailPage).toContain("saveRequestRef");
     expect(detailPage).toContain("onValueChange={(value)");
+    expect(detailPage).toContain("prototypeWorkspace");
+    expect(detailPage).toContain("submissionReadinessItems");
+    expect(detailPage).toContain("submissionPath");
+    expect(detailPage).toContain("Intent Workspace");
+    expect(detailPage).toContain("Submission Path");
   });
 });
