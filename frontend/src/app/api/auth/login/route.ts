@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createSessionCookie } from "@/server/auth/session";
 import {
+  AccountDisabledError,
   InvalidAuthInputError,
   InvalidCredentialsError,
   loginUser,
@@ -52,6 +53,10 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof InvalidCredentialsError) {
       return errorResponse("INVALID_CREDENTIALS", error.message, 401);
+    }
+
+    if (error instanceof AccountDisabledError) {
+      return errorResponse("ACCOUNT_DISABLED", error.message, 403);
     }
 
     if (error instanceof InvalidAuthInputError) {

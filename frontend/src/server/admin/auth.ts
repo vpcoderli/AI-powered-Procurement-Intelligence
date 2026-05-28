@@ -42,10 +42,17 @@ export async function requireAdmin(db: AppDatabase, request: Request): Promise<A
       expiresAt: sessions.expiresAt,
       userId: users.id,
       role: users.role,
+      isDisabled: users.isDisabled,
     })
     .from(sessions)
     .innerJoin(users, eq(sessions.userId, users.id))
-    .where(and(eq(sessions.tokenHash, hashSessionToken(sessionToken)), eq(users.role, "admin")))
+    .where(
+      and(
+        eq(sessions.tokenHash, hashSessionToken(sessionToken)),
+        eq(users.role, "admin"),
+        eq(users.isDisabled, 0),
+      ),
+    )
     .limit(1)
     .get();
 

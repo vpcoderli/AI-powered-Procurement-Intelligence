@@ -4,6 +4,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { Home, Bookmark, Settings, Search, ShieldCheck, ClipboardList, UserRound, Route } from "lucide-react"
 import { useLanguage } from "@/lib/i18n/LanguageContext"
+import { useAuth } from "@/context/AuthContext"
 import {
   Sidebar,
   SidebarContent,
@@ -18,6 +19,7 @@ import {
 
 export function AppSidebar() {
   const { t } = useLanguage();
+  const { user } = useAuth();
   const pathname = usePathname();
 
   // Menu items.
@@ -57,11 +59,15 @@ export function AppSidebar() {
       url: "/settings",
       icon: Settings,
     },
-    {
-      title: t('common.admin'),
-      url: "/admin",
-      icon: ShieldCheck,
-    },
+    ...(user?.role === "admin"
+      ? [
+          {
+            title: t('common.admin'),
+            url: "/admin",
+            icon: ShieldCheck,
+          },
+        ]
+      : []),
   ]
 
   return (

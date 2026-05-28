@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AppDatabase } from "@/server/db/client";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
+  AccountDisabledError,
   DuplicateEmailError,
   InvalidCredentialsError,
   WeakPasswordError,
@@ -33,11 +34,17 @@ describe("auth service", () => {
       id: expect.stringMatching(/^user_/),
       email: "buyer@example.com",
       displayName: "Buyer One",
+      role: "user",
+      tier: "free",
+      features: expect.arrayContaining(["bid_search", "supplier_profile"]),
     });
     expect(result.sessionToken).toMatch(/^sess_/);
     expect(await getSessionUser(testDb.db, result.sessionToken)).toMatchObject({
       email: "buyer@example.com",
       displayName: "Buyer One",
+      role: "user",
+      tier: "free",
+      features: expect.arrayContaining(["bid_search"]),
     });
   });
 
@@ -117,5 +124,21 @@ describe("auth service", () => {
     await logoutSession(testDb.db, result.sessionToken);
 
     expect(await getSessionUser(testDb.db, result.sessionToken)).toBeNull();
+  });
+
+  it("does not authenticate disabled accounts", async () => {
+    const result = await registerUser(testDb.db, {
+      email: "disabled@example.com",
+      password: "strong-password",
+    });
+
+    testDb.db.$client
+      .prepare("UPDATE users SET is_disabled = 1 WHERE id = ?")
+      .run(result.user.id);
+
+    await expect(loginUser(testDb.db, "disabled@example.com", "strong-password")).rejects.toBeInstanceOf(
+      AccountDisabledError,
+    );
+    await expect(getSessionUser(testDb.db, result.sessionToken)).resolves.toBeNull();
   });
 });
