@@ -120,21 +120,43 @@ export async function getBidByIdFromRepository(db: AppDatabase, id: string) {
   return toBid(row, attachmentMap.get(id) ?? [], new Set());
 }
 
-export async function listSavedBidIds(db: AppDatabase, userId: string) {
+function scopedUserIds(userId: string, scopeUserIds?: string[]) {
+  return scopeUserIds && scopeUserIds.length > 0 ? scopeUserIds : [userId];
+}
+
+export async function listSavedBidIds(db: AppDatabase, userId: string, scopeUserIds?: string[]) {
   await ensureUser(db, userId);
+  const userIds = scopedUserIds(userId, scopeUserIds);
 
   const rows = db
     .select({ bidId: savedBids.bidId })
     .from(savedBids)
-    .where(eq(savedBids.userId, userId))
+    .where(inArray(savedBids.userId, userIds))
     .orderBy(asc(savedBids.createdAt), asc(savedBids.bidId))
     .all();
 
-  return rows.map((row) => row.bidId);
+  return [...new Set(rows.map((row) => row.bidId))];
 }
 
-export async function saveSavedBidId(db: AppDatabase, userId: string, bidId: string) {
+export async function saveSavedBidId(
+  db: AppDatabase,
+  userId: string,
+  bidId: string,
+  scopeUserIds?: string[],
+) {
   await ensureUser(db, userId);
+  const userIds = scopedUserIds(userId, scopeUserIds);
+
+  const existing = db
+    .select()
+    .from(savedBids)
+    .where(and(inArray(savedBids.userId, userIds), eq(savedBids.bidId, bidId)))
+    .limit(1)
+    .get();
+
+  if (existing) {
+    return listSavedBidIds(db, userId, userIds);
+  }
 
   db.insert(savedBids)
     .values({
@@ -145,15 +167,22 @@ export async function saveSavedBidId(db: AppDatabase, userId: string, bidId: str
     .onConflictDoNothing()
     .run();
 
-  return listSavedBidIds(db, userId);
+  return listSavedBidIds(db, userId, userIds);
 }
 
-export async function removeSavedBidId(db: AppDatabase, userId: string, bidId: string) {
+export async function removeSavedBidId(
+  db: AppDatabase,
+  userId: string,
+  bidId: string,
+  scopeUserIds?: string[],
+) {
+  const userIds = scopedUserIds(userId, scopeUserIds);
+
   db.delete(savedBids)
-    .where(and(eq(savedBids.userId, userId), eq(savedBids.bidId, bidId)))
+    .where(and(inArray(savedBids.userId, userIds), eq(savedBids.bidId, bidId)))
     .run();
 
-  return listSavedBidIds(db, userId);
+  return listSavedBidIds(db, userId, userIds);
 }
 
 export async function mergeSavedBidIds(db: AppDatabase, fromUserId: string, toUserId: string) {

@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
+  inviteWorkspaceMember,
+  ensureUserWorkspace,
+  listWorkspaceMemberUserIds,
+} from "@/server/account/workspace";
+import { registerUser } from "@/server/auth/service";
+import {
   getBidByIdFromRepository,
   listBids,
   listSavedBidIds,
@@ -51,6 +57,33 @@ describe("bid repository", () => {
 
     expect(await listSavedBidIds(testDb.db, "anon_a")).toEqual([]);
     expect(await listSavedBidIds(testDb.db, "anon_b")).toEqual(["2"]);
+  });
+
+  it("shares saved bids across workspace members when a workspace scope is provided", async () => {
+    const owner = await registerUser(testDb.db, {
+      email: "owner@example.com",
+      password: "strong-password",
+    });
+    const member = await inviteWorkspaceMember(testDb.db, owner.user.id, {
+      email: "member@example.com",
+      role: "member",
+    });
+    const memberUserId = member.member.userId;
+    const scopeUserIds = listWorkspaceMemberUserIds(testDb.db, owner.user.id);
+
+    await saveSavedBidId(testDb.db, owner.user.id, "1", scopeUserIds);
+
+    expect(await listSavedBidIds(testDb.db, memberUserId, scopeUserIds)).toEqual(["1"]);
+
+    await saveSavedBidId(testDb.db, memberUserId, "1", scopeUserIds);
+    expect(await listSavedBidIds(testDb.db, owner.user.id, scopeUserIds)).toEqual(["1"]);
+
+    await removeSavedBidId(testDb.db, memberUserId, "1", scopeUserIds);
+    expect(await listSavedBidIds(testDb.db, owner.user.id, scopeUserIds)).toEqual([]);
+
+    expect(ensureUserWorkspace(testDb.db, memberUserId).organizationId).toBe(
+      owner.user.workspace?.organizationId,
+    );
   });
 
   it("merges anonymous saved bids into an authenticated user idempotently", async () => {

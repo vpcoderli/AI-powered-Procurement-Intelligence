@@ -162,7 +162,12 @@ describe("bid service", () => {
     const first = await saveBid("anon_a", "1");
     const second = await saveBid("anon_a", "1");
 
-    expect(repositorySaveSavedBidId).toHaveBeenCalledWith(expect.anything(), "anon_a", "1");
+    expect(repositorySaveSavedBidId).toHaveBeenCalledWith(
+      expect.anything(),
+      "anon_a",
+      "1",
+      ["anon_a"],
+    );
     expect(first.savedBidIds).toEqual(["1"]);
     expect(second.savedBidIds).toEqual(["1"]);
     expect(second.bids.map((bid) => bid.id)).toEqual(["1"]);
@@ -178,7 +183,12 @@ describe("bid service", () => {
 
     expect((await removeSavedBid("anon_a", "2")).savedBidIds).toEqual([]);
     expect((await removeSavedBid("anon_a", "2")).savedBidIds).toEqual([]);
-    expect(repositoryRemoveSavedBidId).toHaveBeenCalledWith(expect.anything(), "anon_a", "2");
+    expect(repositoryRemoveSavedBidId).toHaveBeenCalledWith(
+      expect.anything(),
+      "anon_a",
+      "2",
+      ["anon_a"],
+    );
   });
 
   it("removes a saved bid for one user without affecting another user", async () => {

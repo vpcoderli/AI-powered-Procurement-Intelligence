@@ -1,6 +1,8 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { intentToBid } from "@/server/db/schema";
+import { inviteWorkspaceMember, listWorkspaceMemberUserIds } from "@/server/account/workspace";
+import { registerUser } from "@/server/auth/service";
 import { createTestDatabase } from "@/server/db/test-utils";
 import type { BidMatchResult } from "@/server/match/types";
 import { createIntentRow } from "./repository";
@@ -127,6 +129,63 @@ describe("intent service", () => {
       expect(intents).toHaveLength(1);
       expect(intents[0].userId).toBe("anon_seed");
       expect(intents[0].bid.id).toBe("1");
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("shares intent workspaces across workspace members when a workspace scope is provided", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      const owner = await registerUser(testDb.db, {
+        email: "owner@example.com",
+        password: "strong-password",
+      });
+      const member = await inviteWorkspaceMember(testDb.db, owner.user.id, {
+        email: "member@example.com",
+        role: "member",
+      });
+      const memberUserId = member.member.userId;
+      const scopeUserIds = listWorkspaceMemberUserIds(testDb.db, owner.user.id);
+      const first = await createIntentForBid(testDb.db, owner.user.id, "1", { scopeUserIds });
+      const second = await createIntentForBid(testDb.db, memberUserId, "1", { scopeUserIds });
+
+      expect(second.id).toBe(first.id);
+      expect(await listUserIntents(testDb.db, memberUserId, { scopeUserIds })).toHaveLength(1);
+      await expect(updateIntentStatus(testDb.db, memberUserId, first.id, "needs_review", { scopeUserIds }))
+        .resolves.toMatchObject({
+          id: first.id,
+          status: "needs_review",
+        });
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("does not expose another workspace's intents", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      const owner = await registerUser(testDb.db, {
+        email: "owner@example.com",
+        password: "strong-password",
+      });
+      const outsider = await registerUser(testDb.db, {
+        email: "outsider@example.com",
+        password: "strong-password",
+      });
+      const ownerScope = listWorkspaceMemberUserIds(testDb.db, owner.user.id);
+      const outsiderScope = listWorkspaceMemberUserIds(testDb.db, outsider.user.id);
+      const intent = await createIntentForBid(testDb.db, owner.user.id, "1", {
+        scopeUserIds: ownerScope,
+      });
+
+      await expect(
+        updateIntentStatus(testDb.db, outsider.user.id, intent.id, "needs_review", {
+          scopeUserIds: outsiderScope,
+        }),
+      ).rejects.toThrow("Intent not found");
     } finally {
       await testDb.cleanup();
     }

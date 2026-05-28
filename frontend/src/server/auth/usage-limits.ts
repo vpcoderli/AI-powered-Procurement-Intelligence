@@ -1,4 +1,5 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
+import { listWorkspaceMemberUserIds } from "@/server/account/workspace";
 import type { AppDatabase } from "@/server/db/client";
 import { intentToBid, savedBids } from "@/server/db/schema";
 import type { AccountTier, FeatureKey } from "./entitlements";
@@ -78,12 +79,43 @@ export function usageLimitForTier(tier: AccountTier, feature: LimitedFeature) {
   return USAGE_LIMITS_BY_TIER[tier][feature];
 }
 
-function usedCount(db: AppDatabase, userId: string, feature: LimitedFeature) {
+interface UsageLimitScopeOptions {
+  scopeUserIds?: string[];
+}
+
+function scopedUserIds(db: AppDatabase, userId: string, options: UsageLimitScopeOptions = {}) {
+  return options.scopeUserIds && options.scopeUserIds.length > 0
+    ? options.scopeUserIds
+    : listWorkspaceMemberUserIds(db, userId);
+}
+
+function usedCount(
+  db: AppDatabase,
+  userId: string,
+  feature: LimitedFeature,
+  options: UsageLimitScopeOptions = {},
+) {
+  const userIds = scopedUserIds(db, userId, options);
+
   if (feature === "saved_bids") {
-    return db.select().from(savedBids).where(eq(savedBids.userId, userId)).all().length;
+    return new Set(
+      db
+        .select({ bidId: savedBids.bidId })
+        .from(savedBids)
+        .where(inArray(savedBids.userId, userIds))
+        .all()
+        .map((row) => row.bidId),
+    ).size;
   }
 
-  return db.select().from(intentToBid).where(eq(intentToBid.userId, userId)).all().length;
+  return new Set(
+    db
+      .select({ bidId: intentToBid.bidId })
+      .from(intentToBid)
+      .where(inArray(intentToBid.userId, userIds))
+      .all()
+      .map((row) => row.bidId),
+  ).size;
 }
 
 function hasExistingResource(
@@ -91,15 +123,17 @@ function hasExistingResource(
   userId: string,
   feature: LimitedFeature,
   resourceId: string | undefined,
+  options: UsageLimitScopeOptions = {},
 ) {
   if (!resourceId) return false;
+  const userIds = scopedUserIds(db, userId, options);
 
   if (feature === "saved_bids") {
     return Boolean(
       db
         .select()
         .from(savedBids)
-        .where(and(eq(savedBids.userId, userId), eq(savedBids.bidId, resourceId)))
+        .where(and(inArray(savedBids.userId, userIds), eq(savedBids.bidId, resourceId)))
         .limit(1)
         .get(),
     );
@@ -109,7 +143,7 @@ function hasExistingResource(
     db
       .select()
       .from(intentToBid)
-      .where(and(eq(intentToBid.userId, userId), eq(intentToBid.bidId, resourceId)))
+      .where(and(inArray(intentToBid.userId, userIds), eq(intentToBid.bidId, resourceId)))
       .limit(1)
       .get(),
   );
@@ -120,9 +154,10 @@ export function getUsageLimitStatus(
   userId: string,
   tier: AccountTier,
   feature: LimitedFeature,
+  options: UsageLimitScopeOptions = {},
 ): UsageLimitStatus {
   const limit = usageLimitForTier(tier, feature);
-  const used = usedCount(db, userId, feature);
+  const used = usedCount(db, userId, feature, options);
 
   return {
     feature,
@@ -142,13 +177,14 @@ export function enforceUsageLimit(
     tier: AccountTier;
     feature: LimitedFeature;
     resourceId?: string;
+    scopeUserIds?: string[];
   },
 ) {
-  if (hasExistingResource(db, input.userId, input.feature, input.resourceId)) {
+  if (hasExistingResource(db, input.userId, input.feature, input.resourceId, input)) {
     return;
   }
 
-  const status = getUsageLimitStatus(db, input.userId, input.tier, input.feature);
+  const status = getUsageLimitStatus(db, input.userId, input.tier, input.feature, input);
 
   if (status.limit !== null && status.used >= status.limit) {
     throw new UsageLimitError({
