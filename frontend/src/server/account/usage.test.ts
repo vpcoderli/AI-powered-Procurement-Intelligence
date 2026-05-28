@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { bids, intentToBid, organizationMemberships, organizations, savedBids, users } from "@/server/db/schema";
+import { alerts, bids, intentToBid, organizationMemberships, organizations, savedBids, users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { getAccountUsage } from "./usage";
 
@@ -84,6 +84,20 @@ describe("account usage service", () => {
       createdAt: "2026-05-28T00:00:02.000Z",
       updatedAt: "2026-05-28T00:00:02.000Z",
     }).run();
+    testDb.db.insert(alerts).values({
+      id: "alert_1",
+      userId: "user_owner",
+      name: "Cloud bids",
+      query: JSON.stringify({ q: "cloud" }),
+      states: "[]",
+      issuerType: "all",
+      deadlinePreset: "any",
+      publishedPreset: "any",
+      frequency: "daily",
+      isEnabled: 1,
+      createdAt: "2026-05-28T00:00:03.000Z",
+      updatedAt: "2026-05-28T00:00:03.000Z",
+    }).run();
 
     expect(getAccountUsage(testDb.db, "user_owner")).toEqual({
       tier: "free",
@@ -104,6 +118,22 @@ describe("account usage service", () => {
           remaining: 1,
           isLimited: false,
           requiredTier: "pro",
+        },
+        {
+          feature: "search_alerts",
+          used: 1,
+          limit: 2,
+          remaining: 1,
+          isLimited: false,
+          requiredTier: "pro",
+        },
+        {
+          feature: "team_members",
+          used: 2,
+          limit: 1,
+          remaining: 0,
+          isLimited: true,
+          requiredTier: "business",
         },
       ],
     });

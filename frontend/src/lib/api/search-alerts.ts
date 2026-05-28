@@ -34,7 +34,10 @@ function isApiErrorResponse(body: unknown): body is SearchAlertApiErrorResponse 
   const { code, message } = error as { code?: unknown; message?: unknown };
 
   return (
-    (code === "ALERT_NOT_FOUND" || code === "INVALID_REQUEST" || code === "INTERNAL_ERROR") &&
+    (code === "ALERT_NOT_FOUND" ||
+      code === "INVALID_REQUEST" ||
+      code === "USAGE_LIMIT_REACHED" ||
+      code === "INTERNAL_ERROR") &&
     typeof message === "string"
   );
 }

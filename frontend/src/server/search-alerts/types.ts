@@ -39,8 +39,12 @@ export interface SearchAlertResponse {
 
 export interface SearchAlertApiErrorResponse {
   error: {
-    code: "ALERT_NOT_FOUND" | "INVALID_REQUEST" | "INTERNAL_ERROR";
+    code: "ALERT_NOT_FOUND" | "INVALID_REQUEST" | "USAGE_LIMIT_REACHED" | "INTERNAL_ERROR";
     message: string;
+    feature?: string;
+    limit?: number;
+    used?: number;
+    requiredTier?: string | null;
   };
 }
 

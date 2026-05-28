@@ -9,7 +9,12 @@ import {
 import type { AppDatabase } from "@/server/db/client";
 import { users } from "@/server/db/schema";
 
-const ACCOUNT_USAGE_FEATURES: LimitedFeature[] = ["saved_bids", "intent_workspace"];
+const ACCOUNT_USAGE_FEATURES: LimitedFeature[] = [
+  "saved_bids",
+  "intent_workspace",
+  "search_alerts",
+  "team_members",
+];
 
 export interface AccountUsageItem {
   feature: LimitedFeature;

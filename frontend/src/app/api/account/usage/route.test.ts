@@ -43,6 +43,22 @@ describe("GET /api/account/usage", () => {
           isLimited: false,
           requiredTier: "pro",
         },
+        {
+          feature: "search_alerts",
+          used: 1,
+          limit: 2,
+          remaining: 1,
+          isLimited: false,
+          requiredTier: "pro",
+        },
+        {
+          feature: "team_members",
+          used: 1,
+          limit: 1,
+          remaining: 0,
+          isLimited: true,
+          requiredTier: "business",
+        },
       ],
     });
 

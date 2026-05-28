@@ -77,6 +77,12 @@ const BILLING_INVOICE_STATUS_FILTERS: Array<"all" | BillingInvoiceStatus> = [
   "void",
   "uncollectible",
 ];
+const USAGE_FEATURE_LABEL_KEYS: Record<AccountUsageData["items"][number]["feature"], string> = {
+  saved_bids: "settings.usageFeature_saved_bids",
+  intent_workspace: "settings.usageFeature_intent_workspace",
+  search_alerts: "settings.usageFeature_search_alerts",
+  team_members: "settings.usageFeature_team_members",
+};
 
 export default function SettingsPage() {
   const { t } = useLanguage();
@@ -132,6 +138,7 @@ export default function SettingsPage() {
   const latestFailedInvoice = (billingInvoicesData?.invoices ?? []).find(
     (invoice) => invoice.status === "payment_failed",
   );
+  const usageLimitedItems = usageData?.items.filter((item) => item.isLimited) ?? [];
   const canManageWorkspace = workspaceData?.currentUserRole === "owner";
 
   useEffect(() => {
@@ -690,6 +697,18 @@ export default function SettingsPage() {
                 {!usageData && !usageError && (
                   <p className="text-sm font-medium text-slate-500">{t("settings.loadingUsage")}</p>
                 )}
+                {usageData && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">
+                      {t("settings.usageDashboardSummary")}
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-slate-900">
+                      {t("settings.usageDashboardSummaryValue")
+                        .replace("{used}", String(usageLimitedItems.length))
+                        .replace("{total}", String(usageData.items.length))}
+                    </p>
+                  </div>
+                )}
                 {(usageData?.items ?? []).map((item) => {
                   const percent =
                     item.limit === null ? 100 : Math.min(Math.round((item.used / Math.max(item.limit, 1)) * 100), 100);
@@ -699,7 +718,7 @@ export default function SettingsPage() {
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                           <p className="text-sm font-semibold text-slate-900">
-                            {t(`settings.usageFeature_${item.feature}`)}
+                            {t(USAGE_FEATURE_LABEL_KEYS[item.feature])}
                           </p>
                           <p className="mt-1 text-xs font-medium text-slate-500">
                             {usageRemainingLabel(item.remaining)}

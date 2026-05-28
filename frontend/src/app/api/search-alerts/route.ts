@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
+import { UsageLimitError, enforceUsageLimit } from "@/server/auth/usage-limits";
 import { db } from "@/server/db/client";
 import * as searchAlertService from "@/server/search-alerts/service";
 import type { CreateSearchAlertInput } from "@/server/search-alerts/types";
@@ -31,6 +32,23 @@ function internalError(principal: RequestPrincipal) {
     { error: { code: "INTERNAL_ERROR", message: "Internal server error" } },
     principal,
     { status: 500 },
+  );
+}
+
+function usageLimitError(error: UsageLimitError, principal: RequestPrincipal) {
+  return jsonWithPrincipalCookie(
+    {
+      error: {
+        code: error.code,
+        message: "Upgrade your plan to create more search alerts.",
+        feature: error.feature,
+        limit: error.limit,
+        used: error.used,
+        requiredTier: error.requiredTier,
+      },
+    },
+    principal,
+    { status: 402 },
   );
 }
 
@@ -127,10 +145,19 @@ export async function POST(request: Request) {
   const principal = await resolvePrincipal(db, request);
 
   try {
+    enforceUsageLimit(db, {
+      userId: principal.userId,
+      tier: principal.tier,
+      feature: "search_alerts",
+    });
     const alert = await searchAlertService.createSearchAlert(db, principal.userId, input);
 
     return jsonWithPrincipalCookie({ alert }, principal);
-  } catch {
+  } catch (error) {
+    if (error instanceof UsageLimitError) {
+      return usageLimitError(error, principal);
+    }
+
     return internalError(principal);
   }
 }

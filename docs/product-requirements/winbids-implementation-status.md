@@ -30,7 +30,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs. |
 | Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin-only console access. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, tier-aware locked states for gated features, and manifest-backed static coverage tests for current/future advanced feature API routes. |
-| Usage limits | Central saved bid and intent workspace quota checks by tier; authenticated users are counted at workspace scope; APIs return `USAGE_LIMIT_REACHED` before creating over-limit resources; Settings shows current workspace usage vs plan limits. |
+| Usage limits | Central saved bid, intent workspace, search alert, and team member quota checks/counts by tier; authenticated users are counted at workspace scope; saved bids, intents, and search alerts return `USAGE_LIMIT_REACHED` before creating over-limit resources; Settings shows current workspace usage vs plan limits. |
 | Notification delivery foundation | `notification_outbox`, file/console/http providers, retryable delivery worker, deployable notification/dunning worker command, user notification preferences, billing dunning reminders, invitation delivery status, admin notification history UI, and admin delivery trigger API/UI. |
 | Subscription foundation | `account_subscriptions`, `subscription_events`, plan catalog, account subscription API, Settings Billing tab. |
 | Billing provider sync foundation | `billing_checkout_sessions`, checkout creation API, Stripe SDK/API adapter, Stripe webhook signature verification/mapping, provider event idempotency, subscription status reconciliation, lifecycle reconciliation, and Settings self-service upgrade/cancel controls. |
@@ -63,7 +63,7 @@ This document is the working checklist for local development. Update it after ea
 | 功能与等级关联 | Done | Central entitlement map controls feature keys such as `submission_guidance`, `compliance_manifest`, `pursue_no_bid`, `quote_workflow`, `knowledge_station`. |
 | 服务端功能拦截 | Done | `requireFeature()` exists and is already used by Submission Guidance, Compliance Manifest, and Pursue / No-Bid APIs; manifest-backed coverage tests protect every registered gated API and explicitly track not-yet-implemented paid feature APIs. |
 | 前端锁定态 | Partial | `useFeature()` and locked messages exist on key workspace modules and Settings feature overview. |
-| 使用额度限制 | Partial | Saved bids and intent workspace limits exist by tier; `/api/account/usage` and Settings Usage Dashboard show current usage, remaining quota, and upgrade prompt. |
+| 使用额度限制 | Partial | Saved bids, intent workspace, search alerts, and team member usage are counted by tier/workspace; saved bids, intents, and search alert creation enforce quota; `/api/account/usage` and Settings Usage Dashboard show current usage, remaining quota, limited-resource summary, and upgrade prompt. |
 | 通知偏好与投递状态 | Partial | Users can persist saved-search alert and marketing preferences; disabled saved-search alerts are skipped by the notification service; invited members show latest delivery status; Admin can view notification outbox rows and manually trigger delivery. |
 | 订阅数据基础 | Partial | `account_subscriptions`, `subscription_events`, plan catalog, and Settings Billing tab exist. |
 | 自助升级/取消基础 | Partial | Settings Billing can start Pro/Business checkout sessions through local fallback or Stripe Checkout, receive provider-compatible/Stripe webhook updates, sync account tier/status, dedupe provider events, schedule provider-side cancellation at period end, and reconcile expired/canceled/past-due access. |
@@ -76,7 +76,8 @@ This document is the working checklist for local development. Update it after ea
 |---:|---|---|---|
 | P0 | Production Billing Provider Hardening | Add end-to-end Stripe sandbox verification, provider dashboard setup notes, and production credential/deployment runbook. | The SDK/API adapter exists; the remaining work is environment hardening and live sandbox proof. |
 | P1 | Trial / Dunning Lifecycle | Add production scheduling for dunning worker and provider-specific dunning event handling. | Prevents stale paid access when payment state changes. |
-| P1 | Usage Dashboard Expansion | Add future quote/workspace/AI-call usage metrics after those resources exist. | Users need to understand why an upgrade is required. |
+| P1 | Team Seat Enforcement | Enforce `team_members` quota in invite/member activation flows and return a user-facing upgrade error. | The dashboard now counts seats; invite flow still needs a hard quota gate. |
+| P1 | Advanced Usage Metrics | Add future quote workflow, Knowledge Station, and AI-call usage metrics after those resources exist. | Users need to understand why an upgrade is required for advanced paid features. |
 | P2 | Granular Operator Roles | Add support/operator roles separate from full admin. | Useful once support operations grow. |
 | P2 | Advanced Feature Flags | Add configurable feature flags or per-account overrides beyond tier defaults. | Enables beta features and enterprise custom access. |
 
@@ -99,8 +100,8 @@ This document is the working checklist for local development. Update it after ea
 | Admin vs user separation | Admin APIs enforce admin role; disabled admins are rejected; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | More granular operator roles such as support/owner/member |
 | User role model | `user`/`admin` role enum, role update API, audit trail, role-aware frontend session payload | More granular operator roles such as support/owner/member |
 | Subscription / tier model | `account_tier` on users, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, Stripe SDK/API checkout and portal sessions, Stripe webhook mapping/signature verification, cancellation scheduling, subscription lifecycle reconciliation, filtered invoice history with summary totals/PDF links, payment retry links, payment-failed notification outbox entries, staged dunning reminders with resolved-payment suppression, and optional generic webhook signature verification | Stripe sandbox verification/runbook and production scheduled dunning worker deployment |
-| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid and intent usage limits, Settings usage dashboard, and manifest-backed static coverage tests; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated; Quote Workflow and Knowledge Station are explicitly marked as not-yet-implemented API surfaces | Per-account feature overrides and beta flags |
-| Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails | Full alert management UI, per-alert digest configuration, real email delivery provider |
+| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid/intent/search alert quota enforcement, team member usage counting, Settings usage dashboard, and manifest-backed static coverage tests; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated; Quote Workflow and Knowledge Station are explicitly marked as not-yet-implemented API surfaces | Team seat enforcement, per-account feature overrides, and beta flags |
+| Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails; creation is quota-gated by tier | Full alert management UI, per-alert digest configuration, real email delivery provider |
 | Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, user preferences, billing dunning reminders, deployable notification/dunning worker command, invite delivery status, admin notification history, and admin delivery trigger exist | Production cron/process deployment and production email provider hardening |
 | Admin data QA | Source status and logs exist | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
 
@@ -119,12 +120,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Stripe Sandbox E2E Verification** next if the next sprint focuses on production readiness. If the next sprint stays on product completeness, prioritize Invoice History Polish or Full Search Alerts UI.
+Prioritize **Team Seat Enforcement** next if the next sprint continues the account/tier thread. Prioritize **Stripe Sandbox E2E Verification** if the next sprint focuses on production readiness. If the next sprint stays on product workflow completeness, prioritize Full Search Alerts UI.
 
 Reason:
 
 - The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Business-gated Compliance Manifest, and Pro-gated Pursue / No-Bid Decision now exist.
-- The remaining account gap is not basic registration; it is Stripe sandbox/deployment hardening, production worker deployment runbook, broader usage dashboards, and future compliance polish.
+- The remaining account gap is not basic registration; it is team seat enforcement, Stripe sandbox/deployment hardening, production worker deployment runbook, broader advanced usage metrics, and future compliance polish.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
@@ -177,6 +178,8 @@ Current local limits:
 |---|---:|---:|---:|---:|
 | `saved_bids` | 5 | 50 | 250 | Unlimited |
 | `intent_workspace` | 2 | 20 | 100 | Unlimited |
+| `search_alerts` | 2 | 10 | 50 | Unlimited |
+| `team_members` | 1 | 3 | 10 | Unlimited |
 
 ## Suggested Implementation Order
 
@@ -188,7 +191,11 @@ Current local limits:
    - Add cron/process deployment notes for `worker:notifications`.
    - Decide production email provider configuration and monitoring.
 
-3. **Product workflow depth**
+3. **Account / tier enforcement**
+   - Enforce team member seat limits during invite and invitation acceptance.
+   - Add per-account feature overrides only after a concrete beta/enterprise use case exists.
+
+4. **Product workflow depth**
    - Build Response Workspace.
 
 ## Completed Phase: Account / Role / Tier Foundation
@@ -970,6 +977,28 @@ Current local limits:
 
 建议下一步：
 - 如果继续账户/权限体验，做 Usage Dashboard Expansion；如果稳定商业化链路，做 Stripe Sandbox E2E Verification 和 Production Worker Deployment Runbook。
+
+## Completed Phase: Usage Dashboard Expansion
+
+本阶段完成：
+- `usage-limits` 从 saved bids / intent workspace 扩展到 `search_alerts` 和 `team_members`。
+- `/api/account/usage` 现在返回四类 workspace 用量：已保存招标、投标意向工作区、搜索提醒、团队成员。
+- Settings Usage Dashboard 增加 limited-resource summary，并补齐中英文功能文案。
+- `/api/search-alerts` 创建前会检查搜索提醒额度，超过套餐限制时返回 `USAGE_LIMIT_REACHED` / HTTP 402，并携带 used、limit、requiredTier。
+- 前端搜索提醒 API 错误类型支持 `USAGE_LIMIT_REACHED`。
+
+验证：
+- `npm test -- src/server/auth/usage-limits.test.ts src/server/account/usage.test.ts src/app/api/account/usage/route.test.ts src/app/api/search-alerts/route.test.ts src/lib/api/auth.test.ts src/app/settings/page.test.ts`
+
+当前还剩：
+1. Team Seat Enforcement：邀请成员和接受邀请时强制检查 `team_members` 套餐席位。
+2. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
+3. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
+4. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+5. Advanced Usage Metrics：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
+
+建议下一步：
+- 继续账户/权限主线时，优先做 Team Seat Enforcement；如果要先稳定商业化链路，做 Stripe Sandbox E2E Verification 和 Production Worker Deployment Runbook。
 
 ## Status Update Template
 
