@@ -288,6 +288,41 @@ def test_fetch_state_replays_il_bidbuy_fixture_html(tmp_path):
     }
 
 
+def test_fetch_state_replays_generic_state_fixture_html(tmp_path):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+    fixture = Path(__file__).parent / "fixtures" / "generic_state_procurement.html"
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "al_state_procurement",
+            "--query",
+            "cabling",
+            "--limit",
+            "5",
+            "--fixture-html",
+            str(fixture),
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 0
+    bid = connection.execute(
+        "SELECT source, source_bid_id, dedupe_key, title, state_code FROM bids"
+    ).fetchone()
+    assert bid == (
+        "Alabama State Procurement",
+        "AL-2026-001",
+        "al_state_procurement:AL-2026-001",
+        "Data center cabling services",
+        "AL",
+    )
+
+
 def test_fetch_state_persists_attachments_from_live_fetcher(tmp_path, monkeypatch):
     database = tmp_path / "apsi.sqlite"
     create_crawler_database(database)

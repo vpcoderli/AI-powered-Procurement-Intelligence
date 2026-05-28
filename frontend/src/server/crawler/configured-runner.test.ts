@@ -25,14 +25,11 @@ describe("configured crawler runner", () => {
       runCrawlerSourceOnce,
     });
 
-    expect(results.map((result) => result.source)).toEqual([
-      "SAM.gov",
-      "ca_caleprocure",
-      "tx_esbd",
-      "ny_contract_reporter",
-      "fl_mfmp",
-      "il_bidbuy",
-    ]);
+    expect(results).toHaveLength(51);
+    expect(results[0].source).toBe("SAM.gov");
+    expect(results.slice(1).map((result) => result.source)).toEqual(
+      CONFIGURED_CRAWLER_SOURCES.slice(1).map((source) => source.source),
+    );
     expect(calls.map((call) => call.source)).toEqual(
       CONFIGURED_CRAWLER_SOURCES.map((source) => source.source),
     );
@@ -52,9 +49,9 @@ describe("configured crawler runner", () => {
       runCrawlerSourceOnce,
     });
 
-    expect(runCrawlerSourceOnce).toHaveBeenCalledTimes(6);
+    expect(runCrawlerSourceOnce).toHaveBeenCalledTimes(51);
     expect(results.find((result) => result.source === "tx_esbd")?.status).toBe("failure");
-    expect(results.at(-1)?.source).toBe("il_bidbuy");
+    expect(results.at(-1)?.source).toBe("wy_state_procurement");
   });
 
   it("passes configured state limit to state runners only", async () => {
@@ -72,13 +69,10 @@ describe("configured crawler runner", () => {
     });
 
     expect(calls[0].runnerOptions).toBeUndefined();
-    expect(calls.slice(1).map((call) => call.runnerOptions)).toEqual([
-      { limit: 7 },
-      { limit: 7 },
-      { limit: 7 },
-      { limit: 7 },
-      { limit: 7 },
-    ]);
+    expect(calls.slice(1)).toHaveLength(50);
+    expect(calls.slice(1).map((call) => call.runnerOptions)).toEqual(
+      Array.from({ length: 50 }, () => ({ limit: 7 })),
+    );
   });
 
   it("parses positive state crawler limits from the environment", () => {
@@ -101,7 +95,7 @@ describe("configured crawler runner", () => {
 
 function successResult(source: string) {
   return {
-    ok: true,
+    ok: true as const,
     source,
     status: "success" as const,
     runner: { ok: true, source, status: "success" as const, stdout: "", stderr: "" },
@@ -112,7 +106,7 @@ function successResult(source: string) {
 
 function failureResult(source: string) {
   return {
-    ok: false,
+    ok: false as const,
     source,
     status: "failure" as const,
     runner: { ok: false, source, status: "failure" as const, stdout: "", stderr: "failed" },

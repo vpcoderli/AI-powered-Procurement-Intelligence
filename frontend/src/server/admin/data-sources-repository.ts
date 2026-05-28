@@ -1,4 +1,5 @@
 import { desc, eq } from "drizzle-orm";
+import { STATE_CRAWLER_SOURCE_IDS_BY_STATE } from "@/lib/state-crawler-sources";
 import type { AppDatabase } from "@/server/db/client";
 import { crawlerLogs, dataSources } from "@/server/db/schema";
 
@@ -58,13 +59,7 @@ export class AdminDataSourceNotFoundError extends Error {
   }
 }
 
-const CRAWLER_LOG_SOURCE_BY_STATE: Record<string, string> = {
-  CA: "ca_caleprocure",
-  TX: "tx_esbd",
-  NY: "ny_contract_reporter",
-  FL: "fl_mfmp",
-  IL: "il_bidbuy",
-};
+const CRAWLER_LOG_SOURCE_BY_STATE = STATE_CRAWLER_SOURCE_IDS_BY_STATE;
 
 function crawlerLogKeysForSource(source: typeof dataSources.$inferSelect) {
   return [CRAWLER_LOG_SOURCE_BY_STATE[source.stateCode], source.label, source.id].filter(

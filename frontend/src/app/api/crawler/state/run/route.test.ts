@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
 import * as notificationService from "@/server/notifications/service";
 import { createStateCrawlerRunPost } from "./route";
 
@@ -58,17 +59,13 @@ describe("POST /api/crawler/state/run", () => {
 
     expect(response.status).toBe(200);
     expect(body.status).toBe("completed");
-    expect(body.results.map((result: { source: string }) => result.source)).toEqual([
-      "ca_caleprocure",
-      "tx_esbd",
-      "ny_contract_reporter",
-      "fl_mfmp",
-      "il_bidbuy",
-    ]);
-    expect(runCrawlerSourceOnce).toHaveBeenCalledTimes(5);
+    expect(body.results.map((result: { source: string }) => result.source)).toEqual(
+      STATE_CRAWLER_SOURCES.map((source) => source.id),
+    );
+    expect(runCrawlerSourceOnce).toHaveBeenCalledTimes(50);
     expect(runCrawlerSourceOnce.mock.calls[0][1]).toEqual(
       expect.objectContaining({
-        source: "ca_caleprocure",
+        source: "al_state_procurement",
         owner: "state_route_test",
         runnerOptions: { allowFixtureFallback: true },
       }),
