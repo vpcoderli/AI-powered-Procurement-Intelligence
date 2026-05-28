@@ -1,4 +1,5 @@
 import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlements";
+import type { AccountExportData } from "@/server/account/lifecycle";
 import type { WorkspaceRole } from "@/server/account/workspace";
 
 export type SubscriptionStatus = "none" | "trialing" | "active" | "past_due" | "canceled";
@@ -104,6 +105,8 @@ export interface PasswordResetRequestResponse {
   expiresAt?: string;
 }
 
+export type AccountExportResponse = AccountExportData;
+
 export interface AccountWorkspaceMember {
   userId: string;
   email: string | null;
@@ -141,6 +144,7 @@ type AuthErrorCode =
   | "INTERNAL_ERROR"
   | "LAST_OWNER_REQUIRED"
   | "MEMBER_NOT_FOUND"
+  | "OWNER_TRANSFER_REQUIRED"
   | "WEAK_PASSWORD";
 
 interface ApiErrorResponse {
@@ -185,6 +189,7 @@ function isApiErrorResponse(body: unknown): body is ApiErrorResponse {
       code === "INTERNAL_ERROR" ||
       code === "LAST_OWNER_REQUIRED" ||
       code === "MEMBER_NOT_FOUND" ||
+      code === "OWNER_TRANSFER_REQUIRED" ||
       code === "WEAK_PASSWORD")
   );
 }
@@ -265,6 +270,20 @@ export async function changePassword(input: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+  });
+
+  return parseResponse<{ ok: true }>(response);
+}
+
+export async function exportAccountData(): Promise<AccountExportResponse> {
+  const response = await fetch("/api/account/export");
+
+  return parseResponse<AccountExportResponse>(response);
+}
+
+export async function deleteAccount(): Promise<{ ok: true }> {
+  const response = await fetch("/api/account", {
+    method: "DELETE",
   });
 
   return parseResponse<{ ok: true }>(response);
@@ -373,6 +392,16 @@ export async function updateWorkspaceMemberRole(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+  });
+
+  return parseResponse<AccountWorkspaceResponse>(response);
+}
+
+export async function transferWorkspaceOwnership(userId: string): Promise<AccountWorkspaceResponse> {
+  const response = await fetch("/api/account/workspace/ownership", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ targetUserId: userId }),
   });
 
   return parseResponse<AccountWorkspaceResponse>(response);

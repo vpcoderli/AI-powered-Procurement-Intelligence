@@ -5,12 +5,15 @@ import {
   cancelAccountSubscription,
   createBillingPortalSession,
   createCheckoutSession,
+  deleteAccount,
+  exportAccountData,
   fetchBillingInvoices,
   fetchAccountSubscription,
   fetchAccountWorkspace,
   inviteWorkspaceMember,
   removeWorkspaceMember,
   requestPasswordReset,
+  transferWorkspaceOwnership,
   updateAccountWorkspace,
   updateAccountProfile,
   updateWorkspaceMemberRole,
@@ -73,6 +76,49 @@ describe("auth API client", () => {
         currentPassword: "strong-password",
         newPassword: "new-strong-password",
       }),
+    });
+  });
+
+  it("exports account data", async () => {
+    const body = {
+      generatedAt: "2026-05-28T00:00:00.000Z",
+      account: {
+        id: "user_1",
+        email: "buyer@example.com",
+        displayName: "Buyer",
+        role: "user",
+        tier: "free",
+        isDisabled: false,
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+        lastLoginAt: null,
+      },
+      workspace: null,
+      subscription: null,
+      billingCheckoutSessions: [],
+      billingInvoices: [],
+      subscriptionEvents: [],
+      savedBids: [],
+      supplierProfile: null,
+      intents: [],
+      submissionPaths: [],
+      submissionConfirmations: [],
+      complianceManifestItems: [],
+      pursuitDecisions: [],
+      searchAlerts: [],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(exportAccountData()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/export");
+  });
+
+  it("deletes the current account", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    await expect(deleteAccount()).resolves.toEqual({ ok: true });
+    expect(mockFetch).toHaveBeenCalledWith("/api/account", {
+      method: "DELETE",
     });
   });
 
@@ -322,6 +368,27 @@ describe("auth API client", () => {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ role: "owner" }),
+    });
+  });
+
+  it("transfers workspace ownership", async () => {
+    const body = {
+      organization: {
+        id: "org_1",
+        name: "Acme Federal Team",
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      },
+      currentUserRole: "member",
+      members: [],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(transferWorkspaceOwnership("user_2")).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/workspace/ownership", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetUserId: "user_2" }),
     });
   });
 
