@@ -14,6 +14,8 @@ This directory is the local working source for WinBids product requirements afte
    - Compares the source requirements with the current local system.
 4. `winbids-next-development-plan.md`
    - Recommends the next implementation phase: Submission Guidance Lite.
+5. `winbids-implementation-status.md`
+   - Tracks implemented, partial, and missing functionality after each local development phase.
 
 ## Current Recommendation
 
@@ -35,5 +37,6 @@ If the Drive folder changes, re-read the Drive folder and update:
 - Unified PRD.
 - Gap analysis.
 - Next development plan.
+- Implementation status checklist.
 
 Do not rely on memory from prior sessions when planning new work.
