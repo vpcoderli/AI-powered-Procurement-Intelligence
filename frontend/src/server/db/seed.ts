@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
 import { MOCK_BIDS } from "../../lib/mock-data";
 import type { AppDatabase } from "./client";
 import { bidAttachments, bids, dataSources, supplierProfiles, users } from "./schema";
@@ -53,8 +54,8 @@ export async function seedDatabase(db: AppDatabase) {
     .onConflictDoNothing()
     .run();
 
-  const sourceRows = new Map(
-    MOCK_BIDS.map((bid) => [
+  const sourceRows = new Map<string, typeof dataSources.$inferInsert>(
+    MOCK_BIDS.filter((bid) => bid.issuerType !== "state").map((bid) => [
       bid.source,
       {
         id: bid.source
@@ -70,6 +71,18 @@ export async function seedDatabase(db: AppDatabase) {
       },
     ]),
   );
+
+  for (const source of STATE_CRAWLER_SOURCES) {
+    sourceRows.set(source.id, {
+      id: source.id,
+      label: source.label,
+      issuerType: "state",
+      stateCode: source.stateCode,
+      baseUrl: source.baseUrl,
+      createdAt: SEED_TIMESTAMP,
+      updatedAt: SEED_TIMESTAMP,
+    });
+  }
 
   for (const source of sourceRows.values()) {
     db.insert(dataSources)

@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { organizations, users } from "@/server/db/schema";
+import { bidAttachments, organizations, users } from "@/server/db/schema";
 import {
   acceptWorkspaceInvitation,
   inviteWorkspaceMember,
@@ -49,6 +49,41 @@ describe("bid repository", () => {
     );
   });
 
+  it("keeps external attachment URLs unchanged and rewrites local ones to the download API", async () => {
+    const timestamp = "2026-05-28T00:00:00.000Z";
+    testDb.db.insert(bidAttachments)
+      .values([
+        {
+          id: "external_attachment",
+          bidId: "1",
+          name: "External.pdf",
+          url: "https://example.gov/files/external.pdf",
+          sizeLabel: "1 MB",
+          sortOrder: 100,
+          createdAt: timestamp,
+        },
+        {
+          id: "local_attachment",
+          bidId: "1",
+          name: "Local.pdf",
+          url: "data/attachments/local.pdf",
+          sizeLabel: "2 MB",
+          sortOrder: 101,
+          createdAt: timestamp,
+        },
+      ])
+      .run();
+
+    const bid = await getBidByIdFromRepository(testDb.db, "1");
+
+    expect(bid?.attachments.find((attachment) => attachment.name === "External.pdf")?.url).toBe(
+      "https://example.gov/files/external.pdf",
+    );
+    expect(bid?.attachments.find((attachment) => attachment.name === "Local.pdf")?.url).toBe(
+      "/api/bids/1/attachments/local_attachment",
+    );
+  });
+
   it("persists saved bids per user", async () => {
     await saveSavedBidId(testDb.db, "anon_a", "1");
     await saveSavedBidId(testDb.db, "anon_b", "2");
@@ -71,9 +106,10 @@ describe("bid repository", () => {
       .set({ accountTier: "business" })
       .where(eq(users.id, owner.user.id))
       .run();
+    expect(owner.user.workspace).toBeDefined();
     testDb.db.update(organizations)
       .set({ accountTier: "business" })
-      .where(eq(organizations.id, owner.user.workspace.organizationId))
+      .where(eq(organizations.id, owner.user.workspace!.organizationId))
       .run();
     const member = await inviteWorkspaceMember(testDb.db, owner.user.id, {
       email: "member@example.com",

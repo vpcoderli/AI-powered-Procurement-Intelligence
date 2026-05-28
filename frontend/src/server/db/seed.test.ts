@@ -47,6 +47,16 @@ describe("database seed", () => {
     expect(source.baseUrl).toBe("https://sam.gov/opp/12345");
   });
 
+  it("seeds state data sources for all 50 crawler states", async () => {
+    const sourceRows = testDb.db.select().from(dataSources).all();
+    const stateRows = sourceRows.filter((source) => source.issuerType === "state");
+
+    expect(stateRows).toHaveLength(50);
+    expect(new Set(stateRows.map((source) => source.stateCode)).size).toBe(50);
+    expect(stateRows.find((source) => source.stateCode === "CA")?.id).toBe("ca_caleprocure");
+    expect(stateRows.find((source) => source.stateCode === "WA")?.id).toBe("wa_state_procurement");
+  });
+
   it("converges seeded attachment ids across repeated runs", async () => {
     await seedDatabase(testDb.db);
 

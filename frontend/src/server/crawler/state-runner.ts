@@ -1,15 +1,8 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
+import { STATE_CRAWLER_SOURCES, type StateCrawlerSourceId } from "@/lib/state-crawler-sources";
 
-export const STATE_CRAWLER_SOURCES = [
-  { id: "ca_caleprocure", label: "California Cal eProcure" },
-  { id: "tx_esbd", label: "Texas ESBD" },
-  { id: "ny_contract_reporter", label: "New York State Contract Reporter" },
-  { id: "fl_mfmp", label: "MyFloridaMarketPlace" },
-  { id: "il_bidbuy", label: "Illinois BidBuy" },
-] as const;
-
-export type StateCrawlerSourceId = (typeof STATE_CRAWLER_SOURCES)[number]["id"];
+export { STATE_CRAWLER_SOURCES, type StateCrawlerSourceId };
 
 export interface StateCrawlerRunOptions {
   source: StateCrawlerSourceId;

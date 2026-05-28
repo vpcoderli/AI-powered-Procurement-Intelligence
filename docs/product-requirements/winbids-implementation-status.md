@@ -27,7 +27,7 @@ This document is the working checklist for local development. Update it after ea
 | User data model basics | `users` table, `sessions` table, `organizations`, `organization_memberships`, `role`, `account_tier`, `is_disabled`, and workspace owner/member state. |
 | Admin auth helper | `requireAdmin()` checks authenticated non-disabled full-admin sessions; `requireAdminAccess()` supports admin/operator/support console access with route-level role restrictions; local bypass for development. |
 | Admin user access console | `/admin` lists registered users, creates invited accounts with temporary passwords, filters/searches accounts, changes role/tier/enabled state, shows access audit logs including self-service account deletion, and keeps account management limited to full admins. |
-| Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs; support can view operational state, operator/admin can run operational actions. |
+| Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs; support can view operational state, operator/admin can run operational actions; state crawler registry now covers all 50 states. |
 | Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin/operator/support console access. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, tier-aware locked states for gated features, and manifest-backed static coverage tests for current/future advanced feature API routes. |
 | Usage limits | Central saved bid, intent workspace, search alert, and team member quota checks/counts by organization tier; authenticated users are counted at workspace scope; saved bids, intents, search alerts, and team member invite/accept flows return `USAGE_LIMIT_REACHED` before creating over-limit resources; Settings shows current workspace usage vs plan limits. |
@@ -36,7 +36,7 @@ This document is the working checklist for local development. Update it after ea
 | Billing provider sync foundation | `billing_checkout_sessions`, checkout creation API, Stripe SDK/API adapter, Stripe webhook signature verification/mapping, provider event idempotency, subscription status reconciliation, lifecycle reconciliation, Settings self-service upgrade/cancel controls, and repeatable Stripe sandbox E2E verifier/runbook. |
 | Invoice / payment history foundation | `billing_invoices`, provider invoice event sync, payment-failed status handling, payment retry links, payment-failed notification outbox entries, account invoice API with status filtering and summary totals, Settings invoice history UI with filters/PDF links/retry links, and optional HMAC webhook signature verification via `BILLING_WEBHOOK_SECRET`. |
 | Customer portal foundation | Hosted checkout and customer portal URL templates, provider/customer placeholders, account portal API, and Settings Manage Billing entry. |
-| Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, CA/TX/NY/FL/IL runner wiring. |
+| Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, 50-state state runner registry, CA/TX/NY/FL/IL dedicated adapters, generic public procurement adapter foundation for remaining states, and local attachment file serving for crawler-managed files. |
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
 | Intent to Bid | Add intent from bid detail, idempotent workspace-scoped intent creation, shared intent list/detail for organization members, status update. |
 | AI-like bid brief | Deterministic brief, key dates, initial checklist, risk flags. |
@@ -1167,6 +1167,32 @@ Current local limits:
 
 建议下一步：
 - 如果继续生产商业化链路，优先做 Production Worker Deployment Runbook；如果继续产品体验，做 Full Search Alerts UI；如果继续权限/账户模型，等出现明确企业用例后再做 Custom Enterprise Permission Rules。
+
+## Completed Phase: 50-State Crawler Registry + Local Attachment Serving
+
+本阶段完成：
+- `winbids-current-gap-analysis.md` 已按当前实现重新拆分：Submission Guidance / Compliance Manifest / Pursue-NoBid 已从 gap 中移出，下一阶段重点转向 50 州 crawler 质量、Full Search Alerts UI、Sourcing/Quote、Response Workspace、Award/Knowledge。
+- Python crawler `STATE_SOURCES` 覆盖美国 50 州；CA/TX/NY/FL/IL 保留专用 adapter，其余州使用通用 public procurement HTML/JSON fetcher 作为基础覆盖层。
+- 前端 state runner、configured crawler runner、admin data source crawler-log mapping、state source mapping 全部扩展到 50 州。
+- seed 数据现在会创建 50 个州级 `data_sources`，Admin source console 可以统一展示和按州运行。
+- 新增 generic state crawler fixture/test，验证通用 HTML 表格可标准化为 bid 记录。
+- 新增本地附件下载链路：本地 `file://`、绝对路径、相对路径附件会在 bid API 中改写为 `/api/bids/:id/attachments/:attachmentId`，下载 API 只服务受控附件目录内的本地文件，外部 URL 保持直链且不会被代理。
+
+验证：
+- `npm test -- src/server/bids/repository.test.ts src/server/bids/attachments.test.ts 'src/app/api/bids/[id]/attachments/[attachmentId]/route.test.ts'`
+- `npm test -- src/lib/state-crawler-sources.test.ts src/server/crawler/state-runner.test.ts src/server/crawler/configured-runner.test.ts src/server/db/seed.test.ts src/app/api/crawler/state/run/route.test.ts src/server/admin/data-sources-repository.test.ts`
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_sources.py crawler/tests/test_generic_state.py crawler/tests/test_state_live_cli.py crawler/tests/test_state_live_sources.py`
+
+当前还剩：
+1. 50-State Crawler Quality Batch 1：选择 5-8 个通用州替换成专用 adapter，补分页、查询、详情页和附件元数据。
+2. Attachment Download Archival：crawler 侧下载附件到 `frontend/data/attachments` 或配置目录，记录 checksum/size/content type/original URL。
+3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+4. Sourcing Partner + Quote Inquiry Lite：partner DB、quote request、quote comparison。
+5. Response Workspace Lite：tasks、artifacts、internal checkpoints。
+6. Award / Tabulation Tracking Lite。
+
+建议下一步：
+- 如果继续数据覆盖主线，优先做 50-State Crawler Quality Batch 1；如果继续用户工作流，做 Full Search Alerts UI；如果继续投标准备深度，做 Sourcing Partner + Quote Inquiry Lite。
 
 ## Status Update Template
 

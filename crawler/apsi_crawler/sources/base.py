@@ -10,3 +10,4 @@ class Source:
     state_code: str
     fixture_loader: object
     live_fetcher: object = None
+    base_url: str = ""

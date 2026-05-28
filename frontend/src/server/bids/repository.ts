@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { bidAttachments, bids, savedBids, users } from "@/server/db/schema";
+import { attachmentDownloadUrl, isLocalAttachmentUrl } from "./attachments";
 import type { Bid } from "./domain";
 
 function nowIso() {
@@ -50,7 +51,7 @@ function attachmentsForBids(db: AppDatabase, bidIds: string[]) {
     const current = byBid.get(row.bidId) ?? [];
     current.push({
       name: row.name,
-      url: row.url,
+      url: isLocalAttachmentUrl(row.url) ? attachmentDownloadUrl(row.bidId, row.id) : row.url,
       size: row.sizeLabel ?? "",
     });
     byBid.set(row.bidId, current);
