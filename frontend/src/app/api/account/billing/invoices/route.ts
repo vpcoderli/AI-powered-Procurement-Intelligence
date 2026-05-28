@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
 import { readSessionToken } from "@/server/auth/session";
 import { getSessionUser } from "@/server/auth/service";
-import { InvalidSubscriptionInputError, listAccountInvoices } from "@/server/billing/subscriptions";
+import {
+  InvalidSubscriptionInputError,
+  isBillingInvoiceStatus,
+  listAccountInvoices,
+} from "@/server/billing/subscriptions";
 import { db } from "@/server/db/client";
 
 function errorResponse(code: string, message: string, status: number) {
@@ -22,7 +26,15 @@ export async function GET(request: Request) {
       return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
     }
 
-    return NextResponse.json(listAccountInvoices(db, sessionUser.id));
+    const status = new URL(request.url).searchParams.get("status");
+
+    if (status && !isBillingInvoiceStatus(status)) {
+      return errorResponse("INVALID_REQUEST", "Invalid invoice status filter", 400);
+    }
+
+    return NextResponse.json(
+      listAccountInvoices(db, sessionUser.id, status && isBillingInvoiceStatus(status) ? { status } : {}),
+    );
   } catch (error) {
     if (error instanceof InvalidSubscriptionInputError) {
       return errorResponse("INVALID_REQUEST", error.message, 400);

@@ -67,6 +67,11 @@ describe("settings page", () => {
     expect(page).toContain("settings.invoiceHistory");
     expect(page).toContain("settings.noInvoices");
     expect(page).toContain("settings.viewInvoice");
+    expect(page).toContain("settings.viewInvoicePdf");
+    expect(page).toContain("settings.invoiceFilter");
+    expect(page).toContain("settings.invoiceSummary");
+    expect(page).toContain("billingInvoiceStatusFilter");
+    expect(page).toContain("billingInvoicesData?.summary");
     expect(page).toContain("settings.pastDueBillingWarning");
     expect(page).toContain("settings.retryPayment");
     expect(page).toContain("settings.manageBilling");
