@@ -7,7 +7,7 @@ import { GET } from "./route";
 vi.mock("@/server/db/client", () => ({ db: {} }));
 vi.mock("@/server/admin/auth", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/server/admin/auth")>();
-  return { ...actual, requireAdmin: vi.fn() };
+  return { ...actual, requireAdminAccess: vi.fn() };
 });
 vi.mock("@/server/notifications/outbox-repository", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/server/notifications/outbox-repository")>();
@@ -20,7 +20,7 @@ describe("GET /api/admin/notifications", () => {
   });
 
   it("allows admins to inspect recent notification outbox rows", async () => {
-    vi.mocked(adminAuth.requireAdmin).mockResolvedValueOnce({ kind: "admin", userId: "admin_1" });
+    vi.mocked(adminAuth.requireAdminAccess).mockResolvedValueOnce({ kind: "admin", role: "admin", userId: "admin_1" });
     vi.mocked(outboxRepository.listRecentNotifications).mockReturnValueOnce([
       {
         id: "notification_1",
@@ -53,7 +53,7 @@ describe("GET /api/admin/notifications", () => {
   });
 
   it("denies non-admin requests", async () => {
-    vi.mocked(adminAuth.requireAdmin).mockRejectedValueOnce(new AdminAuthError());
+    vi.mocked(adminAuth.requireAdminAccess).mockRejectedValueOnce(new AdminAuthError());
 
     const response = await GET(new Request("http://localhost/api/admin/notifications"));
     const body = await response.json();

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin, AdminAuthError } from "@/server/admin/auth";
+import { requireAdminAccess, AdminAuthError } from "@/server/admin/auth";
 import {
   AdminDataSourceNotFoundError,
   updateAdminDataSource,
@@ -46,7 +46,7 @@ export function createAdminDataSourcePatch(database?: AppDatabase) {
   return async function PATCH(request: Request, context: RouteContext) {
     try {
       const resolvedDb = await resolveDatabase(database);
-      await requireAdmin(resolvedDb, request);
+      await requireAdminAccess(resolvedDb, request, { roles: ["admin", "operator"] });
 
       const input = await parsePatchBody(request);
       if (!input) {

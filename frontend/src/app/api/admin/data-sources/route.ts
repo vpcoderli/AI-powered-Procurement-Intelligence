@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdmin, AdminAuthError } from "@/server/admin/auth";
+import { requireAdminAccess, AdminAuthError } from "@/server/admin/auth";
 import { listAdminDataSources } from "@/server/admin/data-sources-repository";
 import type { AppDatabase } from "@/server/db/client";
 
@@ -26,7 +26,7 @@ export function createAdminDataSourcesGet(database?: AppDatabase) {
   return async function GET(request: Request) {
     try {
       const resolvedDb = await resolveDatabase(database);
-      await requireAdmin(resolvedDb, request);
+      await requireAdminAccess(resolvedDb, request);
       return NextResponse.json(await listAdminDataSources(resolvedDb));
     } catch (error) {
       return routeError(error);

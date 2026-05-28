@@ -81,7 +81,8 @@ type InvitationDraft = {
   tier: AccountTier;
 };
 
-const USER_ROLES: UserRole[] = ["user", "admin"];
+const USER_ROLES: UserRole[] = ["user", "admin", "operator", "support"];
+const ADMIN_CONSOLE_USER_ROLES: UserRole[] = ["admin", "operator", "support"];
 const ACCOUNT_TIERS: AccountTier[] = ["free", "pro", "business", "enterprise"];
 const DEFAULT_INVITATION_DRAFT: InvitationDraft = {
   email: "",
@@ -208,16 +209,20 @@ export default function AdminPage() {
   const [isDeliveringNotifications, setIsDeliveringNotifications] = useState(false);
   const [isReconcilingSubscriptions, setIsReconcilingSubscriptions] = useState(false);
   const isAdmin = user?.role === "admin";
+  const isOperator = user?.role === "operator";
+  const canAccessAdminConsole = Boolean(user && ADMIN_CONSOLE_USER_ROLES.includes(user.role));
+  const canManageUsers = isAdmin;
+  const canRunOperations = isAdmin || isOperator;
 
   const load = useCallback(() => {
-    if (!isAdmin) return;
+    if (!canAccessAdminConsole) return;
 
     setState({ status: "loading" });
     Promise.all([
       listAdminDataSources(),
       listAdminCrawlerLogs(),
-      listAdminUsers(userFilters),
-      listAdminUserAuditLogs({ limit: 10 }),
+      canManageUsers ? listAdminUsers(userFilters) : Promise.resolve({ users: [] }),
+      canManageUsers ? listAdminUserAuditLogs({ limit: 10 }) : Promise.resolve({ logs: [] }),
       listAdminNotifications({ limit: 10 }),
     ])
       .then(([data, logsResponse, usersResponse, userAuditLogsResponse, notificationsResponse]) => {
@@ -233,14 +238,14 @@ export default function AdminPage() {
       .catch(() => {
         setState({ status: "error" });
       });
-  }, [isAdmin, userFilters]);
+  }, [canAccessAdminConsole, canManageUsers, userFilters]);
 
   useEffect(() => {
     if (isAuthLoading) return;
-    if (!isAdmin) return;
+    if (!canAccessAdminConsole) return;
 
     queueMicrotask(load);
-  }, [isAdmin, isAuthLoading, load]);
+  }, [canAccessAdminConsole, isAuthLoading, load]);
 
   const summary = state.status === "ready" ? state.data.summary : null;
   const sources = state.status === "ready" ? state.data.sources : [];
@@ -482,7 +487,7 @@ export default function AdminPage() {
     );
   }
 
-  if (!isAdmin) {
+  if (!canAccessAdminConsole) {
     return (
       <AdminAccessState
         icon={ShieldCheck}
@@ -510,23 +515,27 @@ export default function AdminPage() {
             <RefreshCw size={16} />
             {t("admin.refresh")}
           </Button>
-          <Button
-            onClick={runNow}
-            disabled={isRunning || runningSourceId !== null}
-            className="h-10 rounded-lg bg-slate-900 text-white hover:bg-slate-800"
-          >
-            <Play size={16} />
-            {isRunning ? t("admin.running") : t("admin.runStateCrawlers")}
-          </Button>
-          <Button
-            variant="outline"
-            onClick={reconcileSubscriptions}
-            disabled={isReconcilingSubscriptions}
-            className="h-10 rounded-lg border-slate-200"
-          >
-            <RefreshCw size={16} />
-            {isReconcilingSubscriptions ? t("admin.reconcilingSubscriptions") : t("admin.reconcileSubscriptions")}
-          </Button>
+          {canRunOperations && (
+            <Button
+              onClick={runNow}
+              disabled={isRunning || runningSourceId !== null}
+              className="h-10 rounded-lg bg-slate-900 text-white hover:bg-slate-800"
+            >
+              <Play size={16} />
+              {isRunning ? t("admin.running") : t("admin.runStateCrawlers")}
+            </Button>
+          )}
+          {canManageUsers && (
+            <Button
+              variant="outline"
+              onClick={reconcileSubscriptions}
+              disabled={isReconcilingSubscriptions}
+              className="h-10 rounded-lg border-slate-200"
+            >
+              <RefreshCw size={16} />
+              {isReconcilingSubscriptions ? t("admin.reconcilingSubscriptions") : t("admin.reconcileSubscriptions")}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -566,7 +575,7 @@ export default function AdminPage() {
         </div>
       )}
 
-      {state.status === "ready" && (
+      {state.status === "ready" && canManageUsers && (
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
             <div className="flex items-center gap-2 font-semibold text-slate-950">
@@ -814,16 +823,18 @@ export default function AdminPage() {
               <Bell size={18} />
               {t("admin.notificationDelivery")}
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={deliverNotifications}
-              disabled={isDeliveringNotifications}
-              className="h-9 rounded-lg border-slate-200 px-3"
-            >
-              <Play size={14} />
-              {isDeliveringNotifications ? t("admin.deliveringNotifications") : t("admin.deliverNotifications")}
-            </Button>
+            {canRunOperations && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={deliverNotifications}
+                disabled={isDeliveringNotifications}
+                className="h-9 rounded-lg border-slate-200 px-3"
+              >
+                <Play size={14} />
+                {isDeliveringNotifications ? t("admin.deliveringNotifications") : t("admin.deliverNotifications")}
+              </Button>
+            )}
           </div>
           <div className="divide-y divide-slate-100">
             {notifications.length === 0 && (
@@ -853,7 +864,7 @@ export default function AdminPage() {
         </section>
       )}
 
-      {state.status === "ready" && (
+      {state.status === "ready" && canManageUsers && (
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 font-semibold text-slate-950">
             <History size={18} />
@@ -899,8 +910,8 @@ export default function AdminPage() {
                 <TableHead>{t("admin.lastRun")}</TableHead>
                 <TableHead>{t("admin.status")}</TableHead>
                 <TableHead>{t("admin.counts")}</TableHead>
-                <TableHead className="text-right">{t("admin.run")}</TableHead>
-                <TableHead className="text-right">{t("admin.enabled")}</TableHead>
+                {canRunOperations && <TableHead className="text-right">{t("admin.run")}</TableHead>}
+                <TableHead className="text-right">{canRunOperations ? t("admin.enabled") : t("admin.status")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -937,37 +948,45 @@ export default function AdminPage() {
                       ? `${source.latestLog.fetchedCount}/${source.latestLog.insertedCount}/${source.latestLog.updatedCount}/${source.latestLog.failedCount}`
                       : "-"}
                   </TableCell>
+                  {canRunOperations && (
+                    <TableCell className="text-right">
+                      {stateCrawlerSourceIdFor(source) ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => runSourceNow(source)}
+                          disabled={isRunning || runningSourceId !== null}
+                          aria-label={t("admin.runSource").replace("{source}", source.label)}
+                          className="h-8 rounded-lg border-slate-200 px-2"
+                        >
+                          <Play size={14} />
+                          <span className="sr-only">{t("admin.runSource").replace("{source}", source.label)}</span>
+                        </Button>
+                      ) : (
+                        <span className="text-slate-400">-</span>
+                      )}
+                    </TableCell>
+                  )}
                   <TableCell className="text-right">
-                    {stateCrawlerSourceIdFor(source) ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => runSourceNow(source)}
-                        disabled={isRunning || runningSourceId !== null}
-                        aria-label={t("admin.runSource").replace("{source}", source.label)}
-                        className="h-8 rounded-lg border-slate-200 px-2"
-                      >
-                        <Play size={14} />
-                        <span className="sr-only">{t("admin.runSource").replace("{source}", source.label)}</span>
-                      </Button>
+                    {canRunOperations ? (
+                      <div className="flex items-center justify-end gap-3">
+                        <Label htmlFor={`source-${source.id}`} className="text-xs font-medium text-slate-500">
+                          {source.isEnabled ? t("admin.on") : t("admin.off")}
+                        </Label>
+                        <Switch
+                          id={`source-${source.id}`}
+                          checked={source.isEnabled}
+                          disabled={pendingSourceId === source.id}
+                          onCheckedChange={() => toggleSource(source)}
+                          className="data-checked:bg-slate-900"
+                        />
+                      </div>
                     ) : (
-                      <span className="text-slate-400">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-3">
-                      <Label htmlFor={`source-${source.id}`} className="text-xs font-medium text-slate-500">
+                      <Badge variant="outline" className={statusTone(source.isEnabled ? "success" : "disabled")}>
                         {source.isEnabled ? t("admin.on") : t("admin.off")}
-                      </Label>
-                      <Switch
-                        id={`source-${source.id}`}
-                        checked={source.isEnabled}
-                        disabled={pendingSourceId === source.id}
-                        onCheckedChange={() => toggleSource(source)}
-                        className="data-checked:bg-slate-900"
-                      />
-                    </div>
+                      </Badge>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

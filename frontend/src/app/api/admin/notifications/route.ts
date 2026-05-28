@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AdminAuthError, requireAdmin } from "@/server/admin/auth";
+import { AdminAuthError, requireAdminAccess } from "@/server/admin/auth";
 import type { AppDatabase } from "@/server/db/client";
 import { listRecentNotifications } from "@/server/notifications/outbox-repository";
 import type { NotificationStatus } from "@/server/notifications/types";
@@ -40,7 +40,7 @@ export function createAdminNotificationsGet(database?: AppDatabase) {
   return async function GET(request: Request) {
     try {
       const resolvedDb = await resolveDatabase(database);
-      await requireAdmin(resolvedDb, request);
+      await requireAdminAccess(resolvedDb, request);
 
       return NextResponse.json({
         notifications: listRecentNotifications(resolvedDb, {

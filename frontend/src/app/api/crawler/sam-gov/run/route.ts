@@ -10,7 +10,7 @@ import {
   runSamGovCrawler,
   type SamGovCrawlerRunOptions,
 } from "@/server/crawler/sam-gov-runner";
-import { AdminAuthError, requireAdmin } from "@/server/admin/auth";
+import { AdminAuthError, requireAdminAccess } from "@/server/admin/auth";
 import { db, type AppDatabase } from "@/server/db/client";
 import { sendMatchedAlertNotifications } from "@/server/notifications/service";
 import { matchEnabledSearchAlerts, type SearchAlertMatchResult } from "@/server/search-alerts/matcher";
@@ -46,7 +46,7 @@ async function isAuthorized(database: AppDatabase, request: Request) {
   if (tokenFromRequest(request) === requiredToken) return true;
 
   try {
-    await requireAdmin(database, request);
+    await requireAdminAccess(database, request, { roles: ["admin", "operator"] });
     return true;
   } catch (error) {
     if (error instanceof AdminAuthError) return false;

@@ -12,7 +12,7 @@ describe("root layout", () => {
     expect(sidebar).toContain("winbids-sidebar");
     expect(sidebar).toContain("WinBids");
     expect(sidebar).toContain("useAuth");
-    expect(sidebar).toContain('user?.role === "admin"');
+    expect(sidebar).toContain("adminConsoleRoles");
     expect(globals).toContain(".winbids-workspace");
     expect(globals).toContain(".winbids-panel");
   });
