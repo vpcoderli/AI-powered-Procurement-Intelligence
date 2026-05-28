@@ -88,12 +88,17 @@ export function featuresForUser(subject: EntitlementSubject): FeatureKey[] {
 
 export function applyFeatureOverrides(
   baseFeatures: readonly FeatureKey[],
-  overrides: Iterable<{ featureKey: unknown; isEnabled: unknown }>,
+  overrides: Iterable<{ featureKey: unknown; isEnabled: unknown; expiresAt?: unknown }>,
+  now = new Date(),
 ): FeatureKey[] {
   const enabled = new Set(baseFeatures);
 
   for (const override of overrides) {
     if (!isFeatureKey(override.featureKey) || override.featureKey === "admin_console") {
+      continue;
+    }
+
+    if (typeof override.expiresAt === "string" && new Date(override.expiresAt).getTime() <= now.getTime()) {
       continue;
     }
 

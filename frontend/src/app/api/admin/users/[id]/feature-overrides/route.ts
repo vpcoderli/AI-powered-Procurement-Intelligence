@@ -48,9 +48,24 @@ function parseUpdate(body: unknown): UpdateAdminUserFeatureOverrideInput | null 
     return null;
   }
 
+  if ("reason" in source && source.reason !== undefined && source.reason !== null && typeof source.reason !== "string") {
+    return null;
+  }
+
+  if (
+    "expiresAt" in source &&
+    source.expiresAt !== undefined &&
+    source.expiresAt !== null &&
+    (typeof source.expiresAt !== "string" || !Number.isFinite(new Date(source.expiresAt).getTime()))
+  ) {
+    return null;
+  }
+
   return {
     featureKey: source.featureKey,
     isEnabled: source.isEnabled,
+    reason: typeof source.reason === "string" ? source.reason : null,
+    expiresAt: typeof source.expiresAt === "string" ? new Date(source.expiresAt).toISOString() : null,
   };
 }
 

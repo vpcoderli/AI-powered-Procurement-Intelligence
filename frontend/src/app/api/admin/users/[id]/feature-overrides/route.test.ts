@@ -30,14 +30,26 @@ describe("GET /api/admin/users/[id]/feature-overrides", () => {
     vi.mocked(usersRepository.listAdminUserFeatureOverrides).mockReturnValueOnce({
       organizationId: "org_1",
       organizationName: "Buyer Workspace",
-      overrides: [{ featureKey: "compliance_manifest", isEnabled: true }],
+      overrides: [{
+        featureKey: "compliance_manifest",
+        isEnabled: true,
+        reason: "Pilot",
+        expiresAt: "2026-06-28T00:00:00.000Z",
+        isExpired: false,
+      }],
     });
 
     const response = await GET(new Request("http://localhost/api/admin/users/user_1/feature-overrides"), context);
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.overrides).toEqual([{ featureKey: "compliance_manifest", isEnabled: true }]);
+    expect(body.overrides).toEqual([{
+      featureKey: "compliance_manifest",
+      isEnabled: true,
+      reason: "Pilot",
+      expiresAt: "2026-06-28T00:00:00.000Z",
+      isExpired: false,
+    }]);
     expect(usersRepository.listAdminUserFeatureOverrides).toHaveBeenCalledWith({}, "user_1");
   });
 
@@ -62,26 +74,69 @@ describe("PATCH /api/admin/users/[id]/feature-overrides", () => {
     vi.mocked(usersRepository.updateAdminUserFeatureOverride).mockReturnValueOnce({
       organizationId: "org_1",
       organizationName: "Buyer Workspace",
-      overrides: [{ featureKey: "compliance_manifest", isEnabled: false }],
+      overrides: [{
+        featureKey: "compliance_manifest",
+        isEnabled: false,
+        reason: "Enterprise exception",
+        expiresAt: "2026-06-28T00:00:00.000Z",
+        isExpired: false,
+      }],
     });
 
     const response = await PATCH(
       new Request("http://localhost/api/admin/users/user_1/feature-overrides", {
         method: "PATCH",
-        body: JSON.stringify({ featureKey: "compliance_manifest", isEnabled: false }),
+        body: JSON.stringify({
+          featureKey: "compliance_manifest",
+          isEnabled: false,
+          reason: "Enterprise exception",
+          expiresAt: "2026-06-28T00:00:00.000Z",
+        }),
       }),
       context,
     );
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.overrides).toEqual([{ featureKey: "compliance_manifest", isEnabled: false }]);
+    expect(body.overrides).toEqual([{
+      featureKey: "compliance_manifest",
+      isEnabled: false,
+      reason: "Enterprise exception",
+      expiresAt: "2026-06-28T00:00:00.000Z",
+      isExpired: false,
+    }]);
     expect(usersRepository.updateAdminUserFeatureOverride).toHaveBeenCalledWith(
       {},
       "user_1",
-      { featureKey: "compliance_manifest", isEnabled: false },
+      {
+        featureKey: "compliance_manifest",
+        isEnabled: false,
+        reason: "Enterprise exception",
+        expiresAt: "2026-06-28T00:00:00.000Z",
+      },
       { actorKind: "admin", actorUserId: "admin_1" },
     );
+  });
+
+  it("rejects invalid override expiry dates", async () => {
+    vi.mocked(adminAuth.requireAdmin).mockResolvedValueOnce({ kind: "admin", userId: "admin_1" });
+
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/users/user_1/feature-overrides", {
+        method: "PATCH",
+        body: JSON.stringify({
+          featureKey: "compliance_manifest",
+          isEnabled: true,
+          expiresAt: "next week",
+        }),
+      }),
+      context,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("INVALID_REQUEST");
+    expect(usersRepository.updateAdminUserFeatureOverride).not.toHaveBeenCalled();
   });
 
   it("rejects admin console feature overrides", async () => {

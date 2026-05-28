@@ -116,6 +116,36 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function formatDateInputValue(value: string | null) {
+  if (!value) return "";
+
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+
+  return date.toISOString().slice(0, 10);
+}
+
+function expiresAtFromDateInput(value: string) {
+  if (!value) return null;
+
+  const date = new Date(`${value}T23:59:59.000Z`);
+  if (!Number.isFinite(date.getTime())) return null;
+
+  return date.toISOString();
+}
+
+function featureOverrideFormValues(
+  data: AdminUserFeatureOverridesResponse | null,
+  feature: FeatureKey,
+) {
+  const override = data?.overrides.find((item) => item.featureKey === feature);
+
+  return {
+    reason: override?.reason ?? "",
+    expiresAt: formatDateInputValue(override?.expiresAt ?? null),
+  };
+}
+
 function latestRunAt(source: AdminDataSource) {
   return source.latestLog?.finishedAt ?? source.latestLog?.startedAt ?? source.lastSuccessAt ?? source.lastFailureAt;
 }
@@ -141,7 +171,23 @@ function formatAuditChanges(log: AdminUserAuditLog) {
   if (log.changes.length === 0) return "-";
 
   return log.changes
-    .map((change) => `${change.field}: ${String(change.before)} -> ${String(change.after)}`)
+    .map((change) => {
+      if (change.field !== "featureOverride") {
+        return `${change.field}: ${String(change.before)} -> ${String(change.after)}`;
+      }
+
+      const formatOverrideState = (value: typeof change.before) => {
+        if (!value) return "default";
+
+        const parts = [value.isEnabled ? "enabled" : "disabled"];
+        if (value.reason) parts.push(`reason=${value.reason}`);
+        if (value.expiresAt) parts.push(`expires=${formatDate(value.expiresAt)}`);
+
+        return parts.join(" ");
+      };
+
+      return `${change.featureKey}: ${formatOverrideState(change.before)} -> ${formatOverrideState(change.after)}`;
+    })
     .join(", ");
 }
 
@@ -221,6 +267,8 @@ export default function AdminPage() {
   const [featureOverrideUser, setFeatureOverrideUser] = useState<AdminUser | null>(null);
   const [featureOverrideData, setFeatureOverrideData] = useState<AdminUserFeatureOverridesResponse | null>(null);
   const [featureOverrideFeature, setFeatureOverrideFeature] = useState<FeatureKey>("submission_guidance");
+  const [featureOverrideReason, setFeatureOverrideReason] = useState("");
+  const [featureOverrideExpiresAt, setFeatureOverrideExpiresAt] = useState("");
   const [isLoadingFeatureOverrides, setIsLoadingFeatureOverrides] = useState(false);
   const [isUpdatingFeatureOverride, setIsUpdatingFeatureOverride] = useState(false);
   const isAdmin = user?.role === "admin";
@@ -369,13 +417,22 @@ export default function AdminPage() {
       });
   };
 
+  const syncFeatureOverrideForm = (data: AdminUserFeatureOverridesResponse | null, feature: FeatureKey) => {
+    const form = featureOverrideFormValues(data, feature);
+
+    setFeatureOverrideReason(form.reason);
+    setFeatureOverrideExpiresAt(form.expiresAt);
+  };
+
   const openFeatureOverrides = (targetUser: AdminUser) => {
     setFeatureOverrideUser(targetUser);
     setFeatureOverrideData(null);
+    syncFeatureOverrideForm(null, featureOverrideFeature);
     setIsLoadingFeatureOverrides(true);
     listAdminUserFeatureOverrides(targetUser.id)
       .then((response) => {
         setFeatureOverrideData(response);
+        syncFeatureOverrideForm(response, featureOverrideFeature);
       })
       .catch(() => {
         setRunMessage(t("admin.featureOverrideLoadFailed"));
@@ -392,13 +449,18 @@ export default function AdminPage() {
   const saveFeatureOverride = (isEnabled: boolean | null) => {
     if (!featureOverrideUser) return;
 
+    const reason = featureOverrideReason.trim();
+
     setIsUpdatingFeatureOverride(true);
     updateAdminUserFeatureOverride(featureOverrideUser.id, {
       featureKey: featureOverrideFeature,
       isEnabled,
+      reason: isEnabled === null ? null : reason || null,
+      expiresAt: isEnabled === null ? null : expiresAtFromDateInput(featureOverrideExpiresAt),
     })
       .then((response) => {
         setFeatureOverrideData(response);
+        syncFeatureOverrideForm(response, featureOverrideFeature);
         setRunMessage(t("admin.featureOverrideUpdated"));
         return listAdminUserAuditLogs({ limit: 10 });
       })
@@ -893,7 +955,7 @@ export default function AdminPage() {
             </TableBody>
           </Table>
           {featureOverrideUser && (
-            <div className="grid gap-3 border-t border-slate-100 bg-slate-50/60 px-4 py-4 lg:grid-cols-[minmax(220px,1fr)_220px_auto] lg:items-end">
+            <div className="grid gap-3 border-t border-slate-100 bg-slate-50/60 px-4 py-4 lg:grid-cols-[minmax(220px,1fr)_220px_180px_180px_auto] lg:items-end">
               <div>
                 <p className="text-sm font-semibold text-slate-950">{t("admin.featureOverrides")}</p>
                 <p className="mt-1 text-xs leading-5 text-slate-500">
@@ -912,7 +974,12 @@ export default function AdminPage() {
                 {t("admin.feature")}
                 <select
                   value={featureOverrideFeature}
-                  onChange={(event) => setFeatureOverrideFeature(event.target.value as FeatureKey)}
+                  onChange={(event) => {
+                    const feature = event.target.value as FeatureKey;
+
+                    setFeatureOverrideFeature(feature);
+                    syncFeatureOverrideForm(featureOverrideData, feature);
+                  }}
                   className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
                 >
                   {OVERRIDABLE_FEATURES.map((feature) => (
@@ -930,6 +997,31 @@ export default function AdminPage() {
                       : t("admin.overrideDisabled")
                     : t("admin.overrideDefault")}
                 </Badge>
+                {selectedFeatureOverride?.isExpired && (
+                  <Badge variant="outline" className="border-rose-200 bg-rose-50 text-rose-700">
+                    {t("admin.overrideExpired")}
+                  </Badge>
+                )}
+              </div>
+              <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
+                {t("admin.overrideReason")}
+                <Input
+                  value={featureOverrideReason}
+                  onChange={(event) => setFeatureOverrideReason(event.target.value)}
+                  placeholder={t("admin.overrideReasonPlaceholder")}
+                  className="h-9 rounded-lg border-slate-200 bg-white"
+                />
+              </label>
+              <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
+                {t("admin.overrideExpiresAt")}
+                <Input
+                  type="date"
+                  value={featureOverrideExpiresAt}
+                  onChange={(event) => setFeatureOverrideExpiresAt(event.target.value)}
+                  className="h-9 rounded-lg border-slate-200 bg-white"
+                />
+              </label>
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   type="button"
                   variant="outline"

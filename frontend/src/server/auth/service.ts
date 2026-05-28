@@ -101,6 +101,7 @@ function organizationOverridesForWorkspace(db: AppDatabase, workspace?: PublicWo
     .select({
       featureKey: organizationFeatureOverrides.featureKey,
       isEnabled: organizationFeatureOverrides.isEnabled,
+      expiresAt: organizationFeatureOverrides.expiresAt,
     })
     .from(organizationFeatureOverrides)
     .where(eq(organizationFeatureOverrides.organizationId, workspace.organizationId))

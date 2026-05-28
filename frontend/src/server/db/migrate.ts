@@ -130,6 +130,8 @@ export function runMigrations(db: AppDatabase) {
       organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
       feature_key TEXT NOT NULL,
       is_enabled INTEGER NOT NULL,
+      reason TEXT,
+      expires_at TEXT,
       created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -474,6 +476,21 @@ export function runMigrations(db: AppDatabase) {
         LIMIT 1
       ), 'free')
     `);
+  }
+
+  const organizationFeatureOverrideColumns = new Set(
+    sqlite
+      .prepare("PRAGMA table_info(organization_feature_overrides)")
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+
+  if (!organizationFeatureOverrideColumns.has("reason")) {
+    sqlite.exec("ALTER TABLE organization_feature_overrides ADD COLUMN reason TEXT");
+  }
+
+  if (!organizationFeatureOverrideColumns.has("expires_at")) {
+    sqlite.exec("ALTER TABLE organization_feature_overrides ADD COLUMN expires_at TEXT");
   }
 
   const subscriptionEventColumns = new Set(

@@ -235,6 +235,8 @@ export const organizationFeatureOverrides = sqliteTable(
       .references(() => organizations.id, { onDelete: "cascade" }),
     featureKey: text("feature_key").notNull(),
     isEnabled: integer("is_enabled").notNull(),
+    reason: text("reason"),
+    expiresAt: text("expires_at"),
     createdByUserId: text("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),

@@ -229,7 +229,16 @@ describe("database schema", () => {
         .map((row) => (row as { name: string }).name);
 
       expect(featureOverrideColumns).toEqual(
-        expect.arrayContaining(["organization_id", "feature_key", "is_enabled", "created_by_user_id", "created_at", "updated_at"]),
+        expect.arrayContaining([
+          "organization_id",
+          "feature_key",
+          "is_enabled",
+          "reason",
+          "expires_at",
+          "created_by_user_id",
+          "created_at",
+          "updated_at",
+        ]),
       );
 
       const subscriptionEventColumns = testDb.db.$client
@@ -308,14 +317,18 @@ describe("database schema", () => {
             organization_id,
             feature_key,
             is_enabled,
+            reason,
+            expires_at,
             created_by_user_id,
             created_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           "org_1",
           "compliance_manifest",
           1,
+          "Beta pilot",
+          "2026-06-19T00:00:00.000Z",
           "user_1",
           "2026-05-19T00:00:00.000Z",
           "2026-05-19T00:00:00.000Z",

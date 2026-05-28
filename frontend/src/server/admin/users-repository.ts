@@ -60,6 +60,9 @@ export interface CreateAdminUserInviteResponse {
 export interface AdminUserFeatureOverride {
   featureKey: FeatureKey;
   isEnabled: boolean;
+  reason: string | null;
+  expiresAt: string | null;
+  isExpired: boolean;
 }
 
 export interface AdminUserFeatureOverridesResponse {
@@ -71,6 +74,8 @@ export interface AdminUserFeatureOverridesResponse {
 export interface UpdateAdminUserFeatureOverrideInput {
   featureKey: FeatureKey;
   isEnabled: boolean | null;
+  reason?: string | null;
+  expiresAt?: string | null;
 }
 
 export interface AdminUserAuditActor {
@@ -82,7 +87,12 @@ export type AdminUserAuditChange =
   | { field: "role"; before: UserRole; after: UserRole }
   | { field: "tier"; before: AccountTier; after: AccountTier }
   | { field: "isDisabled"; before: boolean; after: boolean }
-  | { field: "featureOverride"; featureKey: FeatureKey; before: boolean | null; after: boolean | null }
+  | {
+      field: "featureOverride";
+      featureKey: FeatureKey;
+      before: AdminUserFeatureOverrideAuditState | null;
+      after: AdminUserFeatureOverrideAuditState | null;
+    }
   | { field: "created"; before: null; after: string }
   | { field: "email"; before: string | null; after: string | null }
   | { field: "workspaceAccess"; before: "active"; after: "removed" };
@@ -96,6 +106,12 @@ export interface AdminUserAuditLog {
   action: "user_access_updated" | "user_invited" | "user_self_deleted";
   changes: AdminUserAuditChange[];
   createdAt: string;
+}
+
+export interface AdminUserFeatureOverrideAuditState {
+  isEnabled: boolean;
+  reason: string | null;
+  expiresAt: string | null;
 }
 
 export interface AdminUserAuditLogsResponse {
@@ -194,6 +210,37 @@ function validateFeatureOverrideKey(featureKey: FeatureKey) {
   }
 }
 
+function normalizeFeatureOverrideReason(reason: string | null | undefined) {
+  const trimmed = typeof reason === "string" ? reason.trim() : "";
+
+  return trimmed ? trimmed : null;
+}
+
+function normalizeFeatureOverrideExpiresAt(expiresAt: string | null | undefined) {
+  if (!expiresAt) return null;
+
+  const timestamp = new Date(expiresAt).getTime();
+  if (!Number.isFinite(timestamp)) {
+    throw new AdminUserFeatureOverrideError("Feature override expiry must be an ISO date.");
+  }
+
+  return new Date(timestamp).toISOString();
+}
+
+function isExpired(expiresAt: string | null, now = new Date()) {
+  return expiresAt ? new Date(expiresAt).getTime() <= now.getTime() : false;
+}
+
+function toFeatureOverrideAuditState(row: { isEnabled: number; reason?: string | null; expiresAt?: string | null } | undefined | null) {
+  if (!row) return null;
+
+  return {
+    isEnabled: row.isEnabled === 1,
+    reason: row.reason ?? null,
+    expiresAt: row.expiresAt ?? null,
+  };
+}
+
 function featureOverrideWorkspace(db: AppDatabase, userId: string) {
   const user = db.select().from(users).where(eq(users.id, userId)).limit(1).get();
 
@@ -209,17 +256,22 @@ function listOrganizationFeatureOverrides(db: AppDatabase, organizationId: strin
     .select({
       featureKey: organizationFeatureOverrides.featureKey,
       isEnabled: organizationFeatureOverrides.isEnabled,
+      reason: organizationFeatureOverrides.reason,
+      expiresAt: organizationFeatureOverrides.expiresAt,
     })
     .from(organizationFeatureOverrides)
     .where(eq(organizationFeatureOverrides.organizationId, organizationId))
     .orderBy(asc(organizationFeatureOverrides.featureKey))
     .all()
-    .filter((row): row is { featureKey: FeatureKey; isEnabled: number } =>
+    .filter((row): row is { featureKey: FeatureKey; isEnabled: number; reason: string | null; expiresAt: string | null } =>
       isFeatureKey(row.featureKey) && row.featureKey !== "admin_console",
     )
     .map((row) => ({
       featureKey: row.featureKey,
       isEnabled: row.isEnabled === 1,
+      reason: row.reason,
+      expiresAt: row.expiresAt,
+      isExpired: isExpired(row.expiresAt),
     }));
 }
 
@@ -425,7 +477,9 @@ export function updateAdminUserFeatureOverride(
     ))
     .limit(1)
     .get();
-  const beforeValue = before ? before.isEnabled === 1 : null;
+  const beforeValue = toFeatureOverrideAuditState(before);
+  const reason = normalizeFeatureOverrideReason(input.reason);
+  const expiresAt = normalizeFeatureOverrideExpiresAt(input.expiresAt);
 
   if (input.isEnabled === null) {
     db.delete(organizationFeatureOverrides)
@@ -438,6 +492,8 @@ export function updateAdminUserFeatureOverride(
     db.update(organizationFeatureOverrides)
       .set({
         isEnabled: input.isEnabled ? 1 : 0,
+        reason,
+        expiresAt,
         createdByUserId: actor.actorUserId,
         updatedAt: timestamp,
       })
@@ -452,6 +508,8 @@ export function updateAdminUserFeatureOverride(
         organizationId: workspace.organizationId,
         featureKey: input.featureKey,
         isEnabled: input.isEnabled ? 1 : 0,
+        reason,
+        expiresAt,
         createdByUserId: actor.actorUserId,
         createdAt: timestamp,
         updatedAt: timestamp,
@@ -459,7 +517,8 @@ export function updateAdminUserFeatureOverride(
       .run();
   }
 
-  if (beforeValue !== input.isEnabled) {
+  const afterValue = input.isEnabled === null ? null : { isEnabled: input.isEnabled, reason, expiresAt };
+  if (JSON.stringify(beforeValue) !== JSON.stringify(afterValue)) {
     db.insert(adminUserAuditLogs)
       .values({
         id: `audit_${crypto.randomUUID()}`,
@@ -471,7 +530,7 @@ export function updateAdminUserFeatureOverride(
           field: "featureOverride",
           featureKey: input.featureKey,
           before: beforeValue,
-          after: input.isEnabled,
+          after: afterValue,
         }]),
         createdAt: timestamp,
       })

@@ -62,7 +62,7 @@ This document is the working checklist for local development. Update it after ea
 | 细粒度后台角色 | Done | `operator` can access operational admin tools and run crawler/notification/dunning actions without user-management permission; `support` can access read-only operational admin views without mutation/run controls. |
 | 用户等级模型 | Done | `account_tier` supports `free`, `pro`, `business`, `enterprise`. |
 | 功能与等级关联 | Done | Central entitlement map controls feature keys such as `submission_guidance`, `compliance_manifest`, `pursue_no_bid`, `quote_workflow`, `knowledge_station`. |
-| 组织级功能覆盖 | Done | Full admin can force-enable, force-disable, or clear selected organization feature overrides beyond tier defaults; session entitlements and server feature gates consume the merged feature list. |
+| 组织级功能覆盖 | Done | Full admin can force-enable, force-disable, or clear selected organization feature overrides beyond tier defaults; overrides support reason and expiry metadata; expired overrides are ignored by session entitlements and server feature gates. |
 | 服务端功能拦截 | Done | `requireFeature()` exists and is already used by Submission Guidance, Compliance Manifest, and Pursue / No-Bid APIs; manifest-backed coverage tests protect every registered gated API and explicitly track not-yet-implemented paid feature APIs. |
 | 前端锁定态 | Partial | `useFeature()` and locked messages exist on key workspace modules and Settings feature overview. |
 | 使用额度限制 | Partial | Saved bids, intent workspace, search alerts, and team member usage are counted by organization tier/workspace; saved bids, intents, search alert creation, team invites, and invitation acceptance enforce quota; `/api/account/usage` and Settings Usage Dashboard show current usage, remaining quota, limited-resource summary, and upgrade prompt. |
@@ -101,7 +101,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin vs user separation | Admin APIs enforce full-admin role for account management and feature overrides; disabled admins are rejected; admin/operator/support can access `/admin`; operator/support receive lower-permission controls; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | Optional per-route permission audit UI and custom enterprise back-office roles |
 | User role model | `user`/`admin`/`operator`/`support` role enum, role update API, audit trail, role-aware frontend session payload | Optional company-level owner/member unification with global role model |
 | Subscription / tier model | `account_tier` on users, organization-level `account_tier` for workspace/team entitlement, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, Stripe SDK/API checkout and portal sessions, Stripe webhook mapping/signature verification, cancellation scheduling, subscription lifecycle reconciliation, filtered invoice history with summary totals/PDF links, payment retry links, payment-failed notification outbox entries, staged dunning reminders with resolved-payment suppression, and optional generic webhook signature verification | Stripe sandbox verification/runbook and production scheduled dunning worker deployment |
-| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid/intent/search alert/team invite quota enforcement, team member usage counting, Settings usage dashboard, organization-level feature overrides, and manifest-backed static coverage tests; session entitlements and workspace quotas now use organization tier; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated; Quote Workflow and Knowledge Station are explicitly marked as not-yet-implemented API surfaces | Optional richer beta program workflow and override expiry dates |
+| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid/intent/search alert/team invite quota enforcement, team member usage counting, Settings usage dashboard, organization-level feature overrides with reason/expiry metadata, and manifest-backed static coverage tests; session entitlements and workspace quotas now use organization tier; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated; Quote Workflow and Knowledge Station are explicitly marked as not-yet-implemented API surfaces | Optional richer beta program workflow, audit filters, and custom enterprise permission rules |
 | Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails; creation is quota-gated by tier | Full alert management UI, per-alert digest configuration, real email delivery provider |
 | Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, user preferences, billing dunning reminders, deployable notification/dunning worker command, invite delivery status, admin notification history, and admin delivery trigger exist | Production cron/process deployment and production email provider hardening |
 | Admin data QA | Source status and logs exist | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
@@ -121,12 +121,12 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Stripe Sandbox E2E Verification** if the next sprint focuses on production readiness. If the next sprint stays on product workflow completeness, prioritize Full Search Alerts UI. If the next sprint continues account/tier design, prioritize override expiry/audit polish or custom enterprise permission rules.
+Prioritize **Stripe Sandbox E2E Verification** if the next sprint focuses on production readiness. If the next sprint stays on product workflow completeness, prioritize Full Search Alerts UI. If the next sprint continues account/tier design, prioritize admin permission audit filters or custom enterprise permission rules.
 
 Reason:
 
 - The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Business-gated Compliance Manifest, and Pro-gated Pursue / No-Bid Decision now exist.
-- The remaining account gap is not basic registration; it is Stripe sandbox/deployment hardening, production worker deployment runbook, override expiry/audit polish, broader advanced usage metrics, and future compliance polish.
+- The remaining account gap is not basic registration; it is Stripe sandbox/deployment hardening, production worker deployment runbook, admin permission audit filters/custom enterprise rules, broader advanced usage metrics, and future compliance polish.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
@@ -1091,11 +1091,33 @@ Current local limits:
 1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
 3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
-4. Override Expiry / Audit Polish：给功能覆盖增加过期时间、原因、筛选和更清晰的审计视图。
+4. Admin Permission Audit Filters：按 actor/action/target/feature 筛选权限审计日志。
 5. Advanced Usage Metrics：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
 
 建议下一步：
-- 如果继续权限/账户模型，做 Override Expiry / Audit Polish；如果继续生产商业化链路，做 Stripe Sandbox E2E Verification；如果继续产品体验，做 Full Search Alerts UI。
+- 如果继续权限/账户模型，做 Admin Permission Audit Filters 或 Custom Enterprise Permission Rules；如果继续生产商业化链路，做 Stripe Sandbox E2E Verification；如果继续产品体验，做 Full Search Alerts UI。
+
+## Completed Phase: Override Expiry / Audit Polish
+
+本阶段完成：
+- `organization_feature_overrides` 增加 `reason` 和 `expires_at`，迁移兼容已有本地数据库。
+- Session entitlement 合并组织覆盖时会忽略已过期覆盖，避免临时 beta/企业授权过期后继续生效。
+- `/api/admin/users/[id]/feature-overrides` GET/PATCH 支持读取和保存原因、过期时间、过期状态。
+- `/admin` 功能覆盖管理区新增原因输入、过期日期输入和“已过期”状态标识。
+- 功能覆盖审计日志从简单布尔值升级为结构化状态，记录开启/关闭、原因和过期时间。
+
+验证：
+- `npm test -- src/app/admin/page.test.ts src/server/db/schema.test.ts src/server/auth/service.test.ts src/server/admin/users-repository.test.ts 'src/app/api/admin/users/[id]/feature-overrides/route.test.ts' src/lib/api/admin.test.ts`
+
+当前还剩：
+1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
+2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
+3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+4. Admin Permission Audit Filters：按 actor/action/target/feature 筛选权限审计日志。
+5. Advanced Usage Metrics：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
+
+建议下一步：
+- 如果继续生产商业化链路，优先做 Stripe Sandbox E2E Verification；如果继续产品体验，做 Full Search Alerts UI；如果继续权限/账户模型，做 Admin Permission Audit Filters。
 
 ## Status Update Template
 
