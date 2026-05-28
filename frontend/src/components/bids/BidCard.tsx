@@ -19,7 +19,7 @@ export function BidCard({ bid }: BidCardProps) {
   const saved = isSaved(bid.id);
 
   return (
-    <Card className="relative h-full border-slate-200 shadow-sm transition-all duration-200 ease-out hover:shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:border-slate-300 bg-white group">
+    <Card className="winbids-bid-card relative h-full border-slate-200 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-blue-200 group">
       <Link href={`/bids/${bid.id}`} className="block h-full">
         <CardContent className="p-6 flex flex-col h-full">
           <div className="flex justify-between items-start mb-4">

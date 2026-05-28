@@ -188,7 +188,7 @@ export default function IntentWorkspacePage() {
   }
 
   return (
-    <div className="prototypeWorkspace mx-auto flex max-w-6xl flex-col gap-5 pb-16 pt-4">
+    <div className="winbids-detail-workspace prototypeWorkspace">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Button
           variant="ghost"
@@ -210,7 +210,7 @@ export default function IntentWorkspacePage() {
         </Link>
       </div>
 
-      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+      <section className="winbids-hero-panel rounded-lg border border-slate-200 bg-white p-5 shadow-sm md:p-6">
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
           <div className="min-w-0">
             <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-700">
@@ -276,7 +276,7 @@ export default function IntentWorkspacePage() {
       </section>
 
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
-        <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <article className="winbids-panel rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-700">
@@ -316,7 +316,7 @@ export default function IntentWorkspacePage() {
           </div>
         </article>
 
-        <aside className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <aside className="winbids-panel rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-700">
             {t("intentsPage.moduleMap")}
           </p>
@@ -348,7 +348,7 @@ export default function IntentWorkspacePage() {
       </section>
 
       <section className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-        <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <article className="winbids-panel rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="flex items-center gap-2 text-xl font-black text-slate-950">
             <CheckCircle2 size={19} className="text-emerald-700" aria-hidden="true" />
             {t("intentsPage.checklist")}
@@ -363,7 +363,7 @@ export default function IntentWorkspacePage() {
           </ul>
         </article>
 
-        <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <article className="winbids-panel rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="flex items-center gap-2 text-xl font-black text-slate-950">
             <Target size={19} className="text-blue-700" aria-hidden="true" />
             {t("intentsPage.matchSnapshot")}
@@ -380,7 +380,7 @@ export default function IntentWorkspacePage() {
         </article>
       </section>
 
-      <section className="submissionPath rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="winbids-panel submissionPath rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-700">

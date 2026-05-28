@@ -16,5 +16,8 @@ describe("profile page", () => {
     expect(page).toContain("mountedRef");
     expect(page).toContain("invalidContractValue");
     expect(page).toContain("return null");
+    expect(page).toContain("winbids-workspace");
+    expect(page).toContain("winbids-hero-panel");
+    expect(page).toContain("winbids-panel");
   });
 });

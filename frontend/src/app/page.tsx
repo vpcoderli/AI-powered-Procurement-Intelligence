@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, Filter } from "lucide-react";
+import { Search, Filter, Gauge, ClipboardCheck, CircleAlert, FileCheck2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -101,10 +101,50 @@ export default function Dashboard() {
   }, [deadlinePreset, issuerType, publishedPreset, retryTick, searchQuery, selectedStates, sortBy]);
 
   return (
-    <div className="flex flex-col lg:flex-row h-full gap-6">
-      <aside className="w-full lg:w-64 shrink-0 flex flex-col gap-6 overflow-visible lg:overflow-y-auto pr-0 lg:pr-2 pb-4 lg:pb-8">
+    <div className="winbids-workspace">
+      <section className="winbids-hero-grid" aria-label="WinBids overview">
+        <article className="winbids-hero-panel">
+          <p className="winbids-kicker">American Public Supply Intelligence LLC</p>
+          <h1 className="winbids-title">{t("dashboard.title")}</h1>
+          <p className="winbids-lead mt-4">{t("dashboard.description")}</p>
+          <div className="relative group mt-6">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-700 transition-colors" size={20} />
+            <Input
+              placeholder={t("dashboard.searchPlaceholder")}
+              className="pl-12 pr-32 h-14 text-base shadow-sm border-slate-200 focus-visible:ring-1 focus-visible:ring-blue-700 rounded-lg"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <Button className="winbids-primary-action absolute right-2 top-1/2 -translate-y-1/2 h-10 border-0 px-6 hover:bg-blue-800">
+              {t("dashboard.searchButton")}
+            </Button>
+          </div>
+        </article>
+
+        <div className="grid gap-3 sm:grid-cols-2" aria-label="Discovery metrics">
+          {[
+            { label: "High-fit bids", value: String(total), icon: Gauge },
+            { label: "Active pursuits", value: "Intent", icon: ClipboardCheck },
+            { label: "Submission risks", value: "Lite", icon: CircleAlert },
+            { label: "Ready artifacts", value: "API", icon: FileCheck2 },
+          ].map((metric) => {
+            const Icon = metric.icon;
+            return (
+              <article key={metric.label} className="winbids-metric-card">
+                <Icon size={18} className="text-blue-700" aria-hidden="true" />
+                <strong className="mt-4 block text-3xl font-black text-slate-950">{metric.value}</strong>
+                <span className="mt-1 block text-xs font-black uppercase text-slate-500">{metric.label}</span>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="winbids-content-grid">
+      <aside className="winbids-filter-panel flex flex-col gap-6 overflow-visible lg:overflow-y-auto pb-2">
         <div>
-          <h3 className="font-semibold text-sm text-slate-900 flex items-center gap-2 mb-3">
+          <p className="winbids-kicker mb-2">Discovery controls</p>
+          <h3 className="font-black text-sm text-slate-950 flex items-center gap-2 mb-3">
             <Filter size={16} />
             {t("dashboard.filters")}
           </h3>
@@ -201,28 +241,14 @@ export default function Dashboard() {
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col gap-5 min-w-0">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal text-slate-950">{t("dashboard.title")}</h1>
-          <p className="mt-1 text-sm text-slate-600">{t("dashboard.description")}</p>
-        </div>
-
-        <div className="relative group">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-slate-900 transition-colors" size={20} />
-          <Input
-            placeholder={t("dashboard.searchPlaceholder")}
-            className="pl-12 pr-32 h-14 text-base shadow-sm border-slate-200 focus-visible:ring-1 focus-visible:ring-slate-900 rounded-xl"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-          <Button className="absolute right-2 top-1/2 -translate-y-1/2 h-10 px-6 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-medium shadow-sm transition-all">
-            {t("dashboard.searchButton")}
-          </Button>
-        </div>
-
+      <main className="winbids-main-column flex flex-col gap-5">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div className="text-sm text-slate-600 font-medium">
+          <div>
+            <p className="winbids-kicker">Discovery-first queue</p>
+            <h2 className="winbids-section-title mt-1">New high-fit bids</h2>
+            <div className="mt-2 text-sm text-slate-600 font-medium">
             {t("dashboard.resultsCount").replace("{count}", String(total))}
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm font-medium text-slate-500">{t("dashboard.sortBy")}</span>
@@ -292,6 +318,7 @@ export default function Dashboard() {
           )}
         </div>
       </main>
+      </section>
     </div>
   );
 }

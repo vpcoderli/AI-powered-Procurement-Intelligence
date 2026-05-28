@@ -186,29 +186,30 @@ export default function ProfilePage() {
   };
 
   return (
-    <div className="flex flex-col h-full gap-8 max-w-4xl mx-auto pb-12">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+    <div className="winbids-workspace">
+      <section className="winbids-hero-panel flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="p-2.5 bg-slate-100 text-slate-700 rounded-lg border border-slate-200 shadow-sm">
+          <div className="winbids-sidebar-mark">
             <UserRound size={22} strokeWidth={2.5} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{t("profilePage.title")}</h1>
-            <p className="text-sm text-slate-500 font-medium mt-0.5">{t("profilePage.description")}</p>
+            <p className="winbids-kicker">Core profile</p>
+            <h1 className="winbids-title">{t("profilePage.title")}</h1>
+            <p className="winbids-lead mt-2">{t("profilePage.description")}</p>
           </div>
         </div>
-        <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 text-right shadow-sm">
+        <div className="winbids-score-badge">
           <p className="text-xs font-semibold uppercase text-slate-500">{t("profilePage.completionScore")}</p>
           <p className="text-2xl font-bold text-slate-900">{completionScore}%</p>
         </div>
-      </div>
+      </section>
 
       {loadError ? (
         <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-medium text-red-700">
           {t("profilePage.loadError")}
         </div>
       ) : isLoading ? (
-        <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
+        <Card className="winbids-panel border-slate-200 rounded-lg overflow-hidden bg-white">
           <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
             <Skeleton className="h-6 w-48" />
             <Skeleton className="h-4 w-72" />
@@ -224,7 +225,7 @@ export default function ProfilePage() {
         </Card>
       ) : (
         <form onSubmit={handleSubmit}>
-          <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
+          <Card className="winbids-panel border-slate-200 rounded-lg overflow-hidden bg-white">
             <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
               <CardTitle className="text-lg font-semibold text-slate-900">{t("profilePage.formTitle")}</CardTitle>
               <CardDescription className="text-slate-500 font-medium">{t("profilePage.formDescription")}</CardDescription>

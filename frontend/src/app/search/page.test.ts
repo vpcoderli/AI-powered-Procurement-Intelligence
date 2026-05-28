@@ -9,4 +9,13 @@ describe("search route", () => {
     expect(page).toContain("Dashboard");
     expect(page).not.toContain("SearchAlertsPage");
   });
+
+  it("uses the WinBids demo workspace styling through the real dashboard route", () => {
+    const dashboardPage = readFileSync(new URL("../page.tsx", import.meta.url), "utf8");
+
+    expect(dashboardPage).toContain("winbids-workspace");
+    expect(dashboardPage).toContain("winbids-hero-panel");
+    expect(dashboardPage).toContain("winbids-filter-panel");
+    expect(dashboardPage).toContain("Discovery-first queue");
+  });
 });

@@ -256,7 +256,7 @@ export default function BidDetailsPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto flex flex-col gap-8 pb-16 pt-4">
+    <div className="winbids-detail-workspace">
       {/* Header Actions */}
       <div className="flex items-center justify-between">
         <Button variant="ghost" onClick={() => router.back()} className="-ml-4 text-slate-500 hover:text-slate-900 font-medium">
@@ -276,7 +276,7 @@ export default function BidDetailsPage() {
       </div>
 
       {/* Title & Badge */}
-      <div className="flex flex-col gap-4">
+      <section className="winbids-hero-panel flex flex-col gap-4">
         <div className="flex items-center gap-3">
           <Badge variant="outline" className="rounded-md font-medium border-slate-200 text-slate-600 bg-slate-50 px-2.5 py-1">
             {bid.source}
@@ -285,11 +285,11 @@ export default function BidDetailsPage() {
             <Building2 size={14} className="text-slate-400" /> {bid.issuerName}
           </span>
         </div>
-        <h1 className="text-3xl md:text-4xl font-bold text-slate-900 leading-tight tracking-tight">{bid.title}</h1>
-      </div>
+        <h1 className="winbids-title">{bid.title}</h1>
+      </section>
 
       {/* Metadata Grid (Receipt Style) */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-6 p-6 bg-white border border-slate-200 rounded-xl shadow-sm">
+      <div className="winbids-panel grid grid-cols-2 md:grid-cols-4 gap-6">
         <div className="flex flex-col gap-1.5">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
             <Building2 size={14}/> {t("bid.issuerType")}
@@ -317,7 +317,7 @@ export default function BidDetailsPage() {
       </div>
 
       {/* Pursuit Panel */}
-      <Card className="shadow-sm border-slate-200 rounded-xl overflow-hidden bg-white">
+      <Card className="winbids-panel border-slate-200 rounded-lg overflow-hidden bg-white">
         <CardHeader className="bg-white border-b border-slate-100 pb-4 pt-6 px-6">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="min-w-0">
@@ -345,7 +345,7 @@ export default function BidDetailsPage() {
             </div>
           ) : match ? (
             <div className="grid gap-5 lg:grid-cols-[0.55fr_1.45fr]">
-              <div className={`rounded-xl border p-5 ${scoreTone(match.score)}`}>
+                <div className={`rounded-lg border p-5 ${scoreTone(match.score)}`}>
                 <p className="text-xs font-semibold uppercase">{t("detail.pursuitScore")}</p>
                 <p className="mt-2 text-5xl font-bold tracking-tight">{match.score}%</p>
                 <p className="mt-2 text-sm font-semibold">{t(`intentsPage.confidence.${match.confidence}`)}</p>
@@ -462,7 +462,7 @@ export default function BidDetailsPage() {
       </Card>
 
       {/* Description */}
-      <Card className="shadow-sm border-slate-200 rounded-xl overflow-hidden">
+      <Card className="winbids-panel border-slate-200 rounded-lg overflow-hidden">
         <CardHeader className="bg-white border-b border-slate-100 pb-4 pt-6 px-6">
           <CardTitle className="text-lg font-semibold text-slate-900">{t("detail.detailedDescription")}</CardTitle>
         </CardHeader>
@@ -474,7 +474,7 @@ export default function BidDetailsPage() {
       </Card>
 
       {/* Contact */}
-      <Card className="shadow-sm border-slate-200 rounded-xl overflow-hidden">
+      <Card className="winbids-panel border-slate-200 rounded-lg overflow-hidden">
         <CardHeader className="bg-white border-b border-slate-100 pb-4 pt-6 px-6">
           <CardTitle className="text-lg font-semibold text-slate-900 flex items-center gap-2">
             <Building2 size={18} className="text-slate-400" /> {t("bid.contact")}
@@ -503,7 +503,7 @@ export default function BidDetailsPage() {
       </Card>
 
       {/* Attachments */}
-      <Card className="shadow-sm border-slate-200 rounded-xl overflow-hidden">
+      <Card className="winbids-panel border-slate-200 rounded-lg overflow-hidden">
         <CardHeader className="bg-white border-b border-slate-100 pb-4 pt-6 px-6">
           <CardTitle className="text-lg font-semibold text-slate-900 flex items-center gap-2">
             <Paperclip size={18} className="text-slate-400" /> {t("detail.attachments")}
