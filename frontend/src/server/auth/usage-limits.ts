@@ -1,10 +1,10 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { listWorkspaceMemberUserIds } from "@/server/account/workspace";
 import type { AppDatabase } from "@/server/db/client";
-import { intentToBid, savedBids } from "@/server/db/schema";
-import type { AccountTier, FeatureKey } from "./entitlements";
+import { alerts, intentToBid, organizationMemberships, savedBids } from "@/server/db/schema";
+import type { AccountTier } from "./entitlements";
 
-export type LimitedFeature = Extract<FeatureKey, "saved_bids" | "intent_workspace">;
+export type LimitedFeature = "saved_bids" | "intent_workspace" | "search_alerts" | "team_members";
 
 type TierUsageLimits = Record<LimitedFeature, number | null>;
 
@@ -12,18 +12,26 @@ const USAGE_LIMITS_BY_TIER: Record<AccountTier, TierUsageLimits> = {
   free: {
     saved_bids: 5,
     intent_workspace: 2,
+    search_alerts: 2,
+    team_members: 1,
   },
   pro: {
     saved_bids: 50,
     intent_workspace: 20,
+    search_alerts: 10,
+    team_members: 3,
   },
   business: {
     saved_bids: 250,
     intent_workspace: 100,
+    search_alerts: 50,
+    team_members: 10,
   },
   enterprise: {
     saved_bids: null,
     intent_workspace: null,
+    search_alerts: null,
+    team_members: null,
   },
 };
 
@@ -35,6 +43,16 @@ const nextTierByFeatureAndTier: Record<LimitedFeature, Partial<Record<AccountTie
   },
   intent_workspace: {
     free: "pro",
+    pro: "business",
+    business: "enterprise",
+  },
+  search_alerts: {
+    free: "pro",
+    pro: "business",
+    business: "enterprise",
+  },
+  team_members: {
+    free: "business",
     pro: "business",
     business: "enterprise",
   },
@@ -108,14 +126,33 @@ function usedCount(
     ).size;
   }
 
-  return new Set(
-    db
-      .select({ bidId: intentToBid.bidId })
-      .from(intentToBid)
-      .where(inArray(intentToBid.userId, userIds))
-      .all()
-      .map((row) => row.bidId),
-  ).size;
+  if (feature === "intent_workspace") {
+    return new Set(
+      db
+        .select({ bidId: intentToBid.bidId })
+        .from(intentToBid)
+        .where(inArray(intentToBid.userId, userIds))
+        .all()
+        .map((row) => row.bidId),
+    ).size;
+  }
+
+  if (feature === "search_alerts") {
+    return db
+      .select({ id: alerts.id })
+      .from(alerts)
+      .where(inArray(alerts.userId, userIds))
+      .all().length;
+  }
+
+  return db
+    .select({ userId: organizationMemberships.userId })
+    .from(organizationMemberships)
+    .where(and(
+      inArray(organizationMemberships.userId, userIds),
+      eq(organizationMemberships.status, "active"),
+    ))
+    .all().length;
 }
 
 function hasExistingResource(
@@ -139,11 +176,37 @@ function hasExistingResource(
     );
   }
 
+  if (feature === "intent_workspace") {
+    return Boolean(
+      db
+        .select()
+        .from(intentToBid)
+        .where(and(inArray(intentToBid.userId, userIds), eq(intentToBid.bidId, resourceId)))
+        .limit(1)
+        .get(),
+    );
+  }
+
+  if (feature === "search_alerts") {
+    return Boolean(
+      db
+        .select()
+        .from(alerts)
+        .where(and(inArray(alerts.userId, userIds), eq(alerts.id, resourceId)))
+        .limit(1)
+        .get(),
+    );
+  }
+
   return Boolean(
     db
       .select()
-      .from(intentToBid)
-      .where(and(inArray(intentToBid.userId, userIds), eq(intentToBid.bidId, resourceId)))
+      .from(organizationMemberships)
+      .where(and(
+        inArray(organizationMemberships.userId, userIds),
+        eq(organizationMemberships.userId, resourceId),
+        eq(organizationMemberships.status, "active"),
+      ))
       .limit(1)
       .get(),
   );

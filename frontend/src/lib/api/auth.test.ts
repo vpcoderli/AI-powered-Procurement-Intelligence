@@ -163,6 +163,22 @@ describe("auth API client", () => {
           isLimited: false,
           requiredTier: "pro",
         },
+        {
+          feature: "search_alerts",
+          used: 1,
+          limit: 2,
+          remaining: 1,
+          isLimited: false,
+          requiredTier: "pro",
+        },
+        {
+          feature: "team_members",
+          used: 1,
+          limit: 1,
+          remaining: 0,
+          isLimited: true,
+          requiredTier: "business",
+        },
       ],
     };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));

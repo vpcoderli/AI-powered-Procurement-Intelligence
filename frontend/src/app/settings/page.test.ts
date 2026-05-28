@@ -13,6 +13,10 @@ describe("settings page", () => {
     expect(page).toContain("settings.featureAccess");
     expect(page).toContain("settings.usageDashboard");
     expect(page).toContain("settings.usageRemaining");
+    expect(page).toContain("settings.usageFeature_search_alerts");
+    expect(page).toContain("settings.usageFeature_team_members");
+    expect(page).toContain("settings.usageDashboardSummary");
+    expect(page).toContain("usageLimitedItems");
     expect(page).toContain("usageData");
     expect(page).toContain("updateAccountProfile");
     expect(page).toContain("changePassword");

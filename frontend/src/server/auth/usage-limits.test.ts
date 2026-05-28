@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { bids, intentToBid, organizationMemberships, organizations, savedBids, users } from "@/server/db/schema";
+import { alerts, bids, intentToBid, organizationMemberships, organizations, savedBids, users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
   UsageLimitError,
@@ -48,6 +48,9 @@ describe("usage limits", () => {
   it("reports tier limits for countable features", () => {
     expect(usageLimitForTier("free", "saved_bids")).toBe(5);
     expect(usageLimitForTier("free", "intent_workspace")).toBe(2);
+    expect(usageLimitForTier("free", "search_alerts")).toBe(2);
+    expect(usageLimitForTier("free", "team_members")).toBe(1);
+    expect(usageLimitForTier("business", "team_members")).toBe(10);
     expect(usageLimitForTier("enterprise", "saved_bids")).toBeNull();
   });
 
@@ -172,5 +175,65 @@ describe("usage limits", () => {
         scopeUserIds: ["user_free", "user_member"],
       }),
     ).not.toThrow();
+  });
+
+  it("counts search alerts and team members across a workspace scope", () => {
+    testDb.db.insert(users).values({
+      id: "user_member",
+      email: "member@example.com",
+      role: "user",
+      accountTier: "free",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+    }).run();
+    testDb.db.insert(organizations).values({
+      id: "org_1",
+      name: "Workspace",
+      createdAt: "2026-05-28T00:00:00.000Z",
+      updatedAt: "2026-05-28T00:00:00.000Z",
+    }).run();
+    for (const userId of ["user_free", "user_member"]) {
+      testDb.db.insert(organizationMemberships).values({
+        organizationId: "org_1",
+        userId,
+        role: userId === "user_free" ? "owner" : "member",
+        status: "active",
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      }).run();
+      testDb.db.insert(alerts).values({
+        id: `alert_${userId}`,
+        userId,
+        name: `Alert ${userId}`,
+        query: JSON.stringify({ q: "cloud" }),
+        states: "[]",
+        issuerType: "all",
+        deadlinePreset: "any",
+        publishedPreset: "any",
+        frequency: "daily",
+        isEnabled: 1,
+        createdAt: "2026-05-28T00:00:00.000Z",
+        updatedAt: "2026-05-28T00:00:00.000Z",
+      }).run();
+    }
+
+    expect(
+      getUsageLimitStatus(testDb.db, "user_free", "free", "search_alerts", {
+        scopeUserIds: ["user_free", "user_member"],
+      }),
+    ).toMatchObject({ used: 2, limit: 2, remaining: 0, isLimited: true, requiredTier: "pro" });
+    expect(
+      getUsageLimitStatus(testDb.db, "user_free", "free", "team_members", {
+        scopeUserIds: ["user_free", "user_member"],
+      }),
+    ).toMatchObject({ used: 2, limit: 1, remaining: 0, isLimited: true, requiredTier: "business" });
+    expect(() =>
+      enforceUsageLimit(testDb.db, {
+        userId: "user_free",
+        tier: "free",
+        feature: "search_alerts",
+        scopeUserIds: ["user_free", "user_member"],
+      }),
+    ).toThrow(UsageLimitError);
   });
 });
