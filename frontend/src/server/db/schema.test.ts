@@ -131,6 +131,8 @@ describe("database schema", () => {
       expect(tables).toContain("submission_paths");
       expect(tables).toContain("submission_confirmations");
       expect(tables).toContain("admin_user_audit_logs");
+      expect(tables).toContain("account_subscriptions");
+      expect(tables).toContain("subscription_events");
 
       const userColumns = testDb.db.$client
         .prepare("PRAGMA table_info(users)")

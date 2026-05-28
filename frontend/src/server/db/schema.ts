@@ -39,6 +39,54 @@ export const adminUserAuditLogs = sqliteTable(
   }),
 );
 
+export const accountSubscriptions = sqliteTable(
+  "account_subscriptions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tier: text("tier").notNull().default("free"),
+    status: text("status").notNull().default("none"),
+    source: text("source").notNull().default("admin_override"),
+    provider: text("provider"),
+    providerCustomerId: text("provider_customer_id"),
+    providerSubscriptionId: text("provider_subscription_id"),
+    currentPeriodEnd: text("current_period_end"),
+    cancelAtPeriodEnd: integer("cancel_at_period_end").notNull().default(0),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    userIdx: uniqueIndex("idx_account_subscriptions_user_id").on(table.userId),
+    providerSubscriptionIdx: index("idx_account_subscriptions_provider_subscription").on(table.providerSubscriptionId),
+  }),
+);
+
+export const subscriptionEvents = sqliteTable(
+  "subscription_events",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    subscriptionId: text("subscription_id").references(() => accountSubscriptions.id, { onDelete: "set null" }),
+    eventType: text("event_type").notNull(),
+    fromTier: text("from_tier"),
+    toTier: text("to_tier"),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status"),
+    source: text("source").notNull(),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    userIdx: index("idx_subscription_events_user_id").on(table.userId),
+    subscriptionIdx: index("idx_subscription_events_subscription_id").on(table.subscriptionId),
+    createdIdx: index("idx_subscription_events_created").on(table.createdAt),
+  }),
+);
+
 export const sessions = sqliteTable(
   "sessions",
   {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { changePassword, updateAccountProfile } from "./auth";
+import { changePassword, fetchAccountSubscription, updateAccountProfile } from "./auth";
 
 const mockFetch = vi.fn<typeof fetch>();
 
@@ -59,5 +59,26 @@ describe("auth API client", () => {
         newPassword: "new-strong-password",
       }),
     });
+  });
+
+  it("fetches the current account subscription", async () => {
+    const body = {
+      subscription: {
+        userId: "user_1",
+        tier: "pro",
+        status: "active",
+        source: "local_checkout",
+        currentPeriodEnd: "2026-06-28T00:00:00.000Z",
+        cancelAtPeriodEnd: false,
+      },
+      plans: [
+        { tier: "free", label: "Free", priceMonthlyUsd: 0 },
+        { tier: "pro", label: "Pro", priceMonthlyUsd: 79 },
+      ],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(fetchAccountSubscription()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/subscription");
   });
 });

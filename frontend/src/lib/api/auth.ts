@@ -1,5 +1,8 @@
 import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlements";
 
+export type SubscriptionStatus = "none" | "trialing" | "active" | "past_due" | "canceled";
+export type SubscriptionSource = "admin_override" | "local_checkout" | "billing_provider";
+
 export interface PublicUser {
   id: string;
   email: string;
@@ -15,6 +18,27 @@ export interface AuthResponse {
 
 export interface SessionResponse {
   user: PublicUser | null;
+}
+
+export interface SubscriptionPlan {
+  tier: AccountTier;
+  label: string;
+  priceMonthlyUsd: number | null;
+  featureHighlights: string[];
+}
+
+export interface AccountSubscription {
+  userId: string;
+  tier: AccountTier;
+  status: SubscriptionStatus;
+  source: SubscriptionSource;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+}
+
+export interface AccountSubscriptionResponse {
+  subscription: AccountSubscription;
+  plans: SubscriptionPlan[];
 }
 
 type AuthErrorCode =
@@ -147,4 +171,10 @@ export async function changePassword(input: {
   });
 
   return parseResponse<{ ok: true }>(response);
+}
+
+export async function fetchAccountSubscription(): Promise<AccountSubscriptionResponse> {
+  const response = await fetch("/api/account/subscription");
+
+  return parseResponse<AccountSubscriptionResponse>(response);
 }
