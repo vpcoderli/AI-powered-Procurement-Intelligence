@@ -1,0 +1,21 @@
+{
+  "hits": 230,
+  "results": [
+    {
+      "bidid": 142657,
+      "bidNumber": "WHWarewashing26-27",
+      "title": "Warewashing",
+      "description": "West Hartford Nutrition Services is accepting proposals for warewashing.",
+      "status": "Open",
+      "startDate": "2026-05-27T14:00:00Z",
+      "statusDate": "2026-06-12T18:00:00Z",
+      "orgBidClassType": {
+        "code": "RFP",
+        "description": "Request for Proposal"
+      },
+      "creatorOrg": {
+        "name": "West Hartford Nutrition Services"
+      }
+    }
+  ]
+}

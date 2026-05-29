@@ -1327,6 +1327,35 @@ Current local limits:
 建议下一步：
 - 继续 crawler 质量主线时，优先做 Batch 4 候选州筛选和 adapter 实现；同时把 SC/OH 保持为“受官方访问机制阻塞”的已知风险，不把它们伪装成稳定非空源。
 
+## Completed Phase: 50-State Crawler Quality Batch 4
+
+本阶段完成：
+- 新增 UT / KS / MT / NM / CO / IN / MS / CT 八个州级 beta 专用 crawler adapter，替代对应州的 generic fetcher 入口。
+- UT 使用 Bonfire open opportunities JSON；MS 使用官方 DataTables JSON；CT 使用 CTsource/WebProcure JSON；KS 使用 Kansas eSupplier PeopleSoft 表格；MT 使用 Montana eMACS/Jaggaer 表格；NM 使用 SPD/Telerik 表格；CO 使用 BidNet open-bids HTML；IN 使用 IDOA current business opportunities 表格。
+- 八个 adapter 均支持 fixture-backed 测试，并解析 source bid id、标题、机构、发布日期/截止日期、详情 URL；IN/MS 同步附件链接元数据，CO/CT/MT/UT 同步详情页 URL。
+- `STATE_SOURCES` 已把 `ut_state_procurement`、`ks_state_procurement`、`mt_state_procurement`、`nm_state_procurement`、`co_state_procurement`、`in_state_procurement`、`ms_state_procurement`、`ct_state_procurement` 接入专用 fetcher。
+- 前端 crawler metadata 已同步标记 UT/KS/MT/NM/CO/IN/MS/CT 为 `dedicated` + `beta`，Admin 可继续通过现有 state runner 单独运行这些州。
+- 当前专用州覆盖：CA/TX/NY/FL/IL 为 verified dedicated；PA/SC/OR/MA/NJ/OH/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT 为 beta dedicated；其余州保持 generic foundation coverage。
+
+验证：
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_dedicated_spiders_batch4.py`
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_sources.py crawler/tests/test_state_live_validation.py crawler/tests/test_state_dedicated_spiders_batch4.py`
+- `npm test -- src/lib/state-crawler-sources.test.ts`
+- `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source ut_state_procurement --source ks_state_procurement --source mt_state_procurement --source nm_state_procurement --source co_state_procurement --source in_state_procurement --source ms_state_procurement --source ct_state_procurement --limit 3 --timeout 30`
+- Migrated temp SQLite fetch-state smoke: UT/KS/MT/NM/CO/MS/CT each inserted 2 bids and wrote success crawler logs; IN currently has 1 public row and inserted 1 bid with a success crawler log.
+
+当前还剩：
+1. SC/OH portal access resolution：SCBO 当前环境超时；OhioBuys 官方公开流程进入 browser_check/reCAPTCHA，不应绕过 CAPTCHA，需要 browser-assisted/manual 或官方 feed/API 策略。
+2. 50-State Crawler Quality Batch 5：继续选择 5-8 个 generic 州做专用 adapter，优先能稳定返回非空的 JSON/HTML 公共源。
+3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
+4. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+5. Sourcing Partner + Quote Inquiry Lite：partner DB、quote request、quote comparison。
+6. Response Workspace Lite：tasks、artifacts、internal checkpoints。
+7. Award / Tabulation Tracking Lite。
+
+建议下一步：
+- 继续 crawler 质量主线时，优先做 Batch 5；候选方向可优先从 OK/WV/ND/NE/SD/VT/WY/ID 中筛选能稳定非空的公开源。若切到产品功能主线，则优先做 Full Search Alerts UI。
+
 ## Status Update Template
 
 Use this after every phase:

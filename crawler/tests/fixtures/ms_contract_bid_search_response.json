@@ -1,0 +1,28 @@
+{
+  "sEcho": 1,
+  "iTotalRecords": 110,
+  "iTotalDisplayRecords": 110,
+  "aaData": [
+    {
+      "BidID": 45453,
+      "BidNumber": "1601-26-R-RFIN-00057",
+      "ObjectID": "3150006847",
+      "BidDescription": "Sole Source No. 5003; for the sole source certification of mail insertion system licensing, support, and maintenance for the Department of Revenue.",
+      "BidStatus": "Open",
+      "BidType": "Req. for Information",
+      "Agency": "",
+      "BuyerName": "Valerie Luckett",
+      "BuyerEmail": "VALERIE.LUCKETT@ITS.MS.GOV",
+      "AdvertiseDate": "/Date(1779858000000)/",
+      "SubmissionDate": "/Date(1780981200000)/",
+      "OpeningDate": "/Date(1780981200000)/",
+      "PDFUrl": "https://SRM.MAGIC.MS.GOV/SAP/EBP/DOCSERVER/SYN_BID_FORM_3150006847.PDF",
+      "Attachments": [
+        {
+          "Description": "Sole Source No. 5003 URL",
+          "Url": "https://SRM.MAGIC.MS.GOV/SAP/EBP/DOCSERVER/SOLE_SOURCE_URL.PDF"
+        }
+      ]
+    }
+  ]
+}
