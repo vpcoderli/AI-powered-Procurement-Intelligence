@@ -208,6 +208,13 @@ export function runMigrations(db: AppDatabase) {
       source_url TEXT NOT NULL,
       is_active INTEGER NOT NULL DEFAULT 1,
       raw_payload TEXT,
+      source_confidence TEXT NOT NULL DEFAULT 'medium',
+      quality_flags_json TEXT NOT NULL DEFAULT '[]',
+      admin_review_status TEXT NOT NULL DEFAULT 'unreviewed',
+      detail_archive_status TEXT NOT NULL DEFAULT 'not_archived',
+      detail_archive_path TEXT,
+      detail_fetched_at TEXT,
+      detail_checksum_sha256 TEXT,
       first_seen_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
@@ -219,6 +226,13 @@ export function runMigrations(db: AppDatabase) {
       bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       url TEXT NOT NULL,
+      original_url TEXT,
+      storage_path TEXT,
+      byte_size INTEGER,
+      content_type TEXT,
+      checksum_sha256 TEXT,
+      fetched_at TEXT,
+      archive_status TEXT NOT NULL DEFAULT 'not_archived',
       size_label TEXT,
       mime_type TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0,
@@ -389,6 +403,19 @@ export function runMigrations(db: AppDatabase) {
       base_url TEXT,
       is_enabled INTEGER NOT NULL DEFAULT 1,
       cadence TEXT NOT NULL DEFAULT 'daily',
+      provider_family TEXT,
+      access_mode TEXT,
+      source_type TEXT,
+      source_confidence TEXT,
+      activation_status TEXT,
+      requires_browser INTEGER,
+      requires_manual INTEGER,
+      requires_login INTEGER,
+      supports_query INTEGER,
+      supports_pagination INTEGER,
+      supports_attachment_metadata INTEGER,
+      supports_detail_page_fetch INTEGER,
+      fallback_notes TEXT,
       last_success_at TEXT,
       last_failure_at TEXT,
       consecutive_failures INTEGER NOT NULL DEFAULT 0,
@@ -545,4 +572,73 @@ export function runMigrations(db: AppDatabase) {
   if (!workspaceInvitationColumns.has("last_sent_at")) {
     sqlite.exec("ALTER TABLE workspace_invitations ADD COLUMN last_sent_at TEXT");
   }
+
+  const bidColumns = new Set(
+    sqlite
+      .prepare("PRAGMA table_info(bids)")
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+
+  const addBidColumn = (name: string, definition: string) => {
+    if (!bidColumns.has(name)) {
+      sqlite.exec(`ALTER TABLE bids ADD COLUMN ${name} ${definition}`);
+    }
+  };
+
+  addBidColumn("source_confidence", "TEXT NOT NULL DEFAULT 'medium'");
+  addBidColumn("quality_flags_json", "TEXT NOT NULL DEFAULT '[]'");
+  addBidColumn("admin_review_status", "TEXT NOT NULL DEFAULT 'unreviewed'");
+  addBidColumn("detail_archive_status", "TEXT NOT NULL DEFAULT 'not_archived'");
+  addBidColumn("detail_archive_path", "TEXT");
+  addBidColumn("detail_fetched_at", "TEXT");
+  addBidColumn("detail_checksum_sha256", "TEXT");
+
+  const bidAttachmentColumns = new Set(
+    sqlite
+      .prepare("PRAGMA table_info(bid_attachments)")
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+
+  const addBidAttachmentColumn = (name: string, definition: string) => {
+    if (!bidAttachmentColumns.has(name)) {
+      sqlite.exec(`ALTER TABLE bid_attachments ADD COLUMN ${name} ${definition}`);
+    }
+  };
+
+  addBidAttachmentColumn("original_url", "TEXT");
+  addBidAttachmentColumn("storage_path", "TEXT");
+  addBidAttachmentColumn("byte_size", "INTEGER");
+  addBidAttachmentColumn("content_type", "TEXT");
+  addBidAttachmentColumn("checksum_sha256", "TEXT");
+  addBidAttachmentColumn("fetched_at", "TEXT");
+  addBidAttachmentColumn("archive_status", "TEXT NOT NULL DEFAULT 'not_archived'");
+
+  const dataSourceColumns = new Set(
+    sqlite
+      .prepare("PRAGMA table_info(data_sources)")
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+
+  const addDataSourceColumn = (name: string, definition: string) => {
+    if (!dataSourceColumns.has(name)) {
+      sqlite.exec(`ALTER TABLE data_sources ADD COLUMN ${name} ${definition}`);
+    }
+  };
+
+  addDataSourceColumn("provider_family", "TEXT");
+  addDataSourceColumn("access_mode", "TEXT");
+  addDataSourceColumn("source_type", "TEXT");
+  addDataSourceColumn("source_confidence", "TEXT");
+  addDataSourceColumn("activation_status", "TEXT");
+  addDataSourceColumn("requires_browser", "INTEGER");
+  addDataSourceColumn("requires_manual", "INTEGER");
+  addDataSourceColumn("requires_login", "INTEGER");
+  addDataSourceColumn("supports_query", "INTEGER");
+  addDataSourceColumn("supports_pagination", "INTEGER");
+  addDataSourceColumn("supports_attachment_metadata", "INTEGER");
+  addDataSourceColumn("supports_detail_page_fetch", "INTEGER");
+  addDataSourceColumn("fallback_notes", "TEXT");
 }

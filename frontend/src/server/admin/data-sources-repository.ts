@@ -46,6 +46,19 @@ export interface AdminDataSource {
   crawlerMaturity: CrawlerMaturity;
   crawlerCapabilities: CrawlerCapability[];
   crawlerBaseUrl: string | null;
+  providerFamily: string;
+  accessMode: string;
+  sourceType: string;
+  sourceConfidence: string;
+  activationStatus: string;
+  requiresBrowser: boolean;
+  requiresManual: boolean;
+  requiresLogin: boolean;
+  supportsQuery: boolean;
+  supportsPagination: boolean;
+  supportsAttachmentMetadata: boolean;
+  supportsDetailPageFetch: boolean;
+  fallbackNotes: string | null;
   createdAt: string;
   updatedAt: string;
   latestLog: AdminCrawlerLog | null;
@@ -149,11 +162,34 @@ function toAdminLog(row: typeof crawlerLogs.$inferSelect): AdminCrawlerLog {
   };
 }
 
+function defaultProviderFamily(row: typeof dataSources.$inferSelect) {
+  if (row.issuerType === "state") return "state_portal";
+  if (row.issuerType === "federal") return "federal_portal";
+  return "public_portal";
+}
+
+function defaultSourceConfidence(maturity: CrawlerMaturity, issuerType: string) {
+  if (maturity === "verified" || issuerType === "federal") return "high";
+  if (maturity === "none") return "medium";
+  return "medium";
+}
+
+function nullableBoolean(value: number | null, fallback: boolean) {
+  if (value === null) return fallback;
+  return value === 1;
+}
+
+function hasCapability(capabilities: CrawlerCapability[], capability: CrawlerCapability) {
+  return capabilities.includes(capability);
+}
+
 function toAdminSource(
   row: typeof dataSources.$inferSelect,
   latestLog: AdminCrawlerLog | null,
 ): AdminDataSource {
   const crawlerMetadata = row.issuerType === "state" ? getStateCrawlerSourceMetadata(row.stateCode) : null;
+  const crawlerCapabilities = [...(crawlerMetadata?.capabilities ?? [])];
+  const crawlerMaturity = crawlerMetadata?.maturity ?? "none";
 
   return {
     id: row.id,
@@ -168,9 +204,28 @@ function toAdminSource(
     consecutiveFailures: row.consecutiveFailures,
     crawlerSourceId: crawlerMetadata?.id ?? null,
     crawlerAdapterKind: crawlerMetadata?.adapterKind ?? "none",
-    crawlerMaturity: crawlerMetadata?.maturity ?? "none",
-    crawlerCapabilities: [...(crawlerMetadata?.capabilities ?? [])],
+    crawlerMaturity,
+    crawlerCapabilities,
     crawlerBaseUrl: crawlerMetadata?.baseUrl ?? null,
+    providerFamily: row.providerFamily ?? defaultProviderFamily(row),
+    accessMode: row.accessMode ?? "http",
+    sourceType: row.sourceType ?? "primary",
+    sourceConfidence: row.sourceConfidence ?? defaultSourceConfidence(crawlerMaturity, row.issuerType),
+    activationStatus: row.activationStatus ?? (row.isEnabled === 1 ? "active" : "paused"),
+    requiresBrowser: nullableBoolean(row.requiresBrowser, false),
+    requiresManual: nullableBoolean(row.requiresManual, false),
+    requiresLogin: nullableBoolean(row.requiresLogin, false),
+    supportsQuery: nullableBoolean(row.supportsQuery, hasCapability(crawlerCapabilities, "query")),
+    supportsPagination: nullableBoolean(row.supportsPagination, hasCapability(crawlerCapabilities, "pagination")),
+    supportsAttachmentMetadata: nullableBoolean(
+      row.supportsAttachmentMetadata,
+      hasCapability(crawlerCapabilities, "attachments"),
+    ),
+    supportsDetailPageFetch: nullableBoolean(
+      row.supportsDetailPageFetch,
+      hasCapability(crawlerCapabilities, "detail_pages"),
+    ),
+    fallbackNotes: row.fallbackNotes,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     latestLog,

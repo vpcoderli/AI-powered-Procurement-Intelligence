@@ -4,7 +4,7 @@ Updated: 2026-05-29
 
 ## Recommendation
 
-Continue with **P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata** as the next implementation phase.
+Continue with **P1 Data Pipeline Hardening: Attachment Download Archival Downloader** as the next implementation phase.
 
 Commercial packaging and credits foundation is now in place:
 
@@ -13,48 +13,35 @@ Commercial packaging and credits foundation is now in place:
 - Credits have a foundation for included monthly credits, purchased credits, premium action costs, refunds, and future ledger events.
 - Settings Billing/Usage can surface plan names, Growth as planned, and credit summaries.
 
-The next risk is data trust. The system has 50-state beta crawler coverage, but the product still needs better source metadata, document archival, checksums, quality flags, and Admin QA workflow depth.
+The source registry, capability metadata, archive metadata columns, and quality flag foundation are now in place. The next risk is data trust at the file layer: the product can now store archive metadata, but the crawler still needs the downloader that fetches attachments/detail pages, computes checksums, and records failure status.
 
 ## Phase Goal
 
 Turn state crawler output into evidence-ready bid records:
 
-`Source Registry -> Connector Run -> Detail/Attachment Archive -> Quality Flags -> Admin QA -> Search/Bid Detail Evidence`
+`Source Registry -> Connector Run -> Detail/Attachment Downloader -> Quality Flags -> Admin QA -> Search/Bid Detail Evidence`
 
-This phase should preserve the current 50-state registry and non-empty result guardrails while adding durable archive and quality metadata.
+This phase should preserve the current 50-state registry, source metadata, and non-empty result guardrails while turning archive metadata from a schema foundation into actual downloaded evidence files.
 
 ## In Scope
 
-- Source Registry metadata fields:
-  - provider family
-  - access mode
-  - source type
-  - source confidence
-  - activation status
-  - requires browser/manual/login flags
-- Connector capability metadata:
-  - supports query
-  - supports pagination
-  - supports attachment metadata
-  - supports detail page fetch
-  - fallback source notes
-- Attachment/detail archival foundation:
-  - original URL
-  - local storage path or future object reference
-  - byte size
-  - content type
-  - checksum
-  - fetched_at
-  - archive status
-- Bid quality metadata:
-  - missing title/source/deadline flags
-  - empty content guardrails
-  - source confidence
-  - admin review status
-- Admin surface updates:
-  - source capability visibility
-  - archive status visibility
-  - quality/review status visibility
+- Attachment/detail downloader:
+  - fetch public attachment URLs when crawler metadata marks them downloadable
+  - fetch detail page HTML when connector supports detail page fetch
+  - write files under the configured attachment/archive directory
+  - calculate byte size, content type, checksum, fetched_at
+  - record archive status and concise failure reason without dropping the bid
+- Storage/repository behavior:
+  - populate existing archive metadata columns on crawler upsert
+  - keep original URL available even when local storage path is used for downloads
+  - keep current API/bid detail behavior working for external-only attachments
+- Guardrails:
+  - do not bypass CAPTCHA, login walls, or terms-gated portals
+  - mark unavailable/manual/browser-required sources explicitly
+  - keep empty-result crawler failures intact
+- Admin surface:
+  - expose archived / unavailable / failed status clearly enough for QA
+  - make 404 local file issues diagnosable from stored archive metadata
 
 ## Out Of Scope
 
@@ -69,9 +56,9 @@ This phase should preserve the current 50-state registry and non-empty result gu
 
 - Existing 50-state crawler tests remain green.
 - Crawler imports still reject empty result sets.
-- Attachment/detail archive metadata is persisted for crawler-managed files or clearly marked unavailable.
-- Source registry/admin views expose enough capability metadata to explain why a source is verified, beta, fallback, browser-required, or manual.
-- Bid records can carry quality/admin-review metadata without breaking current search and bid detail pages.
+- Public downloadable attachments/detail pages are persisted locally with checksum, size, content type, fetched_at, and archive status.
+- Source registry/admin views continue to explain why a source is verified, beta, fallback, browser-required, or manual.
+- Bid records carry quality/admin-review metadata without breaking current search and bid detail pages.
 - `npm test`, `npm run lint`, `npm run build`, `npm run db:migrate`, and `git diff --check` pass.
 
 ## Remaining Work After This Phase

@@ -2,6 +2,13 @@ export interface BidAttachment {
   name: string;
   url: string;
   size: string;
+  originalUrl: string;
+  archiveStatus: string;
+  storagePath: string;
+  byteSize: number | null;
+  contentType: string;
+  checksumSha256: string;
+  fetchedAt: string;
 }
 
 export type IssuerType = "federal" | "state";
@@ -25,6 +32,13 @@ export interface Bid {
   contactPhone: string;
   attachments: BidAttachment[];
   tags: string[];
+  sourceConfidence: string;
+  qualityFlags: string[];
+  adminReviewStatus: string;
+  detailArchiveStatus: string;
+  detailArchivePath: string;
+  detailFetchedAt: string;
+  detailChecksumSha256: string;
   saved: boolean;
   isActive: boolean;
 }

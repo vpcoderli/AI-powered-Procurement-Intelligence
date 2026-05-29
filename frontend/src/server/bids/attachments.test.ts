@@ -75,6 +75,36 @@ describe("bid attachment files", () => {
     expect(attachment?.filePath).toBe(await realpath(attachmentPath));
   });
 
+  it("resolves relative storage paths inside a configured attachment directory", async () => {
+    const attachmentDir = path.join(path.dirname(testDb.databasePath), "configured-attachments");
+    const attachmentPath = path.join(attachmentDir, "archive", "notice.pdf");
+    process.env.CRAWLER_ATTACHMENT_DIR = attachmentDir;
+    await mkdir(path.dirname(attachmentPath), { recursive: true });
+    await writeFile(attachmentPath, "archived notice");
+    testDb.db.insert(bidAttachments)
+      .values({
+        id: "storage_path_pdf",
+        bidId: "1",
+        name: "Storage Path.pdf",
+        url: "https://example.gov/files/notice.pdf",
+        storagePath: "archive/notice.pdf",
+        contentType: "application/pdf",
+        archiveStatus: "archived",
+        sizeLabel: "15 bytes",
+        sortOrder: 100,
+        createdAt: "2026-05-28T00:00:00.000Z",
+      })
+      .run();
+
+    const attachment = await getLocalBidAttachment(testDb.db, "1", "storage_path_pdf");
+
+    expect(attachment).toEqual({
+      filePath: await realpath(attachmentPath),
+      filename: "Storage Path.pdf",
+      mimeType: "application/pdf",
+    });
+  });
+
   it("returns undefined for external URLs and paths outside allowed directories", async () => {
     const attachmentDir = path.join(path.dirname(testDb.databasePath), "attachments");
     const outsidePath = path.join(path.dirname(testDb.databasePath), "secret.pdf");

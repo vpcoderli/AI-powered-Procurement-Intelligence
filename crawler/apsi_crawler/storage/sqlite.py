@@ -36,12 +36,77 @@ def _execute_insert(connection, table_name, values):
     )
 
 
+ARCHIVE_ATTACHMENT_COLUMNS = (
+    "original_url",
+    "storage_path",
+    "byte_size",
+    "content_type",
+    "checksum_sha256",
+    "fetched_at",
+    "archive_status",
+)
+
+ARCHIVE_BID_COLUMNS = (
+    "detail_archive_status",
+    "detail_archive_path",
+    "detail_fetched_at",
+    "detail_checksum_sha256",
+)
+
+
+def _row_dict(cursor, row):
+    if row is None:
+        return None
+    return {description[0]: row[index] for index, description in enumerate(cursor.description)}
+
+
+def _existing_bid_archive_values(connection, bid_id, table_columns):
+    columns = [column for column in ARCHIVE_BID_COLUMNS if column in table_columns]
+    if not columns:
+        return {}
+    cursor = connection.execute(
+        f"SELECT {', '.join(columns)} FROM bids WHERE id = ?",
+        (bid_id,),
+    )
+    return _row_dict(cursor, cursor.fetchone()) or {}
+
+
+def _existing_attachment_archive_values(connection, bid_id, table_columns):
+    columns = ["id", "url", *[column for column in ARCHIVE_ATTACHMENT_COLUMNS if column in table_columns]]
+    cursor = connection.execute(
+        f"SELECT {', '.join(columns)} FROM bid_attachments WHERE bid_id = ?",
+        (bid_id,),
+    )
+    rows = [_row_dict(cursor, row) for row in cursor.fetchall()]
+    return {
+        row["url"]: row
+        for row in rows
+        if row and row.get("url")
+    }
+
+
+def _preserve_existing_archive_value(values, existing, column):
+    if column not in values or not existing:
+        return
+    incoming = values.get(column)
+    current = existing.get(column)
+    if current is None:
+        return
+    if incoming is None or incoming == "" or (column.endswith("archive_status") and incoming == "not_archived"):
+        values[column] = current
+
+
 def _replace_bid_attachments(connection, bid):
     if not _table_exists(connection, "bid_attachments"):
         return
 
     table_columns = _table_columns(connection, "bid_attachments")
     bid_id = bid["id"]
+    existing_archive_values = _existing_attachment_archive_values(
+        connection,
+        bid_id,
+        table_columns,
+    )
     connection.execute("DELETE FROM bid_attachments WHERE bid_id = ?", (bid_id,))
 
     for index, attachment in enumerate(bid.get("attachments") or []):
@@ -55,6 +120,13 @@ def _replace_bid_attachments(connection, bid):
             "url": url,
             "size_label": attachment.get("size_label"),
             "mime_type": attachment.get("mime_type"),
+            "original_url": attachment.get("original_url") or url,
+            "storage_path": attachment.get("storage_path"),
+            "byte_size": attachment.get("byte_size"),
+            "content_type": attachment.get("content_type") or attachment.get("mime_type"),
+            "checksum_sha256": attachment.get("checksum_sha256"),
+            "fetched_at": attachment.get("fetched_at"),
+            "archive_status": attachment.get("archive_status") or "not_archived",
             "sort_order": (
                 index
                 if attachment.get("sort_order") is None
@@ -62,6 +134,9 @@ def _replace_bid_attachments(connection, bid):
             ),
             "created_at": now_iso(),
         }
+        existing = existing_archive_values.get(url)
+        for column in ARCHIVE_ATTACHMENT_COLUMNS:
+            _preserve_existing_archive_value(values, existing, column)
         _execute_insert(
             connection,
             "bid_attachments",
@@ -78,6 +153,13 @@ def upsert_bid(connection, bid):
 
     try:
         if existing:
+            existing_archive_values = _existing_bid_archive_values(
+                connection,
+                existing[0],
+                table_columns,
+            )
+            for column in ARCHIVE_BID_COLUMNS:
+                _preserve_existing_archive_value(bid, existing_archive_values, column)
             update_columns = [
                 column
                 for column in (
@@ -101,6 +183,13 @@ def upsert_bid(connection, bid):
                     "source_url",
                     "is_active",
                     "raw_payload",
+                    "source_confidence",
+                    "quality_flags_json",
+                    "admin_review_status",
+                    "detail_archive_status",
+                    "detail_archive_path",
+                    "detail_fetched_at",
+                    "detail_checksum_sha256",
                     "last_seen_at",
                     "updated_at",
                 )
@@ -142,6 +231,13 @@ def upsert_bid(connection, bid):
                 "source_url",
                 "is_active",
                 "raw_payload",
+                "source_confidence",
+                "quality_flags_json",
+                "admin_review_status",
+                "detail_archive_status",
+                "detail_archive_path",
+                "detail_fetched_at",
+                "detail_checksum_sha256",
                 "first_seen_at",
                 "last_seen_at",
                 "created_at",

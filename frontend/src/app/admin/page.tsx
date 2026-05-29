@@ -195,6 +195,14 @@ function crawlerCapabilityLabel(t: (key: string) => string, capability: AdminDat
   return t("admin.crawlerCapability_query");
 }
 
+function sourceRequirementLabels(t: (key: string) => string, source: AdminDataSource) {
+  return [
+    source.requiresBrowser ? t("admin.sourceRequiresBrowser") : null,
+    source.requiresLogin ? t("admin.sourceRequiresLogin") : null,
+    source.requiresManual ? t("admin.sourceRequiresManual") : null,
+  ].filter((value): value is string => Boolean(value));
+}
+
 function formatCrawlerBaseUrl(value: string | null) {
   if (!value) return null;
 
@@ -1311,6 +1319,32 @@ export default function AdminPage() {
                     {source.crawlerBaseUrl && (
                       <div className="mt-1 max-w-64 truncate text-xs text-slate-500" title={source.crawlerBaseUrl}>
                         {source.crawlerSourceId} - {formatCrawlerBaseUrl(source.crawlerBaseUrl)}
+                      </div>
+                    )}
+                    <div className="mt-2 flex max-w-64 flex-wrap gap-1">
+                      <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
+                        {source.sourceConfidence}
+                      </Badge>
+                      <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+                        {source.accessMode}
+                      </Badge>
+                      <Badge variant="outline" className="border-slate-200 bg-white text-slate-600">
+                        {source.activationStatus}
+                      </Badge>
+                      {source.supportsAttachmentMetadata && (
+                        <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700">
+                          {t("admin.sourceSupportsArchive")}
+                        </Badge>
+                      )}
+                      {sourceRequirementLabels(t, source).map((label) => (
+                        <Badge key={label} variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                          {label}
+                        </Badge>
+                      ))}
+                    </div>
+                    {source.fallbackNotes && (
+                      <div className="mt-1 max-w-64 truncate text-xs text-amber-700" title={source.fallbackNotes}>
+                        {source.fallbackNotes}
                       </div>
                     )}
                   </TableCell>

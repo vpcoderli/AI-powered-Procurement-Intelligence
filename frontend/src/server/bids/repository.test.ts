@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { bidAttachments, organizations, users } from "@/server/db/schema";
+import { bidAttachments, bids as bidRows, organizations, users } from "@/server/db/schema";
 import {
   acceptWorkspaceInvitation,
   inviteWorkspaceMember,
@@ -82,6 +82,63 @@ describe("bid repository", () => {
     expect(bid?.attachments.find((attachment) => attachment.name === "Local.pdf")?.url).toBe(
       "/api/bids/1/attachments/local_attachment",
     );
+  });
+
+  it("prefers archived local attachment paths and exposes archive metadata", async () => {
+    const timestamp = "2026-05-28T00:00:00.000Z";
+    testDb.db.insert(bidAttachments)
+      .values({
+        id: "archived_attachment",
+        bidId: "1",
+        name: "Archived Solicitation.pdf",
+        url: "https://agency.example.gov/files/solicitation.pdf",
+        originalUrl: "https://agency.example.gov/files/solicitation.pdf",
+        storagePath: "data/attachments/agency/solicitation.pdf",
+        byteSize: 4096,
+        contentType: "application/pdf",
+        checksumSha256: "sha256-value",
+        fetchedAt: timestamp,
+        archiveStatus: "archived",
+        sizeLabel: "4 KB",
+        sortOrder: 102,
+        createdAt: timestamp,
+      })
+      .run();
+    testDb.db.update(bidRows)
+      .set({
+        sourceConfidence: "high",
+        qualityFlagsJson: JSON.stringify(["missing_deadline"]),
+        adminReviewStatus: "needs_review",
+        detailArchiveStatus: "archived",
+        detailArchivePath: "data/attachments/details/bid-1.html",
+        detailFetchedAt: timestamp,
+        detailChecksumSha256: "detail-sha256",
+      })
+      .where(eq(bidRows.id, "1"))
+      .run();
+
+    const bid = await getBidByIdFromRepository(testDb.db, "1");
+    const attachment = bid?.attachments.find((item) => item.name === "Archived Solicitation.pdf");
+
+    expect(attachment).toMatchObject({
+      url: "/api/bids/1/attachments/archived_attachment",
+      originalUrl: "https://agency.example.gov/files/solicitation.pdf",
+      archiveStatus: "archived",
+      storagePath: "data/attachments/agency/solicitation.pdf",
+      byteSize: 4096,
+      contentType: "application/pdf",
+      checksumSha256: "sha256-value",
+      fetchedAt: timestamp,
+    });
+    expect(bid).toMatchObject({
+      sourceConfidence: "high",
+      qualityFlags: ["missing_deadline"],
+      adminReviewStatus: "needs_review",
+      detailArchiveStatus: "archived",
+      detailArchivePath: "data/attachments/details/bid-1.html",
+      detailFetchedAt: timestamp,
+      detailChecksumSha256: "detail-sha256",
+    });
   });
 
   it("persists saved bids per user", async () => {
