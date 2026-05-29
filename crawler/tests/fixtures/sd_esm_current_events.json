@@ -1,0 +1,23 @@
+{
+  "data": [
+    {
+      "daysLeft": 0,
+      "eventId": "19802",
+      "id": "26RFP-SDSU04242026",
+      "eventName": "Pouring Rights and Vending Services for South Dakota State Univ.",
+      "publishedDate": "2026-05-21T14:03:24.807",
+      "eventDueDate": "2026-05-29T19:00:00",
+      "invitationType": {
+        "id": 2,
+        "description": "Invitation Only"
+      },
+      "status": {
+        "id": 2,
+        "description": "Ready for Responses"
+      },
+      "timezoneName": "CT",
+      "timezoneNameAbbreviation": "UTC"
+    }
+  ],
+  "totalCount": 28
+}

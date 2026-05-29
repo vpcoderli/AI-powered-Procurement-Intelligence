@@ -1356,6 +1356,36 @@ Current local limits:
 建议下一步：
 - 继续 crawler 质量主线时，优先做 Batch 5；候选方向可优先从 OK/WV/ND/NE/SD/VT/WY/ID 中筛选能稳定非空的公开源。若切到产品功能主线，则优先做 Full Search Alerts UI。
 
+## Completed Phase: 50-State Crawler Quality Batch 5
+
+本阶段完成：
+- 新增 OK / AR / SD / WV / WY 五个州级 beta 专用 crawler adapter，替代对应州的 generic fetcher 入口。
+- OK 使用 Oklahoma PeopleSoft Supplier Portal 表格；AR 使用 Arkansas Current Solicitations HTML 表格；SD 使用官方 ESM Posting Board JSON；WV 使用 BidNet West Virginia open-bids HTML；WY 使用 A&I 公开 Google Sheet CSV bid status 清单。
+- 五个 adapter 均支持 fixture-backed 测试，并解析 source bid id、标题、机构、发布日期/截止日期、详情 URL或源 URL；AR 同步 buyer email，WV/SD 同步详情页 URL。
+- `STATE_SOURCES` 已把 `ok_state_procurement`、`ar_state_procurement`、`sd_state_procurement`、`wv_state_procurement`、`wy_state_procurement` 接入专用 fetcher。
+- 前端 crawler metadata 已同步标记 OK/AR/SD/WV/WY 为 `dedicated` + `beta`，Admin 可继续通过现有 state runner 单独运行这些州。
+- 当前专用州覆盖：CA/TX/NY/FL/IL 为 verified dedicated；PA/SC/OR/MA/NJ/OH/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT/OK/AR/SD/WV/WY 为 beta dedicated；其余州保持 generic foundation coverage。
+- MN/NE/VT 在筛选中发现当前环境存在 Radware captcha 或网络 timeout，本批未纳入稳定源；ND 明确有 captcha，WV 官方 VSS timeout，因此 WV 本批采用公开 BidNet 列表作为 beta 覆盖。
+
+验证：
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_dedicated_spiders_batch5.py`
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_dedicated_spiders_batch5.py crawler/tests/test_state_sources.py crawler/tests/test_state_live_validation.py`
+- `npm test -- src/lib/state-crawler-sources.test.ts`
+- `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source ok_state_procurement --source ar_state_procurement --source sd_state_procurement --source wv_state_procurement --source wy_state_procurement --limit 3 --timeout 30`
+- Migrated temp SQLite fetch-state smoke: OK/AR/SD/WV/WY each inserted 2 bids and wrote success crawler logs.
+
+当前还剩：
+1. SC/OH portal access resolution：SCBO 当前环境超时；OhioBuys 官方公开流程进入 browser_check/reCAPTCHA，不应绕过 CAPTCHA，需要 browser-assisted/manual 或官方 feed/API 策略。
+2. 50-State Crawler Quality Batch 6：继续选择 5-8 个 generic 州做专用 adapter，优先能稳定返回非空的 JSON/HTML 公共源。
+3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
+4. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+5. Sourcing Partner + Quote Inquiry Lite：partner DB、quote request、quote comparison。
+6. Response Workspace Lite：tasks、artifacts、internal checkpoints。
+7. Award / Tabulation Tracking Lite。
+
+建议下一步：
+- 继续 crawler 质量主线时，优先做 Batch 6；候选方向可从 AL/AK/ID/MI/MN/NE/NH/VT 等剩余 generic 州里筛选，但需要避开当前已确认的 captcha/timeout 源。若切到产品功能主线，则优先做 Full Search Alerts UI。
+
 ## Status Update Template
 
 Use this after every phase:

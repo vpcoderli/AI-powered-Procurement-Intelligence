@@ -25,6 +25,11 @@ BETA_DEDICATED_STATE_SOURCES = (
     "in_state_procurement",
     "ms_state_procurement",
     "ct_state_procurement",
+    "ok_state_procurement",
+    "ar_state_procurement",
+    "sd_state_procurement",
+    "wv_state_procurement",
+    "wy_state_procurement",
 )
 
 
