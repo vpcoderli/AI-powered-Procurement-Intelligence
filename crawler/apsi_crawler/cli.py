@@ -18,6 +18,7 @@ from apsi_crawler.spiders.il_bidbuy import fetch_il_bidbuy_opportunities
 from apsi_crawler.spiders.ny_contract_reporter import fetch_ny_contract_reporter_opportunities
 from apsi_crawler.spiders.sam_gov_api import fetch_sam_gov_opportunities
 from apsi_crawler.spiders.tx_esbd import fetch_tx_esbd_opportunities
+from apsi_crawler.storage.archive import archive_bid_documents
 from apsi_crawler.storage.sqlite import now_iso, upsert_bid, write_crawler_log
 
 
@@ -73,13 +74,48 @@ def _upsert_bids(connection, bids):
     return inserted_count, updated_count
 
 
+def _default_archive_dir(database):
+    return str(Path(database).resolve().parent / "attachments")
+
+
+def _archive_summary(bids):
+    summary = {"archived": 0, "failed": 0, "unavailable": 0}
+    for bid in bids:
+        for attachment in bid.get("attachments") or []:
+            status = attachment.get("archive_status")
+            if status in summary:
+                summary[status] += 1
+        detail_status = bid.get("detail_archive_status")
+        if detail_status in summary:
+            summary[detail_status] += 1
+    return summary
+
+
+def _archive_bids(bids, archive_dir, fetch_detail=False):
+    return [
+        archive_bid_documents(
+            bid,
+            archive_dir,
+            fetch_detail=fetch_detail,
+        )
+        for bid in bids
+    ]
+
+
 def _require_non_empty_bids(bids, source):
     if not bids:
         raise EmptyCrawlerResultError(f"Crawler returned no opportunities for source: {source}")
     return bids
 
 
-def import_fixture(database, fixture, source=DEFAULT_SOURCE):
+def import_fixture(
+    database,
+    fixture,
+    source=DEFAULT_SOURCE,
+    archive_documents=False,
+    archive_dir=None,
+    archive_detail_pages=False,
+):
     started_at = now_iso()
     started = perf_counter()
     run_id = str(uuid4())
@@ -90,7 +126,10 @@ def import_fixture(database, fixture, source=DEFAULT_SOURCE):
         loader = get_fixture_loader(source)
         bids = loader(fixture)
         _require_non_empty_bids(bids, source)
+        if archive_documents:
+            bids = _archive_bids(bids, archive_dir or _default_archive_dir(database), archive_detail_pages)
         inserted_count, updated_count = _upsert_bids(connection, bids)
+        metadata = {"archive": _archive_summary(bids)} if archive_documents else None
 
         write_crawler_log(
             connection,
@@ -103,6 +142,7 @@ def import_fixture(database, fixture, source=DEFAULT_SOURCE):
             started_at=started_at,
             finished_at=now_iso(),
             duration_ms=int((perf_counter() - started) * 1000),
+            metadata=metadata,
         )
         return 0
     except Exception as error:
@@ -128,7 +168,17 @@ def import_fixture(database, fixture, source=DEFAULT_SOURCE):
         connection.close()
 
 
-def fetch_sam_gov(database, posted_from, posted_to, api_key=None, limit=100, max_records=None):
+def fetch_sam_gov(
+    database,
+    posted_from,
+    posted_to,
+    api_key=None,
+    limit=100,
+    max_records=None,
+    archive_documents=False,
+    archive_dir=None,
+    archive_detail_pages=False,
+):
     started_at = now_iso()
     started = perf_counter()
     run_id = str(uuid4())
@@ -144,7 +194,12 @@ def fetch_sam_gov(database, posted_from, posted_to, api_key=None, limit=100, max
             max_records=max_records,
         )
         _require_non_empty_bids(bids, DEFAULT_SOURCE)
+        if archive_documents:
+            bids = _archive_bids(bids, archive_dir or _default_archive_dir(database), archive_detail_pages)
         inserted_count, updated_count = _upsert_bids(connection, bids)
+        metadata = {"posted_from": posted_from, "posted_to": posted_to, "limit": limit}
+        if archive_documents:
+            metadata["archive"] = _archive_summary(bids)
 
         write_crawler_log(
             connection,
@@ -157,7 +212,7 @@ def fetch_sam_gov(database, posted_from, posted_to, api_key=None, limit=100, max
             started_at=started_at,
             finished_at=now_iso(),
             duration_ms=int((perf_counter() - started) * 1000),
-            metadata={"posted_from": posted_from, "posted_to": posted_to, "limit": limit},
+            metadata=metadata,
         )
         return 0
     except Exception as error:
@@ -191,6 +246,9 @@ def fetch_state(
     fixture_json=None,
     fixture_html=None,
     fallback_fixture=False,
+    archive_documents=False,
+    archive_dir=None,
+    archive_detail_pages=False,
 ):
     started_at = now_iso()
     started = perf_counter()
@@ -231,6 +289,9 @@ def fetch_state(
             bids = fallback_fetcher(source_metadata, **fallback_kwargs)
 
         _require_non_empty_bids(bids, source_metadata.id)
+        if archive_documents:
+            bids = _archive_bids(bids, archive_dir or _default_archive_dir(database), archive_detail_pages)
+            metadata["archive"] = _archive_summary(bids)
         inserted_count, updated_count = _upsert_bids(connection, bids)
 
         write_crawler_log(
@@ -278,6 +339,9 @@ def build_parser():
     import_fixture_parser.add_argument("--database", required=True)
     import_fixture_parser.add_argument("--fixture", required=True)
     import_fixture_parser.add_argument("--source", default=DEFAULT_SOURCE)
+    import_fixture_parser.add_argument("--archive-documents", action="store_true")
+    import_fixture_parser.add_argument("--archive-dir")
+    import_fixture_parser.add_argument("--archive-detail-pages", action="store_true")
 
     fetch_sam_gov_parser = subparsers.add_parser("fetch-sam-gov")
     fetch_sam_gov_parser.add_argument("--database", required=True)
@@ -286,6 +350,9 @@ def build_parser():
     fetch_sam_gov_parser.add_argument("--posted-to", required=True)
     fetch_sam_gov_parser.add_argument("--limit", type=int, default=100)
     fetch_sam_gov_parser.add_argument("--max-records", type=int)
+    fetch_sam_gov_parser.add_argument("--archive-documents", action="store_true")
+    fetch_sam_gov_parser.add_argument("--archive-dir")
+    fetch_sam_gov_parser.add_argument("--archive-detail-pages", action="store_true")
 
     fetch_state_parser = subparsers.add_parser("fetch-state")
     fetch_state_parser.add_argument("--database", required=True)
@@ -295,6 +362,9 @@ def build_parser():
     fetch_state_parser.add_argument("--fixture-json")
     fetch_state_parser.add_argument("--fixture-html")
     fetch_state_parser.add_argument("--fallback-fixture", action="store_true")
+    fetch_state_parser.add_argument("--archive-documents", action="store_true")
+    fetch_state_parser.add_argument("--archive-dir")
+    fetch_state_parser.add_argument("--archive-detail-pages", action="store_true")
 
     validate_state_live_parser = subparsers.add_parser("validate-state-live")
     validate_state_live_parser.add_argument(
@@ -329,7 +399,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
 
     if args.command == "import-fixture":
-        return import_fixture(args.database, args.fixture, args.source)
+        return import_fixture(
+            args.database,
+            args.fixture,
+            args.source,
+            archive_documents=args.archive_documents,
+            archive_dir=args.archive_dir,
+            archive_detail_pages=args.archive_detail_pages,
+        )
 
     if args.command == "fetch-sam-gov":
         return fetch_sam_gov(
@@ -339,6 +416,9 @@ def main(argv=None):
             api_key=args.api_key,
             limit=args.limit,
             max_records=args.max_records,
+            archive_documents=args.archive_documents,
+            archive_dir=args.archive_dir,
+            archive_detail_pages=args.archive_detail_pages,
         )
 
     if args.command == "fetch-state":
@@ -350,6 +430,9 @@ def main(argv=None):
             fixture_json=args.fixture_json,
             fixture_html=args.fixture_html,
             fallback_fixture=args.fallback_fixture,
+            archive_documents=args.archive_documents,
+            archive_dir=args.archive_dir,
+            archive_detail_pages=args.archive_detail_pages,
         )
 
     if args.command == "validate-state-live":

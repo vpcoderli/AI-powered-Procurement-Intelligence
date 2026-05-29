@@ -71,6 +71,7 @@ function attachmentsForBids(db: AppDatabase, bidIds: string[]) {
       contentType: row.contentType ?? row.mimeType ?? "",
       checksumSha256: row.checksumSha256 ?? "",
       fetchedAt: row.fetchedAt ?? "",
+      archiveError: row.archiveError ?? "",
     });
     byBid.set(row.bidId, current);
   });
@@ -109,6 +110,7 @@ function toBid(
     detailArchivePath: row.detailArchivePath ?? "",
     detailFetchedAt: row.detailFetchedAt ?? "",
     detailChecksumSha256: row.detailChecksumSha256 ?? "",
+    detailArchiveError: row.detailArchiveError ?? "",
     saved: savedBidIds.has(row.id),
     isActive: row.isActive === 1,
   };

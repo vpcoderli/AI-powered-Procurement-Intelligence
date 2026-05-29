@@ -215,6 +215,7 @@ export function runMigrations(db: AppDatabase) {
       detail_archive_path TEXT,
       detail_fetched_at TEXT,
       detail_checksum_sha256 TEXT,
+      detail_archive_error TEXT,
       first_seen_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
@@ -233,6 +234,7 @@ export function runMigrations(db: AppDatabase) {
       checksum_sha256 TEXT,
       fetched_at TEXT,
       archive_status TEXT NOT NULL DEFAULT 'not_archived',
+      archive_error TEXT,
       size_label TEXT,
       mime_type TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0,
@@ -593,6 +595,7 @@ export function runMigrations(db: AppDatabase) {
   addBidColumn("detail_archive_path", "TEXT");
   addBidColumn("detail_fetched_at", "TEXT");
   addBidColumn("detail_checksum_sha256", "TEXT");
+  addBidColumn("detail_archive_error", "TEXT");
 
   const bidAttachmentColumns = new Set(
     sqlite
@@ -614,6 +617,7 @@ export function runMigrations(db: AppDatabase) {
   addBidAttachmentColumn("checksum_sha256", "TEXT");
   addBidAttachmentColumn("fetched_at", "TEXT");
   addBidAttachmentColumn("archive_status", "TEXT NOT NULL DEFAULT 'not_archived'");
+  addBidAttachmentColumn("archive_error", "TEXT");
 
   const dataSourceColumns = new Set(
     sqlite

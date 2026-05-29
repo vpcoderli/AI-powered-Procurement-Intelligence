@@ -17,6 +17,9 @@ describe("bid detail pursuit panel", () => {
     expect(page).toContain("winbids-detail-workspace");
     expect(page).toContain("winbids-hero-panel");
     expect(page).toContain("winbids-panel");
+    expect(page).toContain("archiveTone");
+    expect(page).toContain("detail.archiveStatus_archived");
+    expect(page).toContain("detail.archiveError");
     expect(page).not.toContain("rounded-xl border border-slate-200 bg-white p-5");
   });
 });

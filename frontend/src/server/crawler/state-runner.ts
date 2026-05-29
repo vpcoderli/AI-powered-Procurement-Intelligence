@@ -10,6 +10,9 @@ export interface StateCrawlerRunOptions {
   limit?: number;
   databasePath?: string;
   allowFixtureFallback?: boolean;
+  archiveDocuments?: boolean;
+  archiveDir?: string;
+  archiveDetailPages?: boolean;
 }
 
 export interface StateCrawlerOrchestratorOptions {
@@ -17,6 +20,9 @@ export interface StateCrawlerOrchestratorOptions {
   limit?: number;
   databasePath?: string;
   allowFixtureFallback?: boolean;
+  archiveDocuments?: boolean;
+  archiveDir?: string;
+  archiveDetailPages?: boolean;
 }
 
 export interface StateCrawlerRunResult {
@@ -33,6 +39,10 @@ function crawlerDirectory() {
 
 function defaultDatabasePath() {
   return path.resolve(process.cwd(), "data", "apsi.sqlite");
+}
+
+function defaultArchiveDir() {
+  return process.env.CRAWLER_ATTACHMENT_DIR ?? path.resolve(process.cwd(), "data", "attachments");
 }
 
 function buildArgs(options: StateCrawlerRunOptions) {
@@ -54,6 +64,14 @@ function buildArgs(options: StateCrawlerRunOptions) {
 
   if (options.allowFixtureFallback) {
     args.push("--fallback-fixture");
+  }
+
+  if (options.archiveDocuments !== false) {
+    args.push("--archive-documents", "--archive-dir", options.archiveDir ?? defaultArchiveDir());
+  }
+
+  if (options.archiveDetailPages) {
+    args.push("--archive-detail-pages");
   }
 
   return args;
@@ -89,5 +107,8 @@ export function createStateCrawlerRunner(source: StateCrawlerSourceId) {
       limit: options.limit,
       databasePath: options.databasePath,
       allowFixtureFallback: options.allowFixtureFallback,
+      archiveDocuments: options.archiveDocuments,
+      archiveDir: options.archiveDir,
+      archiveDetailPages: options.archiveDetailPages,
     });
 }

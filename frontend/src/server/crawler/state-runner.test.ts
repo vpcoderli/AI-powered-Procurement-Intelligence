@@ -104,6 +104,9 @@ describe("state crawler runner", () => {
         "25",
         "--query",
         "data",
+        "--archive-documents",
+        "--archive-dir",
+        path.resolve(process.cwd(), "data", "attachments"),
       ],
       expect.objectContaining({
         cwd: path.resolve(process.cwd(), "..", "crawler"),
@@ -134,6 +137,9 @@ describe("state crawler runner", () => {
       "ca_caleprocure",
       "--limit",
       "10",
+      "--archive-documents",
+      "--archive-dir",
+      path.resolve(process.cwd(), "data", "attachments"),
     ]);
   });
 
@@ -150,6 +156,38 @@ describe("state crawler runner", () => {
     });
 
     expect(mockedExecFile.mock.calls[0][1]).toContain("--fallback-fixture");
+  });
+
+  it("passes archive document options by default", async () => {
+    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+      callback(null, "done", "");
+      return {} as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+
+    await runStateCrawler({
+      source: "il_bidbuy",
+      databasePath: "/tmp/apsi.sqlite",
+      archiveDir: "/tmp/attachments",
+    });
+
+    expect(mockedExecFile.mock.calls[0][1]).toEqual(
+      expect.arrayContaining(["--archive-documents", "--archive-dir", "/tmp/attachments"]),
+    );
+  });
+
+  it("can disable archive document options for tests and dry runs", async () => {
+    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+      callback(null, "done", "");
+      return {} as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+
+    await runStateCrawler({
+      source: "il_bidbuy",
+      databasePath: "/tmp/apsi.sqlite",
+      archiveDocuments: false,
+    });
+
+    expect(mockedExecFile.mock.calls[0][1]).not.toContain("--archive-documents");
   });
 
   it("returns failure metadata when the Python crawler exits with an error", async () => {

@@ -9,6 +9,7 @@ export interface BidAttachment {
   contentType: string;
   checksumSha256: string;
   fetchedAt: string;
+  archiveError: string;
 }
 
 export type IssuerType = "federal" | "state";
@@ -39,6 +40,7 @@ export interface Bid {
   detailArchivePath: string;
   detailFetchedAt: string;
   detailChecksumSha256: string;
+  detailArchiveError: string;
   saved: boolean;
   isActive: boolean;
 }

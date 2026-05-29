@@ -126,10 +126,11 @@ describe("bid repository", () => {
       archiveStatus: "archived",
       storagePath: "data/attachments/agency/solicitation.pdf",
       byteSize: 4096,
-      contentType: "application/pdf",
-      checksumSha256: "sha256-value",
-      fetchedAt: timestamp,
-    });
+        contentType: "application/pdf",
+        checksumSha256: "sha256-value",
+        fetchedAt: timestamp,
+        archiveError: "",
+      });
     expect(bid).toMatchObject({
       sourceConfidence: "high",
       qualityFlags: ["missing_deadline"],
@@ -138,6 +139,7 @@ describe("bid repository", () => {
       detailArchivePath: "data/attachments/details/bid-1.html",
       detailFetchedAt: timestamp,
       detailChecksumSha256: "detail-sha256",
+      detailArchiveError: "",
     });
   });
 

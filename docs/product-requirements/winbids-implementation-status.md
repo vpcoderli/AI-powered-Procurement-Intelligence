@@ -37,7 +37,7 @@ This document is the working checklist for local development. Update it after ea
 | Invoice / payment history foundation | `billing_invoices`, provider invoice event sync, payment-failed status handling, payment retry links, payment-failed notification outbox entries, account invoice API with status filtering and summary totals, Settings invoice history UI with filters/PDF links/retry links, and optional HMAC webhook signature verification via `BILLING_WEBHOOK_SECRET`. |
 | Customer portal foundation | Hosted checkout and customer portal URL templates, provider/customer placeholders, account portal API, and Settings Manage Billing entry. |
 | Commercial packaging / credits foundation | Product-facing plan labels now map Free -> `free`, Pursuit Starter -> `pro`, Response Builder -> `business`, Enterprise -> `enterprise`; Growth is present as a planned/disabled catalog plan; PRD feature slugs and credit action metadata exist; `credit_balances` and `credit_usage_events` tables are migrated; Settings Billing/Usage show credits and updated plan copy. |
-| Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, 50-state state runner registry, CA/TX/NY/FL/IL verified dedicated adapters, the other 45 state sources covered by beta dedicated adapters, non-empty live validation guardrails, and local attachment file serving for crawler-managed files. |
+| Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, 50-state state runner registry, CA/TX/NY/FL/IL verified dedicated adapters, the other 45 state sources covered by beta dedicated adapters, non-empty live validation guardrails, local attachment file serving for crawler-managed files, and public attachment/detail archival with status, size, content type, checksum, fetched timestamp, and failure notes. |
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
 | Intent to Bid | Add intent from bid detail, idempotent workspace-scoped intent creation, shared intent list/detail for organization members, status update. |
 | AI-like bid brief | Deterministic brief, key dates, initial checklist, risk flags. |
@@ -55,7 +55,7 @@ The refreshed Drive material changes the product packaging language and introduc
 | Plan names | Code and database use `free`, `pro`, `business`, `enterprise`. | Done locally: product copy exposes Free, Pursuit Starter, Response Builder, Growth, and Enterprise while preserving compatibility values. |
 | Plan mapping | Pursuit Starter maps to `pro`; Response Builder maps to `business`; Enterprise maps to `enterprise`; Growth exists as planned/disabled. | Future: activate Growth only after exact entitlement boundaries and billing model are confirmed. |
 | Credits | Credit vocabulary, included monthly credit metadata, premium action costs, refund semantics, Settings display, and ledger tables exist. | Future: connect real consumption/refund flows and paid credit packs when premium AI actions are implemented. |
-| P1 data architecture | 50-state crawler coverage and admin runner exist. | Separate Source Registry, Connector Engine, Normalization/Data Quality, and Bid Admin/Data QA responsibilities in docs and future implementation. |
+| P1 data architecture | 50-state crawler coverage, admin runner, archive metadata, and local public attachment/detail downloader exist. | Separate Source Registry, Connector Engine, Normalization/Data Quality, and Bid Admin/Data QA responsibilities in docs and future implementation. |
 | Knowledge Station | Feature key exists but no product surface. | Move Knowledge Station Lite earlier as Product 0.9 workflow coaching; deeper procurement intelligence remains post-MVP. |
 
 ## Account / Permission / Billing Tracker
@@ -119,7 +119,7 @@ The refreshed Drive material changes the product packaging language and introduc
 | Feature access control | Central feature map, server guard, client helper, visible locked states, PRD feature slugs, saved bid/intent/search alert/team invite quota enforcement, team member usage counting, Settings usage dashboard, credit summary, organization-level feature overrides with reason/expiry metadata, audit filtering by actor/action/target/feature, and manifest-backed static coverage tests; session entitlements and workspace quotas now use organization tier; Submission Guidance and Pursue / No-Bid are currently Pursuit Starter-gated, Compliance Manifest is currently Response Builder-gated; Quote Workflow and Knowledge Station are explicitly marked as not-yet-implemented API surfaces | Real credit consumption/refund flows, optional richer beta program workflow, and custom enterprise permission rules |
 | Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails; creation is quota-gated by tier | Full alert management UI, per-alert digest configuration, real email delivery provider |
 | Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, user preferences, billing dunning reminders, deployable notification/dunning worker command, invite delivery status, admin notification history, and admin delivery trigger exist | Production cron/process deployment and production email provider hardening |
-| Admin data QA | Source status and logs exist | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
+| Admin data QA | Source status/logs exist; bid detail now surfaces attachment archival status and failure notes. | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
 
 ### Not Implemented
 
@@ -136,13 +136,13 @@ The refreshed Drive material changes the product packaging language and introduc
 
 ## Recommended Next Phase
 
-Prioritize **P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata** next.
+Prioritize **Bid Admin/Data QA Console Expansion** next.
 
 Reason:
 
-- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Response Builder-gated Compliance Manifest, and Pursuit Starter-gated Pursue / No-Bid Decision now exist.
+- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Response Builder-gated Compliance Manifest, Pursuit Starter-gated Pursue / No-Bid Decision, 50-state crawler registry, and local attachment/detail archival now exist.
 - The remaining account gap is not basic registration; it is production deployment hardening, production worker deployment runbook, real credit consumption/refund flows when premium actions exist, custom enterprise rules when concrete use cases appear, broader advanced usage metrics, and future compliance polish.
-- Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
+- The next highest data risk is no longer empty crawler files; it is operator review, correction, and publish confidence across source records and archived evidence.
 
 ## Account / Role / Tier Direction
 
@@ -201,21 +201,32 @@ Current local limits use internal tier values. Product-facing labels should be s
 
 ## Suggested Implementation Order
 
-1. **P1 Data Pipeline Hardening**
-   - Add attachment/detail archival metadata, source capability metadata, quality flags, and admin data QA surfaces.
-   - Preserve 50-state beta coverage and continue official-source upgrades for fallback states.
-
-2. **Bid Admin/Data QA Console Expansion**
+1. **Bid Admin/Data QA Console Expansion**
    - Add review/correction workflow, publish confidence, and quality status filters.
 
-3. **Product 2 Qualification Upgrade**
+2. **Product 2 Qualification Upgrade**
    - Add citations, document-grounded Q&A, amendment/addenda awareness, evidence mapping, and no-bid taxonomy.
 
-4. **Knowledge Station Lite**
+3. **Knowledge Station Lite**
    - Add embedded workflow coaching and reusable knowledge capture before deeper procurement intelligence.
 
-5. **Product workflow depth**
+4. **Product workflow depth**
    - Build Response Workspace, Artifact Vault, Quote Lite, deadline notifications, and award learning in thin MVP slices.
+
+## Completed Phase: Attachment Download Archival Downloader
+
+本阶段完成：
+- 新增 crawler archive downloader，公共 HTTP(S) 附件和可选详情页会写入本地 `attachments/<source>/<bid-id>/...`。
+- 归档元数据会记录 `storage_path`、`byte_size`、`content_type`、`checksum_sha256`、`fetched_at`、`archive_status` 和失败原因。
+- 非 HTTP、本地、登录/SSO/CAPTCHA/browser-required 类 URL 不强行抓取，会标记为 unavailable；下载失败会标记 failed，但不让非空爬虫导入整体失败。
+- `import-fixture`、`fetch-sam-gov`、`fetch-state` 支持 `--archive-documents`、`--archive-dir`、`--archive-detail-pages`。
+- 前端 SAM.gov/state runner 默认启用附件归档，并支持显式关闭或指定归档目录。
+- 招标详情页附件列表显示本地归档状态与失败说明，便于诊断“有数据但文件 404”的问题。
+
+当前还剩：
+1. Bid Admin/Data QA Console Expansion：质量状态筛选、人工 review/correction、publish/unpublish。
+2. Product 2 Qualification Upgrade：document-grounded citations、Q&A、amendment/addenda awareness、evidence mapping、no-bid taxonomy。
+3. Knowledge Station Lite：工作流教练、模板/片段、可复用知识沉淀。
 
 ## Completed Phase: Commercial Packaging And Credits Reconciliation
 
