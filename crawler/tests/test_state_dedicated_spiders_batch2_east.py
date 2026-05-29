@@ -51,6 +51,44 @@ def test_ma_commbuys_json_fixture_uses_same_normalized_shape():
     assert bids[0]["attachments"][0]["name"] == "Technical Requirements"
 
 
+def test_ma_commbuys_current_rio_table_extracts_live_shape(tmp_path):
+    fixture = tmp_path / "ma-current.html"
+    fixture.write_text(
+        """
+        <table>
+          <tr>
+            <th>Bid Solicitation #</th>
+            <th>Organization Name</th>
+            <th>Description</th>
+            <th>Bid Opening Date</th>
+            <th>Status</th>
+          </tr>
+          <tr>
+            <td><a href="/bso/external/bidDetail.sda?docId=BD-26-1241-ARL03-ARL03-130019">BD-26-1241-ARL03-ARL03-130019</a></td>
+            <td>Town of Arlington</td>
+            <td>Traffic Signal and Street Light Maintenance</td>
+            <td>06/11/2026 14:00:00</td>
+            <td>Open</td>
+          </tr>
+        </table>
+        """,
+        encoding="utf-8",
+    )
+
+    bids = fetch_ma_commbuys_opportunities(
+        get_source("ma_state_procurement"),
+        query="traffic",
+        limit=5,
+        fixture_html=str(fixture),
+    )
+
+    assert len(bids) == 1
+    assert bids[0]["source_bid_id"] == "BD-26-1241-ARL03-ARL03-130019"
+    assert bids[0]["title"] == "Traffic Signal and Street Light Maintenance"
+    assert bids[0]["issuer_name"] == "Town of Arlington"
+    assert bids[0]["source_url"] == "https://www.commbuys.com/bso/external/bidDetail.sda?docId=BD-26-1241-ARL03-ARL03-130019"
+
+
 def test_nj_start_html_fixture_extracts_common_fields_and_attachment_links():
     bids = fetch_nj_start_opportunities(
         get_source("nj_state_procurement"),
@@ -84,6 +122,43 @@ def test_nj_start_json_fixture_and_limit_are_supported():
     assert bids[0]["attachments"][0]["url"] == "https://www.njstart.gov/bso/external/document/download?bidId=25DPP01088"
 
 
+def test_nj_start_current_rio_table_extracts_live_shape(tmp_path):
+    fixture = tmp_path / "nj-current.html"
+    fixture.write_text(
+        """
+        <table>
+          <tr>
+            <th>Bid Solicitation #</th>
+            <th>Organization Name</th>
+            <th>Description</th>
+            <th>Bid Opening Date</th>
+            <th>Status</th>
+          </tr>
+          <tr>
+            <td><a href="/bso/external/bidDetail.sda?docId=26DPP00001">26DPP00001</a></td>
+            <td>Division of Purchase and Property</td>
+            <td>Endpoint telemetry services</td>
+            <td>06/12/2026 11:00:00</td>
+            <td>Open</td>
+          </tr>
+        </table>
+        """,
+        encoding="utf-8",
+    )
+
+    bids = fetch_nj_start_opportunities(
+        get_source("nj_state_procurement"),
+        query="telemetry",
+        limit=5,
+        fixture_html=str(fixture),
+    )
+
+    assert len(bids) == 1
+    assert bids[0]["source_bid_id"] == "26DPP00001"
+    assert bids[0]["title"] == "Endpoint telemetry services"
+    assert bids[0]["source_url"] == "https://www.njstart.gov/bso/external/bidDetail.sda?docId=26DPP00001"
+
+
 def test_va_eva_html_fixture_extracts_detail_and_attachment_links():
     bids = fetch_va_eva_opportunities(
         get_source("va_state_procurement"),
@@ -115,3 +190,48 @@ def test_va_eva_json_fixture_extracts_attachment_links():
     assert len(bids) == 1
     assert bids[0]["source_bid_id"] == "IFB 501-26-014"
     assert bids[0]["attachments"][0]["url"] == "https://eva.virginia.gov/documents/IFB-501-26-014.pdf"
+
+
+def test_va_eva_solr_json_extracts_current_public_opportunity_shape(tmp_path):
+    fixture = tmp_path / "va-solr.json"
+    fixture.write_text(
+        """
+        {
+          "response": {
+            "numFound": 1,
+            "docs": [
+              {
+                "externalid": "121312",
+                "internalid": "121312",
+                "version": "0",
+                "doccd": "IFB",
+                "docdeptcd": "L034FREDCNTYSCH",
+                "app": "IV",
+                "shortdesc": "IFB 26015; Pest Management Services",
+                "longdesc": "Provide pest management services.",
+                "pubdate": "2026-05-28T18:19:33.200Z",
+                "closedate": "2026-06-09T13:00:00Z",
+                "agencyname": "Frederick County Public Schools",
+                "category": "Non-professional Services - Non-Technology"
+              }
+            ]
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    bids = fetch_va_eva_opportunities(
+        get_source("va_state_procurement"),
+        query="pest",
+        limit=5,
+        fixture_json=str(fixture),
+    )
+
+    assert len(bids) == 1
+    assert bids[0]["source_bid_id"] == "121312"
+    assert bids[0]["title"] == "IFB 26015; Pest Management Services"
+    assert bids[0]["source_url"] == (
+        "https://mvendor.cgieva.com/Vendor/public/IVDetails.jsp?"
+        "PageTitle=SO%20Details&rfp_id_lot=121312&rfp_id_round=0"
+    )

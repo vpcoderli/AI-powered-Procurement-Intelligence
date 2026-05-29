@@ -10,6 +10,8 @@ from apsi_crawler.html.public_page import (
 from apsi_crawler.normalizers.state_bids import normalize_state_opportunity
 
 
+PA_EMARKETPLACE_SEARCH_URL = "https://www.emarketplace.state.pa.us/Search.aspx/Home.aspx"
+
 PA_EMARKETPLACE_HEADERS = (
     "Solicitation Number",
     "Title",
@@ -18,6 +20,17 @@ PA_EMARKETPLACE_HEADERS = (
     "Posted Date",
     "Type",
     "Documents",
+)
+
+PA_EMARKETPLACE_CURRENT_HEADERS = (
+    "Solicitation #",
+    "Types",
+    "Solicitation Title",
+    "Description",
+    "Agency",
+    "Solicitation Start Date",
+    "Solicitation Due Date",
+    "Bid Opening Date",
 )
 
 
@@ -62,9 +75,11 @@ def _attachments_from_items(items, source):
 
 
 def _record_from_row(row, source):
-    source_bid_id = row.get("Solicitation Number")
+    source_bid_id = _first_present(row, ("Solicitation Number", "Solicitation #"))
     if not source_bid_id:
-        raise PaEmarketplaceError("Pennsylvania eMarketplace row is missing solicitation number")
+        raise PaEmarketplaceError(
+            "Pennsylvania eMarketplace row is missing solicitation number"
+        )
 
     links = row.get("_links", {})
     attachments = []
@@ -74,15 +89,25 @@ def _record_from_row(row, source):
 
     return {
         "source_bid_id": source_bid_id,
-        "title": row.get("Title"),
-        "description": row.get("Title"),
+        "title": _first_present(row, ("Title", "Solicitation Title", "Description")),
+        "description": _first_present(
+            row,
+            ("Description", "Title", "Solicitation Title"),
+        ),
         "issuer_name": row.get("Agency"),
-        "deadline_date": row.get("Bid Opening Date"),
-        "published_date": row.get("Posted Date"),
-        "original_category": row.get("Type"),
+        "deadline_date": _first_present(
+            row,
+            ("Bid Opening Date", "Solicitation Due Date"),
+        ),
+        "published_date": _first_present(row, ("Posted Date", "Solicitation Start Date")),
+        "original_category": _first_present(row, ("Type", "Types")),
         "source_url": absolute_url(
             source.base_url,
-            links.get("Solicitation Number") or links.get("Title") or "",
+            links.get("Solicitation Number")
+            or links.get("Solicitation #")
+            or links.get("Title")
+            or links.get("Solicitation Title")
+            or "",
         )
         or source.base_url,
         "attachments": [attachment for attachment in attachments if attachment],
@@ -142,13 +167,22 @@ def _records_from_payload(payload, source):
 
 
 def _records_from_html(html, source):
-    try:
-        rows = extract_table_rows(html, required_headers=PA_EMARKETPLACE_HEADERS)
-    except HtmlPageError as error:
-        raise PaEmarketplaceError(
-            "Pennsylvania eMarketplace page missing expected solicitation table headers"
-        ) from error
-    return [_record_from_row(row, source) for row in rows]
+    for headers in (PA_EMARKETPLACE_HEADERS, PA_EMARKETPLACE_CURRENT_HEADERS):
+        try:
+            rows = extract_table_rows(html, required_headers=headers)
+        except HtmlPageError:
+            continue
+        records = []
+        for row in rows:
+            try:
+                records.append(_record_from_row(row, source))
+            except PaEmarketplaceError:
+                continue
+        if records:
+            return records
+    raise PaEmarketplaceError(
+        "Pennsylvania eMarketplace page missing expected solicitation table headers"
+    )
 
 
 def fetch_pa_emarketplace_opportunities(
@@ -169,7 +203,11 @@ def fetch_pa_emarketplace_opportunities(
             html = read_html_fixture(fixture_html)
         else:
             try:
-                html = fetch_html(source.base_url, session=session, timeout=timeout)
+                html = fetch_html(
+                    PA_EMARKETPLACE_SEARCH_URL,
+                    session=session,
+                    timeout=timeout,
+                )
             except HtmlPageError as error:
                 raise PaEmarketplaceError(str(error)) from error
         records = _records_from_html(html, source)

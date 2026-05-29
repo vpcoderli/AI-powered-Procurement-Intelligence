@@ -40,6 +40,30 @@ npm run billing:stripe:sandbox -- --tier=pro
 
 Use `--tier=business` for the Business plan, `--origin=http://localhost:3000` to target a different local origin, `--timeout-ms=300000` to change the webhook wait timeout, and `--skip-cancel` to keep the test subscription after verification. Full setup and troubleshooting steps live in [`../docs/operations/stripe-sandbox-e2e.md`](../docs/operations/stripe-sandbox-e2e.md).
 
+## State Crawler Validation
+
+From the repository root, run live adapter validation without writing to the local database:
+
+```bash
+PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --limit 3 --timeout 20
+```
+
+Use repeated `--source <source_id>` flags to validate a subset, for example:
+
+```bash
+PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live \
+  --source pa_state_procurement \
+  --source ma_state_procurement \
+  --source nj_state_procurement \
+  --source or_state_procurement \
+  --source va_state_procurement \
+  --source wa_state_procurement \
+  --limit 3 \
+  --timeout 20
+```
+
+The command fails if a crawler returns zero opportunities or records missing required content. Current local live validation has PA/MA/NJ/OR/VA/WA returning non-empty results; SC times out from this environment and OH requires a new OhioBuys browser/session strategy.
+
 ## Notification Worker
 
 The notification worker schedules staged billing dunning reminders and delivers pending notification outbox rows.

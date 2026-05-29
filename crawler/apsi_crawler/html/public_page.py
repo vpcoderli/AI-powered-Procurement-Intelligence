@@ -60,11 +60,21 @@ class _TableParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.tables = []
         self._table_stack = []
+        self._table_order = 0
 
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
         if tag == "table":
-            self._table_stack.append({"rows": [], "row": None, "cell": None})
+            self._table_order += 1
+            self._table_stack.append(
+                {
+                    "rows": [],
+                    "row": None,
+                    "cell": None,
+                    "depth": len(self._table_stack),
+                    "order": self._table_order,
+                }
+            )
             return
 
         if not self._table_stack:
@@ -107,17 +117,33 @@ class _TableParser(HTMLParser):
             current["row"] = None
         elif tag == "table":
             finished = self._table_stack.pop()
-            if not self._table_stack:
-                self.tables.append(finished["rows"])
+            self.tables.append(
+                {
+                    "depth": finished["depth"],
+                    "order": finished["order"],
+                    "rows": finished["rows"],
+                }
+            )
+
+
+def extract_html_tables(html):
+    parser = _TableParser()
+    parser.feed(html)
+    return [
+        table["rows"]
+        for table in sorted(
+            parser.tables,
+            key=lambda item: (item["depth"], item["order"]),
+        )
+    ]
 
 
 def extract_table_rows(html, required_headers):
-    parser = _TableParser()
-    parser.feed(html)
+    tables = extract_html_tables(html)
     required = tuple(required_headers)
     last_missing = list(required)
 
-    for table in parser.tables:
+    for table in tables:
         if not table:
             continue
         header_index = None

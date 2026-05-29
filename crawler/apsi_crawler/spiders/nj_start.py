@@ -10,6 +10,11 @@ from apsi_crawler.html.public_page import (
 from apsi_crawler.normalizers.state_bids import normalize_state_opportunity
 
 
+NJ_START_SEARCH_URL = (
+    "https://www.njstart.gov/bso/view/search/external/"
+    "advancedSearchBid.xhtml?openBids=true"
+)
+
 NJ_START_HEADERS = (
     "Bid Solicitation #",
     "Title",
@@ -18,6 +23,14 @@ NJ_START_HEADERS = (
     "Bid Opening Date",
     "Commodity",
     "Documents",
+)
+
+NJ_START_RIO_HEADERS = (
+    "Bid Solicitation #",
+    "Organization Name",
+    "Description",
+    "Bid Opening Date",
+    "Status",
 )
 
 
@@ -74,15 +87,18 @@ def _record_from_row(row, source):
 
     return {
         "source_bid_id": source_bid_id,
-        "title": row.get("Title"),
-        "description": row.get("Title"),
-        "issuer_name": row.get("Agency"),
+        "title": _first_present(row, ("Title", "Description")),
+        "description": _first_present(row, ("Description", "Title")),
+        "issuer_name": _first_present(row, ("Agency", "Organization Name")),
         "published_date": row.get("Posted Date"),
         "deadline_date": row.get("Bid Opening Date"),
-        "original_category": row.get("Commodity"),
+        "original_category": _first_present(row, ("Commodity", "Status")),
         "source_url": absolute_url(
             source.base_url,
-            links.get("Bid Solicitation #") or links.get("Title") or "",
+            links.get("Bid Solicitation #")
+            or links.get("Title")
+            or links.get("Description")
+            or "",
         ),
         "attachments": [attachment for attachment in attachments if attachment],
     }
@@ -142,11 +158,13 @@ def _records_from_payload(payload, source):
 
 
 def _records_from_html(html, source):
-    try:
-        rows = extract_table_rows(html, required_headers=NJ_START_HEADERS)
-    except HtmlPageError as error:
-        raise NjStartError("NJSTART page missing expected solicitation table headers") from error
-    return [_record_from_row(row, source) for row in rows]
+    for headers in (NJ_START_HEADERS, NJ_START_RIO_HEADERS):
+        try:
+            rows = extract_table_rows(html, required_headers=headers)
+            return [_record_from_row(row, source) for row in rows]
+        except (HtmlPageError, NjStartError):
+            continue
+    raise NjStartError("NJSTART page missing expected solicitation table headers")
 
 
 def fetch_nj_start_opportunities(
@@ -167,7 +185,7 @@ def fetch_nj_start_opportunities(
             html = read_html_fixture(fixture_html)
         else:
             try:
-                html = fetch_html(source.base_url, session=session, timeout=timeout)
+                html = fetch_html(NJ_START_SEARCH_URL, session=session, timeout=timeout)
             except HtmlPageError as error:
                 raise NjStartError(str(error)) from error
         records = _records_from_html(html, source)
