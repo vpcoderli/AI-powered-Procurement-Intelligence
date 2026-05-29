@@ -8,6 +8,7 @@ from apsi_crawler.spiders.ga_procurement_registry import (
     fetch_ga_procurement_registry_opportunities,
 )
 from apsi_crawler.spiders.generic_state import fetch_generic_state_opportunities
+from apsi_crawler.spiders.hi_hands import fetch_hi_hands_opportunities
 from apsi_crawler.spiders.ia_bid_opportunities import fetch_ia_bid_opportunities
 from apsi_crawler.spiders.il_bidbuy import fetch_il_bidbuy_opportunities
 from apsi_crawler.spiders.in_idoa import fetch_in_idoa_opportunities
@@ -29,6 +30,14 @@ from apsi_crawler.spiders.or_oregonbuys import fetch_or_oregonbuys_opportunities
 from apsi_crawler.spiders.pa_emarketplace import fetch_pa_emarketplace_opportunities
 from apsi_crawler.spiders.sc_business_opportunities import fetch_sc_business_opportunities
 from apsi_crawler.spiders.sd_esm import fetch_sd_esm_opportunities
+from apsi_crawler.spiders.state_bidnet import (
+    fetch_ak_bidnet_opportunities,
+    fetch_al_bidnet_opportunities,
+    fetch_ky_bidnet_opportunities,
+    fetch_mn_bidnet_opportunities,
+    fetch_nh_bidnet_opportunities,
+    fetch_wi_bidnet_opportunities,
+)
 from apsi_crawler.spiders.state_fixture import load_state_fixture_opportunities
 from apsi_crawler.spiders.tx_esbd import fetch_tx_esbd_opportunities
 from apsi_crawler.spiders.ut_bonfire import fetch_ut_bonfire_opportunities
@@ -123,6 +132,13 @@ SPECIAL_FETCHERS = {
     "sd_state_procurement": fetch_sd_esm_opportunities,
     "wv_state_procurement": fetch_wv_bidnet_opportunities,
     "wy_state_procurement": fetch_wy_ai_bid_opportunities,
+    "al_state_procurement": fetch_al_bidnet_opportunities,
+    "ak_state_procurement": fetch_ak_bidnet_opportunities,
+    "hi_state_procurement": fetch_hi_hands_opportunities,
+    "ky_state_procurement": fetch_ky_bidnet_opportunities,
+    "mn_state_procurement": fetch_mn_bidnet_opportunities,
+    "wi_state_procurement": fetch_wi_bidnet_opportunities,
+    "nh_state_procurement": fetch_nh_bidnet_opportunities,
 }
 
 

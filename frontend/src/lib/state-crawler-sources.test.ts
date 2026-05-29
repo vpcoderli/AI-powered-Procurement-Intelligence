@@ -199,6 +199,13 @@ describe("state crawler source mapping", () => {
       maturity: "beta",
       capabilities: expect.arrayContaining(["query"]),
     });
+    for (const stateCode of ["AL", "AK", "HI", "KY", "MN", "WI", "NH"]) {
+      expect(getStateCrawlerSourceMetadata(stateCode)).toMatchObject({
+        adapterKind: "dedicated",
+        maturity: "beta",
+        capabilities: expect.arrayContaining(["query", "detail_pages", "pagination"]),
+      });
+    }
     expect(getStateCrawlerSourceMetadata("US")).toBeNull();
   });
 });

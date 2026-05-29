@@ -77,6 +77,16 @@ const GENERIC_CRAWLER_METADATA = {
 } as const satisfies CrawlerMetadata;
 
 const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinitionId, CrawlerMetadata>> = {
+  al_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
+  ak_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
   ca_caleprocure: {
     adapterKind: "dedicated",
     maturity: "verified",
@@ -122,10 +132,20 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     maturity: "beta",
     capabilities: ["query"],
   },
+  ky_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
   ga_state_procurement: {
     adapterKind: "dedicated",
     maturity: "beta",
     capabilities: ["query", "detail_pages"],
+  },
+  hi_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
   },
   me_state_procurement: {
     adapterKind: "dedicated",
@@ -152,10 +172,20 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     maturity: "beta",
     capabilities: ["query", "detail_pages"],
   },
+  mn_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
   nm_state_procurement: {
     adapterKind: "dedicated",
     maturity: "beta",
     capabilities: ["query"],
+  },
+  nh_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
   },
   nj_state_procurement: {
     adapterKind: "dedicated",
@@ -221,6 +251,11 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     adapterKind: "dedicated",
     maturity: "beta",
     capabilities: ["query", "attachments"],
+  },
+  wi_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
   },
   wv_state_procurement: {
     adapterKind: "dedicated",
