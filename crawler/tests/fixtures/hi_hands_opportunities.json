@@ -1,0 +1,26 @@
+{
+  "data": {
+    "searchResult": {
+      "content": [
+        {
+          "category": "Construction",
+          "closed": false,
+          "department": "Accounting & General Services",
+          "detailsUrl": null,
+          "division": "Public Works",
+          "dueDate": "07/02/2026 02:00 PM",
+          "island": "Oahu",
+          "jurisdiction": "Executive",
+          "jurisdictionUrl": null,
+          "publishDate": "05/28/2026",
+          "status": "POSTED",
+          "system": "HANDS",
+          "title": "HO'OPONO BUILDINGS A AND B ",
+          "solicitionNo": "12-33-7805",
+          "id": 27117
+        }
+      ],
+      "last": true
+    }
+  }
+}

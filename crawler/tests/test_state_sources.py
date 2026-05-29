@@ -15,6 +15,7 @@ from apsi_crawler.spiders.ma_commbuys import fetch_ma_commbuys_opportunities
 from apsi_crawler.spiders.ga_procurement_registry import (
     fetch_ga_procurement_registry_opportunities,
 )
+from apsi_crawler.spiders.hi_hands import fetch_hi_hands_opportunities
 from apsi_crawler.spiders.ia_bid_opportunities import fetch_ia_bid_opportunities
 from apsi_crawler.spiders.me_rfps import fetch_me_rfp_opportunities
 from apsi_crawler.spiders.mo_bid_listing import fetch_mo_bid_listing_opportunities
@@ -28,6 +29,14 @@ from apsi_crawler.spiders.nv_epro import fetch_nv_epro_opportunities
 from apsi_crawler.spiders.oh_procure import fetch_oh_procure_opportunities
 from apsi_crawler.spiders.ok_esupplier import fetch_ok_esupplier_opportunities
 from apsi_crawler.spiders.sd_esm import fetch_sd_esm_opportunities
+from apsi_crawler.spiders.state_bidnet import (
+    fetch_ak_bidnet_opportunities,
+    fetch_al_bidnet_opportunities,
+    fetch_ky_bidnet_opportunities,
+    fetch_mn_bidnet_opportunities,
+    fetch_nh_bidnet_opportunities,
+    fetch_wi_bidnet_opportunities,
+)
 from apsi_crawler.spiders.ut_bonfire import fetch_ut_bonfire_opportunities
 from apsi_crawler.spiders.va_eva import fetch_va_eva_opportunities
 from apsi_crawler.spiders.wa_des import fetch_wa_des_opportunities
@@ -159,6 +168,16 @@ def test_batch_five_state_sources_are_registered_to_dedicated_fetchers():
     assert get_live_fetcher("sd_state_procurement") is fetch_sd_esm_opportunities
     assert get_live_fetcher("wv_state_procurement") is fetch_wv_bidnet_opportunities
     assert get_live_fetcher("wy_state_procurement") is fetch_wy_ai_bid_opportunities
+
+
+def test_batch_six_state_sources_are_registered_to_dedicated_fetchers():
+    assert get_live_fetcher("al_state_procurement") is fetch_al_bidnet_opportunities
+    assert get_live_fetcher("ak_state_procurement") is fetch_ak_bidnet_opportunities
+    assert get_live_fetcher("hi_state_procurement") is fetch_hi_hands_opportunities
+    assert get_live_fetcher("ky_state_procurement") is fetch_ky_bidnet_opportunities
+    assert get_live_fetcher("mn_state_procurement") is fetch_mn_bidnet_opportunities
+    assert get_live_fetcher("wi_state_procurement") is fetch_wi_bidnet_opportunities
+    assert get_live_fetcher("nh_state_procurement") is fetch_nh_bidnet_opportunities
 
 
 def test_sam_gov_default_fixture_loader_remains_compatible():
