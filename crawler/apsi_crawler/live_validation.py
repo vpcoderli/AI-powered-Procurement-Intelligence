@@ -37,6 +37,9 @@ BETA_DEDICATED_STATE_SOURCES = (
     "mn_state_procurement",
     "wi_state_procurement",
     "nh_state_procurement",
+    "de_state_procurement",
+    "ri_state_procurement",
+    "tn_state_procurement",
 )
 
 

@@ -1,0 +1,22 @@
+{
+  "hits": 89,
+  "records": [
+    {
+      "bidid": 129259,
+      "bidNumber": "OEV25004804",
+      "title": "MPA 52 OE Construction Renovations Minor",
+      "description": "Minor construction renovation open enrollment.",
+      "startDate": 1729000800000,
+      "statusDate": 1792440000000,
+      "creatorOrg": {
+        "name": "State of Rhode Island"
+      },
+      "ownerOrg": {
+        "name": "State of Rhode Island"
+      },
+      "orgBidClassType": {
+        "description": "Open Enrollment Vendor Assessment"
+      }
+    }
+  ]
+}
