@@ -1,6 +1,6 @@
 # WinBids Unified Product Requirements
 
-Updated: 2026-05-28
+Updated: 2026-05-29
 
 ## Product Vision
 
@@ -45,6 +45,15 @@ MVP workflow:
 11. Win/loss analysis.
 12. Fulfillment preparation reminder.
 
+## Latest Drive Adjustment
+
+The 2026-05-29 Drive refresh adds four major planning changes:
+
+- Commercial packaging should use Free, Pursuit Starter, Response Builder, Growth, and Enterprise as the product language. The current local `pro` and `business` tiers should be treated as compatibility names until migrated or aliased.
+- Credits are a first-class metering layer for premium actions such as full bid brief generation, compliance manifest generation, readiness review, response drafting, package review, amendment delta review, tabulation analysis, and price-to-win analysis.
+- Product 1 data work is split into Source Registry, Connector Data Ingestion Engine, Bid Data Normalization/Storage/Data Quality, and Bid Admin/Data QA. The crawler work should be aligned to these boundaries instead of treated as one generic scraper layer.
+- Knowledge Station is Product 0.9 / workflow coaching for MVP support, not only a far-future standalone knowledge product.
+
 ## Differentiators
 
 ### Bid Match Guidance
@@ -83,6 +92,16 @@ Core modules:
 - Shared AI system rules.
 - Basic dashboard.
 - Homepage and marketing entry.
+- Product 0.9 Knowledge Station Lite / workflow coaching.
+
+Commercial modules:
+
+- Free account and onboarding.
+- Pursuit Starter activation.
+- Response Builder activation.
+- Growth plan placeholder for award learning and intelligence.
+- Enterprise sales-led governance.
+- Credits, credit ledger, usage, and contextual paywalls.
 
 ### Product 1: Bid Discovery
 
@@ -90,11 +109,11 @@ Purpose: collect, normalize, QA, search, display, save, and match public-sector 
 
 Core modules:
 
-- Federal and state bid data source discovery.
-- Local, education, district, and non-state source discovery.
+- Source Registry and Source Discovery for federal, state, local, education, airport, utility, healthcare, and other SLED sources.
+- Connector Data Ingestion Engine.
+- Bid Data Normalization, Storage, and Data Quality.
 - Supplier profile.
-- Bid ingestion and normalization.
-- Bid admin QA.
+- Bid Admin and Data QA.
 - Bid display, search, filters, detail page, saved bids, saved search alerts.
 - Bid match scoring.
 
@@ -160,10 +179,12 @@ Core modules:
 
 ### Knowledge Station
 
-Purpose: capture reusable knowledge from bid documents, requirements, compliance checklists, supplier artifacts, awards, and prior pursuit outcomes.
+Purpose: provide embedded workflow coaching and later capture reusable knowledge from bid documents, requirements, compliance checklists, supplier artifacts, awards, and prior pursuit outcomes.
 
 MVP role:
 
+- Explain bid concepts, product workflow, and next steps in context.
+- Provide glossary terms, coaching snippets, and mini playbooks.
 - Support bid understanding and preparation.
 - Store reusable requirements and lessons.
 - Avoid becoming a full enterprise knowledge system before core pursuit workflow is useful.
@@ -196,90 +217,74 @@ The MVP is successful when a supplier can:
 - Do not over-automate source ingestion where manual admin QA is safer.
 - AI output must be explainable, cite source fields or documents when possible, show confidence, and avoid legal guarantees.
 
-## Phase Cutline
+## Release Cutline
 
-### Phase 1: Core Bid Discovery and Intent Workflow
+### R0: Planning Readiness
 
-Goal: prove users can create a profile, view matched bids, save a bid, and start evaluation.
+Goal: align scope, architecture, launch guardrails, and commercial model.
 
-Must build:
+Must build or maintain:
 
-- Homepage.
-- Sign up / sign in.
-- Supplier profile.
-- Bid source and bid database.
-- Bid fetch / normalize with admin/manual import plus first connectors.
-- Bid display / search / filter.
-- Match score v1.
-- Save bid.
-- Add to Intent to Bid.
-- AI bid brief v1.
-- Initial checklist v1.
-- Basic admin bid review.
+- Master Product PRD.
+- MVP Release Plan PRD.
+- Data Model PRD.
+- AI System PRD.
+- Security / roles / permissions.
+- User account and subscription foundation.
+- Basic dashboard and homepage direction.
+- Commercial packaging and credits roadmap.
 
-Do not build yet:
+### R1: Bid Discovery Alpha
 
-- Full submission management.
-- Full quote management.
-- Full win/loss analysis.
-- Advanced billing.
-- Team accounts.
-- Direct bid submission.
-
-### Phase 2: Submission Management and Tracking
-
-Goal: help users understand where and how to submit outside WinBids.
+Goal: users can create a profile, find bids, view bid details, save bids, and see match ranking.
 
 Must build:
 
-- Submission path object.
-- Submission complexity score.
-- Submission readiness checklist.
-- External submission guidance.
-- Submission confirmation.
-- Official bid status tracking.
-- User pursuit status tracking.
-- Reminder checkpoints.
+- Source Registry and source activation readiness.
+- Connector ingestion and raw/attachment archival for approved sources.
+- Normalization, data quality flags, dedupe signals, and admin QA routing.
+- Bid display, search, filters, saved bids, saved searches/alerts.
+- Supplier profile and match scoring.
 
-### Phase 3: Supply Chain and Quote Support
+### R2: Qualification Beta
 
-Goal: help users understand whether they can source competitively for a bid.
+Goal: users can save bids, understand requirements, and decide pursue/no-bid.
 
 Must build:
 
-- Sourcing partner database.
-- Freight partner database.
-- Supplier match for bid.
-- Quote inquiry template.
-- Copy-to-clipboard quote inquiry.
-- Manual mark-as-sent.
-- Manual quote entry.
-- Quote attachment upload.
-- Quote comparison table.
-- Quote status tracking.
+- Intent to Bid.
+- Bid Understanding Assistant.
+- Compliance Manifest.
+- Pursue / No-Bid Assistant.
+- No-Bid Reason Taxonomy.
+- Knowledge Station Lite.
 
-### Phase 4: Award, Tabulation, and Win/Loss Learning
+### R3: MVP Launch
 
-Goal: turn bid results into learning data.
+Goal: users can lightly manage a pursuit, receive submission guidance, confirm submission, and track outcomes.
 
 Must build:
 
-- Award record.
-- Tabulation record.
-- Award/tabulation notification.
-- Loss debrief.
-- Win analysis.
-- Future bid recommendation update.
-- Fulfillment preparation reminder.
+- Bid Pursuit Workspace Lite.
+- Artifact Vault Lite.
+- Deadline notifications.
+- Submission Management and Submission Confirmation.
+- Status Tracking.
+- Award / Tabulation capture.
+- Win/Loss Lite.
+- Award/status alerts.
 
-### Phase 5: Advanced Integrations
+### R4: Post-MVP Expansion
 
 Future only:
 
+- Full supply chain management.
+- Full quote management and supplier portal integrations.
+- Full Knowledge Station.
+- Product 6 Procurement Intelligence.
+- Forecasting, pricing/category intelligence, buyer/competitor intelligence.
 - Gmail / Outlook integration.
 - Calendar integration.
-- Team workflow.
-- Supplier quote portal.
 - CRM / ERP export.
 - PO management.
 - Invoice management.
@@ -296,12 +301,16 @@ The current local codebase already includes:
 - Search, filters, saved bids, saved search alerts.
 - Admin data sources and crawler logs.
 - SAM.gov runner and state runner foundations.
-- CA/TX/NY/FL/IL state crawler runner flow.
+- 50-state state runner registry with CA/TX/NY/FL/IL verified dedicated adapters and the other 45 state sources covered by beta dedicated adapters.
 - Supplier profile API and page.
 - Deterministic match score v1.
 - Intent to Bid API, list page, detail page, and bid-detail pursuit panel.
 - Deterministic AI brief/checklist/risk flags.
+- Submission Guidance Lite.
+- Compliance Manifest Lite.
+- Pursue / No-Bid Decision Lite.
+- Account, organization, tier, feature gate, usage limit, Stripe sandbox, invoice, customer portal, and notification foundations.
 - Bilingual English/Chinese UI shell.
 - Static Generative Art Platform UI exploration route.
 
-This means the next product work should focus on deepening Product 2 and then moving into Phase 2 submission guidance, not restarting Product 0/P1 from scratch.
+This means the next product work should first reconcile commercial packaging and credits, then continue with Product 1 data pipeline hardening or Product 3/Knowledge workflow depth.

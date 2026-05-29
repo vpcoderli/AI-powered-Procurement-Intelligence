@@ -1,6 +1,6 @@
 # WinBids Product Requirements
 
-Updated: 2026-05-28
+Updated: 2026-05-29
 
 This directory is the local working source for WinBids product requirements after reading the shared Google Drive folder.
 
@@ -10,24 +10,28 @@ This directory is the local working source for WinBids product requirements afte
    - Lists every Drive file read and the source hierarchy.
 2. `winbids-unified-prd.md`
    - Consolidates product vision, modules, phases, scope, and MVP guardrails.
-3. `winbids-current-gap-analysis.md`
+3. `winbids-requirements-reconciliation-2026-05-29.md`
+   - Compares the latest Drive requirements with the local implementation and creates the revised requirement list.
+4. `winbids-current-gap-analysis.md`
    - Compares the source requirements with the current local system.
-4. `winbids-next-development-plan.md`
-   - Recommends the next implementation phase: Submission Guidance Lite.
-5. `winbids-implementation-status.md`
+5. `winbids-next-development-plan.md`
+   - Tracks the next implementation direction after the latest Drive refresh.
+6. `winbids-implementation-status.md`
    - Tracks implemented, partial, and missing functionality after each local development phase.
 
 ## Current Recommendation
 
-Continue implementation with **Submission Guidance Lite**.
+Continue implementation with **Commercial Packaging And Credits Reconciliation** unless the sprint intentionally stays on crawler/data quality.
 
-The local system already supports the Phase 1A loop:
+Reason:
 
-`Search bid -> match score -> Intent to Bid -> AI brief/checklist/risk flags`
+- The latest Drive requirements changed the commercial model from `Free / Pro / Business / Enterprise` to `Free / Pursuit Starter / Response Builder / Growth / Enterprise`.
+- Credits are now a first-class metering layer for premium AI and workflow actions.
+- Product 3, Knowledge Station, and premium AI work should not be built on top of the old Pro/Business gate vocabulary.
 
-The next valuable workflow is:
+Data-quality alternative:
 
-`Intent -> submission path -> complexity score -> readiness checklist -> external submission guidance -> confirmation record`
+- If the next sprint remains focused on crawler reliability, prioritize **P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata**.
 
 ## Refresh Rule
 
