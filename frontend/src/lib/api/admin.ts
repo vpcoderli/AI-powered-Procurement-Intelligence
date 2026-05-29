@@ -4,6 +4,12 @@ import type {
   AdminDataSourcesResponse,
 } from "@/server/admin/data-sources-repository";
 import type {
+  AdminBidQaArchiveStatus,
+  AdminBidQaItem,
+  AdminBidQaResponse,
+  AdminBidQaReviewStatus,
+} from "@/server/admin/bid-qa-repository";
+import type {
   AdminUserAuditLog,
   AdminUserAuditAction,
   AdminUserAuditActorKind,
@@ -24,6 +30,10 @@ import type { SubscriptionLifecycleReconcileResult } from "@/server/billing/subs
 import type { ScheduleDunningRemindersResult } from "@/server/billing/dunning";
 
 export type {
+  AdminBidQaArchiveStatus,
+  AdminBidQaItem,
+  AdminBidQaResponse,
+  AdminBidQaReviewStatus,
   AdminCrawlerLog,
   AdminDataSource,
   AdminDataSourcesResponse,
@@ -48,11 +58,16 @@ type AdminApiErrorCode =
   | "EMAIL_EXISTS"
   | "INVALID_REQUEST"
   | "DATA_SOURCE_NOT_FOUND"
+  | "BID_NOT_FOUND"
   | "USER_NOT_FOUND"
   | "INTERNAL_ERROR";
 
 export interface AdminCrawlerLogsResponse {
   logs: AdminCrawlerLog[];
+}
+
+export interface UpdateAdminBidQaReviewResponse {
+  item: AdminBidQaItem;
 }
 
 export interface UpdateAdminDataSourceResponse {
@@ -106,6 +121,7 @@ function isAdminErrorResponse(body: unknown): body is { error: { code: AdminApiE
       code === "EMAIL_EXISTS" ||
       code === "INVALID_REQUEST" ||
       code === "DATA_SOURCE_NOT_FOUND" ||
+      code === "BID_NOT_FOUND" ||
       code === "USER_NOT_FOUND" ||
       code === "INTERNAL_ERROR") &&
     typeof message === "string"
@@ -228,6 +244,33 @@ export async function listAdminCrawlerLogs() {
   const response = await fetch("/api/admin/crawler-logs");
 
   return parseResponse<AdminCrawlerLogsResponse>(response);
+}
+
+export async function listAdminBidQaItems(
+  filters: {
+    limit?: number;
+    q?: string;
+    stateCode?: string;
+    reviewStatus?: AdminBidQaReviewStatus;
+    archiveStatus?: AdminBidQaArchiveStatus;
+  } = {},
+) {
+  const response = await fetch(`/api/admin/bids/qa${buildQueryString(filters)}`);
+
+  return parseResponse<AdminBidQaResponse>(response);
+}
+
+export async function updateAdminBidQaReview(
+  id: string,
+  input: { reviewStatus: AdminBidQaReviewStatus; note?: string | null },
+) {
+  const response = await fetch(`/api/admin/bids/qa/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<UpdateAdminBidQaReviewResponse>(response);
 }
 
 export async function listAdminNotifications(input: { limit?: number; status?: NotificationStatus } = {}) {

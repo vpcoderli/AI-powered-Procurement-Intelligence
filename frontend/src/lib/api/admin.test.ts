@@ -6,6 +6,7 @@ import {
   listAdminUserFeatureOverrides,
   listAdminNotifications,
   listAdminCrawlerLogs,
+  listAdminBidQaItems,
   listAdminDataSources,
   listAdminUserAuditLogs,
   listAdminUsers,
@@ -15,6 +16,7 @@ import {
   reconcileAdminSubscriptions,
   updateAdminUserFeatureOverride,
   updateAdminDataSource,
+  updateAdminBidQaReview,
   updateAdminUser,
 } from "./admin";
 
@@ -228,6 +230,42 @@ describe("admin API client", () => {
 
     await expect(listAdminCrawlerLogs()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/admin/crawler-logs");
+  });
+
+  it("lists admin bid QA items with filters", async () => {
+    const body = {
+      summary: { total: 1, needsReview: 1, archiveIssues: 1, lowQuality: 1 },
+      items: [{ id: "bid_1", title: "QA bid" }],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(
+      listAdminBidQaItems({
+        limit: 10,
+        q: "cloud",
+        stateCode: "CA",
+        reviewStatus: "needs_review",
+        archiveStatus: "failed",
+      }),
+    ).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/admin/bids/qa?limit=10&q=cloud&stateCode=CA&reviewStatus=needs_review&archiveStatus=failed",
+    );
+  });
+
+  it("updates admin bid QA review status", async () => {
+    const body = { item: { id: "bid_1", adminReviewStatus: "reviewed" } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(updateAdminBidQaReview("bid 1", {
+      reviewStatus: "reviewed",
+      note: "Verified",
+    })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/bids/qa/bid%201", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reviewStatus: "reviewed", note: "Verified" }),
+    });
   });
 
   it("lists admin notification outbox rows", async () => {

@@ -1,6 +1,6 @@
 # WinBids Implementation Status
 
-Updated: 2026-05-29
+Updated: 2026-05-30
 
 This document is the working checklist for local development. Update it after each completed phase so the next task can start from this list instead of re-reading the whole codebase.
 
@@ -28,6 +28,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin auth helper | `requireAdmin()` checks authenticated non-disabled full-admin sessions; `requireAdminAccess()` supports admin/operator/support console access with route-level role restrictions; local bypass for development. |
 | Admin user access console | `/admin` lists registered users, creates invited accounts with temporary passwords, filters/searches accounts, changes role/tier/enabled state, shows access audit logs including self-service account deletion, and keeps account management limited to full admins. |
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs; support can view operational state, operator/admin can run operational actions; state crawler registry now covers all 50 states. |
+| Admin bid QA console | `/admin` includes a Bid Data QA queue with quality score, review status, source/state, quality flags, archive issue counts, and operator/admin review status updates; support can view the queue read-only. |
 | Feature entitlement map | Central role/tier feature map for current compatibility tiers `free`, `pro`, `business`, `enterprise`; product-facing plan copy maps to Free, Pursuit Starter, Response Builder, planned Growth, and Enterprise. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, tier-aware locked states for gated features, and manifest-backed static coverage tests for current/future advanced feature API routes. |
 | Usage limits | Central saved bid, intent workspace, search alert, and team member quota checks/counts by organization tier; authenticated users are counted at workspace scope; saved bids, intents, search alerts, and team member invite/accept flows return `USAGE_LIMIT_REACHED` before creating over-limit resources; Settings shows current workspace usage vs plan limits. |
@@ -119,7 +120,7 @@ The refreshed Drive material changes the product packaging language and introduc
 | Feature access control | Central feature map, server guard, client helper, visible locked states, PRD feature slugs, saved bid/intent/search alert/team invite quota enforcement, team member usage counting, Settings usage dashboard, credit summary, organization-level feature overrides with reason/expiry metadata, audit filtering by actor/action/target/feature, and manifest-backed static coverage tests; session entitlements and workspace quotas now use organization tier; Submission Guidance and Pursue / No-Bid are currently Pursuit Starter-gated, Compliance Manifest is currently Response Builder-gated; Quote Workflow and Knowledge Station are explicitly marked as not-yet-implemented API surfaces | Real credit consumption/refund flows, optional richer beta program workflow, and custom enterprise permission rules |
 | Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails; creation is quota-gated by tier | Full alert management UI, per-alert digest configuration, real email delivery provider |
 | Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, user preferences, billing dunning reminders, deployable notification/dunning worker command, invite delivery status, admin notification history, and admin delivery trigger exist | Production cron/process deployment and production email provider hardening |
-| Admin data QA | Source status/logs exist; bid detail now surfaces attachment archival status and failure notes. | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
+| Admin data QA | Source status/logs exist; bid detail surfaces attachment archival status and failure notes; Admin now has a QA queue with score, archive issue counts, review status, reviewer timestamp/by metadata, and quick reviewed/needs-review actions. | Field correction workflow, original-vs-corrected preservation, publish/unpublish controls, batch QA actions |
 
 ### Not Implemented
 
@@ -136,13 +137,13 @@ The refreshed Drive material changes the product packaging language and introduc
 
 ## Recommended Next Phase
 
-Prioritize **Bid Admin/Data QA Console Expansion** next.
+Prioritize **Bid Admin/Data QA Correction + Publish Controls** next.
 
 Reason:
 
-- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Response Builder-gated Compliance Manifest, Pursuit Starter-gated Pursue / No-Bid Decision, 50-state crawler registry, and local attachment/detail archival now exist.
+- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Response Builder-gated Compliance Manifest, Pursuit Starter-gated Pursue / No-Bid Decision, 50-state crawler registry, local attachment/detail archival, and Admin Bid QA queue now exist.
 - The remaining account gap is not basic registration; it is production deployment hardening, production worker deployment runbook, real credit consumption/refund flows when premium actions exist, custom enterprise rules when concrete use cases appear, broader advanced usage metrics, and future compliance polish.
-- The next highest data risk is no longer empty crawler files; it is operator review, correction, and publish confidence across source records and archived evidence.
+- The next highest data risk is no longer discovering bad records; it is correcting them safely and controlling publish/suppression state without losing original crawler evidence.
 
 ## Account / Role / Tier Direction
 
@@ -201,8 +202,8 @@ Current local limits use internal tier values. Product-facing labels should be s
 
 ## Suggested Implementation Order
 
-1. **Bid Admin/Data QA Console Expansion**
-   - Add review/correction workflow, publish confidence, and quality status filters.
+1. **Bid Admin/Data QA Correction + Publish Controls**
+   - Add limited field correction workflow, original-vs-corrected preservation, publish/suppress state, and batch QA actions.
 
 2. **Product 2 Qualification Upgrade**
    - Add citations, document-grounded Q&A, amendment/addenda awareness, evidence mapping, and no-bid taxonomy.
@@ -224,9 +225,24 @@ Current local limits use internal tier values. Product-facing labels should be s
 - 招标详情页附件列表显示本地归档状态与失败说明，便于诊断“有数据但文件 404”的问题。
 
 当前还剩：
-1. Bid Admin/Data QA Console Expansion：质量状态筛选、人工 review/correction、publish/unpublish。
+1. Bid Admin/Data QA Correction + Publish Controls：字段修正、原始值保留、publish/suppress、批量审核。
 2. Product 2 Qualification Upgrade：document-grounded citations、Q&A、amendment/addenda awareness、evidence mapping、no-bid taxonomy。
 3. Knowledge Station Lite：工作流教练、模板/片段、可复用知识沉淀。
+
+## Completed Phase: Admin Bid QA Console Thin Slice
+
+本阶段完成：
+- `bids` 增加 `admin_review_note`、`admin_reviewed_at`、`admin_reviewed_by`，保留 review 状态的操作者和时间。
+- 新增 Admin Bid QA repository，计算质量分，汇总 total/needsReview/archiveIssues/lowQuality。
+- 新增 `/api/admin/bids/qa` 列表 API，支持 `limit/q/stateCode/reviewStatus/archiveStatus`。
+- 新增 `/api/admin/bids/qa/[id]` PATCH API，admin/operator 可更新 `reviewStatus` 和 note，support 只读。
+- `/admin` 接入 Bid Data QA 队列，展示质量分、归档问题数、质量 flags、review status，并支持快速标记 Reviewed / Needs review。
+
+当前还剩：
+1. QA 字段修正：title、deadline、issuer、amount、category、source URL 等有限字段编辑。
+2. 原始值保留：记录 crawler original value 与 corrected value，避免覆盖证据。
+3. Publish/suppress 控制：面向搜索结果的发布状态、隐藏/恢复、批量操作。
+4. 更深 QA 筛选：按 source confidence、quality score range、archive failed/unavailable、reviewer、reviewed date 过滤。
 
 ## Completed Phase: Commercial Packaging And Credits Reconciliation
 

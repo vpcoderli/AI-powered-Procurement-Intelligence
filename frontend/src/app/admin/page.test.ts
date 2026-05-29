@@ -10,10 +10,12 @@ describe("admin page", () => {
     expect(page).toContain("listAdminUserAuditLogs");
     expect(page).toContain("listAdminUserFeatureOverrides");
     expect(page).toContain("listAdminNotifications");
+    expect(page).toContain("listAdminBidQaItems");
     expect(page).toContain("deliverAdminNotifications");
     expect(page).toContain("reconcileAdminSubscriptions");
     expect(page).toContain("updateAdminUserAccess");
     expect(page).toContain("updateAdminUserFeatureOverride");
+    expect(page).toContain("updateAdminBidQaReview");
     expect(page).toContain("useAuth");
     expect(page).toContain("isAdmin");
     expect(page).toContain("isOperator");
@@ -25,6 +27,10 @@ describe("admin page", () => {
     expect(page).toContain("if (!canAccessAdminConsole) return");
     expect(page).toContain('t("admin.users")');
     expect(page).toContain('t("admin.crawler")');
+    expect(page).toContain('t("admin.bidQa")');
+    expect(page).toContain('t("admin.qualityScore")');
+    expect(page).toContain('t("admin.archiveIssues")');
+    expect(page).toContain('t("admin.markReviewed")');
     expect(page).toContain('t("admin.crawlerAdapter_dedicated")');
     expect(page).toContain('t("admin.crawlerMaturity_verified")');
     expect(page).toContain("source.crawlerCapabilities");

@@ -211,6 +211,9 @@ export function runMigrations(db: AppDatabase) {
       source_confidence TEXT NOT NULL DEFAULT 'medium',
       quality_flags_json TEXT NOT NULL DEFAULT '[]',
       admin_review_status TEXT NOT NULL DEFAULT 'unreviewed',
+      admin_review_note TEXT,
+      admin_reviewed_at TEXT,
+      admin_reviewed_by TEXT,
       detail_archive_status TEXT NOT NULL DEFAULT 'not_archived',
       detail_archive_path TEXT,
       detail_fetched_at TEXT,
@@ -591,6 +594,9 @@ export function runMigrations(db: AppDatabase) {
   addBidColumn("source_confidence", "TEXT NOT NULL DEFAULT 'medium'");
   addBidColumn("quality_flags_json", "TEXT NOT NULL DEFAULT '[]'");
   addBidColumn("admin_review_status", "TEXT NOT NULL DEFAULT 'unreviewed'");
+  addBidColumn("admin_review_note", "TEXT");
+  addBidColumn("admin_reviewed_at", "TEXT");
+  addBidColumn("admin_reviewed_by", "TEXT");
   addBidColumn("detail_archive_status", "TEXT NOT NULL DEFAULT 'not_archived'");
   addBidColumn("detail_archive_path", "TEXT");
   addBidColumn("detail_fetched_at", "TEXT");

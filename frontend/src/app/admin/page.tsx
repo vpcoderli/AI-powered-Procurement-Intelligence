@@ -33,6 +33,7 @@ import {
 import {
   createAdminUser,
   deliverAdminNotifications,
+  listAdminBidQaItems,
   listAdminCrawlerLogs,
   listAdminDataSources,
   listAdminNotifications,
@@ -42,8 +43,12 @@ import {
   reconcileAdminSubscriptions,
   runStateCrawlersNow,
   updateAdminDataSource,
+  updateAdminBidQaReview,
   updateAdminUserFeatureOverride,
   updateAdminUser as updateAdminUserAccess,
+  type AdminBidQaItem,
+  type AdminBidQaResponse,
+  type AdminBidQaReviewStatus,
   type AdminCrawlerLog,
   type AdminDataSource,
   type AdminDataSourcesResponse,
@@ -67,6 +72,7 @@ type LoadState =
       status: "ready";
       data: AdminDataSourcesResponse;
       logs: AdminCrawlerLog[];
+      bidQa: AdminBidQaResponse;
       users: AdminUser[];
       userAuditLogs: AdminUserAuditLog[];
       notifications: AdminNotificationsResponse["notifications"];
@@ -111,6 +117,10 @@ const DEFAULT_INVITATION_DRAFT: InvitationDraft = {
   role: "user",
   tier: "free",
 };
+
+function reviewStatusLabel(t: (key: string) => string, status: AdminBidQaReviewStatus) {
+  return t(`admin.reviewStatus_${status}`);
+}
 
 function stateCrawlerSourceIdFor(source: AdminDataSource) {
   return source.crawlerSourceId ?? stateCrawlerSourceIdForAdminSource(source);
@@ -166,6 +176,19 @@ function statusTone(status: string | null | undefined) {
   if (status === "running" || status === "locked") return "border-sky-200 bg-sky-50 text-sky-700";
   if (status) return "border-rose-200 bg-rose-50 text-rose-700";
   return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function qualityTone(score: number) {
+  if (score >= 85) return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (score >= 70) return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-rose-200 bg-rose-50 text-rose-700";
+}
+
+function reviewTone(status: string | null | undefined) {
+  if (status === "reviewed") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "suppressed") return "border-slate-300 bg-slate-100 text-slate-700";
+  if (status === "needs_review") return "border-rose-200 bg-rose-50 text-rose-700";
+  return "border-amber-200 bg-amber-50 text-amber-700";
 }
 
 function crawlerTone(value: string | null | undefined) {
@@ -310,6 +333,7 @@ export default function AdminPage() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [pendingSourceId, setPendingSourceId] = useState<string | null>(null);
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
+  const [pendingBidQaId, setPendingBidQaId] = useState<string | null>(null);
   const [userFilters, setUserFilters] = useState<UserFilters>({});
   const [userAuditFilters, setUserAuditFilters] = useState<UserAuditFilters>({});
   const [isRunning, setIsRunning] = useState(false);
@@ -349,15 +373,17 @@ export default function AdminPage() {
     Promise.all([
       listAdminDataSources(),
       listAdminCrawlerLogs(),
+      listAdminBidQaItems({ limit: 10 }),
       canManageUsers ? listAdminUsers(userFilters) : Promise.resolve({ users: [] }),
       canManageUsers ? listAdminUserAuditLogs(auditLogRequest()) : Promise.resolve({ logs: [] }),
       listAdminNotifications({ limit: 10 }),
     ])
-      .then(([data, logsResponse, usersResponse, userAuditLogsResponse, notificationsResponse]) => {
+      .then(([data, logsResponse, bidQa, usersResponse, userAuditLogsResponse, notificationsResponse]) => {
         setState({
           status: "ready",
           data,
           logs: logsResponse.logs,
+          bidQa,
           users: usersResponse.users,
           userAuditLogs: userAuditLogsResponse.logs,
           notifications: notificationsResponse.notifications,
@@ -378,6 +404,8 @@ export default function AdminPage() {
   const summary = state.status === "ready" ? state.data.summary : null;
   const sources = state.status === "ready" ? state.data.sources : [];
   const logs = state.status === "ready" ? state.logs : [];
+  const bidQa = state.status === "ready" ? state.bidQa : null;
+  const bidQaItems = bidQa?.items ?? [];
   const users = state.status === "ready" ? state.users : [];
   const userAuditLogs = state.status === "ready" ? state.userAuditLogs : [];
   const notifications = state.status === "ready" ? state.notifications : [];
@@ -445,6 +473,29 @@ export default function AdminPage() {
       })
       .finally(() => {
         setRunningSourceId(null);
+      });
+  };
+
+  const updateBidQaStatus = (item: AdminBidQaItem, reviewStatus: AdminBidQaReviewStatus) => {
+    setPendingBidQaId(item.id);
+    updateAdminBidQaReview(item.id, { reviewStatus })
+      .then(() => listAdminBidQaItems({ limit: 10 }))
+      .then((bidQa) => {
+        setState((current) => {
+          if (current.status !== "ready") return current;
+
+          return {
+            ...current,
+            bidQa,
+          };
+        });
+        setRunMessage(t("admin.bidQaUpdated"));
+      })
+      .catch(() => {
+        setRunMessage(t("admin.bidQaUpdateFailed"));
+      })
+      .finally(() => {
+        setPendingBidQaId(null);
       });
   };
 
@@ -766,6 +817,119 @@ export default function AdminPage() {
           <SummaryCard label={t("admin.healthySources")} value={summary.healthySources} icon={Activity} />
           <SummaryCard label={t("admin.failingSources")} value={summary.failingSources} icon={AlertTriangle} />
         </div>
+      )}
+
+      {state.status === "ready" && bidQa && (
+        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-2 font-semibold text-slate-950">
+              <Database size={18} />
+              {t("admin.bidQa")}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+                {t("admin.needsReview")}: {bidQa.summary.needsReview}
+              </Badge>
+              <Badge variant="outline" className="border-rose-200 bg-rose-50 text-rose-700">
+                {t("admin.archiveIssues")}: {bidQa.summary.archiveIssues}
+              </Badge>
+              <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                {t("admin.lowQuality")}: {bidQa.summary.lowQuality}
+              </Badge>
+            </div>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t("admin.bid")}</TableHead>
+                <TableHead>{t("admin.source")}</TableHead>
+                <TableHead>{t("admin.qualityScore")}</TableHead>
+                <TableHead>{t("admin.archiveIssues")}</TableHead>
+                <TableHead>{t("admin.status")}</TableHead>
+                <TableHead>{t("bid.deadline")}</TableHead>
+                {canRunOperations && <TableHead className="text-right">{t("admin.review")}</TableHead>}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {bidQaItems.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={canRunOperations ? 7 : 6} className="py-6 text-center text-sm text-slate-500">
+                    {t("admin.noBidQaItems")}
+                  </TableCell>
+                </TableRow>
+              )}
+              {bidQaItems.map((item) => (
+                <TableRow key={item.id}>
+                  <TableCell>
+                    <div className="max-w-80 truncate font-medium text-slate-900" title={item.title}>
+                      {item.title}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {item.qualityFlags.slice(0, 3).map((flag) => (
+                        <Badge key={flag} variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                          {flag}
+                        </Badge>
+                      ))}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="font-medium text-slate-700">{item.source}</div>
+                    <div className="text-xs text-slate-500">{item.stateCode}</div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={qualityTone(item.qualityScore)}>
+                      {item.qualityScore}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-wrap gap-1">
+                      <Badge variant="outline" className={item.archiveIssueCount > 0 ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}>
+                        {item.archiveIssueCount}
+                      </Badge>
+                      {item.detailArchiveError && (
+                        <span className="max-w-44 truncate text-xs text-rose-700" title={item.detailArchiveError}>
+                          {compactErrorMessage(item.detailArchiveError)}
+                        </span>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={reviewTone(item.adminReviewStatus)}>
+                      {reviewStatusLabel(t, item.adminReviewStatus)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{formatDate(item.deadlineDate)}</TableCell>
+                  {canRunOperations && (
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => updateBidQaStatus(item, "reviewed")}
+                          disabled={pendingBidQaId === item.id}
+                          className="h-8 rounded-lg border-slate-200 px-2"
+                        >
+                          {t("admin.markReviewed")}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => updateBidQaStatus(item, "needs_review")}
+                          disabled={pendingBidQaId === item.id}
+                          className="h-8 rounded-lg px-2 text-slate-600"
+                        >
+                          {t("admin.markNeedsReview")}
+                        </Button>
+                      </div>
+                    </TableCell>
+                  )}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </section>
       )}
 
       {state.status === "ready" && canManageUsers && (
