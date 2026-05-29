@@ -10,8 +10,8 @@ This file is now being used as a staged implementation backlog. Some original ga
 - Compliance Manifest Lite is implemented.
 - Pursue / No-Bid Decision Lite is implemented.
 - Account, role, tier, feature gate, organization, billing foundation, dunning foundation, and operator/support admin roles are substantially implemented.
-- State crawler coverage now has a 50-state registry/runner foundation: CA/TX/NY/FL/IL keep verified dedicated adapters; PA/SC/OR/MA/NJ/OH/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT/OK/AR/SD/WV/WY/AL/AK/HI/KY/MN/WI/NH/DE/RI/TN/AZ/ID/LA/MD/NE/NC/ND/VT now have beta dedicated adapters; MI remains registered with a generic public procurement HTML/JSON fetcher so it can be scheduled, logged, and replaced when a stable public source is found.
-- 50-state crawler quality has started moving from foundation to batches: PA/SC/OR, MA/NJ/OH/VA/WA, IA/GA/ME/MO/NV, UT/KS/MT/NM/CO/IN/MS/CT, OK/AR/SD/WV/WY, AL/AK/HI/KY/MN/WI/NH, DE/RI/TN, and AZ/ID/LA/MD/NE/NC/ND/VT now have beta dedicated parser adapters with fixture-backed extraction; live validation currently confirms non-empty PA/OR/MA/NJ/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT/OK/AR/SD/WV/WY/AL/AK/HI/KY/MN/WI/NH/DE/RI/TN/AZ/ID/LA/MD/NE/NC/ND/VT results, while SC is blocked by site timeouts from the local environment and OH is blocked by the current OhioBuys browser-check flow.
+- State crawler coverage now has a 50-state registry/runner foundation: CA/TX/NY/FL/IL keep verified dedicated adapters; the other 45 state sources now have beta dedicated adapters with source-specific parser entry points and admin runner metadata.
+- 50-state crawler quality has moved from foundation to complete beta coverage: PA/SC/OR, MA/NJ/OH/VA/WA, IA/GA/ME/MO/NV, UT/KS/MT/NM/CO/IN/MS/CT, OK/AR/SD/WV/WY, AL/AK/HI/KY/MN/WI/NH, DE/RI/TN, AZ/ID/LA/MD/NE/NC/ND/VT, and MI now have fixture-backed dedicated parser adapters; local live validation confirms non-empty results for the full beta set. MI/SC/OH currently use public BidNet fallback pages because the official/default routes are 404, timeout, or browser-check blocked from the local environment.
 - Crawler ingestion now treats empty result sets as failures for CLI imports/live fetches and rejects state opportunities without a source id or title, so empty content is no longer silently recorded as a successful run.
 - Local crawler attachment files can be served through a private bid attachment API when attachment rows point to a local file path inside an allowed attachment directory.
 
@@ -23,7 +23,7 @@ The local system has completed a useful Phase 1A pursuit loop:
 
 The remaining MVP work is not another search page. The largest remaining gaps are:
 
-1. 50-state crawler adapter quality: continue replacing generic state adapters with reliable source-specific adapters in batches, plus attachment/detail-page extraction and live validation.
+1. Crawler data quality after 50-state beta coverage: attachment/detail-page archival, checksum/content-type recording, and official-source upgrades where fallback sources are being used.
 2. Full Search Alerts UI and production email delivery.
 3. Supplier/sourcing partner and quote workflow.
 4. Award/status tracking and learning.
@@ -38,7 +38,7 @@ The remaining MVP work is not another search page. The largest remaining gaps ar
 | P0 Platform shell | Partial | Layout, nav, auth APIs, settings, bilingual shell | Subscription tiers, real organization/workspace model, role UI, security hardening |
 | P0 Data model | Partial | Users, sessions, bids, attachments, saved bids, profiles, intents, alerts, crawlers, notification outbox, data sources | Full ERD objects for submission, compliance, sourcing, quotes, awards, knowledge |
 | P1 Bid source discovery | Partial/Improving | Data source admin, crawler logs, SAM.gov/state runner, 50-state state crawler registry/runner foundation, admin crawler maturity/capability display | Non-federal/non-state coverage, continued per-state connector maturity |
-| P1 Bid ingestion | Partial/Improving | Normalization, dedupe, crawler logs, seeded data, runner APIs, non-empty crawler result guardrails, local attachment download serving for crawler-managed files, PA/OR/MA/NJ/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT/OK/AR/SD/WV/WY/AL/AK/HI/KY/MN/WI/NH/DE/RI/TN/AZ/ID/LA/MD/NE/NC/ND/VT live-validated dedicated parser adapters, SC/OH beta adapters with current access blockers, MI generic foundation coverage | Production connectors, document parsing, data quality scoring, attachment download/archival by source, MI dedicated source resolution, browser/session handling for blocked state portals |
+| P1 Bid ingestion | Partial/Improving | Normalization, dedupe, crawler logs, seeded data, runner APIs, non-empty crawler result guardrails, local attachment download serving for crawler-managed files, 50-state state source registry, CA/TX/NY/FL/IL verified dedicated adapters, and the remaining 45 state sources live-validated through beta dedicated parser adapters | Production connectors, document parsing, data quality scoring, attachment download/archival by source, official-source upgrades for states currently using public fallback sources |
 | P1 Bid display/search | Partial/Good | `/search`, bid cards, filters, detail page | Closed bids, richer filter taxonomy, saved search UX polish |
 | P1 Saved bids/alerts | Partial/Good | Saved bids, search alerts, notifications foundation | Real email delivery settings, alert digest UI, monitoring |
 | P1 Supplier profile | Partial/Good | `/profile`, API, validation, completion score | Upload-to-fill profile, richer certifications, past performance, warehouse, insurance/bonding |
@@ -79,7 +79,7 @@ Remaining Phase 1 items:
 
 ## Highest-Value Next Gap
 
-The best next development target is now **state crawler quality + source maturity** if the priority is data coverage, or **Full Search Alerts UI** if the priority is user workflow. Submission Guidance Lite, Compliance Manifest Lite, and Pursue / No-Bid Decision Lite are no longer the next gaps because they already exist locally.
+The best next development target is now **Attachment Download Archival** if the priority is data coverage, or **Full Search Alerts UI** if the priority is user workflow. Submission Guidance Lite, Compliance Manifest Lite, Pursue / No-Bid Decision Lite, and 50-state beta crawler coverage are no longer the next gaps because they already exist locally.
 
 Why:
 
@@ -91,22 +91,22 @@ Why:
 
 ## Recommended Next Feature Slice
 
-### 50-State Crawler Final Gap Resolution
+### Attachment Download Archival
 
 Scope:
 
 - Keep the 50-state registry as the scheduler/admin source of truth.
-- Resolve MI dedicated source coverage or document it as requiring browser/session/manual handling.
-- Resolve SC/OH live access blockers without bypassing CAPTCHA or official access controls.
-- Add attachment/detail-page archival for already live-validated dedicated adapters.
-- Continue recording source capability notes: supports query, supports pagination, supports attachment metadata, requires browser, or requires manual/login handling.
+- Download attachments and detail-page documents for already live-validated dedicated adapters.
+- Record checksum, byte size, content type, original URL, local storage path, and download status on attachment rows.
+- Preserve source capability notes: supports query, supports pagination, supports attachment metadata, requires browser, or requires manual/login handling.
+- Keep official-source upgrades for MI/SC/OH as follow-on source-maturity work unless a stable official feed appears during implementation.
 
 Out of scope:
 
 - Login-only portals and CAPTCHA bypass.
 - Full document parsing/OCR.
 - Browser automation for every state in the same batch.
-- Claiming all 50 states have production-grade live data quality before dedicated adapters exist.
+- Replacing every public fallback source with an official source in the same slice.
 
 ## Secondary Next Feature Slice
 
@@ -199,19 +199,20 @@ Current AI-like behavior is deterministic. This is acceptable for local MVP work
 
 ## Operational Gaps
 
-- Source coverage and crawler quality need continued expansion.
+- Crawler data quality needs continued expansion after 50-state beta coverage, especially attachment archival and official-source maturity.
 - Notification outbox exists, but production delivery behavior needs configuration.
 - Admin data QA should track correction status and publish confidence.
 - Local extracted Drive docs are temporary; this summary should be the source for local work unless docs are refreshed.
 
 ## Recommended Development Order
 
-1. 50-State Crawler Final Gap Resolution: MI dedicated coverage, SC/OH access strategy, and attachment/detail-page archival.
+1. Attachment Download Archival: persist source documents, checksums, byte size, content type, original URL, and download status.
 2. Full Search Alerts UI.
-3. Sourcing Partner + Quote Inquiry Lite.
-4. Response Workspace Lite: tasks, artifacts, internal checkpoints.
-5. Award/Tabulation Tracking Lite.
-6. Knowledge Station Lite.
-7. Production AI and citation layer.
+3. Production Worker Deployment Runbook if production readiness becomes the priority.
+4. Sourcing Partner + Quote Inquiry Lite.
+5. Response Workspace Lite: tasks, artifacts, internal checkpoints.
+6. Award/Tabulation Tracking Lite.
+7. Knowledge Station Lite.
+8. Production AI and citation layer.
 
 This order follows the user journey after Intent and avoids overbuilding advanced intelligence before the workflow is usable.

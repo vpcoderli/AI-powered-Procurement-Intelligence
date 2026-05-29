@@ -197,6 +197,11 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     maturity: "beta",
     capabilities: ["query", "detail_pages"],
   },
+  mi_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
   mn_state_procurement: {
     adapterKind: "dedicated",
     maturity: "beta",
@@ -245,7 +250,7 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
   oh_state_procurement: {
     adapterKind: "dedicated",
     maturity: "beta",
-    capabilities: ["query", "attachments"],
+    capabilities: ["query", "detail_pages", "pagination"],
   },
   ok_state_procurement: {
     adapterKind: "dedicated",
@@ -270,7 +275,7 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
   sc_state_procurement: {
     adapterKind: "dedicated",
     maturity: "beta",
-    capabilities: ["query", "attachments"],
+    capabilities: ["query", "detail_pages", "pagination"],
   },
   sd_state_procurement: {
     adapterKind: "dedicated",

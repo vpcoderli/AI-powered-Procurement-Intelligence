@@ -27,7 +27,6 @@ from apsi_crawler.spiders.mt_emacs import fetch_mt_emacs_opportunities
 from apsi_crawler.spiders.nj_start import fetch_nj_start_opportunities
 from apsi_crawler.spiders.nm_spd import fetch_nm_spd_opportunities
 from apsi_crawler.spiders.nv_epro import fetch_nv_epro_opportunities
-from apsi_crawler.spiders.oh_procure import fetch_oh_procure_opportunities
 from apsi_crawler.spiders.ok_esupplier import fetch_ok_esupplier_opportunities
 from apsi_crawler.spiders.ri_ocean_state_procures import (
     fetch_ri_ocean_state_procures_opportunities,
@@ -41,11 +40,14 @@ from apsi_crawler.spiders.state_bidnet import (
     fetch_ky_bidnet_opportunities,
     fetch_la_bidnet_opportunities,
     fetch_md_bidnet_opportunities,
+    fetch_mi_bidnet_opportunities,
     fetch_mn_bidnet_opportunities,
     fetch_nc_bidnet_opportunities,
     fetch_nd_bidnet_opportunities,
     fetch_ne_bidnet_opportunities,
     fetch_nh_bidnet_opportunities,
+    fetch_oh_bidnet_opportunities,
+    fetch_sc_bidnet_opportunities,
     fetch_vt_bidnet_opportunities,
     fetch_wi_bidnet_opportunities,
 )
@@ -151,7 +153,6 @@ def test_state_source_metadata_is_stable():
 def test_batch_two_state_sources_are_registered_to_dedicated_fetchers():
     assert get_live_fetcher("ma_state_procurement") is fetch_ma_commbuys_opportunities
     assert get_live_fetcher("nj_state_procurement") is fetch_nj_start_opportunities
-    assert get_live_fetcher("oh_state_procurement") is fetch_oh_procure_opportunities
     assert get_live_fetcher("va_state_procurement") is fetch_va_eva_opportunities
     assert get_live_fetcher("wa_state_procurement") is fetch_wa_des_opportunities
 
@@ -208,6 +209,12 @@ def test_batch_eight_state_sources_are_registered_to_dedicated_fetchers():
     assert get_live_fetcher("nc_state_procurement") is fetch_nc_bidnet_opportunities
     assert get_live_fetcher("nd_state_procurement") is fetch_nd_bidnet_opportunities
     assert get_live_fetcher("vt_state_procurement") is fetch_vt_bidnet_opportunities
+
+
+def test_final_gap_state_sources_are_registered_to_live_non_empty_fetchers():
+    assert get_live_fetcher("mi_state_procurement") is fetch_mi_bidnet_opportunities
+    assert get_live_fetcher("sc_state_procurement") is fetch_sc_bidnet_opportunities
+    assert get_live_fetcher("oh_state_procurement") is fetch_oh_bidnet_opportunities
 
 
 def test_sam_gov_default_fixture_loader_remains_compatible():

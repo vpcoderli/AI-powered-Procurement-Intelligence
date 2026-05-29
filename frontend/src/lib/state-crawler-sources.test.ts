@@ -59,7 +59,7 @@ describe("state crawler source mapping", () => {
       id: "sc_state_procurement",
       adapterKind: "dedicated",
       maturity: "beta",
-      capabilities: expect.arrayContaining(["query", "attachments"]),
+      capabilities: expect.arrayContaining(["query", "detail_pages", "pagination"]),
     });
     expect(getStateCrawlerSourceMetadata("MA")).toMatchObject({
       id: "ma_state_procurement",
@@ -77,7 +77,7 @@ describe("state crawler source mapping", () => {
       id: "oh_state_procurement",
       adapterKind: "dedicated",
       maturity: "beta",
-      capabilities: expect.arrayContaining(["query", "attachments"]),
+      capabilities: expect.arrayContaining(["query", "detail_pages", "pagination"]),
     });
     expect(getStateCrawlerSourceMetadata("VA")).toMatchObject({
       id: "va_state_procurement",
@@ -219,7 +219,7 @@ describe("state crawler source mapping", () => {
       maturity: "beta",
       capabilities: expect.arrayContaining(["query", "detail_pages"]),
     });
-    for (const stateCode of ["AZ", "ID", "LA", "MD", "NE", "NC", "ND", "VT"]) {
+    for (const stateCode of ["AZ", "ID", "LA", "MD", "NE", "NC", "ND", "VT", "MI"]) {
       expect(getStateCrawlerSourceMetadata(stateCode)).toMatchObject({
         adapterKind: "dedicated",
         maturity: "beta",
