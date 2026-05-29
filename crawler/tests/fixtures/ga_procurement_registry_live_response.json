@@ -1,0 +1,18 @@
+{
+  "draw": 1,
+  "recordsTotal": 551,
+  "recordsFiltered": 551,
+  "data": [
+    {
+      "esourceNumber": "PE-65600-NONST-2027-000000233",
+      "title": "26138-A Annual Hauling",
+      "agencyName": "Fayette County Board Of Commissioners",
+      "postingDateStr": "May 18, 2026 @ 01:54 PM",
+      "closingDateStr": "May 29, 2026 @ 08:00 AM",
+      "status": "Open",
+      "sourceId": "gpr20",
+      "bidProcessType": "Non-State Agency",
+      "esourceNumberKey": "PE-65600-NONST-2027-000000233"
+    }
+  ]
+}

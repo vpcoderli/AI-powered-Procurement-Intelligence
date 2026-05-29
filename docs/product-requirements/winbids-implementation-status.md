@@ -1298,6 +1298,35 @@ Current local limits:
 建议下一步：
 - 继续 crawler 质量主线时，优先处理 SC/OH 的访问机制；并行可启动 50-State Crawler Quality Batch 3，避免被两个站点阻塞整体覆盖。
 
+## Completed Phase: 50-State Crawler Quality Batch 3
+
+本阶段完成：
+- 新增 IA / GA / ME / MO / NV 五个州级 beta 专用 crawler adapter，替代对应州的 generic fetcher 入口。
+- IA 使用 Iowa Bid Opportunities JSON API；GA 使用 Georgia Procurement Registry DataTables JSON；ME/MO/NV 使用公开 HTML 表格解析。
+- 五个 adapter 均支持 fixture-backed 测试，并解析 source bid id、标题、机构、发布日期/截止日期、详情 URL；ME/MO 同步附件链接元数据。
+- `STATE_SOURCES` 已把 `ia_state_procurement`、`ga_state_procurement`、`me_state_procurement`、`mo_state_procurement`、`nv_state_procurement` 接入专用 fetcher。
+- 前端 crawler metadata 已同步标记 IA/GA/ME/MO/NV 为 `dedicated` + `beta`，Admin 可继续通过现有 state runner 单独运行这些州。
+- 当前专用州覆盖：CA/TX/NY/FL/IL 为 verified dedicated；PA/SC/OR/MA/NJ/OH/VA/WA/IA/GA/ME/MO/NV 为 beta dedicated；其余州保持 generic foundation coverage。
+
+验证：
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_dedicated_spiders_batch3.py`
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_sources.py crawler/tests/test_state_live_validation.py crawler/tests/test_state_dedicated_spiders_batch3.py`
+- `npm test -- src/lib/state-crawler-sources.test.ts`
+- `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source ia_state_procurement --source ga_state_procurement --source me_state_procurement --source mo_state_procurement --source nv_state_procurement --limit 3 --timeout 30`
+- Migrated temp SQLite fetch-state smoke: IA/GA/ME/MO/NV each inserted 2 bids and wrote success crawler logs.
+
+当前还剩：
+1. SC/OH portal access resolution：SCBO 当前环境超时；OhioBuys 官方公开流程进入 browser_check/reCAPTCHA，不应绕过 CAPTCHA，需要 browser-assisted/manual 或官方 feed/API 策略。
+2. 50-State Crawler Quality Batch 4：继续选择 5-8 个 generic 州做专用 adapter，优先能稳定返回非空的 JSON/HTML 公共源。
+3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
+4. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+5. Sourcing Partner + Quote Inquiry Lite：partner DB、quote request、quote comparison。
+6. Response Workspace Lite：tasks、artifacts、internal checkpoints。
+7. Award / Tabulation Tracking Lite。
+
+建议下一步：
+- 继续 crawler 质量主线时，优先做 Batch 4 候选州筛选和 adapter 实现；同时把 SC/OH 保持为“受官方访问机制阻塞”的已知风险，不把它们伪装成稳定非空源。
+
 ## Status Update Template
 
 Use this after every phase:

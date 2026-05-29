@@ -92,7 +92,27 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     maturity: "verified",
     capabilities: ["query", "attachments", "detail_pages", "pagination"],
   },
+  ia_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages"],
+  },
+  ga_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages"],
+  },
+  me_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "attachments"],
+  },
   ma_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "attachments"],
+  },
+  mo_state_procurement: {
     adapterKind: "dedicated",
     maturity: "beta",
     capabilities: ["query", "attachments"],
@@ -101,6 +121,11 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     adapterKind: "dedicated",
     maturity: "beta",
     capabilities: ["query", "attachments"],
+  },
+  nv_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages"],
   },
   ny_contract_reporter: {
     adapterKind: "dedicated",
