@@ -6,6 +6,7 @@ from apsi_crawler.sources.registry import (
     list_sources,
     supports_live_fetch,
 )
+from apsi_crawler.spiders.ar_procurement import fetch_ar_procurement_opportunities
 from apsi_crawler.spiders.co_bidnet import fetch_co_bidnet_opportunities
 from apsi_crawler.spiders.ct_ctsource import fetch_ct_ctsource_opportunities
 from apsi_crawler.spiders.in_idoa import fetch_in_idoa_opportunities
@@ -25,9 +26,13 @@ from apsi_crawler.spiders.nj_start import fetch_nj_start_opportunities
 from apsi_crawler.spiders.nm_spd import fetch_nm_spd_opportunities
 from apsi_crawler.spiders.nv_epro import fetch_nv_epro_opportunities
 from apsi_crawler.spiders.oh_procure import fetch_oh_procure_opportunities
+from apsi_crawler.spiders.ok_esupplier import fetch_ok_esupplier_opportunities
+from apsi_crawler.spiders.sd_esm import fetch_sd_esm_opportunities
 from apsi_crawler.spiders.ut_bonfire import fetch_ut_bonfire_opportunities
 from apsi_crawler.spiders.va_eva import fetch_va_eva_opportunities
 from apsi_crawler.spiders.wa_des import fetch_wa_des_opportunities
+from apsi_crawler.spiders.wv_bidnet import fetch_wv_bidnet_opportunities
+from apsi_crawler.spiders.wy_ai_bids import fetch_wy_ai_bid_opportunities
 
 US_STATE_CODES = {
     "AL",
@@ -146,6 +151,14 @@ def test_batch_four_state_sources_are_registered_to_dedicated_fetchers():
     assert get_live_fetcher("in_state_procurement") is fetch_in_idoa_opportunities
     assert get_live_fetcher("ms_state_procurement") is fetch_ms_contract_bid_search_opportunities
     assert get_live_fetcher("ct_state_procurement") is fetch_ct_ctsource_opportunities
+
+
+def test_batch_five_state_sources_are_registered_to_dedicated_fetchers():
+    assert get_live_fetcher("ok_state_procurement") is fetch_ok_esupplier_opportunities
+    assert get_live_fetcher("ar_state_procurement") is fetch_ar_procurement_opportunities
+    assert get_live_fetcher("sd_state_procurement") is fetch_sd_esm_opportunities
+    assert get_live_fetcher("wv_state_procurement") is fetch_wv_bidnet_opportunities
+    assert get_live_fetcher("wy_state_procurement") is fetch_wy_ai_bid_opportunities
 
 
 def test_sam_gov_default_fixture_loader_remains_compatible():

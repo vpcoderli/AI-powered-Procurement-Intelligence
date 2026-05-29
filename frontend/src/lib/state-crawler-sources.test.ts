@@ -169,6 +169,36 @@ describe("state crawler source mapping", () => {
       maturity: "beta",
       capabilities: expect.arrayContaining(["query", "detail_pages", "pagination"]),
     });
+    expect(getStateCrawlerSourceMetadata("OK")).toMatchObject({
+      id: "ok_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query"]),
+    });
+    expect(getStateCrawlerSourceMetadata("AR")).toMatchObject({
+      id: "ar_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "detail_pages"]),
+    });
+    expect(getStateCrawlerSourceMetadata("SD")).toMatchObject({
+      id: "sd_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "detail_pages", "pagination"]),
+    });
+    expect(getStateCrawlerSourceMetadata("WV")).toMatchObject({
+      id: "wv_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "detail_pages", "pagination"]),
+    });
+    expect(getStateCrawlerSourceMetadata("WY")).toMatchObject({
+      id: "wy_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query"]),
+    });
     expect(getStateCrawlerSourceMetadata("US")).toBeNull();
   });
 });
