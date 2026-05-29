@@ -219,6 +219,13 @@ describe("state crawler source mapping", () => {
       maturity: "beta",
       capabilities: expect.arrayContaining(["query", "detail_pages"]),
     });
+    for (const stateCode of ["AZ", "ID", "LA", "MD", "NE", "NC", "ND", "VT"]) {
+      expect(getStateCrawlerSourceMetadata(stateCode)).toMatchObject({
+        adapterKind: "dedicated",
+        maturity: "beta",
+        capabilities: expect.arrayContaining(["query", "detail_pages", "pagination"]),
+      });
+    }
     expect(getStateCrawlerSourceMetadata("US")).toBeNull();
   });
 });

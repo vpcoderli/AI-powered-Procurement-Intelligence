@@ -36,9 +36,17 @@ from apsi_crawler.spiders.sd_esm import fetch_sd_esm_opportunities
 from apsi_crawler.spiders.state_bidnet import (
     fetch_ak_bidnet_opportunities,
     fetch_al_bidnet_opportunities,
+    fetch_az_bidnet_opportunities,
+    fetch_id_bidnet_opportunities,
     fetch_ky_bidnet_opportunities,
+    fetch_la_bidnet_opportunities,
+    fetch_md_bidnet_opportunities,
     fetch_mn_bidnet_opportunities,
+    fetch_nc_bidnet_opportunities,
+    fetch_nd_bidnet_opportunities,
+    fetch_ne_bidnet_opportunities,
     fetch_nh_bidnet_opportunities,
+    fetch_vt_bidnet_opportunities,
     fetch_wi_bidnet_opportunities,
 )
 from apsi_crawler.spiders.tn_edison import fetch_tn_edison_opportunities
@@ -189,6 +197,17 @@ def test_batch_seven_state_sources_are_registered_to_dedicated_fetchers():
     assert get_live_fetcher("de_state_procurement") is fetch_de_bids_opportunities
     assert get_live_fetcher("ri_state_procurement") is fetch_ri_ocean_state_procures_opportunities
     assert get_live_fetcher("tn_state_procurement") is fetch_tn_edison_opportunities
+
+
+def test_batch_eight_state_sources_are_registered_to_dedicated_fetchers():
+    assert get_live_fetcher("az_state_procurement") is fetch_az_bidnet_opportunities
+    assert get_live_fetcher("id_state_procurement") is fetch_id_bidnet_opportunities
+    assert get_live_fetcher("la_state_procurement") is fetch_la_bidnet_opportunities
+    assert get_live_fetcher("md_state_procurement") is fetch_md_bidnet_opportunities
+    assert get_live_fetcher("ne_state_procurement") is fetch_ne_bidnet_opportunities
+    assert get_live_fetcher("nc_state_procurement") is fetch_nc_bidnet_opportunities
+    assert get_live_fetcher("nd_state_procurement") is fetch_nd_bidnet_opportunities
+    assert get_live_fetcher("vt_state_procurement") is fetch_vt_bidnet_opportunities
 
 
 def test_sam_gov_default_fixture_loader_remains_compatible():

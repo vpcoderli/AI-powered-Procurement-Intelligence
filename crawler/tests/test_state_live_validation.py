@@ -54,6 +54,14 @@ def test_default_live_validation_sources_are_current_beta_adapters():
         "de_state_procurement",
         "ri_state_procurement",
         "tn_state_procurement",
+        "az_state_procurement",
+        "id_state_procurement",
+        "la_state_procurement",
+        "md_state_procurement",
+        "ne_state_procurement",
+        "nc_state_procurement",
+        "nd_state_procurement",
+        "vt_state_procurement",
     )
 
 

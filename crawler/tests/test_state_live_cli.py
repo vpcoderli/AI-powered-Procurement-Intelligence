@@ -299,7 +299,7 @@ def test_fetch_state_replays_generic_state_fixture_html(tmp_path):
             "--database",
             str(database),
             "--source",
-            "az_state_procurement",
+            "mi_state_procurement",
             "--query",
             "cabling",
             "--limit",
@@ -315,11 +315,11 @@ def test_fetch_state_replays_generic_state_fixture_html(tmp_path):
         "SELECT source, source_bid_id, dedupe_key, title, state_code FROM bids"
     ).fetchone()
     assert bid == (
-        "Arizona State Procurement",
+        "Michigan State Procurement",
         "AL-2026-001",
-        "az_state_procurement:AL-2026-001",
+        "mi_state_procurement:AL-2026-001",
         "Data center cabling services",
-        "AZ",
+        "MI",
     )
 
 
