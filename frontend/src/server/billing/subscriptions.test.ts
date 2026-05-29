@@ -56,7 +56,31 @@ describe("billing subscriptions service", () => {
       source: "admin_override",
       cancelAtPeriodEnd: false,
     });
-    expect(result.plans.map((plan) => plan.tier)).toEqual(["free", "pro", "business", "enterprise"]);
+    expect(result.plans.map((plan) => plan.productPlanKey)).toEqual([
+      "free",
+      "pursuit_starter",
+      "response_builder",
+      "growth",
+      "enterprise",
+    ]);
+    expect(result.plans).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          tier: "pro",
+          productPlanKey: "pursuit_starter",
+          label: "Pursuit Starter",
+          includedMonthlyCredits: 25,
+          isAvailable: true,
+        }),
+        expect.objectContaining({
+          tier: null,
+          productPlanKey: "growth",
+          label: "Growth",
+          includedMonthlyCredits: 300,
+          isAvailable: false,
+        }),
+      ]),
+    );
   });
 
   it("updates effective tier and writes a subscription event", () => {
@@ -741,10 +765,11 @@ describe("billing subscriptions service", () => {
 
   it("exposes the product plan catalog", () => {
     expect(listSubscriptionPlans()).toEqual([
-      expect.objectContaining({ tier: "free", priceMonthlyUsd: 0 }),
-      expect.objectContaining({ tier: "pro", priceMonthlyUsd: 79 }),
-      expect.objectContaining({ tier: "business", priceMonthlyUsd: 249 }),
-      expect.objectContaining({ tier: "enterprise", priceMonthlyUsd: null }),
+      expect.objectContaining({ tier: "free", productPlanKey: "free", priceMonthlyUsd: 0 }),
+      expect.objectContaining({ tier: "pro", productPlanKey: "pursuit_starter", priceMonthlyUsd: 79 }),
+      expect.objectContaining({ tier: "business", productPlanKey: "response_builder", priceMonthlyUsd: 249 }),
+      expect.objectContaining({ tier: null, productPlanKey: "growth", isAvailable: false }),
+      expect.objectContaining({ tier: "enterprise", productPlanKey: "enterprise", priceMonthlyUsd: null }),
     ]);
   });
 });

@@ -103,6 +103,12 @@ describe("account usage service", () => {
     expect(getAccountUsage(testDb.db, "user_owner")).toEqual({
       tier: "business",
       workspaceUserIds: ["user_owner", "user_member"],
+      creditSummary: {
+        includedMonthlyCredits: 150,
+        purchasedCredits: 0,
+        availableCredits: 150,
+        resetsAt: null,
+      },
       items: [
         {
           feature: "saved_bids",

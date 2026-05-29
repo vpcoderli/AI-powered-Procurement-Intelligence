@@ -32,4 +32,15 @@ export const FEATURE_API_COVERAGE: readonly FeatureApiCoverageEntry[] = [
 export const UNIMPLEMENTED_PAID_FEATURE_API_COVERAGE = [
   "quote_workflow",
   "knowledge_station",
+  "bid.brief.full.generate",
+  "compliance.manifest.generate",
+  "readiness.review.run",
+  "response.workspace.create",
+  "artifact.vault.upload",
+  "response.section.draft",
+  "package.review.run",
+  "amendment.delta.run",
+  "award.tabulation.analyze",
+  "price.to.win.run",
+  "team.member.invite",
 ] as const satisfies readonly FeatureKey[];

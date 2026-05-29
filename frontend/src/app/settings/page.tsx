@@ -58,7 +58,7 @@ import {
 } from "@/lib/api/auth";
 import { canUseFeature, lockedFeatureMessage } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
-import { ACCOUNT_TIER_LABELS, type AccountTier, type FeatureKey } from "@/server/auth/entitlements";
+import { ACCOUNT_TIER_LABELS, type AccountTier, type FeatureKey, type ProductPlanKey } from "@/server/auth/entitlements";
 
 const FEATURE_ACCESS_ITEMS: Array<{ key: FeatureKey; label: string }> = [
   { key: "bid_search", label: "Bid search" },
@@ -231,11 +231,11 @@ export default function SettingsPage() {
     };
   }, [t, user]);
 
-  function localizedPlanFeatures(tier: AccountTier) {
+  function localizedPlanFeatures(productPlanKey: ProductPlanKey) {
     return [
-      t(`settings.plan_${tier}_feature1`),
-      t(`settings.plan_${tier}_feature2`),
-      t(`settings.plan_${tier}_feature3`),
+      t(`settings.plan_${productPlanKey}_feature1`),
+      t(`settings.plan_${productPlanKey}_feature2`),
+      t(`settings.plan_${productPlanKey}_feature3`),
     ];
   }
 
@@ -702,15 +702,29 @@ export default function SettingsPage() {
                   <p className="text-sm font-medium text-slate-500">{t("settings.loadingUsage")}</p>
                 )}
                 {usageData && (
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                    <p className="text-xs font-semibold uppercase text-slate-500">
-                      {t("settings.usageDashboardSummary")}
-                    </p>
-                    <p className="mt-1 text-sm font-semibold text-slate-900">
-                      {t("settings.usageDashboardSummaryValue")
-                        .replace("{used}", String(usageLimitedItems.length))
-                        .replace("{total}", String(usageData.items.length))}
-                    </p>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                      <p className="text-xs font-semibold uppercase text-slate-500">
+                        {t("settings.usageDashboardSummary")}
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-slate-900">
+                        {t("settings.usageDashboardSummaryValue")
+                          .replace("{used}", String(usageLimitedItems.length))
+                          .replace("{total}", String(usageData.items.length))}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border border-cyan-200 bg-cyan-50 p-3">
+                      <p className="text-xs font-semibold uppercase text-cyan-700">
+                        {t("settings.creditSummary")}
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-cyan-950">
+                        {usageData.creditSummary.availableCredits === null
+                          ? t("settings.unlimitedCredits")
+                          : t("settings.creditSummaryValue")
+                            .replace("{available}", String(usageData.creditSummary.availableCredits))
+                            .replace("{included}", String(usageData.creditSummary.includedMonthlyCredits ?? 0))}
+                      </p>
+                    </div>
                   </div>
                 )}
                 {(usageData?.items ?? []).map((item) => {
@@ -1202,8 +1216,8 @@ export default function SettingsPage() {
                   )}
                   <div className="grid gap-3 lg:grid-cols-2">
                     {(subscriptionData?.plans ?? []).map((plan) => {
-                      const isCurrentPlan = user?.tier === plan.tier;
-                      const canSelfServe = plan.tier === "pro" || plan.tier === "business";
+                      const isCurrentPlan = plan.tier !== null && user?.tier === plan.tier;
+                      const canSelfServe = plan.tier !== null && plan.isSelfServe;
                       const isWorking = billingActionTier === plan.tier;
 
                       return (
@@ -1227,24 +1241,39 @@ export default function SettingsPage() {
                             )}
                           </div>
                           <ul className="mt-4 space-y-2">
-                            {localizedPlanFeatures(plan.tier).map((feature) => (
+                            {localizedPlanFeatures(plan.productPlanKey).map((feature) => (
                               <li key={feature} className="flex items-start gap-2 text-sm font-medium text-slate-600">
                                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" />
                                 <span>{feature}</span>
                               </li>
                             ))}
+                            <li className="flex items-start gap-2 text-sm font-medium text-slate-600">
+                              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-cyan-700" />
+                              <span>
+                                {plan.includedMonthlyCredits === null
+                                  ? t("settings.unlimitedCredits")
+                                  : t("settings.includedCredits").replace(
+                                    "{credits}",
+                                    String(plan.includedMonthlyCredits),
+                                  )}
+                              </span>
+                            </li>
                           </ul>
                           <Button
                             variant={isCurrentPlan ? "outline" : "default"}
                             disabled={isCurrentPlan || !canSelfServe || isWorking || !user}
-                            onClick={() => handleStartCheckout(plan.tier)}
+                            onClick={() => {
+                              if (plan.tier) void handleStartCheckout(plan.tier);
+                            }}
                             className={`mt-4 w-full rounded-lg ${
                               isCurrentPlan ? "border-slate-200 text-slate-700" : "bg-slate-900 text-white"
                             }`}
                           >
                             {isCurrentPlan
                               ? t("settings.current")
-                              : plan.tier === "enterprise"
+                              : !plan.isAvailable
+                                ? t("settings.plannedPlan")
+                                : plan.tier === "enterprise"
                                 ? t("settings.contactSales")
                                 : isWorking
                                   ? t("settings.startingCheckout")

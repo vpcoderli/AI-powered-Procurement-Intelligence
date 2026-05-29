@@ -8,6 +8,7 @@ import {
 } from "@/server/auth/usage-limits";
 import type { AppDatabase } from "@/server/db/client";
 import { users } from "@/server/db/schema";
+import { creditSummaryForTier, type CreditSummary } from "@/server/billing/credits";
 
 const ACCOUNT_USAGE_FEATURES: LimitedFeature[] = [
   "saved_bids",
@@ -28,6 +29,7 @@ export interface AccountUsageItem {
 export interface AccountUsageResponse {
   tier: AccountTier;
   workspaceUserIds: string[];
+  creditSummary: CreditSummary;
   items: AccountUsageItem[];
 }
 
@@ -55,6 +57,7 @@ export function getAccountUsage(db: AppDatabase, userId: string): AccountUsageRe
   return {
     tier,
     workspaceUserIds,
+    creditSummary: creditSummaryForTier(tier),
     items: ACCOUNT_USAGE_FEATURES.map((feature) =>
       toAccountUsageItem(
         getUsageLimitStatus(db, userId, tier, feature, {

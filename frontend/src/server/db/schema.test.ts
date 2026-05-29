@@ -201,6 +201,8 @@ describe("database schema", () => {
       expect(tables).toContain("subscription_events");
       expect(tables).toContain("billing_checkout_sessions");
       expect(tables).toContain("billing_invoices");
+      expect(tables).toContain("credit_balances");
+      expect(tables).toContain("credit_usage_events");
       expect(tables).toContain("password_reset_tokens");
       expect(tables).toContain("workspace_invitations");
       expect(tables).toContain("organizations");
@@ -247,6 +249,25 @@ describe("database schema", () => {
         .map((row) => (row as { name: string }).name);
 
       expect(subscriptionEventColumns).toContain("provider_event_id");
+
+      const creditUsageEventColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(credit_usage_events)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(creditUsageEventColumns).toEqual(
+        expect.arrayContaining([
+          "id",
+          "organization_id",
+          "user_id",
+          "feature_key",
+          "event_type",
+          "amount",
+          "balance_after",
+          "metadata_json",
+          "created_at",
+        ]),
+      );
 
       testDb.db.insert(users).values({
         id: "user_1",

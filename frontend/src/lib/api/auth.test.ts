@@ -141,8 +141,26 @@ describe("auth API client", () => {
         cancelAtPeriodEnd: false,
       },
       plans: [
-        { tier: "free", label: "Free", priceMonthlyUsd: 0 },
-        { tier: "pro", label: "Pro", priceMonthlyUsd: 79 },
+        {
+          tier: "free",
+          productPlanKey: "free",
+          label: "Free",
+          priceMonthlyUsd: 0,
+          includedMonthlyCredits: 0,
+          isAvailable: true,
+          isSelfServe: false,
+          featureHighlights: ["Search public bids"],
+        },
+        {
+          tier: "pro",
+          productPlanKey: "pursuit_starter",
+          label: "Pursuit Starter",
+          priceMonthlyUsd: 79,
+          includedMonthlyCredits: 25,
+          isAvailable: true,
+          isSelfServe: true,
+          featureHighlights: ["Submission guidance"],
+        },
       ],
     };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));
@@ -155,6 +173,12 @@ describe("auth API client", () => {
     const body = {
       tier: "free",
       workspaceUserIds: ["user_1"],
+      creditSummary: {
+        includedMonthlyCredits: 0,
+        purchasedCredits: 0,
+        availableCredits: 0,
+        resetsAt: null,
+      },
       items: [
         {
           feature: "saved_bids",

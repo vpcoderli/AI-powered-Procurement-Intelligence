@@ -1,4 +1,4 @@
-import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlements";
+import type { AccountTier, FeatureKey, ProductPlanKey, UserRole } from "@/server/auth/entitlements";
 import type { AccountExportData } from "@/server/account/lifecycle";
 import type { WorkspaceRole } from "@/server/account/workspace";
 import type { AccountUsageResponse } from "@/server/account/usage";
@@ -34,9 +34,13 @@ export interface SessionResponse {
 }
 
 export interface SubscriptionPlan {
-  tier: AccountTier;
+  tier: AccountTier | null;
+  productPlanKey: ProductPlanKey;
   label: string;
   priceMonthlyUsd: number | null;
+  includedMonthlyCredits: number | null;
+  isAvailable: boolean;
+  isSelfServe: boolean;
   featureHighlights: string[];
 }
 

@@ -9,6 +9,17 @@ const PAID_PRODUCT_FEATURE_KEYS: FeatureKey[] = [
   "pursue_no_bid",
   "quote_workflow",
   "knowledge_station",
+  "bid.brief.full.generate",
+  "compliance.manifest.generate",
+  "readiness.review.run",
+  "response.workspace.create",
+  "artifact.vault.upload",
+  "response.section.draft",
+  "package.review.run",
+  "amendment.delta.run",
+  "award.tabulation.analyze",
+  "price.to.win.run",
+  "team.member.invite",
 ] as const;
 
 const apiRoot = new URL("../../app/api/", import.meta.url);

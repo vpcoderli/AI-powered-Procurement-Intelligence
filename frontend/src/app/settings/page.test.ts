@@ -18,6 +18,11 @@ describe("settings page", () => {
     expect(page).toContain("settings.usageDashboardSummary");
     expect(page).toContain("usageLimitedItems");
     expect(page).toContain("usageData");
+    expect(page).toContain("settings.creditSummary");
+    expect(page).toContain("settings.creditSummaryValue");
+    expect(page).toContain("settings.includedCredits");
+    expect(page).toContain("settings.plannedPlan");
+    expect(page).toContain("productPlanKey");
     expect(page).toContain("updateAccountProfile");
     expect(page).toContain("changePassword");
     expect(page).toContain("exportAccountData");

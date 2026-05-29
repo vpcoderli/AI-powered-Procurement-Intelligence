@@ -57,7 +57,8 @@ describe("GET /api/account/subscription", () => {
 
     expect(response.status).toBe(200);
     expect(body.subscription).toMatchObject({ tier: "pro", status: "active" });
-    expect(body.plans).toHaveLength(4);
+    expect(body.plans).toHaveLength(5);
+    expect(body.plans.map((plan: { productPlanKey: string }) => plan.productPlanKey)).toContain("growth");
     expect(billingService.getAccountSubscription).toHaveBeenCalledWith(expect.anything(), "user_1");
   });
 
