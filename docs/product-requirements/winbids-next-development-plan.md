@@ -1,181 +1,108 @@
 # WinBids Next Development Plan
 
-Updated: 2026-05-28
+Updated: 2026-05-29
 
 ## Recommendation
 
-Continue with **Submission Guidance Lite** as the next implementation phase.
+Continue with **Commercial Packaging And Credits Reconciliation** as the next implementation phase.
 
-The local system already supports bid search, match scoring, supplier profile, and Intent to Bid. The next user question is: "How do I submit this bid correctly outside WinBids?" Submission Guidance Lite answers that question without trying to build direct submission or portal automation.
+The latest Drive refresh changed the product packaging from the local `Free / Pro / Business / Enterprise` model to:
+
+`Free -> Pursuit Starter -> Response Builder -> Growth -> Enterprise`
+
+It also makes credits a first-class entitlement and metering layer. Because Product 3, Knowledge Station, premium AI, quote workflow, award analysis, and future intelligence all depend on plan/credit gates, this should be reconciled before building more paid workflow depth.
 
 ## Phase Goal
 
-Add a lightweight submission guidance layer to each Intent workspace:
+Create a compatibility-safe commercial foundation:
 
-`Intent -> Submission path -> Complexity score -> Readiness checklist -> External guidance -> Confirmation record`
+`Current tiers -> new plan vocabulary -> feature slugs -> credit ledger -> contextual paywalls -> usage/credits UI`
 
-## User Story
+This phase should not remove existing data or break current users. The safest first implementation is to support new plan labels and feature/credit metadata while mapping current local tiers to the new business meaning.
 
-As a supplier reviewing an Intent to Bid, I want WinBids to explain where and how the bid must be submitted so that I can avoid missing portal, registration, document, addenda, or deadline requirements.
+## Recommended Mapping
+
+| Current local tier | Updated product plan | Rationale |
+|---|---|---|
+| `free` | Free | Acquisition and proof of relevance. |
+| `pro` | Pursuit Starter | Existing Pro gates already cover Submission Guidance and Pursue / No-Bid, which are Starter-style readiness workflows. |
+| `business` | Response Builder | Existing Business gates already cover Compliance Manifest and team-ready workspace direction; future Response Workspace belongs here. |
+| `enterprise` | Enterprise | Keep as sales-led advanced governance/custom plan. |
+| New | Growth | Add as future/disabled plan for award tracking, tabulation analysis, buyer history, rebid forecasting, and Product 6-adjacent learning. |
 
 ## In Scope
 
-- Submission path data model.
-- Submission guidance generator.
-- Submission complexity score.
-- Submission readiness checklist.
-- Submission confirmation record.
-- Intent detail UI section.
-- API client and route tests.
-- Bilingual labels.
-- Operation guide update.
+- Plan catalog labels and display copy for Free, Pursuit Starter, Response Builder, Growth, Enterprise.
+- Internal compatibility mapping from existing enum values to updated plan semantics.
+- Feature slug expansion from the Drive PRD:
+  - `bid.brief.full.generate`
+  - `compliance.manifest.generate`
+  - `readiness.review.run`
+  - `response.workspace.create`
+  - `artifact.vault.upload`
+  - `response.section.draft`
+  - `package.review.run`
+  - `amendment.delta.run`
+  - `award.tabulation.analyze`
+  - `price.to.win.run`
+  - `team.member.invite`
+- Credit model foundation:
+  - included monthly credits
+  - purchased credits
+  - credit ledger
+  - credit quote before premium action
+  - no-consume/refund behavior for failed system generations
+  - low-balance state
+- Contextual paywall types:
+  - Starter activation
+  - Builder activation
+  - Growth activation
+  - credit top-up
+  - seat limit
+  - Enterprise contact sales
+- Settings usage/plan copy update so the UI speaks the new product language.
+- Documentation update in implementation status and requirements.
 
-## Out of Scope
+## Out Of Scope
 
-- Direct bid submission.
-- Portal login automation.
-- Browser automation for third-party portals.
-- Full compliance matrix.
-- Calendar integration.
-- Email integration.
-- Team assignments.
-- Quote management.
-
-## Proposed Data Model
-
-### `submission_paths`
-
-Fields:
-
-- `id`
-- `intent_id`
-- `bid_id`
-- `user_id`
-- `method`
-- `portal_url`
-- `contact_email`
-- `requires_registration`
-- `requires_physical_delivery`
-- `requires_addenda_acknowledgement`
-- `complexity_score`
-- `guidance_text`
-- `readiness_checklist_json`
-- `risk_flags_json`
-- `created_at`
-- `updated_at`
-
-### `submission_confirmations`
-
-Fields:
-
-- `id`
-- `intent_id`
-- `user_id`
-- `submitted_at`
-- `method`
-- `confirmation_reference`
-- `confirmation_notes`
-- `created_at`
-- `updated_at`
-
-## API Design
-
-### `GET /api/intents/:id/submission`
-
-Returns existing submission path or generates one from the bid and intent context.
-
-### `PATCH /api/intents/:id/submission`
-
-Allows the user to update manually known fields such as method, portal URL, and registration flags.
-
-### `POST /api/intents/:id/submission/confirm`
-
-Stores a manual external submission confirmation.
-
-## Deterministic Guidance Rules
-
-For this phase, generate submission guidance without a real LLM.
-
-Inputs:
-
-- Bid source.
-- Source URL.
-- Issuer type.
-- Contact email.
-- Contact phone.
-- Deadline date.
-- Attachments.
-- Full description text.
-
-Rules:
-
-- If source is SAM.gov or source URL includes a known portal, mark portal submission likely.
-- If contact email exists, show it as a fallback contact, not as guaranteed submission method.
-- If attachments exist, add a checklist item to review every attachment before submission.
-- If deadline is within 7 days, flag short response window.
-- If description mentions addenda, flag addenda acknowledgement.
-- If description mentions sealed bid, physical delivery, mail, or hard copy, flag physical delivery risk.
-- If source URL is missing, mark high complexity.
-
-## UI Design
-
-Add a `Submission Guidance` section to `/intents/[id]`.
-
-Show:
-
-- Complexity score.
-- Submission method.
-- Portal/source link.
-- Readiness checklist.
-- Risk flags.
-- Confirmation form.
-
-Confirmation form:
-
-- Method.
-- Submitted at date/time.
-- Confirmation reference.
-- Notes.
-- Save confirmation button.
-
-## Tests
-
-Add focused tests for:
-
-- Migration creates new tables.
-- Generator handles portal/source/contact/attachment/deadline cases.
-- API creates or reads submission guidance idempotently.
-- API validates confirmation payload.
-- Client wrapper handles non-JSON errors.
-- Intent detail page includes submission guidance wiring.
+- Charging for credit packs in Stripe.
+- Migrating all database enum values immediately.
+- Building Product 3 Response Workspace.
+- Building Knowledge Station Lite.
+- Building paid AI provider calls.
+- Building Growth award/intelligence features.
+- Removing backward compatibility for current `pro` and `business` code paths.
 
 ## Acceptance Criteria
 
-- User can open an intent and see submission guidance.
-- User can see a complexity score and risk flags.
-- User can review a readiness checklist.
-- User can save a manual external submission confirmation.
-- The same intent does not create duplicate submission path records.
-- Existing Phase 1A tests still pass.
-- `npm test`, `npm run lint`, and `npm run build` pass.
-- Browser smoke covers `/intents/[id]` submission section.
+- Current users and tests still work with existing `free/pro/business/enterprise` stored tier values.
+- UI and plan catalog show the updated commercial names.
+- Entitlement logic can answer both old feature keys and new PRD feature slugs.
+- Credit ledger schema exists and can record grants/consumption without requiring Stripe credit-pack checkout.
+- Premium action checks can return a structured reason: plan required, credits required, seat limit, role denied, payment past due, or limit reached.
+- Settings usage/plan surfaces explain plan, usage, and credits without surprising the user.
+- `npm test`, `npm run lint`, `npm run build`, `npm run db:migrate`, and `git diff --check` pass.
 
-## Suggested Task Breakdown
+## Data-Quality Alternative
 
-1. Schema and migration for submission path and confirmation.
-2. Submission guidance generator service.
-3. Submission API routes and client wrapper.
-4. Intent detail UI integration.
-5. Operation guide update.
-6. Full verification and browser smoke.
+If the next sprint should stay on crawler/data reliability instead of commercial packaging, do **P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata**.
+
+That alternative should:
+
+- Add source registry metadata fields: provider family, access mode, allowed use, validation confidence, registration status, activation readiness.
+- Add raw object/archive references and attachment download status.
+- Record checksum, byte size, content type, original URL, local path/object reference, fetched_at, parser version, and extraction availability.
+- Route failed or suspicious records into Admin QA.
 
 ## Remaining Work After This Phase
 
-After Submission Guidance Lite, remaining major MVP functions are:
-
-1. Compliance Manifest Lite.
-2. Pursue/No-Bid Decision Lite.
-3. Sourcing Partner and Quote Inquiry Lite.
-4. Award/Tabulation Tracking Lite.
-5. Win/Loss Analysis Lite.
-6. Knowledge Station Lite.
+1. P1 Data Pipeline Hardening: attachment archival, raw archive, source registry metadata, validation flags.
+2. Bid Admin/Data QA Console Expansion.
+3. P2 Qualification Upgrade: citations, Q&A, amendment refresh, evidence/artifact links, no-bid taxonomy.
+4. Knowledge Station Lite as Product 0.9 workflow coaching.
+5. Response Workspace Lite and Artifact Vault Lite.
+6. Supply Chain and Quote Lite.
+7. Deadline Notifications.
+8. Submission Guidance Completion.
+9. Award Tracking and Learning Lite.
+10. Product 6 data capture only; full intelligence remains post-MVP.

@@ -28,7 +28,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin auth helper | `requireAdmin()` checks authenticated non-disabled full-admin sessions; `requireAdminAccess()` supports admin/operator/support console access with route-level role restrictions; local bypass for development. |
 | Admin user access console | `/admin` lists registered users, creates invited accounts with temporary passwords, filters/searches accounts, changes role/tier/enabled state, shows access audit logs including self-service account deletion, and keeps account management limited to full admins. |
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs; support can view operational state, operator/admin can run operational actions; state crawler registry now covers all 50 states. |
-| Feature entitlement map | Central role/tier feature map for Free, Pro, Business, Enterprise, and admin/operator/support console access. |
+| Feature entitlement map | Central role/tier feature map for current compatibility tiers `free`, `pro`, `business`, `enterprise`; product-facing plan copy still needs reconciliation to Free, Pursuit Starter, Response Builder, Growth, and Enterprise. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, tier-aware locked states for gated features, and manifest-backed static coverage tests for current/future advanced feature API routes. |
 | Usage limits | Central saved bid, intent workspace, search alert, and team member quota checks/counts by organization tier; authenticated users are counted at workspace scope; saved bids, intents, search alerts, and team member invite/accept flows return `USAGE_LIMIT_REACHED` before creating over-limit resources; Settings shows current workspace usage vs plan limits. |
 | Notification delivery foundation | `notification_outbox`, file/console/http providers, retryable delivery worker, deployable notification/dunning worker command, user notification preferences, billing dunning reminders, invitation delivery status, admin notification history UI, and admin delivery trigger API/UI. |
@@ -40,10 +40,22 @@ This document is the working checklist for local development. Update it after ea
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
 | Intent to Bid | Add intent from bid detail, idempotent workspace-scoped intent creation, shared intent list/detail for organization members, status update. |
 | AI-like bid brief | Deterministic brief, key dates, initial checklist, risk flags. |
-| Submission Guidance | `submission_paths`, `submission_confirmations`, generator, service, Pro-gated API routes, API client, Intent workspace UI for generated guidance, editable submission fields, readiness/risk lists, and manual submission confirmation. |
-| Compliance Manifest Lite | `compliance_manifest_items`, generator, service, Business-gated API route, API client, and Intent workspace UI for requirement status, evidence status, and notes. |
-| Pursue / No-Bid Decision Lite | `pursuit_decisions`, recommendation generator, Pro-gated API route, API client, and Intent workspace UI for decision capture, reasons, notes, and history. |
+| Submission Guidance | `submission_paths`, `submission_confirmations`, generator, service, current Pro-gated API routes, API client, Intent workspace UI for generated guidance, editable submission fields, readiness/risk lists, and manual submission confirmation. |
+| Compliance Manifest Lite | `compliance_manifest_items`, generator, service, current Business-gated API route, API client, and Intent workspace UI for requirement status, evidence status, and notes. |
+| Pursue / No-Bid Decision Lite | `pursuit_decisions`, recommendation generator, current Pro-gated API route, API client, and Intent workspace UI for decision capture, reasons, notes, and history. |
 | Static product demo | `/winbids-demo` isolated prototype page from Drive frontend references. |
+
+## Latest Requirements Alignment
+
+The refreshed Drive material changes the product packaging language and introduces credits as a first-class commercial concept.
+
+| Requirement Track | Current Local State | Alignment Needed |
+|---|---|---|
+| Plan names | Code and database use `free`, `pro`, `business`, `enterprise`. | Keep these compatibility values internally, but expose Free, Pursuit Starter, Response Builder, Growth, and Enterprise in product copy. |
+| Plan mapping | Pro/Business labels are visible in Settings, locked states, docs, and tests. | Map Pursuit Starter -> `pro`, Response Builder -> `business`, Enterprise -> `enterprise`; represent Growth as planned/disabled until scope is confirmed. |
+| Credits | Current usage limits count saved bids, intents, alerts, and team members. | Add credit vocabulary, display labels, future ledger placeholders, and usage copy for AI/workflow actions. |
+| P1 data architecture | 50-state crawler coverage and admin runner exist. | Separate Source Registry, Connector Engine, Normalization/Data Quality, and Bid Admin/Data QA responsibilities in docs and future implementation. |
+| Knowledge Station | Feature key exists but no product surface. | Move Knowledge Station Lite earlier as Product 0.9 workflow coaching; deeper procurement intelligence remains post-MVP. |
 
 ## Account / Permission / Billing Tracker
 
@@ -60,8 +72,8 @@ This document is the working checklist for local development. Update it after ea
 | Admin 账户基础分离 | Done | `role=admin` is distinct from `role=user`; operator/support are separate low-privilege back-office roles; `requireAdmin()` protects full-admin APIs; `/admin` is hidden/blocked for ordinary users. |
 | Admin 用户管理 | Done | Full admin can list/search/filter users, create invited accounts with temporary passwords, update role/tier/enabled state, manage organization feature overrides, and filter access/deletion/override audit logs by actor/action/target/feature. |
 | 细粒度后台角色 | Done | `operator` can access operational admin tools and run crawler/notification/dunning actions without user-management permission; `support` can access read-only operational admin views without mutation/run controls. |
-| 用户等级模型 | Done | `account_tier` supports `free`, `pro`, `business`, `enterprise`. |
-| 功能与等级关联 | Done | Central entitlement map controls feature keys such as `submission_guidance`, `compliance_manifest`, `pursue_no_bid`, `quote_workflow`, `knowledge_station`. |
+| 用户等级模型 | Done / Needs copy reconciliation | `account_tier` supports `free`, `pro`, `business`, `enterprise`; latest product-facing names are Free, Pursuit Starter, Response Builder, Growth, and Enterprise. |
+| 功能与等级关联 | Done / Needs plan reconciliation | Central entitlement map controls feature keys such as `submission_guidance`, `compliance_manifest`, `pursue_no_bid`, `quote_workflow`, `knowledge_station`; feature copy and paywalls still need updated plan names and credit language. |
 | 组织级功能覆盖 | Done | Full admin can force-enable, force-disable, or clear selected organization feature overrides beyond tier defaults; overrides support reason and expiry metadata; expired overrides are ignored by session entitlements and server feature gates. |
 | 服务端功能拦截 | Done | `requireFeature()` exists and is already used by Submission Guidance, Compliance Manifest, and Pursue / No-Bid APIs; manifest-backed coverage tests protect every registered gated API and explicitly track not-yet-implemented paid feature APIs. |
 | 前端锁定态 | Partial | `useFeature()` and locked messages exist on key workspace modules and Settings feature overview. |
@@ -77,21 +89,23 @@ This document is the working checklist for local development. Update it after ea
 | Priority | Capability | Needed Work | Why It Matters |
 |---:|---|---|---|
 | P0 | Production Billing / Worker Deployment Runbook | Add production credential separation, deployment environment notes, webhook endpoint rotation process, and scheduled worker deployment instructions. | Sandbox verification is now scriptable; production readiness still needs deployment operations and credential hygiene. |
+| P0 | Commercial Packaging And Credits Reconciliation | Update plan labels, entitlement copy, usage/credits vocabulary, locked states, and Settings Billing/Usage surfaces while preserving internal tier compatibility. | The latest Drive requirements changed the buyer-facing packaging before the next paid feature buildout. |
 | P1 | Trial / Dunning Lifecycle | Add production scheduling for dunning worker and provider-specific dunning event handling. | Prevents stale paid access when payment state changes. |
 | P1 | Advanced Usage Metrics | Add future quote workflow, Knowledge Station, and AI-call usage metrics after those resources exist. | Users need to understand why an upgrade is required for advanced paid features. |
 | P2 | Custom Enterprise Permission Rules | Add a concrete rule model only after enterprise/customer-specific cases are known. | Avoids over-building a permissions engine before real enterprise policy needs are clear. |
 
 ### Current Tier-To-Feature Direction
 
-| Tier | User Type | Current / Planned Feature Access |
-|---|---|---|
-| Free | Ordinary trial/basic supplier | Search, saved bids with low quota, supplier profile, basic match score, limited intent workspace. |
-| Pro | Individual paid supplier | Higher quotas, Submission Guidance, Pursue / No-Bid, full match explanation. |
-| Business | Small team supplier | Pro features plus Compliance Manifest, team-ready workspace, future quote workflow. |
-| Enterprise | Advanced/team account | Business features plus Knowledge Station, advanced intelligence, higher limits, support/admin assistance. |
-| Admin | Full platform operator | Admin console, crawler/source tools, user management, tier assignment, feature overrides, audit visibility, subscription reconciliation. |
-| Operator | Operations staff | Admin console operational tools, crawler/source controls, notification delivery, dunning reminders; no user role/tier management. |
-| Support | Support staff | Read-only admin console operational views for sources, logs, and notification outbox; no run/mutation controls. |
+| Internal Tier | Product-Facing Plan | User Type | Current / Planned Feature Access |
+|---|---|---|---|
+| `free` | Free | Ordinary trial/basic supplier | Search, saved bids with low quota, supplier profile, basic match score, limited intent workspace. |
+| `pro` | Pursuit Starter | Individual paid supplier | Higher quotas, Submission Guidance, Pursue / No-Bid, full match explanation. |
+| `business` | Response Builder | Small team supplier | Pursuit Starter features plus Compliance Manifest, team-ready workspace, future quote workflow. |
+| planned | Growth | Growing supplier/team | Planned future tier; exact entitlements should remain disabled until confirmed. |
+| `enterprise` | Enterprise | Advanced/team account | Response Builder features plus Knowledge Station, advanced intelligence, higher limits, support/admin assistance. |
+| Role: `admin` | Admin | Full platform operator | Admin console, crawler/source tools, user management, tier assignment, feature overrides, audit visibility, subscription reconciliation. |
+| Role: `operator` | Operator | Operations staff | Admin console operational tools, crawler/source controls, notification delivery, dunning reminders; no user role/tier management. |
+| Role: `support` | Support | Support staff | Read-only admin console operational views for sources, logs, and notification outbox; no run/mutation controls. |
 
 ### Partially Implemented
 
@@ -101,8 +115,8 @@ This document is the working checklist for local development. Update it after ea
 | Organization/workspace model | Registered users get a default organization, session payload includes current workspace and owner/member role, Settings Team tab can rename workspace, invite local members, queue invitation email notifications, show latest invite delivery status, resend/revoke pending invitations, accept invitations, transfer owner, change member roles, disable/restore members, remove members, and saved bids/intents are shared across organization members | Invite acceptance analytics and richer team audit history |
 | Admin vs user separation | Admin APIs enforce full-admin role for account management and feature overrides; disabled admins are rejected; admin/operator/support can access `/admin`; operator/support receive lower-permission controls; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | Optional per-route permission audit UI and custom enterprise back-office roles |
 | User role model | `user`/`admin`/`operator`/`support` role enum, role update API, audit trail, role-aware frontend session payload | Optional company-level owner/member unification with global role model |
-| Subscription / tier model | `account_tier` on users, organization-level `account_tier` for workspace/team entitlement, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, Stripe SDK/API checkout and portal sessions, Stripe webhook mapping/signature verification, cancellation scheduling, subscription lifecycle reconciliation, filtered invoice history with summary totals/PDF links, payment retry links, payment-failed notification outbox entries, staged dunning reminders with resolved-payment suppression, optional generic webhook signature verification, and Stripe sandbox verifier/runbook | Production scheduled worker deployment and live credential/webhook operations runbook |
-| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid/intent/search alert/team invite quota enforcement, team member usage counting, Settings usage dashboard, organization-level feature overrides with reason/expiry metadata, audit filtering by actor/action/target/feature, and manifest-backed static coverage tests; session entitlements and workspace quotas now use organization tier; Submission Guidance and Pursue / No-Bid are Pro-gated, Compliance Manifest is Business-gated; Quote Workflow and Knowledge Station are explicitly marked as not-yet-implemented API surfaces | Optional richer beta program workflow and custom enterprise permission rules |
+| Subscription / tier model | `account_tier` on users, organization-level `account_tier` for workspace/team entitlement, admin tier assignment, central entitlement map, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, Stripe SDK/API checkout and portal sessions, Stripe webhook mapping/signature verification, cancellation scheduling, subscription lifecycle reconciliation, filtered invoice history with summary totals/PDF links, payment retry links, payment-failed notification outbox entries, staged dunning reminders with resolved-payment suppression, optional generic webhook signature verification, and Stripe sandbox verifier/runbook | Commercial plan-label/credit reconciliation, then production scheduled worker deployment and live credential/webhook operations runbook |
+| Feature access control | Central feature map, server guard, client helper, visible locked states, saved bid/intent/search alert/team invite quota enforcement, team member usage counting, Settings usage dashboard, organization-level feature overrides with reason/expiry metadata, audit filtering by actor/action/target/feature, and manifest-backed static coverage tests; session entitlements and workspace quotas now use organization tier; Submission Guidance and Pursue / No-Bid are currently Pro-gated, Compliance Manifest is currently Business-gated; Quote Workflow and Knowledge Station are explicitly marked as not-yet-implemented API surfaces | Product-facing plan names, credit-aware paywalls, optional richer beta program workflow, and custom enterprise permission rules |
 | Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails; creation is quota-gated by tier | Full alert management UI, per-alert digest configuration, real email delivery provider |
 | Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, user preferences, billing dunning reminders, deployable notification/dunning worker command, invite delivery status, admin notification history, and admin delivery trigger exist | Production cron/process deployment and production email provider hardening |
 | Admin data QA | Source status and logs exist | Bid review/correction workflow, data quality score, admin publish/unpublish controls |
@@ -117,17 +131,17 @@ This document is the working checklist for local development. Update it after ea
 | Sourcing / quote workflow | Partner database, quote requests, quote comparison, attachment storage. |
 | Award / tabulation tracking | Award notices, bid status monitoring, tabulation records. |
 | Win/loss learning | Outcome capture, reason taxonomy, future recommendation improvements. |
-| Knowledge Station | Reusable knowledge items, snippets, templates, retrieval. |
+| Knowledge Station | Product 0.9 workflow coaching, reusable knowledge items, snippets, templates, retrieval. |
 | Production AI layer | LLM-backed extraction with citations, confidence, prompt rules, uncertainty handling. |
 
 ## Recommended Next Phase
 
-Prioritize **Attachment Download Archival** if the next sprint continues crawler/data quality after 50-state beta coverage. Prioritize **Production Worker Deployment Runbook** if the next sprint focuses on production readiness. If the next sprint stays on product workflow completeness, prioritize Full Search Alerts UI.
+Prioritize **Commercial Packaging And Credits Reconciliation** first. The latest Drive requirements changed buyer-facing plan names and introduced credits as a first-class concept; this should be aligned before building more paid feature surfaces. If the next sprint continues crawler/data quality instead, prioritize **P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata**.
 
 Reason:
 
 - The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Business-gated Compliance Manifest, and Pro-gated Pursue / No-Bid Decision now exist.
-- The remaining account gap is not basic registration; it is production deployment hardening, production worker deployment runbook, custom enterprise rules when concrete use cases appear, broader advanced usage metrics, and future compliance polish.
+- The remaining account gap is not basic registration; it is commercial plan/credit copy alignment, production deployment hardening, production worker deployment runbook, custom enterprise rules when concrete use cases appear, broader advanced usage metrics, and future compliance polish.
 - Advanced features such as Compliance Manifest, Pursue / No-Bid, and Knowledge Station can now rely on the same feature gate and Submission Guidance pattern.
 
 ## Account / Role / Tier Direction
@@ -148,18 +162,19 @@ Later optional roles:
 
 ### Tiers
 
-Use tiers for product entitlement:
+Use tiers for product entitlement. Current internal values remain compatibility values until a migration is justified:
 
-- `free`: basic search, limited saved bids, limited intents.
-- `pro`: more saved bids/intents, match explanations, submission guidance.
-- `business`: compliance manifest, team-ready workspace, quote workflow.
-- `enterprise`: advanced intelligence, admin support, higher limits.
+- `free` / Free: basic search, limited saved bids, limited intents.
+- `pro` / Pursuit Starter: more saved bids/intents, match explanations, submission guidance, pursue/no-bid.
+- `business` / Response Builder: compliance manifest, team-ready workspace, quote workflow.
+- Planned Growth: future plan, disabled until exact package boundaries are confirmed.
+- `enterprise` / Enterprise: advanced intelligence, Knowledge Station, admin support, higher limits.
 
 ### Feature Keys
 
 Start with a central feature map:
 
-| Feature key | Free | Pro | Business | Enterprise |
+| Feature key | Free | Pursuit Starter (`pro`) | Response Builder (`business`) | Enterprise |
 |---|---:|---:|---:|---:|
 | `bid_search` | Yes | Yes | Yes | Yes |
 | `saved_bids` | Limited | Yes | Yes | Yes |
@@ -175,9 +190,9 @@ Start with a central feature map:
 
 ### Usage Limits
 
-Current local limits:
+Current local limits use internal tier values. Product-facing labels should be shown in UI after the commercial packaging reconciliation:
 
-| Feature key | Free | Pro | Business | Enterprise |
+| Feature key | Free | Pursuit Starter (`pro`) | Response Builder (`business`) | Enterprise |
 |---|---:|---:|---:|---:|
 | `saved_bids` | 5 | 50 | 250 | Unlimited |
 | `intent_workspace` | 2 | 20 | 100 | Unlimited |
@@ -186,19 +201,26 @@ Current local limits:
 
 ## Suggested Implementation Order
 
-1. **Billing provider hardening**
-   - Run production deployment checklist with separated live credentials, hosted webhook endpoint, and scheduled workers.
-   - Add deployment runbook for provider dashboard webhook endpoints, price ids, and secrets.
+1. **Commercial Packaging And Credits Reconciliation**
+   - Update plan catalog labels and buyer-facing copy to Free, Pursuit Starter, Response Builder, Growth, and Enterprise.
+   - Add credit vocabulary, display limits, and future ledger placeholders without changing Stripe billing shape yet.
+   - Update locked states, Settings Billing, Settings Usage, feature overview, and docs/tests.
 
-2. **Production operations**
-   - Add cron/process deployment notes for `worker:notifications`.
-   - Decide production email provider configuration and monitoring.
+2. **P1 Data Pipeline Hardening**
+   - Add attachment/detail archival metadata, source capability metadata, quality flags, and admin data QA surfaces.
+   - Preserve 50-state beta coverage and continue official-source upgrades for fallback states.
 
-3. **Account / tier model polish**
-   - Add per-account feature overrides only after a concrete beta/enterprise use case exists.
+3. **Bid Admin/Data QA Console Expansion**
+   - Add review/correction workflow, publish confidence, and quality status filters.
 
-4. **Product workflow depth**
-   - Build Response Workspace.
+4. **Product 2 Qualification Upgrade**
+   - Add citations, document-grounded Q&A, amendment/addenda awareness, evidence mapping, and no-bid taxonomy.
+
+5. **Knowledge Station Lite**
+   - Add embedded workflow coaching and reusable knowledge capture before deeper procurement intelligence.
+
+6. **Product workflow depth**
+   - Build Response Workspace, Artifact Vault, Quote Lite, deadline notifications, and award learning in thin MVP slices.
 
 ## Completed Phase: Account / Role / Tier Foundation
 
