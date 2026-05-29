@@ -7,6 +7,10 @@ from time import perf_counter
 from uuid import uuid4
 
 from apsi_crawler.config import DEFAULT_SOURCE
+from apsi_crawler.live_validation import (
+    BETA_DEDICATED_STATE_SOURCES,
+    validate_state_live_sources,
+)
 from apsi_crawler.sources.registry import get_fixture_loader, get_live_fetcher, get_source
 from apsi_crawler.spiders.ca_caleprocure import fetch_ca_caleprocure_opportunities
 from apsi_crawler.spiders.fl_mfmp import fetch_fl_mfmp_opportunities
@@ -292,7 +296,32 @@ def build_parser():
     fetch_state_parser.add_argument("--fixture-html")
     fetch_state_parser.add_argument("--fallback-fixture", action="store_true")
 
+    validate_state_live_parser = subparsers.add_parser("validate-state-live")
+    validate_state_live_parser.add_argument(
+        "--source",
+        action="append",
+        choices=BETA_DEDICATED_STATE_SOURCES,
+        help=(
+            "Beta dedicated state source to validate. Repeat to validate multiple. "
+            "Defaults to all beta dedicated sources."
+        ),
+    )
+    validate_state_live_parser.add_argument("--query")
+    validate_state_live_parser.add_argument("--limit", type=int, default=25)
+    validate_state_live_parser.add_argument("--timeout", type=int, default=30)
+
     return parser
+
+
+def _print_live_validation_result(result):
+    for source_result in result.sources:
+        line = (
+            f"{source_result.source} {source_result.status} "
+            f"fetched={source_result.fetched_count}"
+        )
+        if source_result.error_code:
+            line = f"{line} error={source_result.error_code}: {source_result.error_message}"
+        print(line)
 
 
 def main(argv=None):
@@ -322,6 +351,16 @@ def main(argv=None):
             fixture_html=args.fixture_html,
             fallback_fixture=args.fallback_fixture,
         )
+
+    if args.command == "validate-state-live":
+        result = validate_state_live_sources(
+            source_ids=args.source,
+            query=args.query,
+            limit=args.limit,
+            timeout=args.timeout,
+        )
+        _print_live_validation_result(result)
+        return 0 if result.ok else 1
 
     parser.error(f"Unsupported command: {args.command}")
     return 2

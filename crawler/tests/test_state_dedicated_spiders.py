@@ -53,6 +53,55 @@ def test_pa_emarketplace_json_fixture_uses_same_normalized_shape():
     assert bids[0]["attachments"][0]["url"] == "https://www.emarketplace.state.pa.us/FileDownload.aspx?file=6100061403_rfi.pdf"
 
 
+def test_pa_emarketplace_current_nested_table_extracts_live_shape(tmp_path):
+    fixture = tmp_path / "pa-current.html"
+    fixture.write_text(
+        """
+        <table>
+          <tr><td>
+            <table id="ctl00_MainBody_grdResults">
+              <tr>
+                <th>Solicitation #</th>
+                <th>Types</th>
+                <th>Solicitation Title</th>
+                <th>Description</th>
+                <th>Agency</th>
+                <th>Solicitation Start Date</th>
+                <th>Solicitation Due Date</th>
+                <th>Bid Opening Date</th>
+              </tr>
+              <tr>
+                <td><a href="/Solicitations.aspx?SID=6100062001">6100062001</a></td>
+                <td>IFB</td>
+                <td>Cloud storage services</td>
+                <td>Object storage and backup services</td>
+                <td>Department of General Services</td>
+                <td>05/29/2026</td>
+                <td>06/19/2026</td>
+                <td>06/20/2026 10:00 AM</td>
+              </tr>
+              <tr><td></td><td></td><td></td></tr>
+            </table>
+          </td></tr>
+        </table>
+        """,
+        encoding="utf-8",
+    )
+
+    bids = fetch_pa_emarketplace_opportunities(
+        get_source("pa_state_procurement"),
+        query="backup",
+        limit=5,
+        fixture_html=str(fixture),
+    )
+
+    assert len(bids) == 1
+    assert bids[0]["source_bid_id"] == "6100062001"
+    assert bids[0]["title"] == "Cloud storage services"
+    assert bids[0]["description"] == "Object storage and backup services"
+    assert bids[0]["source_url"] == "https://www.emarketplace.state.pa.us/Solicitations.aspx?SID=6100062001"
+
+
 def test_sc_business_opportunities_html_fixture_combines_opening_date_and_time():
     bids = fetch_sc_business_opportunities(
         get_source("sc_state_procurement"),
@@ -116,6 +165,44 @@ def test_or_oregonbuys_json_fixture_and_limit_are_supported():
     assert len(bids) == 1
     assert bids[0]["source_bid_id"] == "S-10700-00011950"
     assert bids[0]["attachments"][0]["name"] == "Solicitation Packet"
+
+
+def test_or_oregonbuys_current_rio_table_extracts_live_shape(tmp_path):
+    fixture = tmp_path / "or-current.html"
+    fixture.write_text(
+        """
+        <table>
+          <tr>
+            <th>Bid Solicitation #</th>
+            <th>Organization Name</th>
+            <th>Description</th>
+            <th>Bid Opening Date</th>
+            <th>Status</th>
+          </tr>
+          <tr>
+            <td><a href="/bso/external/bidDetail.sda?docId=S-10700-00012001">S-10700-00012001</a></td>
+            <td>Department of Administrative Services</td>
+            <td>Data exchange platform</td>
+            <td>06/18/2026 14:00:00</td>
+            <td>Open</td>
+          </tr>
+        </table>
+        """,
+        encoding="utf-8",
+    )
+
+    bids = fetch_or_oregonbuys_opportunities(
+        get_source("or_state_procurement"),
+        query="exchange",
+        limit=5,
+        fixture_html=str(fixture),
+    )
+
+    assert len(bids) == 1
+    assert bids[0]["source_bid_id"] == "S-10700-00012001"
+    assert bids[0]["title"] == "Data exchange platform"
+    assert bids[0]["issuer_name"] == "Department of Administrative Services"
+    assert bids[0]["source_url"] == "https://oregonbuys.gov/bso/external/bidDetail.sda?docId=S-10700-00012001"
 
 
 def test_selected_state_sources_are_registered_to_dedicated_fetchers():

@@ -4,6 +4,7 @@ import pytest
 from apsi_crawler.html.public_page import (
     HtmlPageError,
     absolute_url,
+    extract_html_tables,
     extract_table_rows,
     fetch_html,
     normalize_space,
@@ -301,6 +302,40 @@ def test_extract_table_rows_prefers_outer_table_over_nested_table_with_same_head
             "_links": {"Bid Solicitation #": "/bso/detail.xhtml?bidId=OUTER-001"},
         }
     ]
+
+
+def test_extract_html_tables_exposes_nested_tables_after_outer_tables():
+    html = """
+    <table>
+      <tr>
+        <td>
+          Layout
+          <table>
+            <tr>
+              <th>Solicitation #</th>
+              <th>Solicitation Title</th>
+              <th>Agency</th>
+            </tr>
+            <tr>
+              <td><a href="/Solicitations.aspx?SID=6100062001">6100062001</a></td>
+              <td>Cloud storage services</td>
+              <td>Department of General Services</td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+    """
+
+    tables = extract_html_tables(html)
+    rows = extract_table_rows(
+        html,
+        required_headers=("Solicitation #", "Solicitation Title", "Agency"),
+    )
+
+    assert len(tables) == 2
+    assert tables[0][0][0]["text"] == "Layout"
+    assert rows[0]["Solicitation #"] == "6100062001"
 
 
 def test_extract_table_rows_raises_when_required_headers_are_missing():

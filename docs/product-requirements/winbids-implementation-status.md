@@ -1270,6 +1270,34 @@ Current local limits:
 建议下一步：
 - 继续 crawler 质量主线时，优先做 Dedicated Adapter Live Validation，因为现在空结果会失败，下一步应验证 beta adapter 在真实站点下不会稳定产空；如果先补功能覆盖，则继续 50-State Crawler Quality Batch 3。
 
+## Completed Phase: Dedicated Adapter Live Validation
+
+本阶段完成：
+- 新增 `validate-state-live` crawler CLI，用于对 beta dedicated state adapters 做真实站点非空验证，不写数据库，只验证 fetcher 是否返回有效 `source_bid_id`、`title`、`source_url`。
+- PA adapter 支持当前 eMarketplace 嵌套结果表和真实页面空行过滤。
+- MA/NJ/OR adapter 支持当前 RIO 平台 `advancedSearchBid.xhtml?openBids=true` 表格。
+- WA adapter 支持当前 DES BidCalendar 页面的小表结构。
+- VA adapter 从静态表格解析切换到公开 eVA Solr JSON 入口，解决 React 页面本身无 HTML 表格的问题。
+- 通用 HTML parser 现在能发现嵌套表，同时保持外层表优先，避免同表头嵌套表抢先匹配。
+
+验证：
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_html_public_page.py crawler/tests/test_state_dedicated_spiders.py crawler/tests/test_state_dedicated_spiders_batch2_east.py crawler/tests/test_state_dedicated_spiders_batch2_west.py crawler/tests/test_state_live_validation.py crawler/tests/test_state_live_cli.py`
+- `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source pa_state_procurement --source ma_state_procurement --source nj_state_procurement --source or_state_procurement --source wa_state_procurement --limit 3 --timeout 15`
+- `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source va_state_procurement --limit 3 --timeout 20`
+- `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --limit 3 --timeout 20` 当前退出非零，但确认 PA/OR/MA/NJ/VA/WA 可返回非空；SC 仍在当前环境超时，OH 旧入口 404 且 OhioBuys 当前公开站点进入 browser_check/reCAPTCHA。
+
+当前还剩：
+1. SC/OH portal access resolution：SCBO 当前环境超时；OhioBuys 需要 browser/session/reCAPTCHA 策略或替代公开数据源。
+2. 50-State Crawler Quality Batch 3：继续选择 5-8 个州做专用 adapter，并补分页、详情页深抓、附件链接覆盖。
+3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
+4. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+5. Sourcing Partner + Quote Inquiry Lite：partner DB、quote request、quote comparison。
+6. Response Workspace Lite：tasks、artifacts、internal checkpoints。
+7. Award / Tabulation Tracking Lite。
+
+建议下一步：
+- 继续 crawler 质量主线时，优先处理 SC/OH 的访问机制；并行可启动 50-State Crawler Quality Batch 3，避免被两个站点阻塞整体覆盖。
+
 ## Status Update Template
 
 Use this after every phase:

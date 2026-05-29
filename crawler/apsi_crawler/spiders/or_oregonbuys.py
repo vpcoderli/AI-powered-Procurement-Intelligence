@@ -10,6 +10,11 @@ from apsi_crawler.html.public_page import (
 from apsi_crawler.normalizers.state_bids import normalize_state_opportunity
 
 
+OR_OREGONBUYS_SEARCH_URL = (
+    "https://oregonbuys.gov/bso/view/search/external/"
+    "advancedSearchBid.xhtml?openBids=true"
+)
+
 OR_OREGONBUYS_HEADERS = (
     "Opportunity No.",
     "Opportunity Title",
@@ -18,6 +23,14 @@ OR_OREGONBUYS_HEADERS = (
     "Closing Date",
     "Commodity",
     "Attachments",
+)
+
+OR_OREGONBUYS_RIO_HEADERS = (
+    "Bid Solicitation #",
+    "Organization Name",
+    "Description",
+    "Bid Opening Date",
+    "Status",
 )
 
 
@@ -62,7 +75,7 @@ def _attachments_from_items(items, source):
 
 
 def _record_from_row(row, source):
-    source_bid_id = row.get("Opportunity No.")
+    source_bid_id = _first_present(row, ("Opportunity No.", "Bid Solicitation #"))
     if not source_bid_id:
         raise OrOregonBuysError("OregonBuys row is missing opportunity number")
 
@@ -74,15 +87,19 @@ def _record_from_row(row, source):
 
     return {
         "source_bid_id": source_bid_id,
-        "title": row.get("Opportunity Title"),
-        "description": row.get("Opportunity Title"),
-        "issuer_name": row.get("Organization"),
+        "title": _first_present(row, ("Opportunity Title", "Description")),
+        "description": _first_present(row, ("Description", "Opportunity Title")),
+        "issuer_name": _first_present(row, ("Organization", "Organization Name")),
         "published_date": row.get("Published Date"),
-        "deadline_date": row.get("Closing Date"),
-        "original_category": row.get("Commodity"),
+        "deadline_date": _first_present(row, ("Closing Date", "Bid Opening Date")),
+        "original_category": _first_present(row, ("Commodity", "Status")),
         "source_url": absolute_url(
             source.base_url,
-            links.get("Opportunity No.") or links.get("Opportunity Title") or "",
+            links.get("Opportunity No.")
+            or links.get("Bid Solicitation #")
+            or links.get("Opportunity Title")
+            or links.get("Description")
+            or "",
         ),
         "attachments": [attachment for attachment in attachments if attachment],
     }
@@ -145,13 +162,13 @@ def _records_from_payload(payload, source):
 
 
 def _records_from_html(html, source):
-    try:
-        rows = extract_table_rows(html, required_headers=OR_OREGONBUYS_HEADERS)
-    except HtmlPageError as error:
-        raise OrOregonBuysError(
-            "OregonBuys page missing expected opportunity table headers"
-        ) from error
-    return [_record_from_row(row, source) for row in rows]
+    for headers in (OR_OREGONBUYS_HEADERS, OR_OREGONBUYS_RIO_HEADERS):
+        try:
+            rows = extract_table_rows(html, required_headers=headers)
+            return [_record_from_row(row, source) for row in rows]
+        except (HtmlPageError, OrOregonBuysError):
+            continue
+    raise OrOregonBuysError("OregonBuys page missing expected opportunity table headers")
 
 
 def fetch_or_oregonbuys_opportunities(
@@ -172,7 +189,11 @@ def fetch_or_oregonbuys_opportunities(
             html = read_html_fixture(fixture_html)
         else:
             try:
-                html = fetch_html(source.base_url, session=session, timeout=timeout)
+                html = fetch_html(
+                    OR_OREGONBUYS_SEARCH_URL,
+                    session=session,
+                    timeout=timeout,
+                )
             except HtmlPageError as error:
                 raise OrOregonBuysError(str(error)) from error
         records = _records_from_html(html, source)
