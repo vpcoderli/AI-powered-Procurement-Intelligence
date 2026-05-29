@@ -115,6 +115,41 @@ def test_import_fixture_writes_bids_and_crawler_log(tmp_path):
     assert log == ("SAM.gov", "success", 2, 2, 0)
 
 
+def test_import_fixture_empty_result_writes_failure_log(tmp_path, monkeypatch):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+    fixture = tmp_path / "empty.json"
+    fixture.write_text("[]", encoding="utf-8")
+
+    monkeypatch.setattr("apsi_crawler.cli.get_fixture_loader", lambda source: lambda path: [])
+
+    exit_code = main(
+        [
+            "import-fixture",
+            "--database",
+            str(database),
+            "--fixture",
+            str(fixture),
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 1
+    log = connection.execute(
+        "SELECT source, status, fetched_count, inserted_count, updated_count, failed_count, error_code, error_message FROM crawler_logs"
+    ).fetchone()
+    assert log == (
+        "SAM.gov",
+        "failure",
+        0,
+        0,
+        0,
+        1,
+        "EmptyCrawlerResultError",
+        "Crawler returned no opportunities for source: SAM.gov",
+    )
+
+
 def test_fetch_sam_gov_writes_bids_and_crawler_log(tmp_path, monkeypatch):
     database = tmp_path / "apsi.sqlite"
     create_crawler_database(database)
@@ -156,6 +191,40 @@ def test_fetch_sam_gov_writes_bids_and_crawler_log(tmp_path, monkeypatch):
         "SELECT source, status, fetched_count, inserted_count, updated_count FROM crawler_logs"
     ).fetchone()
     assert log == ("SAM.gov", "success", 1, 1, 0)
+
+
+def test_fetch_sam_gov_empty_result_writes_failure_log(tmp_path, monkeypatch):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+
+    monkeypatch.setattr("apsi_crawler.cli.fetch_sam_gov_opportunities", lambda **kwargs: [])
+
+    exit_code = main(
+        [
+            "fetch-sam-gov",
+            "--database",
+            str(database),
+            "--posted-from",
+            "05/01/2026",
+            "--posted-to",
+            "05/19/2026",
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 1
+    log = connection.execute(
+        "SELECT status, fetched_count, inserted_count, updated_count, failed_count, error_code, error_message FROM crawler_logs"
+    ).fetchone()
+    assert log == (
+        "failure",
+        0,
+        0,
+        0,
+        1,
+        "EmptyCrawlerResultError",
+        "Crawler returned no opportunities for source: SAM.gov",
+    )
 
 
 def test_fetch_sam_gov_failure_writes_crawler_log(tmp_path, monkeypatch):

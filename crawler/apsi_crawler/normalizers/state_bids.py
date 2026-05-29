@@ -5,18 +5,37 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat()
 
 
+class StateBidNormalizationError(Exception):
+    pass
+
+
+def _clean_text(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _first_present(raw, keys, default=None):
     for key in keys:
-        value = raw.get(key)
-        if value not in (None, ""):
+        value = _clean_text(raw.get(key))
+        if value is not None:
             return value
     return default
 
 
 def normalize_state_opportunity(raw, source):
     source_bid_id = _first_present(raw, ("source_bid_id", "id", "bid_id", "solicitation_id"))
-    title = _first_present(raw, ("title", "name", "solicitation_title"), "Untitled state opportunity")
-    source_url = _first_present(raw, ("source_url", "url", "link"), "")
+    if not source_bid_id:
+        raise StateBidNormalizationError(f"{source.id} opportunity is missing source id")
+
+    title = _first_present(raw, ("title", "name", "solicitation_title"))
+    if not title:
+        raise StateBidNormalizationError(f"{source.id} opportunity is missing title")
+
+    description = _first_present(raw, ("description", "summary", "type"), title)
+    full_description = _first_present(raw, ("full_description", "description", "summary"), description)
+    source_url = _first_present(raw, ("source_url", "url", "link"), source.base_url)
     timestamp = now_iso()
 
     return {
@@ -25,8 +44,8 @@ def normalize_state_opportunity(raw, source):
         "source_bid_id": source_bid_id,
         "dedupe_key": f"{source.id}:{source_bid_id}",
         "title": title,
-        "description": _first_present(raw, ("description", "summary", "type"), ""),
-        "full_description": _first_present(raw, ("full_description", "description", "summary"), ""),
+        "description": description,
+        "full_description": full_description,
         "original_category": _first_present(raw, ("original_category", "category", "type"), ""),
         "amount": raw.get("amount"),
         "amount_min": raw.get("amount_min"),

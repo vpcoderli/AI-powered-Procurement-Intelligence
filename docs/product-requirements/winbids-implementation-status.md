@@ -1246,6 +1246,30 @@ Current local limits:
 建议下一步：
 - 继续数据覆盖主线时，优先做 50-State Crawler Quality Batch 3；如果想把已抓到的附件链接变成可审计本地资产，优先做 Attachment Download Archival；如果转用户工作流，做 Full Search Alerts UI。
 
+## Completed Phase: Crawler Non-Empty Guardrails
+
+本阶段完成：
+- `fetch-state`、`fetch-sam-gov`、`import-fixture` 在 fetcher/loader 返回空列表时不再写 `success`，而是写入 `failure` crawler log。
+- 新增 `EmptyCrawlerResultError`，错误信息明确指出哪个 source 返回了 0 条 opportunity。
+- State bid normalizer 新增 `StateBidNormalizationError`，缺少 source id 或 title 的州级记录会被拒绝，避免空内容被伪装成有效 bid。
+- 对 description、full description、source URL、issuer name 增加非空回退：description/full description 回退到 title，source URL 回退到 source base URL，issuer name 回退到 `Unknown state agency`。
+
+验证：
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_cli.py crawler/tests/test_state_live_cli.py crawler/tests/test_state_normalizers.py crawler/tests/test_state_dedicated_spiders.py crawler/tests/test_state_dedicated_spiders_batch2_east.py crawler/tests/test_state_dedicated_spiders_batch2_west.py crawler/tests/test_generic_state.py`
+- `git diff --check`
+
+当前还剩：
+1. 50-State Crawler Quality Batch 3：继续选择 5-8 个州做专用 adapter，并补分页、详情页深抓、附件链接覆盖。
+2. Dedicated Adapter Live Validation：对 beta adapter 做真实州站点连通、字段稳定性、失败回退和限流验证。
+3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
+4. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+5. Sourcing Partner + Quote Inquiry Lite：partner DB、quote request、quote comparison。
+6. Response Workspace Lite：tasks、artifacts、internal checkpoints。
+7. Award / Tabulation Tracking Lite。
+
+建议下一步：
+- 继续 crawler 质量主线时，优先做 Dedicated Adapter Live Validation，因为现在空结果会失败，下一步应验证 beta adapter 在真实站点下不会稳定产空；如果先补功能覆盖，则继续 50-State Crawler Quality Batch 3。
+
 ## Status Update Template
 
 Use this after every phase:
