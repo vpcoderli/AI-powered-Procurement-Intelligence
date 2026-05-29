@@ -11,7 +11,7 @@ This file is now being used as a staged implementation backlog. Some original ga
 - Pursue / No-Bid Decision Lite is implemented.
 - Account, role, tier, feature gate, organization, billing foundation, dunning foundation, and operator/support admin roles are substantially implemented.
 - State crawler coverage now has a 50-state registry/runner foundation: CA/TX/NY/FL/IL keep dedicated adapters; the other 45 states are registered with a generic public procurement HTML/JSON fetcher so they can be scheduled, logged, and replaced by dedicated adapters over time.
-- 50-state crawler quality has started moving from foundation to batches: PA/SC/OR now have beta dedicated parser adapters with fixture-backed detail/attachment link extraction, while remaining non-dedicated states keep generic coverage.
+- 50-state crawler quality has started moving from foundation to batches: PA/SC/OR and MA/NJ/OH/VA/WA now have beta dedicated parser adapters with fixture-backed detail/attachment link extraction, while remaining non-dedicated states keep generic coverage.
 - Local crawler attachment files can be served through a private bid attachment API when attachment rows point to a local file path inside an allowed attachment directory.
 
 ## Summary
@@ -37,7 +37,7 @@ The remaining MVP work is not another search page. The largest remaining gaps ar
 | P0 Platform shell | Partial | Layout, nav, auth APIs, settings, bilingual shell | Subscription tiers, real organization/workspace model, role UI, security hardening |
 | P0 Data model | Partial | Users, sessions, bids, attachments, saved bids, profiles, intents, alerts, crawlers, notification outbox, data sources | Full ERD objects for submission, compliance, sourcing, quotes, awards, knowledge |
 | P1 Bid source discovery | Partial/Improving | Data source admin, crawler logs, SAM.gov/state runner, 50-state state crawler registry/runner foundation, admin crawler maturity/capability display | Non-federal/non-state coverage, continued per-state connector maturity |
-| P1 Bid ingestion | Partial/Improving | Normalization, dedupe, crawler logs, seeded data, runner APIs, local attachment download serving for crawler-managed files, PA/SC/OR beta dedicated parser adapters | Production connectors, document parsing, data quality scoring, attachment download/archival by source, more dedicated state adapters |
+| P1 Bid ingestion | Partial/Improving | Normalization, dedupe, crawler logs, seeded data, runner APIs, local attachment download serving for crawler-managed files, PA/SC/OR/MA/NJ/OH/VA/WA beta dedicated parser adapters | Production connectors, document parsing, data quality scoring, attachment download/archival by source, more dedicated state adapters |
 | P1 Bid display/search | Partial/Good | `/search`, bid cards, filters, detail page | Closed bids, richer filter taxonomy, saved search UX polish |
 | P1 Saved bids/alerts | Partial/Good | Saved bids, search alerts, notifications foundation | Real email delivery settings, alert digest UI, monitoring |
 | P1 Supplier profile | Partial/Good | `/profile`, API, validation, completion score | Upload-to-fill profile, richer certifications, past performance, warehouse, insurance/bonding |
@@ -90,7 +90,7 @@ Why:
 
 ## Recommended Next Feature Slice
 
-### 50-State Crawler Quality Batch 2
+### 50-State Crawler Quality Batch 3
 
 Scope:
 
@@ -206,7 +206,7 @@ Current AI-like behavior is deterministic. This is acceptable for local MVP work
 
 ## Recommended Development Order
 
-1. 50-State Crawler Quality Batch 2: dedicated adapters for the next 5 to 8 generic states, plus live validation and richer capability notes.
+1. 50-State Crawler Quality Batch 3: dedicated adapters for the next 5 to 8 generic states, plus live validation and richer capability notes.
 2. Full Search Alerts UI.
 3. Sourcing Partner + Quote Inquiry Lite.
 4. Response Workspace Lite: tasks, artifacts, internal checkpoints.

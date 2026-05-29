@@ -3,12 +3,17 @@ from apsi_crawler.spiders.ca_caleprocure import fetch_ca_caleprocure_opportuniti
 from apsi_crawler.spiders.fl_mfmp import fetch_fl_mfmp_opportunities
 from apsi_crawler.spiders.generic_state import fetch_generic_state_opportunities
 from apsi_crawler.spiders.il_bidbuy import fetch_il_bidbuy_opportunities
+from apsi_crawler.spiders.ma_commbuys import fetch_ma_commbuys_opportunities
+from apsi_crawler.spiders.nj_start import fetch_nj_start_opportunities
 from apsi_crawler.spiders.ny_contract_reporter import fetch_ny_contract_reporter_opportunities
+from apsi_crawler.spiders.oh_procure import fetch_oh_procure_opportunities
 from apsi_crawler.spiders.or_oregonbuys import fetch_or_oregonbuys_opportunities
 from apsi_crawler.spiders.pa_emarketplace import fetch_pa_emarketplace_opportunities
 from apsi_crawler.spiders.sc_business_opportunities import fetch_sc_business_opportunities
 from apsi_crawler.spiders.state_fixture import load_state_fixture_opportunities
 from apsi_crawler.spiders.tx_esbd import fetch_tx_esbd_opportunities
+from apsi_crawler.spiders.va_eva import fetch_va_eva_opportunities
+from apsi_crawler.spiders.wa_des import fetch_wa_des_opportunities
 
 
 STATE_SOURCE_DEFINITIONS = (
@@ -70,9 +75,14 @@ SPECIAL_FETCHERS = {
     "ny_contract_reporter": fetch_ny_contract_reporter_opportunities,
     "fl_mfmp": fetch_fl_mfmp_opportunities,
     "il_bidbuy": fetch_il_bidbuy_opportunities,
+    "ma_state_procurement": fetch_ma_commbuys_opportunities,
+    "nj_state_procurement": fetch_nj_start_opportunities,
+    "oh_state_procurement": fetch_oh_procure_opportunities,
     "pa_state_procurement": fetch_pa_emarketplace_opportunities,
     "sc_state_procurement": fetch_sc_business_opportunities,
     "or_state_procurement": fetch_or_oregonbuys_opportunities,
+    "va_state_procurement": fetch_va_eva_opportunities,
+    "wa_state_procurement": fetch_wa_des_opportunities,
 }
 
 

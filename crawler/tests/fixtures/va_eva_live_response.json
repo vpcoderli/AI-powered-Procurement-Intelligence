@@ -1,0 +1,20 @@
+{
+  "bids": [
+    {
+      "source_bid_id": "IFB 501-26-014",
+      "title": "Enterprise data warehouse support",
+      "description": "Data warehouse operations, reporting, and support",
+      "department": "Department of Health",
+      "published_date": "05/24/2026",
+      "deadline_date": "06/29/2026 03:30 PM",
+      "original_category": "Information Technology",
+      "source_url": "/solicitations/IFB-501-26-014",
+      "attachments": [
+        {
+          "label": "IFB Package",
+          "link": "/documents/IFB-501-26-014.pdf"
+        }
+      ]
+    }
+  ]
+}

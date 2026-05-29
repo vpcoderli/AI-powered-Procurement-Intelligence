@@ -1,0 +1,28 @@
+{
+  "results": [
+    {
+      "solicitationNumber": "25DPP01088",
+      "title": "Digital records management platform",
+      "description": "Records platform implementation and migration support",
+      "agency": "Division of Purchase and Property",
+      "postedDate": "05/23/2026",
+      "bidOpeningDate": "06/27/2026 01:00 PM",
+      "commodity": "Technology",
+      "detailUrl": "/bso/external/bidDetail.sdo?docId=25DPP01088",
+      "documents": [
+        {
+          "title": "Solicitation Package",
+          "href": "/bso/external/document/download?bidId=25DPP01088"
+        }
+      ]
+    },
+    {
+      "solicitationNumber": "25DPP01089",
+      "title": "Copier maintenance services",
+      "agency": "Division of Purchase and Property",
+      "postedDate": "05/23/2026",
+      "bidOpeningDate": "06/28/2026 01:00 PM",
+      "commodity": "Office"
+    }
+  ]
+}

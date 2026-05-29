@@ -1,0 +1,20 @@
+{
+  "opportunities": [
+    {
+      "bidNumber": "BD-26-1040-ITD00-ITD01-22222",
+      "bidTitle": "Network segmentation assessment",
+      "description": "Network segmentation assessment for statewide systems",
+      "purchasingOrganization": "Executive Office of Technology Services",
+      "publishedDate": "05/22/2026",
+      "closingDate": "06/25/2026 04:00 PM",
+      "category": "Information Technology",
+      "detailUrl": "/bso/external/bidDetail.sdo?docId=BD-26-1040-ITD00-ITD01-22222",
+      "attachments": [
+        {
+          "name": "Technical Requirements",
+          "url": "/bso/external/document/download?bidId=BD-26-1040-ITD00-ITD01-22222"
+        }
+      ]
+    }
+  ]
+}

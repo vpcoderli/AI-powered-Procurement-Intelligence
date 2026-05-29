@@ -6,6 +6,11 @@ from apsi_crawler.sources.registry import (
     list_sources,
     supports_live_fetch,
 )
+from apsi_crawler.spiders.ma_commbuys import fetch_ma_commbuys_opportunities
+from apsi_crawler.spiders.nj_start import fetch_nj_start_opportunities
+from apsi_crawler.spiders.oh_procure import fetch_oh_procure_opportunities
+from apsi_crawler.spiders.va_eva import fetch_va_eva_opportunities
+from apsi_crawler.spiders.wa_des import fetch_wa_des_opportunities
 
 US_STATE_CODES = {
     "AL",
@@ -97,6 +102,14 @@ def test_state_source_metadata_is_stable():
     assert ca_source.state_code == "CA"
     assert ca_source.source_label == "California Cal eProcure"
     assert callable(get_fixture_loader("ca_caleprocure"))
+
+
+def test_batch_two_state_sources_are_registered_to_dedicated_fetchers():
+    assert get_live_fetcher("ma_state_procurement") is fetch_ma_commbuys_opportunities
+    assert get_live_fetcher("nj_state_procurement") is fetch_nj_start_opportunities
+    assert get_live_fetcher("oh_state_procurement") is fetch_oh_procure_opportunities
+    assert get_live_fetcher("va_state_procurement") is fetch_va_eva_opportunities
+    assert get_live_fetcher("wa_state_procurement") is fetch_wa_des_opportunities
 
 
 def test_sam_gov_default_fixture_loader_remains_compatible():

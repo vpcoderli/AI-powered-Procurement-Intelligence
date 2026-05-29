@@ -92,10 +92,25 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     maturity: "verified",
     capabilities: ["query", "attachments", "detail_pages", "pagination"],
   },
+  ma_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "attachments"],
+  },
+  nj_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "attachments"],
+  },
   ny_contract_reporter: {
     adapterKind: "dedicated",
     maturity: "verified",
     capabilities: ["query", "detail_pages", "pagination"],
+  },
+  oh_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "attachments"],
   },
   or_state_procurement: {
     adapterKind: "dedicated",
@@ -116,6 +131,16 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     adapterKind: "dedicated",
     maturity: "verified",
     capabilities: ["query", "detail_pages", "pagination"],
+  },
+  va_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "attachments"],
+  },
+  wa_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "attachments"],
   },
 };
 
