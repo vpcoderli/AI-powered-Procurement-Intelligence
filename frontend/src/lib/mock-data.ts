@@ -6,6 +6,9 @@ export interface BidAttachment {
   name: string;
   size: string;
   url: string;
+  archiveStatus?: string;
+  archiveError?: string;
+  storagePath?: string;
 }
 
 export interface Bid {

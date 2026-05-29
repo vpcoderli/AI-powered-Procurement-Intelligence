@@ -7,6 +7,9 @@ export interface SamGovCrawlerRunOptions {
   limit?: number;
   maxRecords?: number;
   databasePath?: string;
+  archiveDocuments?: boolean;
+  archiveDir?: string;
+  archiveDetailPages?: boolean;
 }
 
 export interface SamGovCrawlerRunResult {
@@ -41,6 +44,10 @@ function defaultDatabasePath() {
   return path.resolve(process.cwd(), "data", "apsi.sqlite");
 }
 
+function defaultArchiveDir() {
+  return process.env.CRAWLER_ATTACHMENT_DIR ?? path.resolve(process.cwd(), "data", "attachments");
+}
+
 function buildArgs(options: SamGovCrawlerRunOptions) {
   const args = [
     "-m",
@@ -58,6 +65,14 @@ function buildArgs(options: SamGovCrawlerRunOptions) {
 
   if (options.maxRecords !== undefined) {
     args.push("--max-records", String(options.maxRecords));
+  }
+
+  if (options.archiveDocuments !== false) {
+    args.push("--archive-documents", "--archive-dir", options.archiveDir ?? defaultArchiveDir());
+  }
+
+  if (options.archiveDetailPages) {
+    args.push("--archive-detail-pages");
   }
 
   return args;

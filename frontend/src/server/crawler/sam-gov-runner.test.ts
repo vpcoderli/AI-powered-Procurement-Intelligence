@@ -51,6 +51,9 @@ describe("SAM.gov crawler runner", () => {
         "50",
         "--max-records",
         "75",
+        "--archive-documents",
+        "--archive-dir",
+        path.resolve(process.cwd(), "data", "attachments"),
       ],
       expect.objectContaining({
         cwd: path.resolve(process.cwd(), "..", "crawler"),
@@ -74,5 +77,23 @@ describe("SAM.gov crawler runner", () => {
     expect(result.ok).toBe(false);
     expect(result.status).toBe("failure");
     expect(result.stderr).toBe("trace");
+  });
+
+  it("passes archive document options by default", async () => {
+    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+      callback(null, "imported 1", "");
+      return {} as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+
+    await runSamGovCrawler({
+      postedFrom: "05/01/2026",
+      postedTo: "05/19/2026",
+      databasePath: "/tmp/apsi.sqlite",
+      archiveDir: "/tmp/attachments",
+    });
+
+    expect(mockedExecFile.mock.calls[0][1]).toEqual(
+      expect.arrayContaining(["--archive-documents", "--archive-dir", "/tmp/attachments"]),
+    );
   });
 });

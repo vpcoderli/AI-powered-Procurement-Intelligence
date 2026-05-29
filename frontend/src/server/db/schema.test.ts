@@ -389,6 +389,7 @@ describe("database schema", () => {
           "detail_archive_path",
           "detail_fetched_at",
           "detail_checksum_sha256",
+          "detail_archive_error",
         ]),
       );
 
@@ -406,6 +407,7 @@ describe("database schema", () => {
           "checksum_sha256",
           "fetched_at",
           "archive_status",
+          "archive_error",
         ]),
       );
 

@@ -44,6 +44,7 @@ ARCHIVE_ATTACHMENT_COLUMNS = (
     "checksum_sha256",
     "fetched_at",
     "archive_status",
+    "archive_error",
 )
 
 ARCHIVE_BID_COLUMNS = (
@@ -51,6 +52,7 @@ ARCHIVE_BID_COLUMNS = (
     "detail_archive_path",
     "detail_fetched_at",
     "detail_checksum_sha256",
+    "detail_archive_error",
 )
 
 
@@ -127,6 +129,7 @@ def _replace_bid_attachments(connection, bid):
             "checksum_sha256": attachment.get("checksum_sha256"),
             "fetched_at": attachment.get("fetched_at"),
             "archive_status": attachment.get("archive_status") or "not_archived",
+            "archive_error": attachment.get("archive_error"),
             "sort_order": (
                 index
                 if attachment.get("sort_order") is None
@@ -190,6 +193,7 @@ def upsert_bid(connection, bid):
                     "detail_archive_path",
                     "detail_fetched_at",
                     "detail_checksum_sha256",
+                    "detail_archive_error",
                     "last_seen_at",
                     "updated_at",
                 )
@@ -238,6 +242,7 @@ def upsert_bid(connection, bid):
                 "detail_archive_path",
                 "detail_fetched_at",
                 "detail_checksum_sha256",
+                "detail_archive_error",
                 "first_seen_at",
                 "last_seen_at",
                 "created_at",

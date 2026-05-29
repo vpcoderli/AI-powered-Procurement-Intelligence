@@ -62,6 +62,20 @@ function scoreTone(score: number) {
   return "text-slate-600 bg-slate-50 border-slate-200";
 }
 
+function archiveTone(status: string | undefined) {
+  if (status === "archived") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "failed") return "border-rose-200 bg-rose-50 text-rose-700";
+  if (status === "unavailable") return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function archiveLabelKey(status: string | undefined) {
+  if (status === "archived") return "detail.archiveStatus_archived";
+  if (status === "failed") return "detail.archiveStatus_failed";
+  if (status === "unavailable") return "detail.archiveStatus_unavailable";
+  return "detail.archiveStatus_not_archived";
+}
+
 function fallbackLabel(label: string, key: string, fallback: string) {
   return label === key ? fallback : label;
 }
@@ -531,7 +545,17 @@ export default function BidDetailsPage() {
                     </div>
                     <div className="flex flex-col">
                       <span className="font-medium text-sm text-slate-900">{file.name}</span>
-                      <span className="text-xs font-medium text-slate-500 mt-0.5">{file.size}</span>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-medium text-slate-500">{file.size}</span>
+                        <Badge variant="outline" className={cn("h-5 rounded-md px-1.5 text-[11px]", archiveTone(file.archiveStatus))}>
+                          {t(archiveLabelKey(file.archiveStatus))}
+                        </Badge>
+                      </div>
+                      {file.archiveError && (
+                        <span className="mt-1 max-w-md truncate text-xs text-rose-700" title={file.archiveError}>
+                          {t("detail.archiveError")}: {file.archiveError}
+                        </span>
+                      )}
                     </div>
                   </div>
                   <Button asChild variant="ghost" size="sm" className="text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium">

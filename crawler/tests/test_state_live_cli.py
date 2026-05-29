@@ -379,6 +379,141 @@ def test_fetch_state_persists_attachments_from_live_fetcher(tmp_path, monkeypatc
     ]
 
 
+def test_fetch_state_persists_archived_attachment_metadata(tmp_path, monkeypatch):
+    database = tmp_path / "apsi.sqlite"
+    archive_dir = tmp_path / "attachments"
+    create_crawler_database(database)
+    bid = state_bid()
+    bid.update(
+        {
+            "id": "il_bidbuy:IL-BIDBUY-2026-001",
+            "source": "Illinois BidBuy",
+            "source_bid_id": "IL-BIDBUY-2026-001",
+            "dedupe_key": "il_bidbuy:IL-BIDBUY-2026-001",
+            "title": "Enterprise data integration services",
+            "state_code": "IL",
+            "attachments": [
+                {
+                    "name": "Scope of Work.pdf",
+                    "url": "https://www.bidbuy.illinois.gov/documents/scope.pdf",
+                    "size_label": "242 KB",
+                    "mime_type": "application/pdf",
+                    "sort_order": 0,
+                }
+            ],
+        }
+    )
+
+    def fake_fetcher(source, query=None, limit=25):
+        return [bid]
+
+    class FakeResponse:
+        status_code = 200
+        content = b"scope-pdf"
+        headers = {"Content-Type": "application/pdf"}
+
+        def raise_for_status(self):
+            return None
+
+    class FakeSession:
+        def get(self, url, headers=None, timeout=30):
+            return FakeResponse()
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("apsi_crawler.cli.get_live_fetcher", lambda source: fake_fetcher)
+    monkeypatch.setattr("apsi_crawler.storage.archive.requests.Session", lambda: FakeSession())
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "il_bidbuy",
+            "--archive-documents",
+            "--archive-dir",
+            str(archive_dir),
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 0
+    row = connection.execute(
+        """
+        SELECT original_url, storage_path, byte_size, content_type,
+               checksum_sha256, archive_status, archive_error
+        FROM bid_attachments
+        """
+    ).fetchone()
+    assert row[0] == "https://www.bidbuy.illinois.gov/documents/scope.pdf"
+    assert Path(row[1]).read_bytes() == b"scope-pdf"
+    assert row[2:] == (
+        9,
+        "application/pdf",
+        "48fdd17f826c69750bdf5950261d3e6e2f48b363baae48a8417b5d2f4d1a4f61",
+        "archived",
+        None,
+    )
+    log = connection.execute("SELECT metadata FROM crawler_logs").fetchone()
+    metadata = json.loads(log[0])
+    assert metadata["archive"] == {"archived": 1, "failed": 0, "unavailable": 0}
+
+
+def test_fetch_state_keeps_success_when_attachment_archive_fails(tmp_path, monkeypatch):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+    bid = state_bid()
+    bid.update(
+        {
+            "attachments": [
+                {
+                    "name": "Broken Attachment",
+                    "url": "https://caleprocure.ca.gov/files/broken.pdf",
+                }
+            ]
+        }
+    )
+
+    def fake_fetcher(source, query=None, limit=25):
+        return [bid]
+
+    class FakeSession:
+        def get(self, url, headers=None, timeout=30):
+            raise RuntimeError("download timeout")
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("apsi_crawler.cli.get_live_fetcher", lambda source: fake_fetcher)
+    monkeypatch.setattr("apsi_crawler.storage.archive.requests.Session", lambda: FakeSession())
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "ca_caleprocure",
+            "--archive-documents",
+            "--archive-dir",
+            str(tmp_path / "attachments"),
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 0
+    assert connection.execute("SELECT COUNT(*) FROM bids").fetchone()[0] == 1
+    row = connection.execute(
+        "SELECT archive_status, archive_error FROM bid_attachments"
+    ).fetchone()
+    assert row == ("failed", "download timeout")
+    log = connection.execute("SELECT status, metadata FROM crawler_logs").fetchone()
+    assert log[0] == "success"
+    assert json.loads(log[1])["archive"] == {"archived": 0, "failed": 1, "unavailable": 0}
+
+
 def test_fetch_state_unsupported_source_writes_failure_log(tmp_path, monkeypatch):
     from apsi_crawler.sources.base import Source
     from apsi_crawler.sources import registry
