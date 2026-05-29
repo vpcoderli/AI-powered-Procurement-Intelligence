@@ -121,6 +121,54 @@ describe("state crawler source mapping", () => {
       maturity: "beta",
       capabilities: expect.arrayContaining(["query", "detail_pages"]),
     });
+    expect(getStateCrawlerSourceMetadata("UT")).toMatchObject({
+      id: "ut_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "detail_pages"]),
+    });
+    expect(getStateCrawlerSourceMetadata("KS")).toMatchObject({
+      id: "ks_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query"]),
+    });
+    expect(getStateCrawlerSourceMetadata("MT")).toMatchObject({
+      id: "mt_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "detail_pages"]),
+    });
+    expect(getStateCrawlerSourceMetadata("NM")).toMatchObject({
+      id: "nm_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query"]),
+    });
+    expect(getStateCrawlerSourceMetadata("CO")).toMatchObject({
+      id: "co_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "detail_pages", "pagination"]),
+    });
+    expect(getStateCrawlerSourceMetadata("IN")).toMatchObject({
+      id: "in_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "attachments"]),
+    });
+    expect(getStateCrawlerSourceMetadata("MS")).toMatchObject({
+      id: "ms_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "attachments", "detail_pages"]),
+    });
+    expect(getStateCrawlerSourceMetadata("CT")).toMatchObject({
+      id: "ct_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "detail_pages", "pagination"]),
+    });
     expect(getStateCrawlerSourceMetadata("US")).toBeNull();
   });
 });

@@ -1,5 +1,7 @@
 from apsi_crawler.sources.base import Source
 from apsi_crawler.spiders.ca_caleprocure import fetch_ca_caleprocure_opportunities
+from apsi_crawler.spiders.co_bidnet import fetch_co_bidnet_opportunities
+from apsi_crawler.spiders.ct_ctsource import fetch_ct_ctsource_opportunities
 from apsi_crawler.spiders.fl_mfmp import fetch_fl_mfmp_opportunities
 from apsi_crawler.spiders.ga_procurement_registry import (
     fetch_ga_procurement_registry_opportunities,
@@ -7,10 +9,17 @@ from apsi_crawler.spiders.ga_procurement_registry import (
 from apsi_crawler.spiders.generic_state import fetch_generic_state_opportunities
 from apsi_crawler.spiders.ia_bid_opportunities import fetch_ia_bid_opportunities
 from apsi_crawler.spiders.il_bidbuy import fetch_il_bidbuy_opportunities
+from apsi_crawler.spiders.in_idoa import fetch_in_idoa_opportunities
+from apsi_crawler.spiders.ks_esupplier import fetch_ks_esupplier_opportunities
 from apsi_crawler.spiders.ma_commbuys import fetch_ma_commbuys_opportunities
 from apsi_crawler.spiders.me_rfps import fetch_me_rfp_opportunities
 from apsi_crawler.spiders.mo_bid_listing import fetch_mo_bid_listing_opportunities
+from apsi_crawler.spiders.ms_contract_bid_search import (
+    fetch_ms_contract_bid_search_opportunities,
+)
+from apsi_crawler.spiders.mt_emacs import fetch_mt_emacs_opportunities
 from apsi_crawler.spiders.nj_start import fetch_nj_start_opportunities
+from apsi_crawler.spiders.nm_spd import fetch_nm_spd_opportunities
 from apsi_crawler.spiders.nv_epro import fetch_nv_epro_opportunities
 from apsi_crawler.spiders.ny_contract_reporter import fetch_ny_contract_reporter_opportunities
 from apsi_crawler.spiders.oh_procure import fetch_oh_procure_opportunities
@@ -19,6 +28,7 @@ from apsi_crawler.spiders.pa_emarketplace import fetch_pa_emarketplace_opportuni
 from apsi_crawler.spiders.sc_business_opportunities import fetch_sc_business_opportunities
 from apsi_crawler.spiders.state_fixture import load_state_fixture_opportunities
 from apsi_crawler.spiders.tx_esbd import fetch_tx_esbd_opportunities
+from apsi_crawler.spiders.ut_bonfire import fetch_ut_bonfire_opportunities
 from apsi_crawler.spiders.va_eva import fetch_va_eva_opportunities
 from apsi_crawler.spiders.wa_des import fetch_wa_des_opportunities
 
@@ -95,6 +105,14 @@ SPECIAL_FETCHERS = {
     "or_state_procurement": fetch_or_oregonbuys_opportunities,
     "va_state_procurement": fetch_va_eva_opportunities,
     "wa_state_procurement": fetch_wa_des_opportunities,
+    "ut_state_procurement": fetch_ut_bonfire_opportunities,
+    "ks_state_procurement": fetch_ks_esupplier_opportunities,
+    "mt_state_procurement": fetch_mt_emacs_opportunities,
+    "nm_state_procurement": fetch_nm_spd_opportunities,
+    "co_state_procurement": fetch_co_bidnet_opportunities,
+    "in_state_procurement": fetch_in_idoa_opportunities,
+    "ms_state_procurement": fetch_ms_contract_bid_search_opportunities,
+    "ct_state_procurement": fetch_ct_ctsource_opportunities,
 }
 
 

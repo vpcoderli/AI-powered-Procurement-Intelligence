@@ -10,8 +10,8 @@ This file is now being used as a staged implementation backlog. Some original ga
 - Compliance Manifest Lite is implemented.
 - Pursue / No-Bid Decision Lite is implemented.
 - Account, role, tier, feature gate, organization, billing foundation, dunning foundation, and operator/support admin roles are substantially implemented.
-- State crawler coverage now has a 50-state registry/runner foundation: CA/TX/NY/FL/IL keep verified dedicated adapters; IA/GA/ME/MO/NV/PA/SC/OR/MA/NJ/OH/VA/WA now have beta dedicated adapters; remaining states stay registered with a generic public procurement HTML/JSON fetcher so they can be scheduled, logged, and replaced over time.
-- 50-state crawler quality has started moving from foundation to batches: PA/SC/OR, MA/NJ/OH/VA/WA, and IA/GA/ME/MO/NV now have beta dedicated parser adapters with fixture-backed extraction; live validation currently confirms non-empty PA/OR/MA/NJ/VA/WA/IA/GA/ME/MO/NV results, while SC is blocked by site timeouts from the local environment and OH is blocked by the current OhioBuys browser-check flow.
+- State crawler coverage now has a 50-state registry/runner foundation: CA/TX/NY/FL/IL keep verified dedicated adapters; PA/SC/OR/MA/NJ/OH/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT now have beta dedicated adapters; remaining states stay registered with a generic public procurement HTML/JSON fetcher so they can be scheduled, logged, and replaced over time.
+- 50-state crawler quality has started moving from foundation to batches: PA/SC/OR, MA/NJ/OH/VA/WA, IA/GA/ME/MO/NV, and UT/KS/MT/NM/CO/IN/MS/CT now have beta dedicated parser adapters with fixture-backed extraction; live validation currently confirms non-empty PA/OR/MA/NJ/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT results, while SC is blocked by site timeouts from the local environment and OH is blocked by the current OhioBuys browser-check flow.
 - Crawler ingestion now treats empty result sets as failures for CLI imports/live fetches and rejects state opportunities without a source id or title, so empty content is no longer silently recorded as a successful run.
 - Local crawler attachment files can be served through a private bid attachment API when attachment rows point to a local file path inside an allowed attachment directory.
 
@@ -38,7 +38,7 @@ The remaining MVP work is not another search page. The largest remaining gaps ar
 | P0 Platform shell | Partial | Layout, nav, auth APIs, settings, bilingual shell | Subscription tiers, real organization/workspace model, role UI, security hardening |
 | P0 Data model | Partial | Users, sessions, bids, attachments, saved bids, profiles, intents, alerts, crawlers, notification outbox, data sources | Full ERD objects for submission, compliance, sourcing, quotes, awards, knowledge |
 | P1 Bid source discovery | Partial/Improving | Data source admin, crawler logs, SAM.gov/state runner, 50-state state crawler registry/runner foundation, admin crawler maturity/capability display | Non-federal/non-state coverage, continued per-state connector maturity |
-| P1 Bid ingestion | Partial/Improving | Normalization, dedupe, crawler logs, seeded data, runner APIs, non-empty crawler result guardrails, local attachment download serving for crawler-managed files, PA/OR/MA/NJ/VA/WA/IA/GA/ME/MO/NV live-validated dedicated parser adapters, SC/OH beta adapters with current access blockers | Production connectors, document parsing, data quality scoring, attachment download/archival by source, more dedicated state adapters, browser/session handling for blocked state portals |
+| P1 Bid ingestion | Partial/Improving | Normalization, dedupe, crawler logs, seeded data, runner APIs, non-empty crawler result guardrails, local attachment download serving for crawler-managed files, PA/OR/MA/NJ/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT live-validated dedicated parser adapters, SC/OH beta adapters with current access blockers | Production connectors, document parsing, data quality scoring, attachment download/archival by source, more dedicated state adapters, browser/session handling for blocked state portals |
 | P1 Bid display/search | Partial/Good | `/search`, bid cards, filters, detail page | Closed bids, richer filter taxonomy, saved search UX polish |
 | P1 Saved bids/alerts | Partial/Good | Saved bids, search alerts, notifications foundation | Real email delivery settings, alert digest UI, monitoring |
 | P1 Supplier profile | Partial/Good | `/profile`, API, validation, completion score | Upload-to-fill profile, richer certifications, past performance, warehouse, insurance/bonding |
@@ -91,12 +91,12 @@ Why:
 
 ## Recommended Next Feature Slice
 
-### 50-State Crawler Quality Batch 4
+### 50-State Crawler Quality Batch 5
 
 Scope:
 
 - Keep the 50-state registry as the scheduler/admin source of truth.
-- Choose the next 5 to 8 high-value states and replace their generic adapters with source-specific fetchers.
+- Choose the next 5 to 8 generic states and replace their generic adapters with source-specific fetchers.
 - Add per-state fixtures for live-like responses.
 - Add detail-page/attachment metadata extraction where the source exposes public attachment links.
 - Continue recording source capability notes: supports query, supports pagination, supports attachment metadata, requires browser, or requires manual/login handling.
@@ -207,7 +207,7 @@ Current AI-like behavior is deterministic. This is acceptable for local MVP work
 
 ## Recommended Development Order
 
-1. 50-State Crawler Quality Batch 4: dedicated adapters for the next 5 to 8 generic states, plus live validation and richer capability notes.
+1. 50-State Crawler Quality Batch 5: dedicated adapters for the next 5 to 8 generic states, plus live validation and richer capability notes.
 2. Full Search Alerts UI.
 3. Sourcing Partner + Quote Inquiry Lite.
 4. Response Workspace Lite: tasks, artifacts, internal checkpoints.

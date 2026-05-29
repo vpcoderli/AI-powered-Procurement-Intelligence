@@ -82,6 +82,16 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     maturity: "verified",
     capabilities: ["query", "pagination"],
   },
+  co_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
+  ct_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
   fl_mfmp: {
     adapterKind: "dedicated",
     maturity: "verified",
@@ -96,6 +106,16 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     adapterKind: "dedicated",
     maturity: "beta",
     capabilities: ["query", "detail_pages"],
+  },
+  in_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "attachments"],
+  },
+  ks_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query"],
   },
   ga_state_procurement: {
     adapterKind: "dedicated",
@@ -116,6 +136,21 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     adapterKind: "dedicated",
     maturity: "beta",
     capabilities: ["query", "attachments"],
+  },
+  ms_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "attachments", "detail_pages"],
+  },
+  mt_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages"],
+  },
+  nm_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query"],
   },
   nj_state_procurement: {
     adapterKind: "dedicated",
@@ -156,6 +191,11 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     adapterKind: "dedicated",
     maturity: "verified",
     capabilities: ["query", "detail_pages", "pagination"],
+  },
+  ut_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages"],
   },
   va_state_procurement: {
     adapterKind: "dedicated",

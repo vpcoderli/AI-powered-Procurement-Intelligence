@@ -6,6 +6,10 @@ from apsi_crawler.sources.registry import (
     list_sources,
     supports_live_fetch,
 )
+from apsi_crawler.spiders.co_bidnet import fetch_co_bidnet_opportunities
+from apsi_crawler.spiders.ct_ctsource import fetch_ct_ctsource_opportunities
+from apsi_crawler.spiders.in_idoa import fetch_in_idoa_opportunities
+from apsi_crawler.spiders.ks_esupplier import fetch_ks_esupplier_opportunities
 from apsi_crawler.spiders.ma_commbuys import fetch_ma_commbuys_opportunities
 from apsi_crawler.spiders.ga_procurement_registry import (
     fetch_ga_procurement_registry_opportunities,
@@ -13,9 +17,15 @@ from apsi_crawler.spiders.ga_procurement_registry import (
 from apsi_crawler.spiders.ia_bid_opportunities import fetch_ia_bid_opportunities
 from apsi_crawler.spiders.me_rfps import fetch_me_rfp_opportunities
 from apsi_crawler.spiders.mo_bid_listing import fetch_mo_bid_listing_opportunities
+from apsi_crawler.spiders.ms_contract_bid_search import (
+    fetch_ms_contract_bid_search_opportunities,
+)
+from apsi_crawler.spiders.mt_emacs import fetch_mt_emacs_opportunities
 from apsi_crawler.spiders.nj_start import fetch_nj_start_opportunities
+from apsi_crawler.spiders.nm_spd import fetch_nm_spd_opportunities
 from apsi_crawler.spiders.nv_epro import fetch_nv_epro_opportunities
 from apsi_crawler.spiders.oh_procure import fetch_oh_procure_opportunities
+from apsi_crawler.spiders.ut_bonfire import fetch_ut_bonfire_opportunities
 from apsi_crawler.spiders.va_eva import fetch_va_eva_opportunities
 from apsi_crawler.spiders.wa_des import fetch_wa_des_opportunities
 
@@ -125,6 +135,17 @@ def test_batch_three_state_sources_are_registered_to_dedicated_fetchers():
     assert get_live_fetcher("me_state_procurement") is fetch_me_rfp_opportunities
     assert get_live_fetcher("mo_state_procurement") is fetch_mo_bid_listing_opportunities
     assert get_live_fetcher("nv_state_procurement") is fetch_nv_epro_opportunities
+
+
+def test_batch_four_state_sources_are_registered_to_dedicated_fetchers():
+    assert get_live_fetcher("ut_state_procurement") is fetch_ut_bonfire_opportunities
+    assert get_live_fetcher("ks_state_procurement") is fetch_ks_esupplier_opportunities
+    assert get_live_fetcher("mt_state_procurement") is fetch_mt_emacs_opportunities
+    assert get_live_fetcher("nm_state_procurement") is fetch_nm_spd_opportunities
+    assert get_live_fetcher("co_state_procurement") is fetch_co_bidnet_opportunities
+    assert get_live_fetcher("in_state_procurement") is fetch_in_idoa_opportunities
+    assert get_live_fetcher("ms_state_procurement") is fetch_ms_contract_bid_search_opportunities
+    assert get_live_fetcher("ct_state_procurement") is fetch_ct_ctsource_opportunities
 
 
 def test_sam_gov_default_fixture_loader_remains_compatible():
