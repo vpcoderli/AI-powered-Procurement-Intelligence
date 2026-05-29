@@ -36,7 +36,7 @@ This document is the working checklist for local development. Update it after ea
 | Billing provider sync foundation | `billing_checkout_sessions`, checkout creation API, Stripe SDK/API adapter, Stripe webhook signature verification/mapping, provider event idempotency, subscription status reconciliation, lifecycle reconciliation, Settings self-service upgrade/cancel controls, and repeatable Stripe sandbox E2E verifier/runbook. |
 | Invoice / payment history foundation | `billing_invoices`, provider invoice event sync, payment-failed status handling, payment retry links, payment-failed notification outbox entries, account invoice API with status filtering and summary totals, Settings invoice history UI with filters/PDF links/retry links, and optional HMAC webhook signature verification via `BILLING_WEBHOOK_SECRET`. |
 | Customer portal foundation | Hosted checkout and customer portal URL templates, provider/customer placeholders, account portal API, and Settings Manage Billing entry. |
-| Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, 50-state state runner registry, CA/TX/NY/FL/IL verified dedicated adapters, PA/SC/OR/MA/NJ/OH/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT/OK/AR/SD/WV/WY/AL/AK/HI/KY/MN/WI/NH beta dedicated adapters, generic public procurement adapter foundation for remaining states, and local attachment file serving for crawler-managed files. |
+| Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, 50-state state runner registry, CA/TX/NY/FL/IL verified dedicated adapters, PA/SC/OR/MA/NJ/OH/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT/OK/AR/SD/WV/WY/AL/AK/HI/KY/MN/WI/NH/DE/RI/TN beta dedicated adapters, generic public procurement adapter foundation for remaining states, and local attachment file serving for crawler-managed files. |
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
 | Intent to Bid | Add intent from bid detail, idempotent workspace-scoped intent creation, shared intent list/detail for organization members, status update. |
 | AI-like bid brief | Deterministic brief, key dates, initial checklist, risk flags. |
@@ -1414,6 +1414,36 @@ Current local limits:
 
 建议下一步：
 - 继续 crawler 质量主线时，优先做 Batch 7，并把官方源可用性高于 BidNet 聚合源；如果想补数据完整度，做 Attachment Download Archival；如果转用户工作流，做 Full Search Alerts UI。
+
+## Completed Phase: 50-State Crawler Quality Batch 7
+
+本阶段完成：
+- 新增 DE / RI / TN 三个州级 beta 专用 crawler adapter，替代对应州的 generic fetcher 入口。
+- DE 使用 Delaware contracts jqGrid JSON；该站点需要先访问 `/Bids` 获取站点 cookie，并使用浏览器 UA + JSON POST 请求 `GetBids?status=Open`。
+- RI 使用 Ocean State Procures 背后的 Proactis JSON 搜索接口，复用与 CTsource 类似的公开 search pattern。
+- TN 使用 Edison PeopleSoft public bid grid HTML，解析 Event Name、Business Unit、Event ID、Start Date、End Date 等字段。
+- 三个 adapter 均支持 fixture-backed 测试，并解析 source bid id、标题、机构、发布日期/截止日期、分类和详情/源 URL。
+- `STATE_SOURCES` 已把 `de_state_procurement`、`ri_state_procurement`、`tn_state_procurement` 接入专用 fetcher。
+- 前端 crawler metadata 已同步标记 DE/RI/TN 为 `dedicated` + `beta`，Admin 可继续通过现有 state runner 单独运行这些州。
+- 当前专用州覆盖：CA/TX/NY/FL/IL 为 verified dedicated；PA/SC/OR/MA/NJ/OH/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT/OK/AR/SD/WV/WY/AL/AK/HI/KY/MN/WI/NH/DE/RI/TN 为 beta dedicated；其余州保持 generic foundation coverage。
+
+验证：
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_dedicated_spiders_batch7.py crawler/tests/test_state_sources.py crawler/tests/test_state_live_validation.py`
+- `npm test -- src/lib/state-crawler-sources.test.ts`
+- `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source de_state_procurement --source ri_state_procurement --source tn_state_procurement --limit 3 --timeout 30`
+- Migrated temp SQLite fetch-state smoke: DE/RI/TN each inserted 2 bids and wrote success crawler logs.
+
+当前还剩：
+1. SC/OH portal access resolution：SCBO 当前环境超时；OhioBuys 官方公开流程进入 browser_check/reCAPTCHA，不应绕过 CAPTCHA，需要 browser-assisted/manual 或官方 feed/API 策略。
+2. 50-State Crawler Quality Batch 8：继续从 AZ/ID/LA/MD/MI/NE/NC/ND/VT 等剩余 generic 州中筛选稳定非空的公开 JSON/HTML/API 源。
+3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
+4. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+5. Sourcing Partner + Quote Inquiry Lite：partner DB、quote request、quote comparison。
+6. Response Workspace Lite：tasks、artifacts、internal checkpoints。
+7. Award / Tabulation Tracking Lite。
+
+建议下一步：
+- 继续 crawler 质量主线时，优先做 Batch 8；但如果剩余州继续遇到 CAPTCHA/timeout，可以切到 Attachment Download Archival 提升已覆盖州的数据完整度，或转做 Full Search Alerts UI 补用户工作流。
 
 ## Status Update Template
 

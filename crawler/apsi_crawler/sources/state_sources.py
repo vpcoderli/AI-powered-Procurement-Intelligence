@@ -3,6 +3,7 @@ from apsi_crawler.spiders.ar_procurement import fetch_ar_procurement_opportuniti
 from apsi_crawler.spiders.ca_caleprocure import fetch_ca_caleprocure_opportunities
 from apsi_crawler.spiders.co_bidnet import fetch_co_bidnet_opportunities
 from apsi_crawler.spiders.ct_ctsource import fetch_ct_ctsource_opportunities
+from apsi_crawler.spiders.de_bids import fetch_de_bids_opportunities
 from apsi_crawler.spiders.fl_mfmp import fetch_fl_mfmp_opportunities
 from apsi_crawler.spiders.ga_procurement_registry import (
     fetch_ga_procurement_registry_opportunities,
@@ -28,6 +29,9 @@ from apsi_crawler.spiders.oh_procure import fetch_oh_procure_opportunities
 from apsi_crawler.spiders.ok_esupplier import fetch_ok_esupplier_opportunities
 from apsi_crawler.spiders.or_oregonbuys import fetch_or_oregonbuys_opportunities
 from apsi_crawler.spiders.pa_emarketplace import fetch_pa_emarketplace_opportunities
+from apsi_crawler.spiders.ri_ocean_state_procures import (
+    fetch_ri_ocean_state_procures_opportunities,
+)
 from apsi_crawler.spiders.sc_business_opportunities import fetch_sc_business_opportunities
 from apsi_crawler.spiders.sd_esm import fetch_sd_esm_opportunities
 from apsi_crawler.spiders.state_bidnet import (
@@ -39,6 +43,7 @@ from apsi_crawler.spiders.state_bidnet import (
     fetch_wi_bidnet_opportunities,
 )
 from apsi_crawler.spiders.state_fixture import load_state_fixture_opportunities
+from apsi_crawler.spiders.tn_edison import fetch_tn_edison_opportunities
 from apsi_crawler.spiders.tx_esbd import fetch_tx_esbd_opportunities
 from apsi_crawler.spiders.ut_bonfire import fetch_ut_bonfire_opportunities
 from apsi_crawler.spiders.va_eva import fetch_va_eva_opportunities
@@ -139,6 +144,9 @@ SPECIAL_FETCHERS = {
     "mn_state_procurement": fetch_mn_bidnet_opportunities,
     "wi_state_procurement": fetch_wi_bidnet_opportunities,
     "nh_state_procurement": fetch_nh_bidnet_opportunities,
+    "de_state_procurement": fetch_de_bids_opportunities,
+    "ri_state_procurement": fetch_ri_ocean_state_procures_opportunities,
+    "tn_state_procurement": fetch_tn_edison_opportunities,
 }
 
 

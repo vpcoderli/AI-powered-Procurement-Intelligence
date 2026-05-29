@@ -1,0 +1,17 @@
+{
+  "total": 30,
+  "page": 1,
+  "records": 60,
+  "rows": [
+    {
+      "Id": 9180,
+      "Title": "State of Delaware's Group Dental Insurance",
+      "ContractNumber": "DHR26011-DENTAL",
+      "OpenDate": "2026-05-28",
+      "DeadlineDate": "2026-07-13",
+      "AgencyCode": "DHR",
+      "ContactEmail": "pamela.barr@delaware.gov",
+      "BidUnspscCodesString": "8413"
+    }
+  ]
+}

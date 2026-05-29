@@ -206,6 +206,19 @@ describe("state crawler source mapping", () => {
         capabilities: expect.arrayContaining(["query", "detail_pages", "pagination"]),
       });
     }
+    for (const stateCode of ["DE", "RI"]) {
+      expect(getStateCrawlerSourceMetadata(stateCode)).toMatchObject({
+        adapterKind: "dedicated",
+        maturity: "beta",
+        capabilities: expect.arrayContaining(["query", "detail_pages", "pagination"]),
+      });
+    }
+    expect(getStateCrawlerSourceMetadata("TN")).toMatchObject({
+      id: "tn_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "detail_pages"]),
+    });
     expect(getStateCrawlerSourceMetadata("US")).toBeNull();
   });
 });
