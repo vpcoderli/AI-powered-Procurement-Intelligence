@@ -86,11 +86,19 @@ PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live \
   --source de_state_procurement \
   --source ri_state_procurement \
   --source tn_state_procurement \
+  --source az_state_procurement \
+  --source id_state_procurement \
+  --source la_state_procurement \
+  --source md_state_procurement \
+  --source ne_state_procurement \
+  --source nc_state_procurement \
+  --source nd_state_procurement \
+  --source vt_state_procurement \
   --limit 3 \
   --timeout 20
 ```
 
-The command fails if a crawler returns zero opportunities or records missing required content. Current local live validation has PA/MA/NJ/OR/VA/WA plus IA/GA/ME/MO/NV, UT/KS/MT/NM/CO/IN/MS/CT, OK/AR/SD/WV/WY, AL/AK/HI/KY/MN/WI/NH, and DE/RI/TN returning non-empty results; SC times out from this environment and OH requires a new OhioBuys browser/session strategy.
+The command fails if a crawler returns zero opportunities or records missing required content. Current local live validation has PA/MA/NJ/OR/VA/WA plus IA/GA/ME/MO/NV, UT/KS/MT/NM/CO/IN/MS/CT, OK/AR/SD/WV/WY, AL/AK/HI/KY/MN/WI/NH, DE/RI/TN, and AZ/ID/LA/MD/NE/NC/ND/VT returning non-empty results; SC times out from this environment, OH requires a new OhioBuys browser/session strategy, and MI still needs a stable dedicated public source.
 
 ## Notification Worker
 

@@ -87,6 +87,11 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     maturity: "beta",
     capabilities: ["query", "detail_pages", "pagination"],
   },
+  az_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
   ca_caleprocure: {
     adapterKind: "dedicated",
     maturity: "verified",
@@ -127,6 +132,11 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     maturity: "beta",
     capabilities: ["query", "detail_pages"],
   },
+  id_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
   in_state_procurement: {
     adapterKind: "dedicated",
     maturity: "beta",
@@ -138,6 +148,16 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     capabilities: ["query"],
   },
   ky_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
+  la_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
+  md_state_procurement: {
     adapterKind: "dedicated",
     maturity: "beta",
     capabilities: ["query", "detail_pages", "pagination"],
@@ -188,6 +208,21 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     capabilities: ["query"],
   },
   nh_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
+  nc_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
+  nd_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
+  },
+  ne_state_procurement: {
     adapterKind: "dedicated",
     maturity: "beta",
     capabilities: ["query", "detail_pages", "pagination"],
@@ -261,6 +296,11 @@ const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinit
     adapterKind: "dedicated",
     maturity: "beta",
     capabilities: ["query", "attachments"],
+  },
+  vt_state_procurement: {
+    adapterKind: "dedicated",
+    maturity: "beta",
+    capabilities: ["query", "detail_pages", "pagination"],
   },
   wa_state_procurement: {
     adapterKind: "dedicated",

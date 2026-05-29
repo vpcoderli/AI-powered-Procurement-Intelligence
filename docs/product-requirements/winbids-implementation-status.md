@@ -36,7 +36,7 @@ This document is the working checklist for local development. Update it after ea
 | Billing provider sync foundation | `billing_checkout_sessions`, checkout creation API, Stripe SDK/API adapter, Stripe webhook signature verification/mapping, provider event idempotency, subscription status reconciliation, lifecycle reconciliation, Settings self-service upgrade/cancel controls, and repeatable Stripe sandbox E2E verifier/runbook. |
 | Invoice / payment history foundation | `billing_invoices`, provider invoice event sync, payment-failed status handling, payment retry links, payment-failed notification outbox entries, account invoice API with status filtering and summary totals, Settings invoice history UI with filters/PDF links/retry links, and optional HMAC webhook signature verification via `BILLING_WEBHOOK_SECRET`. |
 | Customer portal foundation | Hosted checkout and customer portal URL templates, provider/customer placeholders, account portal API, and Settings Manage Billing entry. |
-| Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, 50-state state runner registry, CA/TX/NY/FL/IL verified dedicated adapters, PA/SC/OR/MA/NJ/OH/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT/OK/AR/SD/WV/WY/AL/AK/HI/KY/MN/WI/NH/DE/RI/TN beta dedicated adapters, generic public procurement adapter foundation for remaining states, and local attachment file serving for crawler-managed files. |
+| Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, 50-state state runner registry, CA/TX/NY/FL/IL verified dedicated adapters, PA/SC/OR/MA/NJ/OH/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT/OK/AR/SD/WV/WY/AL/AK/HI/KY/MN/WI/NH/DE/RI/TN/AZ/ID/LA/MD/NE/NC/ND/VT beta dedicated adapters, MI generic public procurement adapter foundation, and local attachment file serving for crawler-managed files. |
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
 | Intent to Bid | Add intent from bid detail, idempotent workspace-scoped intent creation, shared intent list/detail for organization members, status update. |
 | AI-like bid brief | Deterministic brief, key dates, initial checklist, risk flags. |
@@ -1444,6 +1444,35 @@ Current local limits:
 
 建议下一步：
 - 继续 crawler 质量主线时，优先做 Batch 8；但如果剩余州继续遇到 CAPTCHA/timeout，可以切到 Attachment Download Archival 提升已覆盖州的数据完整度，或转做 Full Search Alerts UI 补用户工作流。
+
+## Completed Phase: 50-State Crawler Quality Batch 8
+
+本阶段完成：
+- 新增 AZ / ID / LA / MD / NE / NC / ND / VT 八个州级 beta 专用 crawler adapter，替代对应州的 generic fetcher 入口。
+- 八个州均使用公开 BidNet state open-bids 页面作为 beta 覆盖入口；本阶段只纳入当前本地 `requests` 可稳定返回非空表格的州。
+- MI 的 BidNet 页面当前返回 404，本阶段未纳入，避免把空数据伪装成可用 crawler。
+- 八个 adapter 均支持 fixture-backed 测试，并解析 source bid id、标题、发布日期/截止日期和详情 URL。
+- `STATE_SOURCES` 已把 `az_state_procurement`、`id_state_procurement`、`la_state_procurement`、`md_state_procurement`、`ne_state_procurement`、`nc_state_procurement`、`nd_state_procurement`、`vt_state_procurement` 接入专用 fetcher。
+- 前端 crawler metadata 已同步标记 AZ/ID/LA/MD/NE/NC/ND/VT 为 `dedicated` + `beta`，Admin 可继续通过现有 state runner 单独运行这些州。
+- 当前专用州覆盖：CA/TX/NY/FL/IL 为 verified dedicated；PA/SC/OR/MA/NJ/OH/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT/OK/AR/SD/WV/WY/AL/AK/HI/KY/MN/WI/NH/DE/RI/TN/AZ/ID/LA/MD/NE/NC/ND/VT 为 beta dedicated；MI 保持 generic foundation coverage。
+
+验证：
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_dedicated_spiders_batch8.py crawler/tests/test_state_sources.py crawler/tests/test_state_live_validation.py`
+- `npm test -- src/lib/state-crawler-sources.test.ts`
+- `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source az_state_procurement --source id_state_procurement --source la_state_procurement --source md_state_procurement --source ne_state_procurement --source nc_state_procurement --source nd_state_procurement --source vt_state_procurement --limit 3 --timeout 30`
+- Migrated temp SQLite fetch-state smoke: AZ/ID/LA/MD/NE/NC/ND/VT each inserted 2 bids and wrote success crawler logs.
+
+当前还剩：
+1. MI dedicated source resolution：MI 仍是 generic foundation；需要找到稳定公开源，或标记为 browser/session/manual 处理。
+2. SC/OH portal access resolution：SCBO 当前环境超时；OhioBuys 官方公开流程进入 browser_check/reCAPTCHA，不应绕过 CAPTCHA，需要 browser-assisted/manual 或官方 feed/API 策略。
+3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
+4. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+5. Sourcing Partner + Quote Inquiry Lite：partner DB、quote request、quote comparison。
+6. Response Workspace Lite：tasks、artifacts、internal checkpoints。
+7. Award / Tabulation Tracking Lite。
+
+建议下一步：
+- 如果继续 crawler 主线，优先做 MI/SC/OH final gap resolution；如果要提升已抓数据质量，做 Attachment Download Archival；如果转用户工作流，做 Full Search Alerts UI。
 
 ## Status Update Template
 

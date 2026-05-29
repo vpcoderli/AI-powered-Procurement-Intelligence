@@ -37,9 +37,17 @@ from apsi_crawler.spiders.sd_esm import fetch_sd_esm_opportunities
 from apsi_crawler.spiders.state_bidnet import (
     fetch_ak_bidnet_opportunities,
     fetch_al_bidnet_opportunities,
+    fetch_az_bidnet_opportunities,
+    fetch_id_bidnet_opportunities,
     fetch_ky_bidnet_opportunities,
+    fetch_la_bidnet_opportunities,
+    fetch_md_bidnet_opportunities,
     fetch_mn_bidnet_opportunities,
+    fetch_nc_bidnet_opportunities,
+    fetch_nd_bidnet_opportunities,
+    fetch_ne_bidnet_opportunities,
     fetch_nh_bidnet_opportunities,
+    fetch_vt_bidnet_opportunities,
     fetch_wi_bidnet_opportunities,
 )
 from apsi_crawler.spiders.state_fixture import load_state_fixture_opportunities
@@ -147,6 +155,14 @@ SPECIAL_FETCHERS = {
     "de_state_procurement": fetch_de_bids_opportunities,
     "ri_state_procurement": fetch_ri_ocean_state_procures_opportunities,
     "tn_state_procurement": fetch_tn_edison_opportunities,
+    "az_state_procurement": fetch_az_bidnet_opportunities,
+    "id_state_procurement": fetch_id_bidnet_opportunities,
+    "la_state_procurement": fetch_la_bidnet_opportunities,
+    "md_state_procurement": fetch_md_bidnet_opportunities,
+    "ne_state_procurement": fetch_ne_bidnet_opportunities,
+    "nc_state_procurement": fetch_nc_bidnet_opportunities,
+    "nd_state_procurement": fetch_nd_bidnet_opportunities,
+    "vt_state_procurement": fetch_vt_bidnet_opportunities,
 }
 
 
