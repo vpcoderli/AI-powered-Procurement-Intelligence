@@ -1,9 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  ACCOUNT_TIER_LABELS,
+  FEATURE_KEYS,
+  PRODUCT_PLAN_LABELS,
   featuresForUser,
   hasFeature,
   isAccountTier,
+  isFeatureKey,
   isUserRole,
+  minimumTierLabelForFeature,
+  productPlanForTier,
 } from "./entitlements";
 
 describe("auth entitlements", () => {
@@ -25,6 +31,28 @@ describe("auth entitlements", () => {
     expect(featuresForUser({ role: "admin", tier: "free" })).toContain("admin_console");
     expect(featuresForUser({ role: "operator", tier: "free" })).toContain("admin_console");
     expect(featuresForUser({ role: "support", tier: "free" })).toContain("admin_console");
+  });
+
+  it("maps internal tiers to updated product-facing plan labels", () => {
+    expect(ACCOUNT_TIER_LABELS).toMatchObject({
+      free: "Free",
+      pro: "Pursuit Starter",
+      business: "Response Builder",
+      enterprise: "Enterprise",
+    });
+    expect(PRODUCT_PLAN_LABELS.growth).toBe("Growth");
+    expect(productPlanForTier("pro")).toBe("pursuit_starter");
+    expect(productPlanForTier("business")).toBe("response_builder");
+  });
+
+  it("supports PRD feature slugs alongside legacy feature keys", () => {
+    expect(FEATURE_KEYS).toContain("bid.brief.full.generate");
+    expect(FEATURE_KEYS).toContain("response.workspace.create");
+    expect(isFeatureKey("compliance.manifest.generate")).toBe(true);
+    expect(hasFeature({ role: "user", tier: "free" }, "bid.brief.full.generate")).toBe(false);
+    expect(hasFeature({ role: "user", tier: "pro" }, "bid.brief.full.generate")).toBe(true);
+    expect(hasFeature({ role: "user", tier: "business" }, "response.workspace.create")).toBe(true);
+    expect(minimumTierLabelForFeature("response.workspace.create")).toBe("Response Builder");
   });
 
   it("checks individual feature access", () => {

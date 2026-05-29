@@ -142,6 +142,41 @@ export const subscriptionEvents = sqliteTable(
   }),
 );
 
+export const creditBalances = sqliteTable(
+  "credit_balances",
+  {
+    organizationId: text("organization_id")
+      .primaryKey()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    includedCreditsRemaining: integer("included_credits_remaining"),
+    purchasedCreditsRemaining: integer("purchased_credits_remaining").notNull().default(0),
+    periodStart: text("period_start"),
+    periodEnd: text("period_end"),
+    updatedAt: text("updated_at").notNull(),
+  },
+);
+
+export const creditUsageEvents = sqliteTable(
+  "credit_usage_events",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id").references(() => organizations.id, { onDelete: "set null" }),
+    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+    featureKey: text("feature_key").notNull(),
+    eventType: text("event_type").notNull(),
+    amount: integer("amount").notNull(),
+    balanceAfter: integer("balance_after"),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    organizationIdx: index("idx_credit_usage_events_organization_id").on(table.organizationId),
+    userIdx: index("idx_credit_usage_events_user_id").on(table.userId),
+    featureIdx: index("idx_credit_usage_events_feature_key").on(table.featureKey),
+    createdIdx: index("idx_credit_usage_events_created_at").on(table.createdAt),
+  }),
+);
+
 export const sessions = sqliteTable(
   "sessions",
   {

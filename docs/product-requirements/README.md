@@ -21,17 +21,17 @@ This directory is the local working source for WinBids product requirements afte
 
 ## Current Recommendation
 
-Continue implementation with **Commercial Packaging And Credits Reconciliation** unless the sprint intentionally stays on crawler/data quality.
+Continue implementation with **P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata**.
 
 Reason:
 
-- The latest Drive requirements changed the commercial model from `Free / Pro / Business / Enterprise` to `Free / Pursuit Starter / Response Builder / Growth / Enterprise`.
-- Credits are now a first-class metering layer for premium AI and workflow actions.
-- Product 3, Knowledge Station, and premium AI work should not be built on top of the old Pro/Business gate vocabulary.
+- Commercial packaging and credits foundation is now implemented locally while preserving `free/pro/business/enterprise` compatibility values.
+- The next highest-risk gap is data reliability: source registry metadata, connector capability tracking, attachment/detail archival, checksums, content types, and quality flags.
+- Product 2, Knowledge Station, and Response Workspace will be stronger if bid source evidence and document archives are trustworthy first.
 
-Data-quality alternative:
+Product-workflow alternative:
 
-- If the next sprint remains focused on crawler reliability, prioritize **P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata**.
+- If the next sprint intentionally shifts to user workflow depth, prioritize **Product 2 Qualification Upgrade**.
 
 ## Refresh Rule
 

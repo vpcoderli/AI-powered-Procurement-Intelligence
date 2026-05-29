@@ -6,9 +6,12 @@ import { syncOwnedWorkspaceTier } from "@/server/account/workspace";
 import {
   isAccountTier,
   ACCOUNT_TIER_LABELS,
+  PRODUCT_PLAN_LABELS,
   normalizeAccountTier,
   type AccountTier,
+  type ProductPlanKey,
 } from "@/server/auth/entitlements";
+import { creditAllowanceForTier } from "@/server/billing/credits";
 import { InvalidSubscriptionInputError } from "./errors";
 import {
   createConfiguredBillingProvider,
@@ -26,9 +29,13 @@ export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number];
 export type SubscriptionSource = (typeof SUBSCRIPTION_SOURCES)[number];
 
 export interface SubscriptionPlan {
-  tier: AccountTier;
+  tier: AccountTier | null;
+  productPlanKey: ProductPlanKey;
   label: string;
   priceMonthlyUsd: number | null;
+  includedMonthlyCredits: number | null;
+  isAvailable: boolean;
+  isSelfServe: boolean;
   featureHighlights: string[];
 }
 
@@ -188,26 +195,52 @@ export interface BillingProviderEvent {
 const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
   {
     tier: "free",
+    productPlanKey: "free",
     label: ACCOUNT_TIER_LABELS.free,
     priceMonthlyUsd: 0,
-    featureHighlights: ["Search bids", "Save bids", "Supplier profile"],
+    includedMonthlyCredits: creditAllowanceForTier("free"),
+    isAvailable: true,
+    isSelfServe: false,
+    featureHighlights: ["Search public bids", "Save opportunities", "Build a supplier profile"],
   },
   {
     tier: "pro",
+    productPlanKey: "pursuit_starter",
     label: ACCOUNT_TIER_LABELS.pro,
     priceMonthlyUsd: 79,
-    featureHighlights: ["Submission guidance", "Pursue / no-bid workflow", "Full match explanation"],
+    includedMonthlyCredits: creditAllowanceForTier("pro"),
+    isAvailable: true,
+    isSelfServe: true,
+    featureHighlights: ["Submission guidance", "Pursue / no-bid workflow", "Full match explanations"],
   },
   {
     tier: "business",
+    productPlanKey: "response_builder",
     label: ACCOUNT_TIER_LABELS.business,
     priceMonthlyUsd: 249,
-    featureHighlights: ["Compliance manifest", "Quote workflow", "Team-ready bid workspace"],
+    includedMonthlyCredits: creditAllowanceForTier("business"),
+    isAvailable: true,
+    isSelfServe: true,
+    featureHighlights: ["Compliance manifest", "Response workspace foundation", "Team-ready bid workflow"],
+  },
+  {
+    tier: null,
+    productPlanKey: "growth",
+    label: PRODUCT_PLAN_LABELS.growth,
+    priceMonthlyUsd: null,
+    includedMonthlyCredits: 300,
+    isAvailable: false,
+    isSelfServe: false,
+    featureHighlights: ["Award tracking", "Tabulation analysis", "Buyer history and rebid learning"],
   },
   {
     tier: "enterprise",
+    productPlanKey: "enterprise",
     label: ACCOUNT_TIER_LABELS.enterprise,
     priceMonthlyUsd: null,
+    includedMonthlyCredits: creditAllowanceForTier("enterprise"),
+    isAvailable: true,
+    isSelfServe: false,
     featureHighlights: ["Knowledge Station", "Advanced intelligence", "Higher support limits"],
   },
 ];

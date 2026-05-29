@@ -34,6 +34,6 @@ describe("server feature gate", () => {
 
     expect(error.code).toBe("FEATURE_NOT_AVAILABLE");
     expect(error.status).toBe(403);
-    expect(error.message).toContain("Pro");
+    expect(error.message).toContain("Pursuit Starter");
   });
 });

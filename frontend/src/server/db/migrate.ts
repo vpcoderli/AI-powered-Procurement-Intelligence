@@ -100,6 +100,27 @@ export function runMigrations(db: AppDatabase) {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS credit_balances (
+      organization_id TEXT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+      included_credits_remaining INTEGER,
+      purchased_credits_remaining INTEGER NOT NULL DEFAULT 0,
+      period_start TEXT,
+      period_end TEXT,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS credit_usage_events (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      feature_key TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      balance_after INTEGER,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS password_reset_tokens (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -389,6 +410,10 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_subscription_events_user_id ON subscription_events(user_id);
     CREATE INDEX IF NOT EXISTS idx_subscription_events_subscription_id ON subscription_events(subscription_id);
     CREATE INDEX IF NOT EXISTS idx_subscription_events_created ON subscription_events(created_at);
+    CREATE INDEX IF NOT EXISTS idx_credit_usage_events_organization_id ON credit_usage_events(organization_id);
+    CREATE INDEX IF NOT EXISTS idx_credit_usage_events_user_id ON credit_usage_events(user_id);
+    CREATE INDEX IF NOT EXISTS idx_credit_usage_events_feature_key ON credit_usage_events(feature_key);
+    CREATE INDEX IF NOT EXISTS idx_credit_usage_events_created_at ON credit_usage_events(created_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_password_reset_tokens_token_hash ON password_reset_tokens(token_hash);

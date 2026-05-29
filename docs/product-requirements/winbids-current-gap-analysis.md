@@ -25,12 +25,11 @@ The local system has completed a useful Phase 1A pursuit loop:
 
 The remaining MVP work is not another search page. The largest remaining gaps are:
 
-1. Commercial packaging and credits reconciliation: plan labels, feature entitlement copy, quota/credit semantics, locked-state messaging, and Settings/Billing language must match the latest Drive plan model.
-2. P1 data pipeline hardening after 50-state beta coverage: Source Registry metadata, connector capability tracking, attachment/detail-page archival, checksum/content-type recording, data quality flags, and official-source upgrades where fallback sources are being used.
-3. Product 2 upgrade: citations, document-grounded Q&A, amendment/addenda awareness, evidence mapping, richer no-bid taxonomy, and decision history.
-4. Product 0.9 Knowledge Station Lite: embedded workflow coaching and reusable knowledge capture.
-5. Product 3-5 lightweight MVP workflows: response workspace, artifacts, sourcing/quotes, submission completion, award/status learning.
-6. Production-grade AI and citation layer.
+1. P1 data pipeline hardening after 50-state beta coverage: Source Registry metadata, connector capability tracking, attachment/detail-page archival, checksum/content-type recording, data quality flags, and official-source upgrades where fallback sources are being used.
+2. Product 2 upgrade: citations, document-grounded Q&A, amendment/addenda awareness, evidence mapping, richer no-bid taxonomy, and decision history.
+3. Product 0.9 Knowledge Station Lite: embedded workflow coaching and reusable knowledge capture.
+4. Product 3-5 lightweight MVP workflows: response workspace, artifacts, sourcing/quotes, submission completion, award/status learning.
+5. Production-grade AI and citation layer.
 
 ## Implementation Coverage by Product Area
 
@@ -80,38 +79,16 @@ Remaining Phase 1 items:
 
 ## Highest-Value Next Gap
 
-The best next development target is now **Commercial Packaging And Credits Reconciliation** because the refreshed Drive requirements changed how the product should be sold, explained, and metered. If the next sprint prioritizes data quality instead of packaging, choose **P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata**.
+The best next development target is now **P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata** because commercial packaging and credits foundation now exists locally.
 
 Why:
 
-- It aligns the visible product with the latest buyer-facing plan names before more paid features are added.
-- It turns current quotas into a clearer credits/usage story without requiring Stripe credit-pack sales in the same slice.
-- It preserves current `free/pro/business/enterprise` compatibility values while introducing product copy for Free, Pursuit Starter, Response Builder, Growth, and Enterprise.
-- It gives future Product 2, Knowledge Station, quote workflow, and AI features a consistent entitlement surface.
-- It can be implemented without disrupting the 50-state crawler work.
+- It turns 50-state beta coverage into more durable evidence, not just search cards.
+- It supports future citation, compliance, and response workflows with archived source material.
+- It directly addresses the remaining crawler risk where some states still rely on fallback sources.
+- It gives Admin/Data QA a stronger foundation for correction and confidence tracking.
 
 ## Recommended Next Feature Slice
-
-### Commercial Packaging And Credits Reconciliation
-
-Scope:
-
-- Keep current database tier values for compatibility: `free`, `pro`, `business`, `enterprise`.
-- Map product-facing plans: Free -> `free`, Pursuit Starter -> `pro`, Response Builder -> `business`, Enterprise -> `enterprise`.
-- Represent Growth as a planned/disabled future plan until its exact entitlement boundary is confirmed.
-- Update plan catalog labels, Settings Billing copy, upgrade prompts, locked-state copy, and feature overview text.
-- Add a credit model foundation in code/docs: named credit categories, display labels, limits, usage language, and future ledger placeholders.
-- Expand feature slugs and entitlement descriptions so Product 2, Knowledge Station, Response Workspace, quote workflow, and AI usage can be gated consistently later.
-
-Out of scope:
-
-- Stripe credit packs or metered billing.
-- Database enum migration away from existing tier values.
-- Full Product 3 response workspace.
-- Paid AI generation.
-- Growth plan activation before product leadership confirms its exact scope.
-
-## Secondary Next Feature Slice
 
 ### P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata
 
@@ -123,7 +100,25 @@ Scope:
 - Separate Source Registry, Connector Engine, Normalization/Data Quality, and Bid Admin/Data QA responsibilities in code and docs.
 - Keep official-source upgrades for MI/SC/OH as follow-on source-maturity work unless a stable official feed appears during implementation.
 
-This can run after or in parallel with commercial packaging because it mostly touches crawler/source/admin surfaces.
+Out of scope:
+
+- Login-only portals and CAPTCHA bypass.
+- Full document parsing/OCR.
+- Browser automation for every state in the same batch.
+- Replacing every public fallback source with an official source in the same slice.
+
+## Secondary Next Feature Slice
+
+### Product 2 Qualification Upgrade
+
+Scope:
+
+- Add source-grounded citations to bid brief/checklist/risk outputs.
+- Add document-grounded bid Q&A and amendment/addenda awareness.
+- Expand compliance evidence mapping and no-bid reason taxonomy.
+- Preserve deterministic fallback behavior while preparing for production AI.
+
+This can run after data hardening or in parallel if implementation slices do not touch crawler/archive code.
 
 ## Data Model Gaps
 
@@ -221,16 +216,15 @@ Current AI-like behavior is deterministic. This is acceptable for local MVP work
 
 ## Recommended Development Order
 
-1. Commercial Packaging And Credits Reconciliation.
-2. P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata.
-3. Bid Admin/Data QA Console Expansion.
-4. Product 2 Qualification Upgrade: citations, Q&A, amendment awareness, evidence mapping, and no-bid taxonomy.
-5. Knowledge Station Lite: embedded workflow coaching and reusable knowledge capture.
-6. Response Workspace Lite + Artifact Vault Lite.
-7. Supply Chain and Quote Lite.
-8. Deadline Notifications and Search Alerts UI.
-9. Submission Guidance Completion.
-10. Award Tracking and Learning Lite.
-11. Product 6 procurement intelligence data capture only.
+1. P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata.
+2. Bid Admin/Data QA Console Expansion.
+3. Product 2 Qualification Upgrade: citations, Q&A, amendment awareness, evidence mapping, and no-bid taxonomy.
+4. Knowledge Station Lite: embedded workflow coaching and reusable knowledge capture.
+5. Response Workspace Lite + Artifact Vault Lite.
+6. Supply Chain and Quote Lite.
+7. Deadline Notifications and Search Alerts UI.
+8. Submission Guidance Completion.
+9. Award Tracking and Learning Lite.
+10. Product 6 procurement intelligence data capture only.
 
 This order follows the user journey after Intent and avoids overbuilding advanced intelligence before the workflow is usable.

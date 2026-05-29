@@ -12,12 +12,26 @@ export const FEATURE_KEYS = [
   "pursue_no_bid",
   "quote_workflow",
   "knowledge_station",
+  "bid.brief.full.generate",
+  "compliance.manifest.generate",
+  "readiness.review.run",
+  "response.workspace.create",
+  "artifact.vault.upload",
+  "response.section.draft",
+  "package.review.run",
+  "amendment.delta.run",
+  "award.tabulation.analyze",
+  "price.to.win.run",
+  "team.member.invite",
   "admin_console",
 ] as const;
+
+export const PRODUCT_PLAN_KEYS = ["free", "pursuit_starter", "response_builder", "growth", "enterprise"] as const;
 
 export type UserRole = (typeof USER_ROLES)[number];
 export type AccountTier = (typeof ACCOUNT_TIERS)[number];
 export type FeatureKey = (typeof FEATURE_KEYS)[number];
+export type ProductPlanKey = (typeof PRODUCT_PLAN_KEYS)[number];
 export type AdminConsoleRole = Exclude<UserRole, "user">;
 
 interface EntitlementSubject {
@@ -45,13 +59,39 @@ const minimumTierByFeature: Record<Exclude<FeatureKey, "admin_console">, Account
   pursue_no_bid: "pro",
   quote_workflow: "business",
   knowledge_station: "enterprise",
+  "bid.brief.full.generate": "pro",
+  "compliance.manifest.generate": "business",
+  "readiness.review.run": "pro",
+  "response.workspace.create": "business",
+  "artifact.vault.upload": "business",
+  "response.section.draft": "business",
+  "package.review.run": "business",
+  "amendment.delta.run": "business",
+  "award.tabulation.analyze": "enterprise",
+  "price.to.win.run": "enterprise",
+  "team.member.invite": "business",
+};
+
+export const PRODUCT_PLAN_LABELS: Record<ProductPlanKey, string> = {
+  free: "Free",
+  pursuit_starter: "Pursuit Starter",
+  response_builder: "Response Builder",
+  growth: "Growth",
+  enterprise: "Enterprise",
+};
+
+export const PRODUCT_PLAN_BY_TIER: Record<AccountTier, Exclude<ProductPlanKey, "growth">> = {
+  free: "free",
+  pro: "pursuit_starter",
+  business: "response_builder",
+  enterprise: "enterprise",
 };
 
 export const ACCOUNT_TIER_LABELS: Record<AccountTier, string> = {
-  free: "Free",
-  pro: "Pro",
-  business: "Business",
-  enterprise: "Enterprise",
+  free: PRODUCT_PLAN_LABELS.free,
+  pro: PRODUCT_PLAN_LABELS.pursuit_starter,
+  business: PRODUCT_PLAN_LABELS.response_builder,
+  enterprise: PRODUCT_PLAN_LABELS.enterprise,
 };
 
 export function isUserRole(value: unknown): value is UserRole {
@@ -64,6 +104,18 @@ export function isFeatureKey(value: unknown): value is FeatureKey {
 
 export function isAccountTier(value: unknown): value is AccountTier {
   return typeof value === "string" && ACCOUNT_TIERS.includes(value as AccountTier);
+}
+
+export function isProductPlanKey(value: unknown): value is ProductPlanKey {
+  return typeof value === "string" && PRODUCT_PLAN_KEYS.includes(value as ProductPlanKey);
+}
+
+export function productPlanForTier(tier: AccountTier): Exclude<ProductPlanKey, "growth"> {
+  return PRODUCT_PLAN_BY_TIER[tier];
+}
+
+export function productPlanLabelForTier(tier: AccountTier): string {
+  return PRODUCT_PLAN_LABELS[productPlanForTier(tier)];
 }
 
 export function normalizeUserRole(value: unknown): UserRole {

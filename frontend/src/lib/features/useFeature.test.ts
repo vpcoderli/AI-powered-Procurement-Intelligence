@@ -23,7 +23,7 @@ describe("client feature helpers", () => {
   });
 
   it("returns a tier-specific upgrade message", () => {
-    expect(lockedFeatureMessage("submission_guidance")).toContain("Pro");
-    expect(lockedFeatureMessage("compliance_manifest")).toContain("Business");
+    expect(lockedFeatureMessage("submission_guidance")).toContain("Pursuit Starter");
+    expect(lockedFeatureMessage("compliance_manifest")).toContain("Response Builder");
   });
 });

@@ -34,6 +34,12 @@ describe("GET /api/account/usage", () => {
     vi.mocked(usageService.getAccountUsage).mockReturnValueOnce({
       tier: "free",
       workspaceUserIds: ["user_1"],
+      creditSummary: {
+        includedMonthlyCredits: 0,
+        purchasedCredits: 0,
+        availableCredits: 0,
+        resetsAt: null,
+      },
       items: [
         {
           feature: "saved_bids",
