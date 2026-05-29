@@ -1,0 +1,19 @@
+{
+  "sEcho": 1,
+  "iTotalRecords": 64,
+  "aaData": [
+    {
+      "ID": "b6ba764c-efe5-4b24-be9f-0a805d2e0010",
+      "BidNumber": "358",
+      "EffectiveDate": "/Date(1779291900000)/",
+      "ExpirationDate": "/Date(1781726400000)/",
+      "Solicitation": "2026 Statewide On-Call Traffic Engineering Services",
+      "Description": "The Iowa Department of Transportation is seeking traffic engineering services.",
+      "AgencyName": "Transportation",
+      "AgencyContactName": "Adam Haar",
+      "AgencyContactPhoneNumber": "5152337706",
+      "AgencyContactEmail": "adam.haar@iowadot.us",
+      "Status": "Open"
+    }
+  ]
+}

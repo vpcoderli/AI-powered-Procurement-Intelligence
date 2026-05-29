@@ -12,6 +12,11 @@ BETA_DEDICATED_STATE_SOURCES = (
     "oh_state_procurement",
     "va_state_procurement",
     "wa_state_procurement",
+    "ia_state_procurement",
+    "ga_state_procurement",
+    "me_state_procurement",
+    "mo_state_procurement",
+    "nv_state_procurement",
 )
 
 
