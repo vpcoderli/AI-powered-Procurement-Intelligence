@@ -60,12 +60,14 @@ def test_normalize_state_opportunity_rejects_missing_identifier():
         )
 
 
-def test_normalize_state_opportunity_rejects_blank_title():
-    with pytest.raises(StateBidNormalizationError, match="title"):
-        normalize_state_opportunity(
-            {"source_bid_id": "WA-2026-001", "title": "  "},
-            get_source("wa_state_procurement"),
-        )
+def test_normalize_state_opportunity_flags_blank_title_with_non_empty_fallback():
+    bid = normalize_state_opportunity(
+        {"source_bid_id": "WA-2026-001", "title": "  "},
+        get_source("wa_state_procurement"),
+    )
+
+    assert bid["title"] == "Untitled Washington State Procurement opportunity"
+    assert "missing_title" in bid["quality_flags_json"]
 
 
 def test_normalize_state_opportunity_fills_non_empty_content_defaults():

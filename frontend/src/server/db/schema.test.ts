@@ -5,8 +5,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDatabase } from "./client";
 import { runMigrations } from "./migrate";
 import {
+  bidAttachments,
   bids,
   crawlerLocks,
+  dataSources,
   notificationOutbox,
   organizationMemberships,
   organizations,
@@ -67,8 +69,8 @@ describe("database schema", () => {
       })
       .run();
 
-    expect(db.select().from(users).all()).toHaveLength(1);
-    expect(db.select().from(bids).all()).toHaveLength(1);
+      expect(db.select().from(users).all()).toHaveLength(1);
+      expect(db.select().from(bids).all()).toHaveLength(1);
     expect(
       db.$client
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
@@ -372,6 +374,124 @@ describe("database schema", () => {
       expect(notificationPreferenceColumns).toContain("saved_search_alerts_enabled");
       expect(notificationPreferenceColumns).toContain("default_alert_frequency");
       expect(notificationPreferenceColumns).toContain("marketing_updates_enabled");
+
+      const bidColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(bids)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(bidColumns).toEqual(
+        expect.arrayContaining([
+          "source_confidence",
+          "quality_flags_json",
+          "admin_review_status",
+          "detail_archive_status",
+          "detail_archive_path",
+          "detail_fetched_at",
+          "detail_checksum_sha256",
+        ]),
+      );
+
+      const attachmentColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(bid_attachments)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(attachmentColumns).toEqual(
+        expect.arrayContaining([
+          "original_url",
+          "storage_path",
+          "byte_size",
+          "content_type",
+          "checksum_sha256",
+          "fetched_at",
+          "archive_status",
+        ]),
+      );
+
+      const dataSourceColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(data_sources)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(dataSourceColumns).toEqual(
+        expect.arrayContaining([
+          "provider_family",
+          "access_mode",
+          "source_type",
+          "source_confidence",
+          "activation_status",
+          "requires_browser",
+          "requires_manual",
+          "requires_login",
+          "supports_query",
+          "supports_pagination",
+          "supports_attachment_metadata",
+          "supports_detail_page_fetch",
+          "fallback_notes",
+        ]),
+      );
+
+      expect(() =>
+        testDb.db.insert(dataSources).values({
+          id: "ca_caleprocure_quality",
+          label: "California Cal eProcure",
+          issuerType: "state",
+          stateCode: "CA",
+          providerFamily: "state_portal",
+          accessMode: "http",
+          sourceType: "primary",
+          sourceConfidence: "high",
+          activationStatus: "active",
+          requiresBrowser: 0,
+          requiresManual: 0,
+          requiresLogin: 0,
+          supportsQuery: 1,
+          supportsPagination: 1,
+          supportsAttachmentMetadata: 0,
+          supportsDetailPageFetch: 1,
+          fallbackNotes: "403 fallback fixture available",
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
+
+      expect(() =>
+        testDb.db.insert(bids).values({
+          id: "archive_bid_1",
+          source: "SAM.gov",
+          sourceBidId: "archive:1",
+          dedupeKey: "archive:1",
+          title: "Archived solicitation",
+          description: "Archived solicitation description",
+          issuerName: "Example Agency",
+          issuerType: "federal",
+          stateCode: "US",
+          sourceUrl: "https://example.gov/solicitation",
+          isActive: 1,
+          firstSeenAt: "2026-05-19T00:00:00.000Z",
+          lastSeenAt: "2026-05-19T00:00:00.000Z",
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
+
+      expect(() =>
+        testDb.db.insert(bidAttachments).values({
+          id: "archive_attachment_1",
+          bidId: "archive_bid_1",
+          name: "Solicitation.pdf",
+          url: "https://example.gov/solicitation.pdf",
+          originalUrl: "https://example.gov/solicitation.pdf",
+          storagePath: "data/attachments/solicitation.pdf",
+          byteSize: 2048,
+          contentType: "application/pdf",
+          checksumSha256: "abc123",
+          fetchedAt: "2026-05-19T00:00:00.000Z",
+          archiveStatus: "archived",
+          createdAt: "2026-05-19T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
     } finally {
       await testDb.cleanup();
     }

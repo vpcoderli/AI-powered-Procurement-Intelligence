@@ -1533,6 +1533,33 @@ Current local limits use internal tier values. Product-facing labels should be s
 建议下一步：
 - 如果继续数据质量主线，优先做 Attachment Download Archival；如果转用户工作流，做 Full Search Alerts UI；如果准备上线，做 Production Worker Deployment Runbook。
 
+## Completed Phase: Data Pipeline Hardening Metadata Foundation
+
+本阶段完成：
+- `bids` 增加 source confidence、quality flags、admin review status、detail archive status/path/checksum/fetched_at 字段，为后续 QA 和证据链做基础承载。
+- `bid_attachments` 增加 original URL、local storage path、byte size、content type、checksum、fetched_at、archive status 字段；前端下载逻辑现在会优先使用 `storage_path`，解决“文件已落地但页面/API 404”的基础路径问题。
+- `data_sources` 增加 source registry 和 connector capability 元数据字段，包括 provider/access/type/confidence/status、browser/manual/login 要求、query/pagination/attachment/detail 能力和 fallback notes。
+- Admin Data Sources API 保留原 crawler metadata，同时派生/暴露 source registry 与 capability 布尔字段；Admin 页面展示 confidence、access mode、activation、archive metadata 能力和 browser/login/manual 标记。
+- Python crawler storage 会在 upsert 时写入新增 bid/attachment metadata；state/SAM normalizer 会生成 `missing_title`、`missing_source_url`、`missing_deadline` 等质量标记，并继续保持空结果失败的 guardrail。
+
+验证：
+- `npm test -- src/server/db/schema.test.ts src/server/admin/data-sources-repository.test.ts src/server/bids/repository.test.ts`
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_storage.py`
+- `npm run lint`
+- `npm run build`
+
+当前还剩：
+1. Attachment Download Archival Downloader：真正下载附件/详情页到本地或对象存储，计算 checksum/size/content type，并把失败原因写入 archive status。
+2. Bid Admin/Data QA Console Expansion：按 quality flags、archive status、source confidence、review status 做筛选、批量审核和修复入口。
+3. Official-source maturity：后续拿到稳定官方 feed/API 后，把 MI/SC/OH 等公共 fallback 升级为官方源；不绕过 CAPTCHA 或访问控制。
+4. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+5. Production Worker Deployment Runbook：生产 credential 隔离、worker 定时部署、webhook endpoint 轮换和运维说明。
+6. Response Workspace Lite / Artifact Vault Lite：tasks、artifacts、internal checkpoints、证据文件引用。
+7. Sourcing Partner + Quote Inquiry Lite 与 Award / Tabulation Tracking Lite。
+
+建议下一步：
+- 继续数据质量主线时，优先做 Attachment Download Archival Downloader；如果希望 Admin 先可运营，做 Bid Admin/Data QA Console Expansion；如果转用户工作流，做 Full Search Alerts UI。
+
 ## Status Update Template
 
 Use this after every phase:

@@ -50,7 +50,7 @@ function relativeAttachmentPath(value: string) {
   return withoutDataPrefix;
 }
 
-function candidatePaths(value: string) {
+function candidatePaths(value: string, relativeRoots: string[]) {
   if (value.startsWith("file://")) {
     try {
       return [fileURLToPath(value)];
@@ -63,7 +63,8 @@ function candidatePaths(value: string) {
     return [value];
   }
 
-  return [path.resolve(defaultAttachmentDir(), relativeAttachmentPath(value))];
+  const relativePath = relativeAttachmentPath(value);
+  return relativeRoots.map((root) => path.resolve(root, relativePath));
 }
 
 async function canonicalPath(value: string) {
@@ -80,9 +81,10 @@ async function resolveAllowedLocalPath(value: string) {
     return undefined;
   }
 
-  const allowedDirs = await Promise.all(allowedAttachmentDirs().map(canonicalPath));
+  const allowedDirCandidates = allowedAttachmentDirs();
+  const allowedDirs = await Promise.all(allowedDirCandidates.map(canonicalPath));
 
-  for (const candidate of candidatePaths(value)) {
+  for (const candidate of candidatePaths(value, allowedDirCandidates)) {
     const resolvedCandidate = path.resolve(candidate);
     await access(resolvedCandidate).catch(() => undefined);
     const fileStats = await stat(resolvedCandidate).catch(() => undefined);
@@ -111,12 +113,12 @@ export async function getLocalBidAttachment(
 
   if (!row) return undefined;
 
-  const filePath = await resolveAllowedLocalPath(row.url);
+  const filePath = await resolveAllowedLocalPath(row.storagePath ?? row.url);
   if (!filePath) return undefined;
 
   return {
     filePath,
     filename: row.name,
-    mimeType: row.mimeType,
+    mimeType: row.mimeType ?? row.contentType,
   };
 }

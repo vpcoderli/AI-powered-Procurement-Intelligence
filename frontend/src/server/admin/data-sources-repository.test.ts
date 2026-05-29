@@ -170,6 +170,19 @@ describe("admin data sources repository", () => {
         stateCode: "TX",
         isEnabled: 1,
         cadence: "daily",
+        providerFamily: "state_portal",
+        accessMode: "http",
+        sourceType: "primary",
+        sourceConfidence: "high",
+        activationStatus: "active",
+        requiresBrowser: 0,
+        requiresManual: 0,
+        requiresLogin: 0,
+        supportsQuery: 1,
+        supportsPagination: 1,
+        supportsAttachmentMetadata: 1,
+        supportsDetailPageFetch: 1,
+        fallbackNotes: "Uses fixture fallback when ESBD blocks live fetch.",
         createdAt: NOW,
         updatedAt: NOW,
       })
@@ -197,8 +210,56 @@ describe("admin data sources repository", () => {
       crawlerMaturity: "verified",
       crawlerCapabilities: expect.arrayContaining(["query", "detail_pages"]),
       crawlerBaseUrl: "https://www.txsmartbuy.gov/esbd",
+      providerFamily: "state_portal",
+      accessMode: "http",
+      sourceType: "primary",
+      sourceConfidence: "high",
+      activationStatus: "active",
+      requiresBrowser: false,
+      requiresManual: false,
+      requiresLogin: false,
+      supportsQuery: true,
+      supportsPagination: true,
+      supportsAttachmentMetadata: true,
+      supportsDetailPageFetch: true,
+      fallbackNotes: "Uses fixture fallback when ESBD blocks live fetch.",
     });
     expect(result.summary.failingSources).toBe(1);
+  });
+
+  it("derives default registry metadata for state crawler sources", async () => {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id: "illinois_bidbuy",
+        label: "Illinois BidBuy",
+        issuerType: "state",
+        stateCode: "IL",
+        isEnabled: 1,
+        cadence: "daily",
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+      .run();
+
+    const result = await listAdminDataSources(testDb.db);
+    const source = result.sources.find((item) => item.id === "illinois_bidbuy");
+
+    expect(source).toMatchObject({
+      providerFamily: "state_portal",
+      accessMode: "http",
+      sourceType: "primary",
+      sourceConfidence: "high",
+      activationStatus: "active",
+      requiresBrowser: false,
+      requiresManual: false,
+      requiresLogin: false,
+      supportsQuery: true,
+      supportsPagination: true,
+      supportsAttachmentMetadata: true,
+      supportsDetailPageFetch: true,
+      fallbackNotes: null,
+    });
   });
 
   it("keeps direct SAM.gov log matching", async () => {

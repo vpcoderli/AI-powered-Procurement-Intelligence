@@ -20,6 +20,13 @@ def _create_bid_attachment_database(connection, attachment_name_constraint=""):
           state_code TEXT NOT NULL,
           source_url TEXT NOT NULL,
           is_active INTEGER NOT NULL DEFAULT 1,
+          source_confidence TEXT NOT NULL DEFAULT 'medium',
+          quality_flags_json TEXT NOT NULL DEFAULT '[]',
+          admin_review_status TEXT NOT NULL DEFAULT 'unreviewed',
+          detail_archive_status TEXT NOT NULL DEFAULT 'not_archived',
+          detail_archive_path TEXT,
+          detail_fetched_at TEXT,
+          detail_checksum_sha256 TEXT,
           first_seen_at TEXT NOT NULL,
           last_seen_at TEXT NOT NULL,
           created_at TEXT NOT NULL,
@@ -30,6 +37,13 @@ def _create_bid_attachment_database(connection, attachment_name_constraint=""):
           bid_id TEXT NOT NULL,
           name TEXT NOT NULL{attachment_name_constraint},
           url TEXT NOT NULL,
+          original_url TEXT,
+          storage_path TEXT,
+          byte_size INTEGER,
+          content_type TEXT,
+          checksum_sha256 TEXT,
+          fetched_at TEXT,
+          archive_status TEXT NOT NULL DEFAULT 'not_archived',
           size_label TEXT,
           mime_type TEXT,
           sort_order INTEGER NOT NULL DEFAULT 0,
@@ -192,6 +206,139 @@ def test_upsert_bid_writes_and_replaces_attachments_when_table_exists(tmp_path):
         )
     ]
 
+
+def test_upsert_bid_writes_archive_and_quality_metadata_when_columns_exist(tmp_path):
+    db_path = tmp_path / "apsi.sqlite"
+    connection = sqlite3.connect(db_path)
+    _create_bid_attachment_database(connection)
+
+    bid = _il_bid(
+        source_confidence="high",
+        quality_flags_json=["missing_deadline"],
+        admin_review_status="needs_review",
+        detail_archive_status="archived",
+        detail_archive_path="data/attachments/details/il_bidbuy.html",
+        detail_fetched_at="2026-05-19T00:01:00Z",
+        detail_checksum_sha256="detail-sha",
+        attachments=[
+            {
+                "name": "Scope of Work.pdf",
+                "url": "https://www.bidbuy.illinois.gov/documents/scope.pdf",
+                "original_url": "https://www.bidbuy.illinois.gov/documents/scope.pdf",
+                "storage_path": "data/attachments/il/scope.pdf",
+                "byte_size": 2048,
+                "content_type": "application/pdf",
+                "checksum_sha256": "attachment-sha",
+                "fetched_at": "2026-05-19T00:02:00Z",
+                "archive_status": "archived",
+            }
+        ],
+    )
+
+    assert upsert_bid(connection, bid) == "inserted"
+    bid_row = connection.execute(
+        """
+        SELECT source_confidence, quality_flags_json, admin_review_status,
+               detail_archive_status, detail_archive_path, detail_fetched_at, detail_checksum_sha256
+        FROM bids
+        """
+    ).fetchone()
+    assert bid_row == (
+        "high",
+        '["missing_deadline"]',
+        "needs_review",
+        "archived",
+        "data/attachments/details/il_bidbuy.html",
+        "2026-05-19T00:01:00Z",
+        "detail-sha",
+    )
+    attachment_row = connection.execute(
+        """
+        SELECT original_url, storage_path, byte_size, content_type,
+               checksum_sha256, fetched_at, archive_status
+        FROM bid_attachments
+        """
+    ).fetchone()
+    assert attachment_row == (
+        "https://www.bidbuy.illinois.gov/documents/scope.pdf",
+        "data/attachments/il/scope.pdf",
+        2048,
+        "application/pdf",
+        "attachment-sha",
+        "2026-05-19T00:02:00Z",
+        "archived",
+    )
+
+
+def test_upsert_bid_preserves_existing_archive_metadata_when_refresh_lacks_it(tmp_path):
+    db_path = tmp_path / "apsi.sqlite"
+    connection = sqlite3.connect(db_path)
+    _create_bid_attachment_database(connection)
+
+    archived = _il_bid(
+        detail_archive_status="archived",
+        detail_archive_path="data/attachments/details/il_bidbuy.html",
+        detail_fetched_at="2026-05-19T00:01:00Z",
+        detail_checksum_sha256="detail-sha",
+        attachments=[
+            {
+                "name": "Scope of Work.pdf",
+                "url": "https://www.bidbuy.illinois.gov/documents/scope.pdf",
+                "storage_path": "data/attachments/il/scope.pdf",
+                "byte_size": 2048,
+                "content_type": "application/pdf",
+                "checksum_sha256": "attachment-sha",
+                "fetched_at": "2026-05-19T00:02:00Z",
+                "archive_status": "archived",
+            }
+        ],
+    )
+    assert upsert_bid(connection, archived) == "inserted"
+
+    refreshed = _il_bid(
+        title="Enterprise data integration services refreshed",
+        detail_archive_status="not_archived",
+        detail_archive_path=None,
+        detail_fetched_at=None,
+        detail_checksum_sha256=None,
+        attachments=[
+            {
+                "name": "Scope of Work.pdf",
+                "url": "https://www.bidbuy.illinois.gov/documents/scope.pdf",
+            }
+        ],
+    )
+    assert upsert_bid(connection, refreshed) == "updated"
+
+    bid_row = connection.execute(
+        """
+        SELECT title, detail_archive_status, detail_archive_path,
+               detail_fetched_at, detail_checksum_sha256
+        FROM bids
+        """
+    ).fetchone()
+    assert bid_row == (
+        "Enterprise data integration services refreshed",
+        "archived",
+        "data/attachments/details/il_bidbuy.html",
+        "2026-05-19T00:01:00Z",
+        "detail-sha",
+    )
+    attachment_row = connection.execute(
+        """
+        SELECT storage_path, byte_size, content_type,
+               checksum_sha256, fetched_at, archive_status
+        FROM bid_attachments
+        """
+    ).fetchone()
+    assert attachment_row == (
+        "data/attachments/il/scope.pdf",
+        2048,
+        "application/pdf",
+        "attachment-sha",
+        "2026-05-19T00:02:00Z",
+        "archived",
+    )
 
 def test_upsert_bid_rolls_back_bid_and_attachment_changes_when_attachment_insert_fails(tmp_path):
     db_path = tmp_path / "apsi.sqlite"

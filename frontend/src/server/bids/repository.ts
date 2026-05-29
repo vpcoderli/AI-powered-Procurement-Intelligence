@@ -20,6 +20,16 @@ function stringArray(value: unknown): string[] | null {
   return value;
 }
 
+function parseStringArrayJson(value: string | null) {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return stringArray(parsed) ?? [];
+  } catch {
+    return [];
+  }
+}
+
 function tagsFromBid(row: typeof bids.$inferSelect) {
   if (row.rawPayload) {
     try {
@@ -49,10 +59,18 @@ function attachmentsForBids(db: AppDatabase, bidIds: string[]) {
   const byBid = new Map<string, Bid["attachments"]>();
   rows.forEach((row) => {
     const current = byBid.get(row.bidId) ?? [];
+    const localAttachmentPath = row.storagePath ?? row.url;
     current.push({
       name: row.name,
-      url: isLocalAttachmentUrl(row.url) ? attachmentDownloadUrl(row.bidId, row.id) : row.url,
+      url: isLocalAttachmentUrl(localAttachmentPath) ? attachmentDownloadUrl(row.bidId, row.id) : row.url,
       size: row.sizeLabel ?? "",
+      originalUrl: row.originalUrl ?? row.url,
+      archiveStatus: row.archiveStatus,
+      storagePath: row.storagePath ?? "",
+      byteSize: row.byteSize,
+      contentType: row.contentType ?? row.mimeType ?? "",
+      checksumSha256: row.checksumSha256 ?? "",
+      fetchedAt: row.fetchedAt ?? "",
     });
     byBid.set(row.bidId, current);
   });
@@ -84,6 +102,13 @@ function toBid(
     contactPhone: row.contactPhone ?? "",
     attachments,
     tags: tagsFromBid(row),
+    sourceConfidence: row.sourceConfidence,
+    qualityFlags: parseStringArrayJson(row.qualityFlagsJson),
+    adminReviewStatus: row.adminReviewStatus,
+    detailArchiveStatus: row.detailArchiveStatus,
+    detailArchivePath: row.detailArchivePath ?? "",
+    detailFetchedAt: row.detailFetchedAt ?? "",
+    detailChecksumSha256: row.detailChecksumSha256 ?? "",
     saved: savedBidIds.has(row.id),
     isActive: row.isActive === 1,
   };
