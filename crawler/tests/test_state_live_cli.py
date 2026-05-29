@@ -535,3 +535,40 @@ def test_fetch_state_adapter_failure_writes_failure_log(tmp_path, monkeypatch):
         "SELECT source, status, failed_count, error_code, error_message FROM crawler_logs"
     ).fetchone()
     assert log == ("ca_caleprocure", "failure", 1, "RuntimeError", "state portal unavailable")
+
+
+def test_fetch_state_empty_result_writes_failure_log(tmp_path, monkeypatch):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+
+    def fake_fetcher(source, query=None, limit=25):
+        return []
+
+    monkeypatch.setattr("apsi_crawler.cli.get_live_fetcher", lambda source: fake_fetcher)
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "wa_state_procurement",
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 1
+    assert connection.execute("SELECT COUNT(*) FROM bids").fetchone()[0] == 0
+    log = connection.execute(
+        "SELECT source, status, fetched_count, inserted_count, updated_count, failed_count, error_code, error_message FROM crawler_logs"
+    ).fetchone()
+    assert log == (
+        "wa_state_procurement",
+        "failure",
+        0,
+        0,
+        0,
+        1,
+        "EmptyCrawlerResultError",
+        "Crawler returned no opportunities for source: wa_state_procurement",
+    )

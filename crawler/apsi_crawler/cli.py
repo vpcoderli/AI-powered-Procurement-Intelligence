@@ -34,6 +34,10 @@ STATE_FALLBACK_FETCHERS = {
 }
 
 
+class EmptyCrawlerResultError(Exception):
+    pass
+
+
 def _bundled_fixture_path(filename):
     return Path(__file__).resolve().parents[1] / "tests" / "fixtures" / filename
 
@@ -65,6 +69,12 @@ def _upsert_bids(connection, bids):
     return inserted_count, updated_count
 
 
+def _require_non_empty_bids(bids, source):
+    if not bids:
+        raise EmptyCrawlerResultError(f"Crawler returned no opportunities for source: {source}")
+    return bids
+
+
 def import_fixture(database, fixture, source=DEFAULT_SOURCE):
     started_at = now_iso()
     started = perf_counter()
@@ -75,6 +85,7 @@ def import_fixture(database, fixture, source=DEFAULT_SOURCE):
     try:
         loader = get_fixture_loader(source)
         bids = loader(fixture)
+        _require_non_empty_bids(bids, source)
         inserted_count, updated_count = _upsert_bids(connection, bids)
 
         write_crawler_log(
@@ -90,6 +101,25 @@ def import_fixture(database, fixture, source=DEFAULT_SOURCE):
             duration_ms=int((perf_counter() - started) * 1000),
         )
         return 0
+    except Exception as error:
+        write_crawler_log(
+            connection,
+            source=source,
+            run_id=run_id,
+            status="failure",
+            fetched_count=0,
+            inserted_count=0,
+            updated_count=0,
+            failed_count=1,
+            started_at=started_at,
+            finished_at=now_iso(),
+            duration_ms=int((perf_counter() - started) * 1000),
+            error_code=type(error).__name__,
+            error_message=str(error),
+            error_stack=traceback.format_exc(),
+            metadata={"fixture": fixture},
+        )
+        return 1
     finally:
         connection.close()
 
@@ -109,6 +139,7 @@ def fetch_sam_gov(database, posted_from, posted_to, api_key=None, limit=100, max
             limit=limit,
             max_records=max_records,
         )
+        _require_non_empty_bids(bids, DEFAULT_SOURCE)
         inserted_count, updated_count = _upsert_bids(connection, bids)
 
         write_crawler_log(
@@ -195,6 +226,7 @@ def fetch_state(
             fallback_kwargs = {"query": query, "limit": limit, fixture_kind: fixture_path}
             bids = fallback_fetcher(source_metadata, **fallback_kwargs)
 
+        _require_non_empty_bids(bids, source_metadata.id)
         inserted_count, updated_count = _upsert_bids(connection, bids)
 
         write_crawler_log(

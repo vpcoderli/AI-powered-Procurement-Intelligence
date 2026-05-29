@@ -1,4 +1,9 @@
-from apsi_crawler.normalizers.state_bids import normalize_state_opportunity
+import pytest
+
+from apsi_crawler.normalizers.state_bids import (
+    StateBidNormalizationError,
+    normalize_state_opportunity,
+)
 from apsi_crawler.sources.registry import get_source
 
 
@@ -45,3 +50,31 @@ def test_normalize_state_opportunity_accepts_source_specific_identifiers():
     assert bid["state_code"] == "TX"
     assert bid["dedupe_key"] == "tx_esbd:ESBD-2026-77"
     assert bid["source_url"] == "https://www.txsmartbuy.gov/esbd/ESBD-2026-77"
+
+
+def test_normalize_state_opportunity_rejects_missing_identifier():
+    with pytest.raises(StateBidNormalizationError, match="source id"):
+        normalize_state_opportunity(
+            {"title": "Network equipment refresh"},
+            get_source("wa_state_procurement"),
+        )
+
+
+def test_normalize_state_opportunity_rejects_blank_title():
+    with pytest.raises(StateBidNormalizationError, match="title"):
+        normalize_state_opportunity(
+            {"source_bid_id": "WA-2026-001", "title": "  "},
+            get_source("wa_state_procurement"),
+        )
+
+
+def test_normalize_state_opportunity_fills_non_empty_content_defaults():
+    bid = normalize_state_opportunity(
+        {"source_bid_id": "WA-2026-002", "title": "Network equipment refresh"},
+        get_source("wa_state_procurement"),
+    )
+
+    assert bid["description"] == "Network equipment refresh"
+    assert bid["full_description"] == "Network equipment refresh"
+    assert bid["issuer_name"] == "Unknown state agency"
+    assert bid["source_url"] == "https://pr-webs-vendor.des.wa.gov"
