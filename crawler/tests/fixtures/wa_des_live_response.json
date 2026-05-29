@@ -1,0 +1,29 @@
+{
+  "opportunities": [
+    {
+      "solicitationNumber": "DES-2026-0901",
+      "title": "Cloud hosting modernization assessment",
+      "agency": "Department of Enterprise Services",
+      "postedDate": "05/22/2026",
+      "closingDate": "06/25/2026 03:30 PM",
+      "commodity": "Information Technology",
+      "detailUrl": "/bid/detail/DES-2026-0901",
+      "documents": [
+        {
+          "name": "Scope of Work",
+          "url": "/docs/DES-2026-0901_scope.pdf"
+        }
+      ]
+    },
+    {
+      "solicitationNumber": "DES-2026-0902",
+      "title": "Building maintenance supplies",
+      "agency": "Department of Enterprise Services",
+      "postedDate": "05/23/2026",
+      "closingDate": "06/27/2026 10:00 AM",
+      "commodity": "Goods",
+      "detailUrl": "/bid/detail/DES-2026-0902",
+      "documents": []
+    }
+  ]
+}

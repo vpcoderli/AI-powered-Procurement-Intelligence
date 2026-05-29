@@ -61,11 +61,35 @@ describe("state crawler source mapping", () => {
       maturity: "beta",
       capabilities: expect.arrayContaining(["query", "attachments"]),
     });
+    expect(getStateCrawlerSourceMetadata("MA")).toMatchObject({
+      id: "ma_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "attachments"]),
+    });
+    expect(getStateCrawlerSourceMetadata("NJ")).toMatchObject({
+      id: "nj_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "attachments"]),
+    });
+    expect(getStateCrawlerSourceMetadata("OH")).toMatchObject({
+      id: "oh_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "attachments"]),
+    });
+    expect(getStateCrawlerSourceMetadata("VA")).toMatchObject({
+      id: "va_state_procurement",
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "attachments"]),
+    });
     expect(getStateCrawlerSourceMetadata("WA")).toMatchObject({
       id: "wa_state_procurement",
-      adapterKind: "generic",
-      maturity: "generic",
-      capabilities: ["query"],
+      adapterKind: "dedicated",
+      maturity: "beta",
+      capabilities: expect.arrayContaining(["query", "attachments"]),
     });
     expect(getStateCrawlerSourceMetadata("US")).toBeNull();
   });
