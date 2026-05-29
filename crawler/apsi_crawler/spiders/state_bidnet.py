@@ -9,11 +9,14 @@ BIDNET_STATE_URLS = {
     "ky_state_procurement": "https://www.bidnetdirect.com/kentucky/solicitations/open-bids",
     "la_state_procurement": "https://www.bidnetdirect.com/louisiana/solicitations/open-bids",
     "md_state_procurement": "https://www.bidnetdirect.com/maryland/solicitations/open-bids",
+    "mi_state_procurement": "https://www.bidnetdirect.com/mitn/solicitations/open-bids",
     "mn_state_procurement": "https://www.bidnetdirect.com/minnesota/solicitations/open-bids",
     "nc_state_procurement": "https://www.bidnetdirect.com/north-carolina/solicitations/open-bids",
     "nd_state_procurement": "https://www.bidnetdirect.com/north-dakota/solicitations/open-bids",
     "ne_state_procurement": "https://www.bidnetdirect.com/nebraska/solicitations/open-bids",
     "nh_state_procurement": "https://www.bidnetdirect.com/new-hampshire/solicitations/open-bids",
+    "oh_state_procurement": "https://www.bidnetdirect.com/ohio/solicitations/open-bids",
+    "sc_state_procurement": "https://www.bidnetdirect.com/south-carolina/solicitations/open-bids",
     "vt_state_procurement": "https://www.bidnetdirect.com/vermont/solicitations/open-bids",
     "wi_state_procurement": "https://www.bidnetdirect.com/wisconsin/solicitations/open-bids",
 }
@@ -110,6 +113,17 @@ def fetch_md_bidnet_opportunities(source, query=None, limit=25, session=None, ti
     )
 
 
+def fetch_mi_bidnet_opportunities(source, query=None, limit=25, session=None, timeout=30, fixture_html=None):
+    return _fetch_state_bidnet(
+        source,
+        query=query,
+        limit=limit,
+        session=session,
+        timeout=timeout,
+        fixture_html=fixture_html,
+    )
+
+
 def fetch_mn_bidnet_opportunities(source, query=None, limit=25, session=None, timeout=30, fixture_html=None):
     return _fetch_state_bidnet(
         source,
@@ -155,6 +169,28 @@ def fetch_ne_bidnet_opportunities(source, query=None, limit=25, session=None, ti
 
 
 def fetch_nh_bidnet_opportunities(source, query=None, limit=25, session=None, timeout=30, fixture_html=None):
+    return _fetch_state_bidnet(
+        source,
+        query=query,
+        limit=limit,
+        session=session,
+        timeout=timeout,
+        fixture_html=fixture_html,
+    )
+
+
+def fetch_oh_bidnet_opportunities(source, query=None, limit=25, session=None, timeout=30, fixture_html=None):
+    return _fetch_state_bidnet(
+        source,
+        query=query,
+        limit=limit,
+        session=session,
+        timeout=timeout,
+        fixture_html=fixture_html,
+    )
+
+
+def fetch_sc_bidnet_opportunities(source, query=None, limit=25, session=None, timeout=30, fixture_html=None):
     return _fetch_state_bidnet(
         source,
         query=query,

@@ -1,4 +1,5 @@
 import re
+from html import unescape
 
 from apsi_crawler.html.public_page import absolute_url, fetch_html, read_html_fixture
 from apsi_crawler.normalizers.state_bids import normalize_state_opportunity
@@ -12,7 +13,7 @@ class CoBidnetError(Exception):
 
 
 def _strip_tags(value):
-    return " ".join(re.sub(r"<[^>]+>", " ", value or "").split())
+    return " ".join(unescape(re.sub(r"<[^>]+>", " ", value or "")).split())
 
 
 def _records_from_html(html, issuer_name):

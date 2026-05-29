@@ -6,6 +6,7 @@ from apsi_crawler.spiders.pa_emarketplace import fetch_pa_emarketplace_opportuni
 from apsi_crawler.spiders.sc_business_opportunities import (
     fetch_sc_business_opportunities,
 )
+from apsi_crawler.spiders.state_bidnet import fetch_sc_bidnet_opportunities
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -207,5 +208,5 @@ def test_or_oregonbuys_current_rio_table_extracts_live_shape(tmp_path):
 
 def test_selected_state_sources_are_registered_to_dedicated_fetchers():
     assert get_live_fetcher("pa_state_procurement") is fetch_pa_emarketplace_opportunities
-    assert get_live_fetcher("sc_state_procurement") is fetch_sc_business_opportunities
+    assert get_live_fetcher("sc_state_procurement") is fetch_sc_bidnet_opportunities
     assert get_live_fetcher("or_state_procurement") is fetch_or_oregonbuys_opportunities

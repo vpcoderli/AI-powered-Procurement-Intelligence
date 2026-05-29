@@ -36,7 +36,7 @@ This document is the working checklist for local development. Update it after ea
 | Billing provider sync foundation | `billing_checkout_sessions`, checkout creation API, Stripe SDK/API adapter, Stripe webhook signature verification/mapping, provider event idempotency, subscription status reconciliation, lifecycle reconciliation, Settings self-service upgrade/cancel controls, and repeatable Stripe sandbox E2E verifier/runbook. |
 | Invoice / payment history foundation | `billing_invoices`, provider invoice event sync, payment-failed status handling, payment retry links, payment-failed notification outbox entries, account invoice API with status filtering and summary totals, Settings invoice history UI with filters/PDF links/retry links, and optional HMAC webhook signature verification via `BILLING_WEBHOOK_SECRET`. |
 | Customer portal foundation | Hosted checkout and customer portal URL templates, provider/customer placeholders, account portal API, and Settings Manage Billing entry. |
-| Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, 50-state state runner registry, CA/TX/NY/FL/IL verified dedicated adapters, PA/SC/OR/MA/NJ/OH/VA/WA/IA/GA/ME/MO/NV/UT/KS/MT/NM/CO/IN/MS/CT/OK/AR/SD/WV/WY/AL/AK/HI/KY/MN/WI/NH/DE/RI/TN/AZ/ID/LA/MD/NE/NC/ND/VT beta dedicated adapters, MI generic public procurement adapter foundation, and local attachment file serving for crawler-managed files. |
+| Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, 50-state state runner registry, CA/TX/NY/FL/IL verified dedicated adapters, the other 45 state sources covered by beta dedicated adapters, non-empty live validation guardrails, and local attachment file serving for crawler-managed files. |
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
 | Intent to Bid | Add intent from bid detail, idempotent workspace-scoped intent creation, shared intent list/detail for organization members, status update. |
 | AI-like bid brief | Deterministic brief, key dates, initial checklist, risk flags. |
@@ -122,7 +122,7 @@ This document is the working checklist for local development. Update it after ea
 
 ## Recommended Next Phase
 
-Prioritize **Production Worker Deployment Runbook** if the next sprint focuses on production readiness. If the next sprint stays on product workflow completeness, prioritize Full Search Alerts UI. If the next sprint continues account/tier design, prioritize custom enterprise permission rules only after a concrete enterprise use case exists.
+Prioritize **Attachment Download Archival** if the next sprint continues crawler/data quality after 50-state beta coverage. Prioritize **Production Worker Deployment Runbook** if the next sprint focuses on production readiness. If the next sprint stays on product workflow completeness, prioritize Full Search Alerts UI.
 
 Reason:
 
@@ -209,7 +209,7 @@ Current local limits:
 - 新增 Admin 用户管理 API：注册用户列表、改角色、改套餐、启用/禁用。
 - `/admin` 接入用户权限表，普通用户侧边栏不再显示 Admin 入口。
 
-当前还剩：
+当时还剩：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
 2. Organization team management：成员角色调整、移除、owner 转移。
 3. Submission Guidance 真实编辑与确认 UI。
@@ -313,7 +313,7 @@ Current local limits:
 5. Organization team management：成员角色调整、移除、owner 转移。
 6. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
 
-建议下一步：
+当时建议下一步：
 - 优先开发 Compliance Manifest Lite，因为它直接承接 Submission Guidance，让用户开始把投标要求转成可执行清单。
 
 ## Completed Phase: Admin Page Access Guard
@@ -1462,7 +1462,7 @@ Current local limits:
 - `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source az_state_procurement --source id_state_procurement --source la_state_procurement --source md_state_procurement --source ne_state_procurement --source nc_state_procurement --source nd_state_procurement --source vt_state_procurement --limit 3 --timeout 30`
 - Migrated temp SQLite fetch-state smoke: AZ/ID/LA/MD/NE/NC/ND/VT each inserted 2 bids and wrote success crawler logs.
 
-当前还剩：
+当时还剩：
 1. MI dedicated source resolution：MI 仍是 generic foundation；需要找到稳定公开源，或标记为 browser/session/manual 处理。
 2. SC/OH portal access resolution：SCBO 当前环境超时；OhioBuys 官方公开流程进入 browser_check/reCAPTCHA，不应绕过 CAPTCHA，需要 browser-assisted/manual 或官方 feed/API 策略。
 3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
@@ -1471,8 +1471,35 @@ Current local limits:
 6. Response Workspace Lite：tasks、artifacts、internal checkpoints。
 7. Award / Tabulation Tracking Lite。
 
-建议下一步：
+当时建议下一步：
 - 如果继续 crawler 主线，优先做 MI/SC/OH final gap resolution；如果要提升已抓数据质量，做 Attachment Download Archival；如果转用户工作流，做 Full Search Alerts UI。
+
+## Completed Phase: 50-State Crawler Final Gap Resolution
+
+本阶段完成：
+- MI / SC / OH 均已接入可返回非空结果的 beta dedicated live fetcher，50 个州现在都有 verified 或 beta dedicated adapter 可由 state runner 调度。
+- MI 默认 BidNet Michigan 页面返回 404，稳定公开入口改为 MITN open-bids 页面；SC 官方站点从本地环境超时，OH 官方旧入口 404 且 OhioBuys 公开流程进入 browser-check，因此 SC/OH 当前使用公共 BidNet open-bids fallback。
+- 新增 MI/SC/OH fixture-backed parser 测试，覆盖 source bid id、标题、发布日期/截止日期、详情 URL、州缩写和 dedupe key。
+- BidNet HTML 清洗现在会反转义实体，避免标题中保留 `&amp;` 这类页面编码内容。
+- `STATE_SOURCES`、live validation beta source list、前端 crawler metadata、admin state runner 能力展示均已同步 MI/SC/OH。
+
+验证：
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_dedicated_spiders_final_gap.py crawler/tests/test_state_sources.py crawler/tests/test_state_live_validation.py crawler/tests/test_state_live_cli.py::test_fetch_state_replays_state_fixture_html_for_live_fetcher crawler/tests/test_state_dedicated_spiders.py::test_selected_state_sources_are_registered_to_dedicated_fetchers`
+- `npm test -- src/lib/state-crawler-sources.test.ts`
+- `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source mi_state_procurement --source sc_state_procurement --source oh_state_procurement --limit 3 --timeout 30`
+- Migrated temp SQLite fetch-state smoke: MI/SC/OH each inserted 2 bids and wrote success crawler logs.
+
+当前还剩：
+1. Attachment Download Archival：crawler 侧真正下载附件和详情页文档，记录 checksum、size、content type、original URL、local path、download status。
+2. Official-source maturity：如果后续拿到稳定官方 feed/API，再把 MI/SC/OH 的公共 fallback 升级为官方源；不绕过 CAPTCHA 或访问控制。
+3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
+4. Production Worker Deployment Runbook：生产 credential 隔离、worker 定时部署、webhook endpoint 轮换和运维说明。
+5. Sourcing Partner + Quote Inquiry Lite：partner DB、quote request、quote comparison。
+6. Response Workspace Lite：tasks、artifacts、internal checkpoints。
+7. Award / Tabulation Tracking Lite。
+
+建议下一步：
+- 如果继续数据质量主线，优先做 Attachment Download Archival；如果转用户工作流，做 Full Search Alerts UI；如果准备上线，做 Production Worker Deployment Runbook。
 
 ## Status Update Template
 

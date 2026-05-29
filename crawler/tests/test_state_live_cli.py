@@ -288,10 +288,10 @@ def test_fetch_state_replays_il_bidbuy_fixture_html(tmp_path):
     }
 
 
-def test_fetch_state_replays_generic_state_fixture_html(tmp_path):
+def test_fetch_state_replays_state_fixture_html_for_live_fetcher(tmp_path):
     database = tmp_path / "apsi.sqlite"
     create_crawler_database(database)
-    fixture = Path(__file__).parent / "fixtures" / "generic_state_procurement.html"
+    fixture = Path(__file__).parent / "fixtures" / "bidnet_final_gap_open_bids.html"
 
     exit_code = main(
         [
@@ -301,7 +301,7 @@ def test_fetch_state_replays_generic_state_fixture_html(tmp_path):
             "--source",
             "mi_state_procurement",
             "--query",
-            "cabling",
+            "chip seal",
             "--limit",
             "5",
             "--fixture-html",
@@ -316,9 +316,9 @@ def test_fetch_state_replays_generic_state_fixture_html(tmp_path):
     ).fetchone()
     assert bid == (
         "Michigan State Procurement",
-        "AL-2026-001",
-        "mi_state_procurement:AL-2026-001",
-        "Data center cabling services",
+        "0000425930",
+        "mi_state_procurement:0000425930",
+        "ADVERTISEMENT FOR BID PROPOSALS FOR LABOR AND MATERIAL TO CHIP SEAL/FOGSEAL PARK",
         "MI",
     )
 

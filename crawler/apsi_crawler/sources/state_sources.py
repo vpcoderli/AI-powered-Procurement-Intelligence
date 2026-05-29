@@ -25,14 +25,12 @@ from apsi_crawler.spiders.nj_start import fetch_nj_start_opportunities
 from apsi_crawler.spiders.nm_spd import fetch_nm_spd_opportunities
 from apsi_crawler.spiders.nv_epro import fetch_nv_epro_opportunities
 from apsi_crawler.spiders.ny_contract_reporter import fetch_ny_contract_reporter_opportunities
-from apsi_crawler.spiders.oh_procure import fetch_oh_procure_opportunities
 from apsi_crawler.spiders.ok_esupplier import fetch_ok_esupplier_opportunities
 from apsi_crawler.spiders.or_oregonbuys import fetch_or_oregonbuys_opportunities
 from apsi_crawler.spiders.pa_emarketplace import fetch_pa_emarketplace_opportunities
 from apsi_crawler.spiders.ri_ocean_state_procures import (
     fetch_ri_ocean_state_procures_opportunities,
 )
-from apsi_crawler.spiders.sc_business_opportunities import fetch_sc_business_opportunities
 from apsi_crawler.spiders.sd_esm import fetch_sd_esm_opportunities
 from apsi_crawler.spiders.state_bidnet import (
     fetch_ak_bidnet_opportunities,
@@ -42,11 +40,14 @@ from apsi_crawler.spiders.state_bidnet import (
     fetch_ky_bidnet_opportunities,
     fetch_la_bidnet_opportunities,
     fetch_md_bidnet_opportunities,
+    fetch_mi_bidnet_opportunities,
     fetch_mn_bidnet_opportunities,
     fetch_nc_bidnet_opportunities,
     fetch_nd_bidnet_opportunities,
     fetch_ne_bidnet_opportunities,
     fetch_nh_bidnet_opportunities,
+    fetch_oh_bidnet_opportunities,
+    fetch_sc_bidnet_opportunities,
     fetch_vt_bidnet_opportunities,
     fetch_wi_bidnet_opportunities,
 )
@@ -126,9 +127,9 @@ SPECIAL_FETCHERS = {
     "nv_state_procurement": fetch_nv_epro_opportunities,
     "ma_state_procurement": fetch_ma_commbuys_opportunities,
     "nj_state_procurement": fetch_nj_start_opportunities,
-    "oh_state_procurement": fetch_oh_procure_opportunities,
+    "oh_state_procurement": fetch_oh_bidnet_opportunities,
     "pa_state_procurement": fetch_pa_emarketplace_opportunities,
-    "sc_state_procurement": fetch_sc_business_opportunities,
+    "sc_state_procurement": fetch_sc_bidnet_opportunities,
     "or_state_procurement": fetch_or_oregonbuys_opportunities,
     "va_state_procurement": fetch_va_eva_opportunities,
     "wa_state_procurement": fetch_wa_des_opportunities,
@@ -159,6 +160,7 @@ SPECIAL_FETCHERS = {
     "id_state_procurement": fetch_id_bidnet_opportunities,
     "la_state_procurement": fetch_la_bidnet_opportunities,
     "md_state_procurement": fetch_md_bidnet_opportunities,
+    "mi_state_procurement": fetch_mi_bidnet_opportunities,
     "ne_state_procurement": fetch_ne_bidnet_opportunities,
     "nc_state_procurement": fetch_nc_bidnet_opportunities,
     "nd_state_procurement": fetch_nd_bidnet_opportunities,
