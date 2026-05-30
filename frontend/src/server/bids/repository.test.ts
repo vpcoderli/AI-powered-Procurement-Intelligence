@@ -49,6 +49,19 @@ describe("bid repository", () => {
     );
   });
 
+  it("excludes suppressed bids from public list and detail reads", async () => {
+    testDb.db.update(bidRows)
+      .set({ displayStatus: "suppressed" })
+      .where(eq(bidRows.id, "1"))
+      .run();
+
+    const bids = await listBids(testDb.db, []);
+    const bid = await getBidByIdFromRepository(testDb.db, "1");
+
+    expect(bids.map((item) => item.id)).not.toContain("1");
+    expect(bid).toBeUndefined();
+  });
+
   it("keeps external attachment URLs unchanged and rewrites local ones to the download API", async () => {
     const timestamp = "2026-05-28T00:00:00.000Z";
     testDb.db.insert(bidAttachments)

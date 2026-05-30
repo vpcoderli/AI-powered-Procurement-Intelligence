@@ -48,6 +48,7 @@ import {
   updateAdminUser as updateAdminUserAccess,
   type AdminBidQaItem,
   type AdminBidQaResponse,
+  type AdminBidQaDisplayStatus,
   type AdminBidQaReviewStatus,
   type AdminCrawlerLog,
   type AdminDataSource,
@@ -99,6 +100,11 @@ type InvitationDraft = {
   tier: AccountTier;
 };
 
+type BidQaCorrectionDraft = {
+  title: string;
+  deadlineDate: string;
+};
+
 const USER_ROLES: UserRole[] = ["user", "admin", "operator", "support"];
 const ADMIN_CONSOLE_USER_ROLES: UserRole[] = ["admin", "operator", "support"];
 const ACCOUNT_TIERS: AccountTier[] = ["free", "pro", "business", "enterprise"];
@@ -120,6 +126,16 @@ const DEFAULT_INVITATION_DRAFT: InvitationDraft = {
 
 function reviewStatusLabel(t: (key: string) => string, status: AdminBidQaReviewStatus) {
   return t(`admin.reviewStatus_${status}`);
+}
+
+function displayStatusLabel(t: (key: string) => string, status: AdminBidQaDisplayStatus) {
+  return t(`admin.displayStatus_${status}`);
+}
+
+function displayStatusTone(status: AdminBidQaDisplayStatus) {
+  if (status === "published") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "suppressed") return "border-slate-300 bg-slate-100 text-slate-700";
+  return "border-amber-200 bg-amber-50 text-amber-700";
 }
 
 function stateCrawlerSourceIdFor(source: AdminDataSource) {
@@ -153,6 +169,22 @@ function expiresAtFromDateInput(value: string) {
   if (!Number.isFinite(date.getTime())) return null;
 
   return date.toISOString();
+}
+
+function deadlineFromDateInput(value: string) {
+  if (!value) return null;
+
+  const date = new Date(`${value}T23:59:59.000Z`);
+  if (!Number.isFinite(date.getTime())) return null;
+
+  return date.toISOString();
+}
+
+function bidQaCorrectionDraftFor(item: AdminBidQaItem, drafts: Record<string, BidQaCorrectionDraft>) {
+  return drafts[item.id] ?? {
+    title: item.title,
+    deadlineDate: formatDateInputValue(item.deadlineDate),
+  };
 }
 
 function featureOverrideFormValues(
@@ -334,6 +366,7 @@ export default function AdminPage() {
   const [pendingSourceId, setPendingSourceId] = useState<string | null>(null);
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [pendingBidQaId, setPendingBidQaId] = useState<string | null>(null);
+  const [correctionDrafts, setCorrectionDrafts] = useState<Record<string, BidQaCorrectionDraft>>({});
   const [userFilters, setUserFilters] = useState<UserFilters>({});
   const [userAuditFilters, setUserAuditFilters] = useState<UserAuditFilters>({});
   const [isRunning, setIsRunning] = useState(false);
@@ -488,6 +521,65 @@ export default function AdminPage() {
             ...current,
             bidQa,
           };
+        });
+        setRunMessage(t("admin.bidQaUpdated"));
+      })
+      .catch(() => {
+        setRunMessage(t("admin.bidQaUpdateFailed"));
+      })
+      .finally(() => {
+        setPendingBidQaId(null);
+      });
+  };
+
+  const updateBidQaDisplayStatus = (item: AdminBidQaItem, displayStatus: AdminBidQaDisplayStatus) => {
+    setPendingBidQaId(item.id);
+    updateAdminBidQaReview(item.id, { displayStatus })
+      .then(() => listAdminBidQaItems({ limit: 10 }))
+      .then((bidQa) => {
+        setState((current) => {
+          if (current.status !== "ready") return current;
+
+          return {
+            ...current,
+            bidQa,
+          };
+        });
+        setRunMessage(t("admin.bidQaUpdated"));
+      })
+      .catch(() => {
+        setRunMessage(t("admin.bidQaUpdateFailed"));
+      })
+      .finally(() => {
+        setPendingBidQaId(null);
+      });
+  };
+
+  const saveBidQaCorrections = (item: AdminBidQaItem) => {
+    const draft = bidQaCorrectionDraftFor(item, correctionDrafts);
+
+    setPendingBidQaId(item.id);
+    updateAdminBidQaReview(item.id, {
+      corrections: {
+        title: draft.title.trim(),
+        deadlineDate: deadlineFromDateInput(draft.deadlineDate),
+      },
+      note: "Admin QA correction",
+    })
+      .then(() => listAdminBidQaItems({ limit: 10 }))
+      .then((bidQa) => {
+        setState((current) => {
+          if (current.status !== "ready") return current;
+
+          return {
+            ...current,
+            bidQa,
+          };
+        });
+        setCorrectionDrafts((current) => {
+          const next = { ...current };
+          delete next[item.id];
+          return next;
         });
         setRunMessage(t("admin.bidQaUpdated"));
       })
@@ -845,7 +937,9 @@ export default function AdminPage() {
                 <TableHead>{t("admin.source")}</TableHead>
                 <TableHead>{t("admin.qualityScore")}</TableHead>
                 <TableHead>{t("admin.archiveIssues")}</TableHead>
+                <TableHead>{t("admin.correctionCount")}</TableHead>
                 <TableHead>{t("admin.status")}</TableHead>
+                <TableHead>{t("admin.displayStatus")}</TableHead>
                 <TableHead>{t("bid.deadline")}</TableHead>
                 {canRunOperations && <TableHead className="text-right">{t("admin.review")}</TableHead>}
               </TableRow>
@@ -853,80 +947,158 @@ export default function AdminPage() {
             <TableBody>
               {bidQaItems.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={canRunOperations ? 7 : 6} className="py-6 text-center text-sm text-slate-500">
+                  <TableCell colSpan={canRunOperations ? 9 : 8} className="py-6 text-center text-sm text-slate-500">
                     {t("admin.noBidQaItems")}
                   </TableCell>
                 </TableRow>
               )}
-              {bidQaItems.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell>
-                    <div className="max-w-80 truncate font-medium text-slate-900" title={item.title}>
-                      {item.title}
-                    </div>
-                    <div className="mt-1 flex flex-wrap gap-1">
-                      {item.qualityFlags.slice(0, 3).map((flag) => (
-                        <Badge key={flag} variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
-                          {flag}
-                        </Badge>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="font-medium text-slate-700">{item.source}</div>
-                    <div className="text-xs text-slate-500">{item.stateCode}</div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={qualityTone(item.qualityScore)}>
-                      {item.qualityScore}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      <Badge variant="outline" className={item.archiveIssueCount > 0 ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}>
-                        {item.archiveIssueCount}
-                      </Badge>
-                      {item.detailArchiveError && (
-                        <span className="max-w-44 truncate text-xs text-rose-700" title={item.detailArchiveError}>
-                          {compactErrorMessage(item.detailArchiveError)}
-                        </span>
+              {bidQaItems.map((item) => {
+                const correctionDraft = bidQaCorrectionDraftFor(item, correctionDrafts);
+                const isPending = pendingBidQaId === item.id;
+
+                return (
+                  <TableRow key={item.id}>
+                    <TableCell>
+                      <div className="max-w-80 truncate font-medium text-slate-900" title={item.title}>
+                        {item.title}
+                      </div>
+                      {canRunOperations && (
+                        <div className="mt-2 grid max-w-80 gap-2">
+                          <Input
+                            value={correctionDraft.title}
+                            onChange={(event) =>
+                              setCorrectionDrafts((current) => ({
+                                ...current,
+                                [item.id]: {
+                                  ...bidQaCorrectionDraftFor(item, current),
+                                  title: event.target.value,
+                                },
+                              }))
+                            }
+                            aria-label={`${t("admin.bid")} ${t("admin.saveCorrections")}`}
+                            className="h-8 rounded-lg border-slate-200 bg-white text-xs"
+                          />
+                          <Input
+                            type="date"
+                            value={correctionDraft.deadlineDate}
+                            onChange={(event) =>
+                              setCorrectionDrafts((current) => ({
+                                ...current,
+                                [item.id]: {
+                                  ...bidQaCorrectionDraftFor(item, current),
+                                  deadlineDate: event.target.value,
+                                },
+                              }))
+                            }
+                            aria-label={`${t("bid.deadline")} ${t("admin.saveCorrections")}`}
+                            className="h-8 rounded-lg border-slate-200 bg-white text-xs"
+                          />
+                        </div>
                       )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={reviewTone(item.adminReviewStatus)}>
-                      {reviewStatusLabel(t, item.adminReviewStatus)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{formatDate(item.deadlineDate)}</TableCell>
-                  {canRunOperations && (
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => updateBidQaStatus(item, "reviewed")}
-                          disabled={pendingBidQaId === item.id}
-                          className="h-8 rounded-lg border-slate-200 px-2"
-                        >
-                          {t("admin.markReviewed")}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => updateBidQaStatus(item, "needs_review")}
-                          disabled={pendingBidQaId === item.id}
-                          className="h-8 rounded-lg px-2 text-slate-600"
-                        >
-                          {t("admin.markNeedsReview")}
-                        </Button>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {item.qualityFlags.slice(0, 3).map((flag) => (
+                          <Badge key={flag} variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                            {flag}
+                          </Badge>
+                        ))}
                       </div>
                     </TableCell>
-                  )}
-                </TableRow>
-              ))}
+                    <TableCell>
+                      <div className="font-medium text-slate-700">{item.source}</div>
+                      <div className="text-xs text-slate-500">{item.stateCode}</div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={qualityTone(item.qualityScore)}>
+                        {item.qualityScore}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1">
+                        <Badge variant="outline" className={item.archiveIssueCount > 0 ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}>
+                          {item.archiveIssueCount}
+                        </Badge>
+                        {item.detailArchiveError && (
+                          <span className="max-w-44 truncate text-xs text-rose-700" title={item.detailArchiveError}>
+                            {compactErrorMessage(item.detailArchiveError)}
+                          </span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={item.correctionCount > 0 ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
+                        {item.correctionCount}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={reviewTone(item.adminReviewStatus)}>
+                        {reviewStatusLabel(t, item.adminReviewStatus)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className={displayStatusTone(item.displayStatus)}>
+                        {displayStatusLabel(t, item.displayStatus)}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{formatDate(item.deadlineDate)}</TableCell>
+                    {canRunOperations && (
+                      <TableCell className="text-right">
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => saveBidQaCorrections(item)}
+                            disabled={isPending || correctionDraft.title.trim().length === 0}
+                            className="h-8 rounded-lg border-slate-200 px-2"
+                          >
+                            {t("admin.saveCorrections")}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => updateBidQaDisplayStatus(item, "published")}
+                            disabled={isPending || item.displayStatus === "published"}
+                            className="h-8 rounded-lg border-slate-200 px-2"
+                          >
+                            {t("admin.publishBid")}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => updateBidQaDisplayStatus(item, "suppressed")}
+                            disabled={isPending || item.displayStatus === "suppressed"}
+                            className="h-8 rounded-lg px-2 text-slate-600"
+                          >
+                            {t("admin.suppressBid")}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => updateBidQaStatus(item, "reviewed")}
+                            disabled={isPending}
+                            className="h-8 rounded-lg border-slate-200 px-2"
+                          >
+                            {t("admin.markReviewed")}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => updateBidQaStatus(item, "needs_review")}
+                            disabled={isPending}
+                            className="h-8 rounded-lg px-2 text-slate-600"
+                          >
+                            {t("admin.markNeedsReview")}
+                          </Button>
+                        </div>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </section>

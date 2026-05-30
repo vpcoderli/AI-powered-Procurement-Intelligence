@@ -31,6 +31,13 @@ describe("admin page", () => {
     expect(page).toContain('t("admin.qualityScore")');
     expect(page).toContain('t("admin.archiveIssues")');
     expect(page).toContain('t("admin.markReviewed")');
+    expect(page).toContain('t("admin.displayStatus")');
+    expect(page).toContain('t("admin.publishBid")');
+    expect(page).toContain('t("admin.suppressBid")');
+    expect(page).toContain('t("admin.saveCorrections")');
+    expect(page).toContain("correctionDrafts");
+    expect(page).toContain("displayStatus");
+    expect(page).toContain("correctionCount");
     expect(page).toContain('t("admin.crawlerAdapter_dedicated")');
     expect(page).toContain('t("admin.crawlerMaturity_verified")');
     expect(page).toContain("source.crawlerCapabilities");

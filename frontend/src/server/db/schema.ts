@@ -336,6 +336,7 @@ export const bids = sqliteTable(
     adminReviewNote: text("admin_review_note"),
     adminReviewedAt: text("admin_reviewed_at"),
     adminReviewedBy: text("admin_reviewed_by"),
+    displayStatus: text("display_status").notNull().default("published"),
     detailArchiveStatus: text("detail_archive_status").notNull().default("not_archived"),
     detailArchivePath: text("detail_archive_path"),
     detailFetchedAt: text("detail_fetched_at"),
@@ -354,6 +355,26 @@ export const bids = sqliteTable(
     stateIdx: index("idx_bids_state_code").on(table.stateCode),
     issuerTypeIdx: index("idx_bids_issuer_type").on(table.issuerType),
     sourceIdx: index("idx_bids_source").on(table.source),
+  }),
+);
+
+export const bidFieldCorrections = sqliteTable(
+  "bid_field_corrections",
+  {
+    id: text("id").primaryKey(),
+    bidId: text("bid_id")
+      .notNull()
+      .references(() => bids.id, { onDelete: "cascade" }),
+    fieldName: text("field_name").notNull(),
+    originalValue: text("original_value"),
+    correctedValue: text("corrected_value"),
+    note: text("note"),
+    correctedBy: text("corrected_by").notNull(),
+    correctedAt: text("corrected_at").notNull(),
+  },
+  (table) => ({
+    bidIdx: index("idx_bid_field_corrections_bid_id").on(table.bidId),
+    fieldIdx: index("idx_bid_field_corrections_field_name").on(table.fieldName),
   }),
 );
 

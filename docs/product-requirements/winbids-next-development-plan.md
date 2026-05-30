@@ -4,7 +4,7 @@ Updated: 2026-05-30
 
 ## Recommendation
 
-Continue with **Bid Admin/Data QA Correction + Publish Controls** as the next implementation phase.
+Continue with **Admin QA Batch Filters + Correction History** as the next implementation phase.
 
 Commercial packaging and credits foundation is now in place:
 
@@ -13,21 +13,33 @@ Commercial packaging and credits foundation is now in place:
 - Credits have a foundation for included monthly credits, purchased credits, premium action costs, refunds, and future ledger events.
 - Settings Billing/Usage can surface plan names, Growth as planned, and credit summaries.
 
-The source registry, capability metadata, archive metadata columns, quality flag foundation, public attachment/detail downloader, and Admin Bid QA queue are now in place. The next risk is safe correction and publish control: operators can now find low-quality records, but they still need a controlled way to correct fields, preserve original crawler values, and suppress or publish records.
+The source registry, capability metadata, archive metadata columns, quality flag foundation, public attachment/detail downloader, Admin Bid QA queue, correction audit persistence, and publish/suppress controls are now in place. The next risk is operational scale: operators can fix one record, but they still need better filters, batch actions, visible correction history, and original-vs-corrected comparison.
 
 ## Last Completed Phase
+
+**Bid Admin/Data QA Correction + Publish Controls** made single-record QA correction actionable:
+
+Completed locally:
+
+- `bids` now stores `display_status` and public search/detail filters out suppressed records.
+- `bid_field_corrections` preserves original/corrected values, note, reviewer id, and correction timestamp.
+- Admin QA repository/API/client support review updates, display status updates, and limited field corrections.
+- `/admin` displays display status and correction counts, and lets admin/operator publish, suppress, or save title/deadline corrections.
+- Support remains read-only.
+
+## Previous Completed Phase
 
 **Admin Bid QA Console Thin Slice** made quality issues actionable from `/admin`:
 
 Completed locally:
 
-- `bids` now stores review note, reviewed timestamp, and reviewer id.
+- `bids` stores review note, reviewed timestamp, and reviewer id.
 - Admin QA repository computes quality score and summary counts from deadline, source confidence, quality flags, attachment archive status, and detail archive status.
 - `/api/admin/bids/qa` lists QA records with filters for query, state, review status, and archive status.
 - `/api/admin/bids/qa/[id]` lets admin/operator update review status; support remains read-only.
 - `/admin` displays the Bid Data QA queue with quality score, archive issue count, review status, and quick Reviewed / Needs review actions.
 
-## Previous Completed Phase
+## Earlier Completed Phase
 
 **Attachment Download Archival Downloader** turned state/SAM crawler output into evidence-ready bid records:
 
@@ -43,27 +55,24 @@ Completed locally:
 
 ## Phase Goal
 
-Give operations users safe correction and publish controls:
+Make Admin QA efficient for operational review:
 
-`QA Queue -> Field Correction -> Original Value Preservation -> Publish / Suppress -> Evidence Links`
+`QA Queue -> Rich Filters -> Batch Action -> Correction History -> Original/Corrected Comparison`
 
-This phase should preserve the current crawler, archival, and QA queue behavior while allowing limited correction and display-state decisions without losing original crawler evidence.
+This phase should preserve the current crawler, archival, correction, and publish/suppress behavior while making the QA queue usable when crawler volume grows across 50 states.
 
 ## In Scope
 
-- Correction workflow:
-  - edit limited normalized fields: title, deadline, issuer, amount, category, source URL, and contact fields
-  - preserve the original crawler value for every corrected field
-  - record correction note, reviewer id, and timestamp
-- Publish controls:
-  - add display status such as `pending_qa`, `published`, and `suppressed`
-  - keep public search/bid detail from showing suppressed records
-  - allow admin/operator to publish or suppress from the QA row
 - QA filters:
   - expand filtering by score range, source confidence, reviewer, reviewed date, and display status
+- Batch actions:
+  - allow selected rows to be marked reviewed, moved to needs review, published, or suppressed
+- Correction visibility:
+  - show original-vs-corrected values for corrected fields
+  - expose correction history per bid with note/reviewer/time
 - Guardrails:
-  - preserve original crawler values where corrections are applied
-  - keep ordinary search/bid detail pages stable while QA workflow is added
+  - keep support read-only
+  - keep ordinary search/bid detail pages stable while QA workflow expands
 
 ## Out Of Scope
 
@@ -80,6 +89,9 @@ This phase should preserve the current crawler, archival, and QA queue behavior 
 - Operator/admin users can correct limited fields without changing source ingestion code.
 - Corrections preserve original crawler values and audit metadata.
 - Suppressed records are hidden from ordinary bid search/detail surfaces.
+- Operator/admin users can filter by display status, score range, reviewer, reviewed date, and source confidence.
+- Operator/admin users can perform batch review/publish/suppress on selected rows.
+- Admin QA exposes correction history and original-vs-corrected values.
 - Search/bid detail still works for existing records.
 - `npm test`, `PYTHONPATH=crawler python3 -m pytest crawler/tests`, `npm run lint`, `npm run build`, `npm run db:migrate`, and `git diff --check` pass.
 
