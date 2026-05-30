@@ -27,12 +27,16 @@ export const FEATURE_API_COVERAGE: readonly FeatureApiCoverageEntry[] = [
     feature: "pursue_no_bid",
     methods: ["GET", "PATCH"],
   },
+  {
+    sourcePath: "../../app/api/intents/[id]/qa/route.ts",
+    feature: "bid.brief.full.generate",
+    methods: ["POST"],
+  },
 ] as const;
 
 export const UNIMPLEMENTED_PAID_FEATURE_API_COVERAGE = [
   "quote_workflow",
   "knowledge_station",
-  "bid.brief.full.generate",
   "compliance.manifest.generate",
   "readiness.review.run",
   "response.workspace.create",

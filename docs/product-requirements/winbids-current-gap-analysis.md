@@ -26,7 +26,7 @@ The local system has completed a useful Phase 1A pursuit loop:
 The remaining MVP work is not another search page. The largest remaining gaps are:
 
 1. P1 data pipeline hardening after 50-state beta coverage: Source Registry metadata, connector capability tracking, attachment/detail-page archival, checksum/content-type recording, data quality flags, and official-source upgrades where fallback sources are being used.
-2. Product 2 upgrade: citations, document-grounded Q&A, amendment/addenda awareness, evidence mapping, richer no-bid taxonomy, and decision history.
+2. Product 2 upgrade continuation: amendment/addenda awareness, richer evidence/artifact links, evidence mapping, richer no-bid taxonomy, and decision history.
 3. Product 0.9 Knowledge Station Lite: embedded workflow coaching and reusable knowledge capture.
 4. Product 3-5 lightweight MVP workflows: response workspace, artifacts, sourcing/quotes, submission completion, award/status learning.
 5. Production-grade AI and citation layer.
@@ -44,7 +44,7 @@ The remaining MVP work is not another search page. The largest remaining gaps ar
 | P1 Supplier profile | Partial/Good | `/profile`, API, validation, completion score | Upload-to-fill profile, richer certifications, past performance, warehouse, insurance/bonding |
 | P1 Match scoring | Partial/Good | Deterministic score and explanation | AI-assisted scoring, weighting config, source citations, category/code matching |
 | P2 Intent to Bid | Partial/Good | Intent creation/list/detail/status | More statuses, owner notes, timeline, decision history, no-bid reasons |
-| P2 Bid Understanding | Partial | Rule-generated brief/checklist/risk flags | Real AI extraction, citations, document-level requirements, confidence, open questions |
+| P2 Bid Understanding | Partial/Improving | Rule-generated brief/checklist/risk flags, persisted evidence citations, and deterministic document-grounded Q&A | Real AI extraction, document-level requirements, confidence, open questions, amendment awareness |
 | P2 Compliance manifest | Lite implemented | Compliance manifest model/API/UI exists | Required forms, registrations, addenda, certifications, deadlines, evidence mapping need richer extraction |
 | P2 Pursue/no-bid | Lite implemented | Structured recommendation, decision capture, and history exist | No-bid taxonomy and timeline can be expanded |
 | P3 Response workspace | Missing | No task/doc/quote workspace | Task board, artifact vault, reusable docs, internal checkpoints |
@@ -113,8 +113,8 @@ Out of scope:
 
 Scope:
 
-- Add source-grounded citations to bid brief/checklist/risk outputs.
-- Add document-grounded bid Q&A and amendment/addenda awareness.
+- Extend existing source-grounded citations and document-grounded Q&A with richer evidence/artifact links.
+- Add amendment/addenda awareness.
 - Expand compliance evidence mapping and no-bid reason taxonomy.
 - Preserve deterministic fallback behavior while preparing for production AI.
 
@@ -218,7 +218,7 @@ Current AI-like behavior is deterministic. This is acceptable for local MVP work
 
 1. P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata.
 2. Bid Admin/Data QA Console Expansion.
-3. Product 2 Qualification Upgrade: citations, Q&A, amendment awareness, evidence mapping, and no-bid taxonomy.
+3. Product 2 Qualification Upgrade continuation: amendment awareness, richer evidence mapping, and no-bid taxonomy.
 4. Knowledge Station Lite: embedded workflow coaching and reusable knowledge capture.
 5. Response Workspace Lite + Artifact Vault Lite.
 6. Supply Chain and Quote Lite.

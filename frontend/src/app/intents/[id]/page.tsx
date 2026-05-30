@@ -16,6 +16,7 @@ import {
   fetchPursuitDecisionBoard,
   fetchQualificationCitations,
   fetchSubmissionGuidance,
+  postQualificationQuestion,
   updateComplianceManifestItem,
   updateIntentStatus,
   updatePursuitDecision,
@@ -25,7 +26,10 @@ import { lockedFeatureMessage, useFeature } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import type { IntentDetail, IntentStatus } from "@/server/intents/types";
 import { INTENT_STATUSES } from "@/server/intents/types";
-import type { QualificationCitation } from "@/server/qualification/types";
+import type {
+  QualificationCitation,
+  QualificationQuestionResponse,
+} from "@/server/qualification/types";
 import type {
   ComplianceEvidenceStatus,
   ComplianceItemStatus,
@@ -210,9 +214,14 @@ export default function IntentWorkspacePage() {
   const [pursuitDecisionNotice, setPursuitDecisionNotice] = useState("");
   const [qualificationCitations, setQualificationCitations] = useState<QualificationCitation[]>([]);
   const [isCitationsLoading, setIsCitationsLoading] = useState(false);
+  const [qaQuestion, setQaQuestion] = useState("");
+  const [qaAnswer, setQaAnswer] = useState<QualificationQuestionResponse | null>(null);
+  const [isQaLoading, setIsQaLoading] = useState(false);
+  const [qaError, setQaError] = useState<Error | null>(null);
   const submissionGuidanceFeature = useFeature("submission_guidance");
   const complianceManifestFeature = useFeature("compliance_manifest");
   const pursuitDecisionFeature = useFeature("pursue_no_bid");
+  const qualificationQaFeature = useFeature("bid.brief.full.generate");
 
   const intentId = typeof params?.id === "string" ? params.id : Array.isArray(params?.id) ? params.id[0] : "";
 
@@ -260,6 +269,8 @@ export default function IntentWorkspacePage() {
       if (cancelled || !mountedRef.current) return;
 
       setQualificationCitations([]);
+      setQaAnswer(null);
+      setQaError(null);
 
       if (!intentId) {
         setIsCitationsLoading(false);
@@ -422,6 +433,35 @@ export default function IntentWorkspacePage() {
     if (!intent) return [];
     return Object.entries(intent.match.components);
   }, [intent]);
+
+  const handleAskEvidenceQuestion = async () => {
+    if (!intent || !qualificationQaFeature.enabled || isQaLoading) return;
+
+    const question = qaQuestion.trim();
+    if (!question) {
+      setQaError(new Error("Question is required"));
+      return;
+    }
+
+    setIsQaLoading(true);
+    setQaAnswer(null);
+    setQaError(null);
+
+    try {
+      const response = await postQualificationQuestion(intent.id, { question });
+      if (!mountedRef.current) return;
+
+      setQaAnswer(response);
+      setQaQuestion(response.question);
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setQaError(err instanceof Error ? err : new Error("Failed to answer question"));
+    } finally {
+      if (mountedRef.current) {
+        setIsQaLoading(false);
+      }
+    }
+  };
 
   const handleStatusChange = async (status: IntentStatus | null) => {
     if (!intent || !status || status === intent.status || isSaving) return;
@@ -797,6 +837,93 @@ export default function IntentWorkspacePage() {
                   );
                 })}
               </div>
+            )}
+          </div>
+          <div className={`mt-4 rounded-lg border p-4 ${
+            qualificationQaFeature.enabled ? "border-slate-200 bg-white" : "border-amber-200 bg-amber-50/60"
+          }`}>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <p className="text-sm font-black text-slate-950">{t("intentsPage.askEvidenceQuestion")}</p>
+                <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
+                  {qualificationQaFeature.enabled
+                    ? t("intentsPage.groundedByEvidence")
+                    : lockedFeatureMessage("bid.brief.full.generate")}
+                </p>
+              </div>
+              {qaAnswer ? (
+                <Badge variant="outline" className="w-fit border-emerald-200 bg-emerald-50 text-emerald-700">
+                  {t("intentsPage.groundedAnswer")}
+                </Badge>
+              ) : null}
+            </div>
+            {qualificationQaFeature.enabled ? (
+              <div className="mt-3 grid gap-3">
+                <textarea
+                  value={qaQuestion}
+                  onChange={(event) => setQaQuestion(event.target.value)}
+                  disabled={isQaLoading}
+                  placeholder={t("intentsPage.askEvidenceQuestionPlaceholder")}
+                  className="min-h-20 w-full resize-y rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 text-sm font-semibold leading-6 outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                />
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <Button
+                    onClick={() => void handleAskEvidenceQuestion()}
+                    disabled={isQaLoading || !qaQuestion.trim()}
+                    className="w-fit rounded-lg bg-slate-950 text-white hover:bg-slate-800"
+                  >
+                    {isQaLoading ? t("intentsPage.askingQuestion") : t("intentsPage.askQuestion")}
+                  </Button>
+                  <p className="min-h-5 text-sm font-semibold text-slate-500">
+                    {qaError ? t("intentsPage.qaError") : ""}
+                  </p>
+                </div>
+                {qaAnswer ? (
+                  <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 p-4">
+                    <p className="text-sm font-black text-slate-950">{t("intentsPage.groundedAnswer")}</p>
+                    <p className="mt-2 whitespace-pre-wrap break-words text-sm font-semibold leading-7 text-slate-700">
+                      {qaAnswer.answer}
+                    </p>
+                    <p className="mt-4 text-xs font-black uppercase text-slate-400">
+                      {t("intentsPage.answerEvidence")}
+                    </p>
+                    <div className="mt-2 grid gap-2">
+                      {qaAnswer.citations.map((citation) => {
+                        const evidenceUrl = safeEvidenceUrl(citation.url);
+
+                        return (
+                          <article key={citation.id} className="rounded-lg border border-emerald-100 bg-white p-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+                                {t(`intentsPage.citationSections.${citation.section}`)}
+                              </Badge>
+                              <span className="text-xs font-black text-slate-900">{citation.sourceLabel}</span>
+                            </div>
+                            <p className="mt-2 line-clamp-2 break-words text-xs font-semibold leading-5 text-slate-600">
+                              {citation.excerpt}
+                            </p>
+                            {evidenceUrl ? (
+                              <Link
+                                href={evidenceUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="mt-2 inline-flex items-center text-xs font-black text-blue-700 hover:text-blue-900"
+                              >
+                                <ExternalLink size={13} className="mr-1.5" aria-hidden="true" />
+                                {t("intentsPage.openEvidence")}
+                              </Link>
+                            ) : null}
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm font-semibold leading-6 text-amber-800">
+                {lockedFeatureMessage("bid.brief.full.generate")}
+              </p>
             )}
           </div>
         </article>

@@ -4,7 +4,7 @@ Updated: 2026-05-30
 
 ## Recommendation
 
-Continue with **Product 2 Document-Grounded Q&A v1** as the next implementation phase.
+Continue with **Search Alerts Notification History + Digest Delivery Verification** as the next implementation phase.
 
 Commercial packaging and credits foundation is now in place:
 
@@ -13,9 +13,21 @@ Commercial packaging and credits foundation is now in place:
 - Credits have a foundation for included monthly credits, purchased credits, premium action costs, refunds, and future ledger events.
 - Settings Billing/Usage can surface plan names, Growth as planned, and credit summaries.
 
-The source registry, capability metadata, archive metadata columns, quality flag foundation, public attachment/detail downloader, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA actions, rich QA filters, correction history, Search Alerts management UI, notification provider hardening, 50-state crawler guardrails, production billing/worker runbooks, and Qualification Evidence Citations v1 are now in place. The next risk is useful qualification interaction: users need constrained Q&A over known evidence before the Product 2 workflow can deepen.
+The source registry, capability metadata, archive metadata columns, quality flag foundation, public attachment/detail downloader, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA actions, rich QA filters, correction history, Search Alerts management UI, notification provider hardening, 50-state crawler guardrails, production billing/worker runbooks, Qualification Evidence Citations v1, and Document-Grounded Q&A v1 are now in place. The next risk is alert trust: users can configure alerts, but need visible delivery history and digest verification before alerts are credible for daily use.
 
 ## Last Completed Phase
+
+**Document-Grounded Q&A v1** made qualification interaction evidence-bound:
+
+Completed locally:
+
+- `/api/intents/[id]/qa` accepts a question and returns a deterministic answer grounded only in existing qualification citations.
+- The Q&A route is gated by the current Pro-level `bid.brief.full.generate` entitlement and reuses the existing principal/session pattern.
+- The Q&A service ranks citation excerpts against the question and falls back to closest available evidence instead of inventing unsupported claims.
+- The Intent detail page shows a compact Ask the Evidence panel with answer text and supporting citation links.
+- Existing Submission Guidance, Compliance Manifest, Pursue/No-Bid, and citations wire shapes remain unchanged.
+
+## Previous Completed Phase
 
 **Qualification Evidence Citations v1** made generated qualification outputs evidence-backed:
 
@@ -27,7 +39,7 @@ Completed locally:
 - The Intent detail page shows a compact evidence panel near the generated brief.
 - Existing Submission Guidance, Compliance Manifest, and Pursue/No-Bid wire shapes remain unchanged.
 
-## Previous Completed Phase
+## Earlier Completed Phase
 
 **Admin Bid QA Console Thin Slice** made quality issues actionable from `/admin`:
 
@@ -39,7 +51,7 @@ Completed locally:
 - `/api/admin/bids/qa/[id]` lets admin/operator update review status; support remains read-only.
 - `/admin` displays the Bid Data QA queue with quality score, archive issue count, review status, and quick Reviewed / Needs review actions.
 
-## Earlier Completed Phase
+## Earlier Completed Data Phase
 
 **Attachment Download Archival Downloader** turned state/SAM crawler output into evidence-ready bid records:
 
@@ -55,34 +67,35 @@ Completed locally:
 
 ## Phase Goal
 
-Make Product 2 qualification interaction grounded in known evidence:
+Make Search Alerts auditable and verifiable:
 
-`Intent Workspace -> Evidence Citations -> Fixed Question Set -> Grounded Answer -> Source Link`
+`Alert Config -> Matching Run -> Digest Candidate -> Notification Outbox -> Delivery History`
 
-This phase should use existing citations and bid metadata to answer a constrained set of common questions. It should not introduce open-ended chat or unsupported claims.
+This phase should let users and operators see whether alerts produced matches, whether digest notifications were queued/sent/failed, and why a delivery did not happen.
 
 ## In Scope
 
-- Add a small deterministic Q&A service for common questions: deadline, submission method, required documents, buyer/contact, risks, and attachments.
-- Each answer must include citation ids from existing evidence citations.
-- Expose a read-only Q&A API/client helper.
-- Show Q&A in Intent detail as a fixed list, not free-form chat.
-- Keep feature gates and existing output wire shapes stable.
+- Add per-alert delivery history derived from existing notification outbox/search alert matching data.
+- Add digest run summary fields or a lightweight read model for match count, queued count, sent count, failed count, and skipped preference state.
+- Show alert history in Settings under each alert.
+- Add admin/operator visibility for failed alert digest delivery where useful.
+- Keep existing alert CRUD wire shapes stable unless a versioned additive response field is safer.
 
 ## Out Of Scope
 
 - Login-only portal automation or CAPTCHA bypass.
-- Full OCR/document parsing.
-- Free-form LLM Q&A.
-- Amendment/addenda monitoring automation.
-- Production object storage migration.
-- Broad redesign of public search/bid detail pages.
+- Real production email provider credentials.
+- Bounce/complaint webhook handling.
+- New alert matching algorithms.
+- SMS/push notifications.
+- Broad redesign of Settings or Admin.
 
 ## Acceptance Criteria
 
 - Existing 50-state crawler, Admin QA, Search Alerts, notification, and billing tests remain green.
-- Q&A answers reference existing citation ids and do not fabricate source claims.
-- Intent detail can display Q&A without requiring a paid external AI provider.
+- Users can see recent delivery attempts and digest status for each alert.
+- Disabled notification preferences and paused alerts are visible as skipped, not silent.
+- Failed deliveries expose a safe reason and retry state.
 - Submission Guidance, Compliance Manifest, and Pursue/No-Bid continue to work with current gates.
 - Search/bid detail still works for existing records.
 - `npm test`, `PYTHONPATH=crawler python3 -m pytest crawler/tests`, `npm run lint`, `npm run build`, `npm run db:migrate`, and `git diff --check` pass.
@@ -90,12 +103,11 @@ This phase should use existing citations and bid metadata to answer a constraine
 ## Remaining Work After This Phase
 
 1. Product 2 Qualification Upgrade continuation: amendment refresh, richer evidence/artifact links, no-bid taxonomy, qualification risk explanations.
-2. Search Alerts notification history and digest delivery verification.
-3. 50-state crawler hardening continuation: promote beta adapters, add source quality monitoring, and document Source Registry / Connector Engine / Normalization QA responsibilities.
-4. Production deployment dry run for billing, notification, and crawler workers.
-5. UI/UE production polish: migrate the demo visual direction into real `/search`, `/bids/[id]`, `/admin`, and settings workflows.
-6. Knowledge Station Lite as Product 0.9 workflow coaching.
-7. Response Workspace Lite and Artifact Vault Lite.
-8. Supply Chain and Quote Lite.
-9. Deadline Notifications, Award Tracking, and Win/Loss Learning Lite.
-10. Real credit consumption, advanced usage metrics, enterprise custom rules, and production AI layer.
+2. 50-state crawler hardening continuation: promote beta adapters, add source quality monitoring, and document Source Registry / Connector Engine / Normalization QA responsibilities.
+3. Production deployment dry run for billing, notification, and crawler workers.
+4. UI/UE production polish: migrate the demo visual direction into real `/search`, `/bids/[id]`, `/admin`, and settings workflows.
+5. Knowledge Station Lite as Product 0.9 workflow coaching.
+6. Response Workspace Lite and Artifact Vault Lite.
+7. Supply Chain and Quote Lite.
+8. Deadline Notifications, Award Tracking, and Win/Loss Learning Lite.
+9. Real credit consumption, advanced usage metrics, enterprise custom rules, and production AI layer.

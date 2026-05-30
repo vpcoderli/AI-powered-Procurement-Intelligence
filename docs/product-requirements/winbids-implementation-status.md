@@ -28,7 +28,7 @@ This document is the working checklist for local development. Update it after ea
 | Requirement | Current state | Remaining work | Suggested next slice |
 |---|---|---|---|
 | 50-state crawler hardening | 50 州 registry 已覆盖；CA/TX/NY/FL/IL 为 verified dedicated，其他州为 beta dedicated；非空校验、fixture/live validation、空结果失败保护和 fallback 元数据已强化。 | 将 beta 州逐步提升为 verified；增加生产调度/监控；持续替换仍依赖 fallback 的州源。 | 每批 10-15 州做 live fixture 校验、source quality 报告和 adapter maturity 更新。 |
-| Product 2 Qualification Upgrade | Match score、AI-like brief、Submission Guidance、Compliance Manifest Lite、Pursue/No-Bid Lite 已有 deterministic 版本；Qualification Evidence Citations v1 已完成，Intent 级 citation snapshot、只读 API/client、Intent detail 证据面板已接入。 | Document-grounded Q&A、amendment/addenda awareness、evidence mapping、no-bid taxonomy、资格风险解释。 | 下一步做 document-grounded Q&A v1：只读问题/回答 API、答案引用现有 citations，不先做自由式聊天。 |
+| Product 2 Qualification Upgrade | Match score、AI-like brief、Submission Guidance、Compliance Manifest Lite、Pursue/No-Bid Lite 已有 deterministic 版本；Qualification Evidence Citations v1 与 Document-Grounded Q&A v1 已完成，Intent 级 citation snapshot、只读 citations API/client、Pro-gated Q&A API/client、Intent detail 证据面板和基于证据问答已接入。 | Amendment/addenda awareness、richer evidence/artifact links、no-bid taxonomy、资格风险解释。 | 下一步可做 Product 2 amendment/addenda refresh；若优先补 MVP 闭环，先做 Search Alerts notification history + digest delivery verification。 |
 | Search Alerts Full UI | Settings 已新增 Search Alerts 管理界面，支持 per-alert 创建/编辑/暂停恢复/删除，并复用现有 quota gate 与通知偏好。 | 通知历史、真实邮件 provider、digest 发送监控仍需补齐。 | 下一步做 alert notification history + digest delivery verification。 |
 | Production Billing / Worker Deployment Runbook | Stripe sandbox E2E verifier、checkout/webhook/portal/cancel foundation 已完成；production billing/worker runbook 已新增；notification worker 支持部署前检查。 | 真实生产凭证填充、生产 webhook 端点创建/轮换演练、进程管理器/cron 部署执行。 | 上线前按 runbook 做一次 staging/prod dry run。 |
 | Notification production hardening | outbox、file/console/http provider、retry worker、Admin 手动 delivery、provider env validation、生产投递 runbook 已有。 | 生产邮件 provider 真实账号、退信/投诉回流、模板版本治理、投递监控 dashboard。 | 接入选定邮件 provider 后补 bounce/complaint webhook。 |
@@ -87,7 +87,7 @@ This document is the working checklist for local development. Update it after ea
 | Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, 50-state state runner registry, CA/TX/NY/FL/IL verified dedicated adapters, the other 45 state sources covered by beta dedicated adapters, non-empty live validation guardrails, local attachment file serving for crawler-managed files, and public attachment/detail archival with status, size, content type, checksum, fetched timestamp, and failure notes. |
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
 | Intent to Bid | Add intent from bid detail, idempotent workspace-scoped intent creation, shared intent list/detail for organization members, status update. |
-| AI-like bid brief | Deterministic brief, key dates, initial checklist, risk flags, and persisted evidence citations shown in Intent detail. |
+| AI-like bid brief | Deterministic brief, key dates, initial checklist, risk flags, persisted evidence citations, and Pro-gated document-grounded Q&A shown in Intent detail. |
 | Submission Guidance | `submission_paths`, `submission_confirmations`, generator, service, current Pursuit Starter-gated API routes, API client, Intent workspace UI for generated guidance, editable submission fields, readiness/risk lists, and manual submission confirmation. |
 | Compliance Manifest Lite | `compliance_manifest_items`, generator, service, current Response Builder-gated API route, API client, and Intent workspace UI for requirement status, evidence status, and notes. |
 | Pursue / No-Bid Decision Lite | `pursuit_decisions`, recommendation generator, current Pursuit Starter-gated API route, API client, and Intent workspace UI for decision capture, reasons, notes, and history. |
@@ -183,13 +183,13 @@ The refreshed Drive material changes the product packaging language and introduc
 
 ## Recommended Next Phase
 
-Prioritize **Product 2 Document-Grounded Q&A v1** next.
+Prioritize **Search Alerts Notification History + Digest Delivery Verification** next.
 
 Reason:
 
-- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Response Builder-gated Compliance Manifest, Pursuit Starter-gated Pursue / No-Bid Decision, 50-state crawler registry, local attachment/detail archival, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA operations, Search Alerts UI, notification hardening, production billing/worker runbooks, and qualification evidence citations now exist.
+- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Response Builder-gated Compliance Manifest, Pursuit Starter-gated Pursue / No-Bid Decision, 50-state crawler registry, local attachment/detail archival, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA operations, Search Alerts UI, notification hardening, production billing/worker runbooks, qualification evidence citations, and document-grounded Q&A now exist.
 - The remaining account gap is not basic registration; it is production deployment hardening, production worker deployment runbook, real credit consumption/refund flows when premium actions exist, custom enterprise rules when concrete use cases appear, broader advanced usage metrics, and future compliance polish.
-- The next highest product risk is making qualification interaction useful without inventing unsupported answers: Q&A should be constrained to existing bid fields, archived details, attachments, and persisted citations.
+- The next highest MVP risk is closing the alert loop: users can create and edit search alerts, but still need visible delivery history and digest verification before alerting feels production-ready.
 
 ## Account / Role / Tier Direction
 
@@ -248,11 +248,11 @@ Current local limits use internal tier values. Product-facing labels should be s
 
 ## Suggested Implementation Order
 
-1. **Product 2 Document-Grounded Q&A v1**
-   - Add a deterministic/read-only Q&A surface that answers a small set of common pursuit questions using bid fields, attachments, and existing citations.
-
-2. **Search Alerts Notification History + Digest Verification**
+1. **Search Alerts Notification History + Digest Verification**
    - Add per-alert notification history and verify digest delivery against the production-ready notification provider layer.
+
+2. **Product 2 Qualification Upgrade Continuation**
+   - Add amendment/addenda refresh, richer evidence/artifact links, no-bid taxonomy, and qualification risk explanations.
 
 3. **Knowledge Station Lite**
    - Add embedded workflow coaching and reusable knowledge capture before deeper procurement intelligence.

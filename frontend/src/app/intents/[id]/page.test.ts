@@ -12,4 +12,15 @@ describe("intent detail page", () => {
     expect(page).toContain('t("intentsPage.evidenceCitations")');
     expect(page).toContain('t("intentsPage.noEvidenceCitations")');
   });
+
+  it("renders document-grounded Q&A controls", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("postQualificationQuestion");
+    expect(page).toContain("qaQuestion");
+    expect(page).toContain("qaAnswer");
+    expect(page).toContain('useFeature("bid.brief.full.generate")');
+    expect(page).toContain('t("intentsPage.askEvidenceQuestion")');
+    expect(page).toContain('t("intentsPage.groundedAnswer")');
+  });
 });

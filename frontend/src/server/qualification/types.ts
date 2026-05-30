@@ -32,3 +32,17 @@ export interface QualificationCitationsResponse {
   bidId: string;
   citations: QualificationCitation[];
 }
+
+export interface QualificationQuestionInput {
+  question: string;
+}
+
+export interface QualificationQuestionResponse {
+  intentId: string;
+  bidId: string;
+  question: string;
+  answer: string;
+  citations: QualificationCitation[];
+  grounded: true;
+  generatedAt: string;
+}
