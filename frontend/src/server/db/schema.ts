@@ -663,6 +663,27 @@ export const notificationOutbox = sqliteTable(
   }),
 );
 
+export const searchAlertDigestRuns = sqliteTable(
+  "search_alert_digest_runs",
+  {
+    id: text("id").primaryKey(),
+    alertId: text("alert_id").notNull(),
+    userId: text("user_id").notNull(),
+    frequency: text("frequency", { enum: ["daily", "weekly"] }).notNull(),
+    status: text("status", { enum: ["queued", "sent", "failed", "skipped"] }).notNull(),
+    matchCount: integer("match_count").notNull().default(0),
+    notificationId: text("notification_id"),
+    skippedReason: text("skipped_reason"),
+    failureReason: text("failure_reason"),
+    matchedBidIdsJson: text("matched_bid_ids_json").notNull().default("[]"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    alertCreatedIdx: index("idx_search_alert_digest_runs_alert_created").on(table.alertId, table.createdAt),
+    userCreatedIdx: index("idx_search_alert_digest_runs_user_created").on(table.userId, table.createdAt),
+  }),
+);
+
 export const dataSources = sqliteTable("data_sources", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),

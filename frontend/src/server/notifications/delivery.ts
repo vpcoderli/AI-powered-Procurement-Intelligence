@@ -1,12 +1,14 @@
+import { randomUUID } from "node:crypto";
 import type { AppDatabase } from "@/server/db/client";
 import { notificationOutbox } from "@/server/db/schema";
+import { recordSearchAlertDigestRun } from "@/server/search-alerts/digest-history";
 import {
   listDeliverableNotifications,
   markNotificationFailed,
   markNotificationSent,
 } from "./outbox-repository";
 import { createNotificationProvider } from "./provider";
-import type { NotificationProvider } from "./types";
+import type { NotificationOutboxRow, NotificationProvider } from "./types";
 
 export interface NotificationDeliveryOptions {
   now?: string;
@@ -19,6 +21,27 @@ export interface NotificationDeliveryResult {
   sent: number;
   failed: number;
   skipped: number;
+}
+
+function recordDigestRunFromNotification(
+  db: AppDatabase,
+  notification: NotificationOutboxRow,
+  input: { status: "sent" | "failed"; now: string; failureReason?: string | null },
+) {
+  if (notification.matchedBidIds.length === 0) return;
+
+  recordSearchAlertDigestRun(db, {
+    id: `digest_run_${randomUUID()}`,
+    alertId: notification.alertId,
+    userId: notification.userId,
+    frequency: notification.frequency,
+    status: input.status,
+    matchCount: notification.matchedBidIds.length,
+    notificationId: notification.id,
+    failureReason: input.failureReason ?? null,
+    matchedBidIds: notification.matchedBidIds,
+    createdAt: input.now,
+  });
 }
 
 export async function deliverPendingNotifications(
@@ -60,18 +83,30 @@ export async function deliverPendingNotifications(
 
       if (sendResult.ok) {
         markNotificationSent(db, notification.id, now);
+        recordDigestRunFromNotification(db, notification, { status: "sent", now });
         result.sent += 1;
       } else {
         markNotificationFailed(db, notification.id, sendResult.error, now);
+        recordDigestRunFromNotification(db, notification, {
+          status: "failed",
+          now,
+          failureReason: sendResult.error,
+        });
         result.failed += 1;
       }
     } catch (error) {
+      const failureReason = error instanceof Error ? error.message : "Notification provider threw an unknown error";
       markNotificationFailed(
         db,
         notification.id,
-        error instanceof Error ? error.message : "Notification provider threw an unknown error",
+        failureReason,
         now,
       );
+      recordDigestRunFromNotification(db, notification, {
+        status: "failed",
+        now,
+        failureReason,
+      });
       result.failed += 1;
     }
   }

@@ -4,7 +4,7 @@ Updated: 2026-05-30
 
 ## Recommendation
 
-Continue with **Search Alerts Notification History + Digest Delivery Verification** as the next implementation phase.
+Continue with **Product 2 Amendment/Addenda Awareness v1** as the next implementation phase.
 
 Commercial packaging and credits foundation is now in place:
 
@@ -13,9 +13,21 @@ Commercial packaging and credits foundation is now in place:
 - Credits have a foundation for included monthly credits, purchased credits, premium action costs, refunds, and future ledger events.
 - Settings Billing/Usage can surface plan names, Growth as planned, and credit summaries.
 
-The source registry, capability metadata, archive metadata columns, quality flag foundation, public attachment/detail downloader, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA actions, rich QA filters, correction history, Search Alerts management UI, notification provider hardening, 50-state crawler guardrails, production billing/worker runbooks, Qualification Evidence Citations v1, and Document-Grounded Q&A v1 are now in place. The next risk is alert trust: users can configure alerts, but need visible delivery history and digest verification before alerts are credible for daily use.
+The source registry, capability metadata, archive metadata columns, quality flag foundation, public attachment/detail downloader, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA actions, rich QA filters, correction history, Search Alerts management UI and delivery history, notification provider hardening, 50-state crawler guardrails, production billing/worker runbooks, Qualification Evidence Citations v1, and Document-Grounded Q&A v1 are now in place. The next risk is qualification freshness: users can inspect evidence and ask questions, but addenda/amendments can change deadlines, requirements, and pursuit decisions after an intent has already been created.
 
 ## Last Completed Phase
+
+**Search Alerts Notification History + Digest Delivery Verification** made alerting auditable:
+
+Completed locally:
+
+- `search_alert_digest_runs` records sent, failed, duplicate, missing-recipient, unsupported-channel, and notification-preference skipped digest outcomes.
+- Search alert list responses hydrate recent digest history without changing existing CRUD request shapes.
+- The notification service records delivery history while sending/skipping matched alert notifications, including provider failures and worker retry outcomes.
+- Settings shows each alert's latest digest status, match count, failure/skipped reason, and recent history.
+- Existing quota gates, alert preferences, notification outbox, and API shapes remain compatible.
+
+## Previous Completed Phase
 
 **Document-Grounded Q&A v1** made qualification interaction evidence-bound:
 
@@ -27,7 +39,7 @@ Completed locally:
 - The Intent detail page shows a compact Ask the Evidence panel with answer text and supporting citation links.
 - Existing Submission Guidance, Compliance Manifest, Pursue/No-Bid, and citations wire shapes remain unchanged.
 
-## Previous Completed Phase
+## Earlier Completed Phase
 
 **Qualification Evidence Citations v1** made generated qualification outputs evidence-backed:
 
@@ -67,42 +79,41 @@ Completed locally:
 
 ## Phase Goal
 
-Make Search Alerts auditable and verifiable:
+Make Product 2 qualification safer when bid documents change:
 
-`Alert Config -> Matching Run -> Digest Candidate -> Notification Outbox -> Delivery History`
+`Bid Update/Addendum -> Intent Evidence Refresh -> Qualification Snapshot -> User Review`
 
-This phase should let users and operators see whether alerts produced matches, whether digest notifications were queued/sent/failed, and why a delivery did not happen.
+This phase should let an intent detect amendment/addenda signals, surface whether qualification artifacts may be stale, and give the user a deterministic refresh path for the bid brief, evidence citations, Q&A context, guidance, compliance, and pursue/no-bid decision.
 
 ## In Scope
 
-- Add per-alert delivery history derived from existing notification outbox/search alert matching data.
-- Add digest run summary fields or a lightweight read model for match count, queued count, sent count, failed count, and skipped preference state.
-- Show alert history in Settings under each alert.
-- Add admin/operator visibility for failed alert digest delivery where useful.
-- Keep existing alert CRUD wire shapes stable unless a versioned additive response field is safer.
+- Add bid/intent metadata to identify amendment or addenda related evidence from title, description, attachments, or source detail text.
+- Add an intent-level qualification freshness flag and last refreshed timestamp.
+- Add a deterministic refresh service that regenerates qualification citations and existing Product 2 derived artifacts from current bid evidence.
+- Show stale/current amendment awareness state in Intent detail.
+- Keep existing Submission Guidance, Compliance Manifest, Pursue/No-Bid, citations, and Q&A APIs additive-compatible.
 
 ## Out Of Scope
 
 - Login-only portal automation or CAPTCHA bypass.
 - Real production email provider credentials.
-- Bounce/complaint webhook handling.
-- New alert matching algorithms.
-- SMS/push notifications.
-- Broad redesign of Settings or Admin.
+- Full legal/compliance interpretation of amendment text.
+- LLM-based document extraction.
+- New document downloader logic beyond using already archived bid evidence.
+- Broad redesign of Intent detail.
 
 ## Acceptance Criteria
 
 - Existing 50-state crawler, Admin QA, Search Alerts, notification, and billing tests remain green.
-- Users can see recent delivery attempts and digest status for each alert.
-- Disabled notification preferences and paused alerts are visible as skipped, not silent.
-- Failed deliveries expose a safe reason and retry state.
-- Submission Guidance, Compliance Manifest, and Pursue/No-Bid continue to work with current gates.
-- Search/bid detail still works for existing records.
+- Users can see whether an intent's qualification evidence is current or may be stale because amendment/addenda signals exist.
+- Refreshing qualification evidence updates the citation snapshot and downstream deterministic Product 2 artifacts without losing user notes/history.
+- Q&A uses the refreshed citation snapshot.
+- Existing Submission Guidance, Compliance Manifest, Pursue/No-Bid, Search Alerts, and Search/bid detail still work for existing records.
 - `npm test`, `PYTHONPATH=crawler python3 -m pytest crawler/tests`, `npm run lint`, `npm run build`, `npm run db:migrate`, and `git diff --check` pass.
 
 ## Remaining Work After This Phase
 
-1. Product 2 Qualification Upgrade continuation: amendment refresh, richer evidence/artifact links, no-bid taxonomy, qualification risk explanations.
+1. Product 2 Qualification Upgrade continuation: richer evidence/artifact links, no-bid taxonomy, and qualification risk explanations.
 2. 50-state crawler hardening continuation: promote beta adapters, add source quality monitoring, and document Source Registry / Connector Engine / Normalization QA responsibilities.
 3. Production deployment dry run for billing, notification, and crawler workers.
 4. UI/UE production polish: migrate the demo visual direction into real `/search`, `/bids/[id]`, `/admin`, and settings workflows.

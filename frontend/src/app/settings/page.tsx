@@ -70,7 +70,7 @@ import {
 import { canUseFeature, lockedFeatureMessage } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { ACCOUNT_TIER_LABELS, type AccountTier, type FeatureKey, type ProductPlanKey } from "@/server/auth/entitlements";
-import type { AlertFrequency, SearchAlert } from "@/server/search-alerts/types";
+import type { AlertFrequency, SearchAlert, SearchAlertDigestRun } from "@/server/search-alerts/types";
 
 const FEATURE_ACCESS_ITEMS: Array<{ key: FeatureKey; label: string }> = [
   { key: "bid_search", label: "Bid search" },
@@ -333,6 +333,49 @@ export default function SettingsPage() {
       : t("settings.searchAlertAllStates");
 
     return `${keywords} · ${states}`;
+  }
+
+  function searchAlertDigestStatusLabel(status: SearchAlertDigestRun["status"]) {
+    if (status === "queued") return t("settings.searchAlertDigestStatus_queued");
+    if (status === "sent") return t("settings.searchAlertDigestStatus_sent");
+    if (status === "failed") return t("settings.searchAlertDigestStatus_failed");
+
+    return t("settings.searchAlertDigestStatus_skipped");
+  }
+
+  function searchAlertDigestStatusClassName(status: SearchAlertDigestRun["status"]) {
+    if (status === "sent") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    if (status === "failed") return "border-red-200 bg-red-50 text-red-700";
+    if (status === "skipped") return "border-amber-200 bg-amber-50 text-amber-700";
+
+    return "border-sky-200 bg-sky-50 text-sky-700";
+  }
+
+  function searchAlertDigestSkippedLabel(reason: SearchAlertDigestRun["skippedReason"]) {
+    if (reason === "unsupported_channel") return t("settings.searchAlertDigestSkipped_unsupported_channel");
+    if (reason === "missing_recipient") return t("settings.searchAlertDigestSkipped_missing_recipient");
+    if (reason === "notifications_disabled") return t("settings.searchAlertDigestSkipped_notifications_disabled");
+    if (reason === "duplicate_digest") return t("settings.searchAlertDigestSkipped_duplicate_digest");
+
+    return t("settings.searchAlertDigestSkipped_unknown");
+  }
+
+  function searchAlertDigestDetail(run: SearchAlertDigestRun) {
+    if (run.status === "failed") {
+      return t("settings.searchAlertDigestFailureReason").replace(
+        "{reason}",
+        run.failureReason ?? t("settings.searchAlertDigestFailedUnknown"),
+      );
+    }
+    if (run.status === "skipped") {
+      return searchAlertDigestSkippedLabel(run.skippedReason);
+    }
+
+    return t("settings.searchAlertDigestMatched").replace("{count}", String(run.matchCount));
+  }
+
+  function searchAlertDigestDateLabel(run: SearchAlertDigestRun) {
+    return t("settings.searchAlertDigestAt").replace("{date}", searchAlertDateLabel(run.createdAt));
   }
 
   function searchAlertDraftFrom(alert: SearchAlert): SearchAlertDraft {
@@ -1542,67 +1585,111 @@ export default function SettingsPage() {
                   </p>
                 )}
                 <div className="space-y-3">
-                  {(searchAlertsData ?? []).map((alert) => (
-                    <div
-                      key={alert.id}
-                      className="flex flex-col gap-4 rounded-lg border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm font-semibold text-slate-900">{alert.name}</p>
-                          <Badge
-                            variant="outline"
-                            className={`w-fit ${
-                              alert.isEnabled
-                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                                : "border-slate-200 bg-slate-50 text-slate-600"
-                            }`}
-                          >
-                            {alert.isEnabled ? t("settings.searchAlertActive") : t("settings.searchAlertPaused")}
-                          </Badge>
-                          <Badge variant="outline" className="w-fit border-slate-200 bg-slate-50 text-slate-700">
-                            {alert.frequency === "weekly" ? t("settings.weeklySummary") : t("settings.dailyDigest")}
-                          </Badge>
+                  {(searchAlertsData ?? []).map((alert) => {
+                    const digestHistory = alert.digestHistory ?? [];
+                    const latestDigest = digestHistory[0];
+                    const previousDigestRuns = digestHistory.slice(1);
+
+                    return (
+                      <div
+                        key={alert.id}
+                        className="flex flex-col gap-4 rounded-lg border border-slate-200 bg-white p-4 sm:flex-row sm:items-start sm:justify-between"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-semibold text-slate-900">{alert.name}</p>
+                            <Badge
+                              variant="outline"
+                              className={`w-fit ${
+                                alert.isEnabled
+                                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                  : "border-slate-200 bg-slate-50 text-slate-600"
+                              }`}
+                            >
+                              {alert.isEnabled ? t("settings.searchAlertActive") : t("settings.searchAlertPaused")}
+                            </Badge>
+                            <Badge variant="outline" className="w-fit border-slate-200 bg-slate-50 text-slate-700">
+                              {alert.frequency === "weekly" ? t("settings.weeklySummary") : t("settings.dailyDigest")}
+                            </Badge>
+                          </div>
+                          <p className="mt-1 text-sm font-medium text-slate-600">{searchAlertQuerySummary(alert)}</p>
+                          <p className="mt-1 text-xs font-medium text-slate-500">
+                            {t("settings.searchAlertLastMatched").replace(
+                              "{date}",
+                              searchAlertDateLabel(alert.lastMatchedAt),
+                            )}
+                          </p>
+                          <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-xs font-semibold uppercase text-slate-500">
+                                {t("settings.searchAlertDeliveryHistory")}
+                              </p>
+                              {latestDigest && (
+                                <Badge
+                                  variant="outline"
+                                  className={`w-fit ${searchAlertDigestStatusClassName(latestDigest.status)}`}
+                                >
+                                  {searchAlertDigestStatusLabel(latestDigest.status)}
+                                </Badge>
+                              )}
+                            </div>
+                            {latestDigest ? (
+                              <div className="mt-2 space-y-1 text-xs font-medium text-slate-600">
+                                <p>{searchAlertDigestDetail(latestDigest)}</p>
+                                <p>{searchAlertDigestDateLabel(latestDigest)}</p>
+                                {previousDigestRuns.length > 0 && (
+                                  <div className="space-y-1 pt-1">
+                                    {previousDigestRuns.map((run) => (
+                                      <p key={run.id} className="text-slate-500">
+                                        {searchAlertDigestStatusLabel(run.status)}
+                                        {" · "}
+                                        {searchAlertDigestDetail(run)}
+                                        {" · "}
+                                        {searchAlertDateLabel(run.createdAt)}
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <p className="mt-2 text-xs font-medium text-slate-500">
+                                {t("settings.searchAlertNoDeliveryHistory")}
+                              </p>
+                            )}
+                          </div>
                         </div>
-                        <p className="mt-1 text-sm font-medium text-slate-600">{searchAlertQuerySummary(alert)}</p>
-                        <p className="mt-1 text-xs font-medium text-slate-500">
-                          {t("settings.searchAlertLastMatched").replace(
-                            "{date}",
-                            searchAlertDateLabel(alert.lastMatchedAt),
-                          )}
-                        </p>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <Button
+                            variant="outline"
+                            onClick={() => setSearchAlertDraft(searchAlertDraftFrom(alert))}
+                            disabled={searchAlertActionId === alert.id}
+                            className="h-9 border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          >
+                            <Pencil className="mr-2 h-4 w-4" />
+                            {t("settings.editSearchAlert")}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => handleSearchAlertToggle(alert)}
+                            disabled={searchAlertActionId === alert.id}
+                            className="h-9 border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          >
+                            {alert.isEnabled ? <Pause className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
+                            {alert.isEnabled ? t("settings.pauseSearchAlert") : t("settings.resumeSearchAlert")}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => handleSearchAlertDelete(alert)}
+                            disabled={searchAlertActionId === alert.id}
+                            className="h-9 border-red-200 px-3 text-sm font-medium text-red-700 hover:bg-red-50 hover:text-red-800"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            {t("settings.deleteSearchAlert")}
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                        <Button
-                          variant="outline"
-                          onClick={() => setSearchAlertDraft(searchAlertDraftFrom(alert))}
-                          disabled={searchAlertActionId === alert.id}
-                          className="h-9 border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                        >
-                          <Pencil className="mr-2 h-4 w-4" />
-                          {t("settings.editSearchAlert")}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          onClick={() => handleSearchAlertToggle(alert)}
-                          disabled={searchAlertActionId === alert.id}
-                          className="h-9 border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
-                        >
-                          {alert.isEnabled ? <Pause className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
-                          {alert.isEnabled ? t("settings.pauseSearchAlert") : t("settings.resumeSearchAlert")}
-                        </Button>
-                        <Button
-                          variant="outline"
-                          onClick={() => handleSearchAlertDelete(alert)}
-                          disabled={searchAlertActionId === alert.id}
-                          className="h-9 border-red-200 px-3 text-sm font-medium text-red-700 hover:bg-red-50 hover:text-red-800"
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          {t("settings.deleteSearchAlert")}
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>

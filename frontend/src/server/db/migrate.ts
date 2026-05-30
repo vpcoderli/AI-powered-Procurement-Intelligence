@@ -415,6 +415,20 @@ export function runMigrations(db: AppDatabase) {
       sent_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS search_alert_digest_runs (
+      id TEXT PRIMARY KEY,
+      alert_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      frequency TEXT NOT NULL,
+      status TEXT NOT NULL,
+      match_count INTEGER NOT NULL DEFAULT 0,
+      notification_id TEXT,
+      skipped_reason TEXT,
+      failure_reason TEXT,
+      matched_bid_ids_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS data_sources (
       id TEXT PRIMARY KEY,
       label TEXT NOT NULL,
@@ -503,6 +517,8 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_notification_outbox_status_created ON notification_outbox(status, created_at);
     CREATE INDEX IF NOT EXISTS idx_notification_outbox_alert_id ON notification_outbox(alert_id);
     CREATE INDEX IF NOT EXISTS idx_notification_outbox_user_id ON notification_outbox(user_id);
+    CREATE INDEX IF NOT EXISTS idx_search_alert_digest_runs_alert_created ON search_alert_digest_runs(alert_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_search_alert_digest_runs_user_created ON search_alert_digest_runs(user_id, created_at);
   `);
 
   const userColumns = new Set(

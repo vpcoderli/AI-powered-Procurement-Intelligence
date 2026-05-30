@@ -172,7 +172,7 @@ Recommended near-term APIs still pending:
 
 - Plan/catalog API copy updates for product-facing plan labels and credit language.
 - Credit usage summary API if the current usage API cannot carry all needed display fields.
-- Search alert management UI-backed update endpoints if current API shape is insufficient.
+- Product 2 amendment/addenda freshness and refresh APIs.
 - Source capability/admin notes APIs.
 - Attachment/archive status APIs.
 - Sourcing partner and quote request APIs.
@@ -190,7 +190,7 @@ Recommended near-term UI additions still pending:
 
 - Settings Billing and Usage plan-label reconciliation.
 - Contextual paywall and locked-state copy updates for the latest plan names.
-- Full Search Alerts management UI.
+- Product 2 amendment/addenda freshness controls in Intent detail.
 - Source capability/coverage status in Admin.
 - Attachment/archive/data-quality status in Admin.
 - Response Workspace task/artifact sections.
@@ -210,7 +210,7 @@ Current AI-like behavior is deterministic. This is acceptable for local MVP work
 ## Operational Gaps
 
 - Crawler data quality needs continued expansion after 50-state beta coverage, especially attachment archival and official-source maturity.
-- Notification outbox exists, but production delivery behavior needs configuration.
+- Notification outbox and Search Alert delivery history exist, but production email provider credentials, bounce/complaint webhooks, and operations dashboards still need configuration.
 - Admin data QA should track correction status and publish confidence.
 - Local extracted Drive docs are temporary; this summary should be the source for local work unless docs are refreshed.
 
@@ -222,7 +222,7 @@ Current AI-like behavior is deterministic. This is acceptable for local MVP work
 4. Knowledge Station Lite: embedded workflow coaching and reusable knowledge capture.
 5. Response Workspace Lite + Artifact Vault Lite.
 6. Supply Chain and Quote Lite.
-7. Deadline Notifications and Search Alerts UI.
+7. Deadline Notifications and production Search Alerts provider monitoring.
 8. Submission Guidance Completion.
 9. Award Tracking and Learning Lite.
 10. Product 6 procurement intelligence data capture only.

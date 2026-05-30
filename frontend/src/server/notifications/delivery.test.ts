@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { notificationOutbox } from "@/server/db/schema";
+import { notificationOutbox, searchAlertDigestRuns } from "@/server/db/schema";
 import { createTestDatabase } from "@/server/db/test-utils";
 import { enqueueNotification, markNotificationFailed } from "./outbox-repository";
 import { deliverPendingNotifications } from "./delivery";
@@ -96,6 +96,46 @@ describe("notification delivery service", () => {
           lastError: "Provider unavailable",
         },
       ]);
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("records search alert digest history when a retry succeeds", async () => {
+    const testDb = await createTestDatabase();
+
+    try {
+      enqueueNotification(testDb.db, {
+        ...input,
+        id: "notification_alert_1",
+        alertId: "alert_1",
+        dedupeKey: "alert_1:2026-05-28:email",
+        subject: "Cloud bids",
+        bodyText: "Matched bids",
+        matchedBidIds: ["bid_1", "bid_2"],
+      });
+      markNotificationFailed(
+        testDb.db,
+        "notification_alert_1",
+        "Provider unavailable",
+        "2026-05-28T00:10:00.000Z",
+      );
+      const provider = { send: vi.fn().mockResolvedValue({ ok: true, providerMessageId: "mail_1" }) };
+
+      const result = await deliverPendingNotifications(testDb.db, provider, {
+        now: "2026-05-28T01:00:00.000Z",
+      });
+
+      expect(result).toEqual({ attempted: 1, sent: 1, failed: 0, skipped: 0 });
+      expect(testDb.db.select().from(searchAlertDigestRuns).get()).toMatchObject({
+        alertId: "alert_1",
+        userId: "user_1",
+        status: "sent",
+        matchCount: 2,
+        notificationId: "notification_alert_1",
+        matchedBidIdsJson: JSON.stringify(["bid_1", "bid_2"]),
+        createdAt: "2026-05-28T01:00:00.000Z",
+      });
     } finally {
       await testDb.cleanup();
     }

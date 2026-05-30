@@ -14,6 +14,7 @@ import {
   organizationMemberships,
   organizations,
   passwordResetTokens,
+  searchAlertDigestRuns,
   userNotificationPreferences,
   users,
   workspaceInvitations,
@@ -128,6 +129,22 @@ describe("database schema", () => {
         })
         .run(),
     ).toThrow();
+
+    expect(() =>
+      db!.insert(searchAlertDigestRuns)
+        .values({
+          id: "digest_run_1",
+          alertId: "alert_1",
+          userId: "user_1",
+          frequency: "daily",
+          status: "sent",
+          matchCount: 1,
+          notificationId: "notification_1",
+          matchedBidIdsJson: JSON.stringify(["bid_1"]),
+          createdAt: "2026-05-19T00:00:00.000Z",
+        })
+        .run(),
+    ).not.toThrow();
   });
 
   it("migrates legacy subscription events before creating provider event index", async () => {

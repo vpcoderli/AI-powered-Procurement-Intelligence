@@ -1,6 +1,40 @@
 import type { BidQuery } from "@/server/bids/types";
 
 export type AlertFrequency = "daily" | "weekly";
+export type SearchAlertDigestStatus = "queued" | "sent" | "failed" | "skipped";
+export type SearchAlertDigestSkippedReason =
+  | "unsupported_channel"
+  | "missing_recipient"
+  | "notifications_disabled"
+  | "duplicate_digest";
+
+export interface SearchAlertDigestRun {
+  id: string;
+  alertId: string;
+  userId: string;
+  frequency: AlertFrequency;
+  status: SearchAlertDigestStatus;
+  matchCount: number;
+  notificationId: string | null;
+  skippedReason: SearchAlertDigestSkippedReason | null;
+  failureReason: string | null;
+  matchedBidIds: string[];
+  createdAt: string;
+}
+
+export interface SearchAlertDigestRunInput {
+  id: string;
+  alertId: string;
+  userId: string;
+  frequency: AlertFrequency;
+  status: SearchAlertDigestStatus;
+  matchCount: number;
+  notificationId?: string | null;
+  skippedReason?: SearchAlertDigestSkippedReason | null;
+  failureReason?: string | null;
+  matchedBidIds?: string[];
+  createdAt: string;
+}
 
 export interface SearchAlert {
   id: string;
@@ -11,6 +45,7 @@ export interface SearchAlert {
   isEnabled: boolean;
   lastMatchedAt: string | null;
   lastNotifiedAt: string | null;
+  digestHistory?: SearchAlertDigestRun[];
   createdAt: string;
   updatedAt: string;
 }
