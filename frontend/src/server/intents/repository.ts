@@ -121,3 +121,18 @@ export function updateIntentRowStatusForUsers(
 
   return findIntentByUsersAndId(db, userIds, intentId);
 }
+
+export function updateIntentEvidenceCitationsForUsers(
+  db: AppDatabase,
+  userIds: string[],
+  intentId: string,
+  citationsJson: string,
+  timestamp: string,
+) {
+  db.update(intentToBid)
+    .set({ evidenceCitationsJson: citationsJson, updatedAt: timestamp })
+    .where(and(inArray(intentToBid.userId, userIds), eq(intentToBid.id, intentId)))
+    .run();
+
+  return findIntentByUsersAndId(db, userIds, intentId);
+}

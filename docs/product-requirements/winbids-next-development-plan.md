@@ -4,7 +4,7 @@ Updated: 2026-05-30
 
 ## Recommendation
 
-Continue with **Product 2 Qualification Evidence Citations v1** as the next implementation phase.
+Continue with **Product 2 Document-Grounded Q&A v1** as the next implementation phase.
 
 Commercial packaging and credits foundation is now in place:
 
@@ -13,19 +13,19 @@ Commercial packaging and credits foundation is now in place:
 - Credits have a foundation for included monthly credits, purchased credits, premium action costs, refunds, and future ledger events.
 - Settings Billing/Usage can surface plan names, Growth as planned, and credit summaries.
 
-The source registry, capability metadata, archive metadata columns, quality flag foundation, public attachment/detail downloader, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA actions, rich QA filters, correction history, Search Alerts management UI, notification provider hardening, 50-state crawler guardrails, and production billing/worker runbooks are now in place. The next risk is qualification trust: users need generated outputs to point back to evidence before the Product 2 workflow can deepen.
+The source registry, capability metadata, archive metadata columns, quality flag foundation, public attachment/detail downloader, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA actions, rich QA filters, correction history, Search Alerts management UI, notification provider hardening, 50-state crawler guardrails, production billing/worker runbooks, and Qualification Evidence Citations v1 are now in place. The next risk is useful qualification interaction: users need constrained Q&A over known evidence before the Product 2 workflow can deepen.
 
 ## Last Completed Phase
 
-**Admin QA Batch Filters + Correction History plus P1 operational hardening** made QA and MVP operations more scalable:
+**Qualification Evidence Citations v1** made generated qualification outputs evidence-backed:
 
 Completed locally:
 
-- Admin QA repository/API/client/UI now support display status, score range, source confidence, reviewer, and reviewed-date filters.
-- Operator/admin users can select QA rows and batch mark reviewed, move to needs review, publish, or suppress.
-- `/admin` exposes correction history and original-vs-corrected values; support remains read-only.
-- Settings includes Search Alerts management for per-alert CRUD and pause/resume.
-- Notification provider validation, notification delivery runbook, production billing/worker runbook, worker deployment checks, and 50-state crawler non-empty/live validation guardrails were added.
+- `intent_to_bid` now stores an `evidence_citations_json` snapshot.
+- Qualification citations are generated from bid fields, source URLs, archived detail metadata, attachments, and deterministic generated output.
+- `/api/intents/[id]/citations` exposes read-only citations through the existing principal/session pattern.
+- The Intent detail page shows a compact evidence panel near the generated brief.
+- Existing Submission Guidance, Compliance Manifest, and Pursue/No-Bid wire shapes remain unchanged.
 
 ## Previous Completed Phase
 
@@ -55,18 +55,18 @@ Completed locally:
 
 ## Phase Goal
 
-Make Product 2 qualification outputs evidence-backed:
+Make Product 2 qualification interaction grounded in known evidence:
 
-`Intent Workspace -> Generated Qualification Output -> Evidence Citation -> Source/Attachment Link -> User Trust`
+`Intent Workspace -> Evidence Citations -> Fixed Question Set -> Grounded Answer -> Source Link`
 
-This phase should preserve the current deterministic generators while adding citation persistence and display. It should not require a production LLM to be useful.
+This phase should use existing citations and bid metadata to answer a constrained set of common questions. It should not introduce open-ended chat or unsupported claims.
 
 ## In Scope
 
-- Persist qualification evidence citations linked to intent/bid outputs.
-- Generate deterministic citations from bid fields, archived detail pages, attachment metadata, and existing compliance/submission outputs where available.
-- Expose read-only citation API/client helpers.
-- Show citations in Intent detail near Submission Guidance, Compliance Manifest, and Pursue/No-Bid sections.
+- Add a small deterministic Q&A service for common questions: deadline, submission method, required documents, buyer/contact, risks, and attachments.
+- Each answer must include citation ids from existing evidence citations.
+- Expose a read-only Q&A API/client helper.
+- Show Q&A in Intent detail as a fixed list, not free-form chat.
 - Keep feature gates and existing output wire shapes stable.
 
 ## Out Of Scope
@@ -81,15 +81,15 @@ This phase should preserve the current deterministic generators while adding cit
 ## Acceptance Criteria
 
 - Existing 50-state crawler, Admin QA, Search Alerts, notification, and billing tests remain green.
-- Citation records preserve source type, source label, excerpt/field reference, confidence, and generated timestamp.
-- Intent detail can display citations without requiring a paid external AI provider.
+- Q&A answers reference existing citation ids and do not fabricate source claims.
+- Intent detail can display Q&A without requiring a paid external AI provider.
 - Submission Guidance, Compliance Manifest, and Pursue/No-Bid continue to work with current gates.
 - Search/bid detail still works for existing records.
 - `npm test`, `PYTHONPATH=crawler python3 -m pytest crawler/tests`, `npm run lint`, `npm run build`, `npm run db:migrate`, and `git diff --check` pass.
 
 ## Remaining Work After This Phase
 
-1. Product 2 Qualification Upgrade continuation: document-grounded Q&A, amendment refresh, evidence/artifact links, no-bid taxonomy, qualification risk explanations.
+1. Product 2 Qualification Upgrade continuation: amendment refresh, richer evidence/artifact links, no-bid taxonomy, qualification risk explanations.
 2. Search Alerts notification history and digest delivery verification.
 3. 50-state crawler hardening continuation: promote beta adapters, add source quality monitoring, and document Source Registry / Connector Engine / Normalization QA responsibilities.
 4. Production deployment dry run for billing, notification, and crawler workers.

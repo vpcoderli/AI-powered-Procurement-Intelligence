@@ -455,6 +455,7 @@ export const intentToBid = sqliteTable(
     initialChecklistJson: text("initial_checklist_json").notNull().default("[]"),
     riskFlagsJson: text("risk_flags_json").notNull().default("[]"),
     matchScoreSnapshotJson: text("match_score_snapshot_json").notNull().default("{}"),
+    evidenceCitationsJson: text("evidence_citations_json").notNull().default("[]"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
