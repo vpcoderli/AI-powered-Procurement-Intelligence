@@ -11,3 +11,6 @@ class Source:
     fixture_loader: object
     live_fetcher: object = None
     base_url: str = ""
+    adapter_kind: str = "none"
+    maturity: str = "none"
+    capabilities: tuple = ()

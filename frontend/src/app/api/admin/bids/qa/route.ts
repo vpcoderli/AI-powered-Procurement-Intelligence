@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { AdminAuthError, requireAdminAccess } from "@/server/admin/auth";
 import {
+  isAdminBidQaDisplayStatus,
+  isAdminBidQaReviewStatus,
   listAdminBidQaItems,
   type AdminBidQaArchiveStatus,
-  type AdminBidQaReviewStatus,
 } from "@/server/admin/bid-qa-repository";
 import type { AppDatabase } from "@/server/db/client";
 
@@ -45,12 +46,21 @@ export function createAdminBidQaGet(database?: AppDatabase) {
       await requireAdminAccess(resolvedDb, request);
 
       const params = new URL(request.url).searchParams;
+      const reviewStatus = stringParam(params, "reviewStatus");
+      const displayStatus = stringParam(params, "displayStatus");
       const response = await listAdminBidQaItems(resolvedDb, {
         limit: numberParam(params, "limit"),
         q: stringParam(params, "q"),
         stateCode: stringParam(params, "stateCode"),
-        reviewStatus: stringParam(params, "reviewStatus") as AdminBidQaReviewStatus | undefined,
+        reviewStatus: isAdminBidQaReviewStatus(reviewStatus) ? reviewStatus : undefined,
         archiveStatus: stringParam(params, "archiveStatus") as AdminBidQaArchiveStatus | undefined,
+        displayStatus: isAdminBidQaDisplayStatus(displayStatus) ? displayStatus : undefined,
+        sourceConfidence: stringParam(params, "sourceConfidence"),
+        minQualityScore: numberParam(params, "minQualityScore"),
+        maxQualityScore: numberParam(params, "maxQualityScore"),
+        reviewerId: stringParam(params, "reviewerId"),
+        reviewedFrom: stringParam(params, "reviewedFrom"),
+        reviewedTo: stringParam(params, "reviewedTo"),
       });
 
       return NextResponse.json(response);

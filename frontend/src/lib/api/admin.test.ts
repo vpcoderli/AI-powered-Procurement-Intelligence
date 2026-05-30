@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AdminApiError,
+  batchUpdateAdminBidQaItems,
   createAdminUser,
   deliverAdminNotifications,
+  getAdminBidQaCorrections,
   listAdminUserFeatureOverrides,
   listAdminNotifications,
   listAdminCrawlerLogs,
@@ -246,11 +248,42 @@ describe("admin API client", () => {
         stateCode: "CA",
         reviewStatus: "needs_review",
         archiveStatus: "failed",
+        displayStatus: "suppressed",
+        sourceConfidence: "low",
+        minQualityScore: 30,
+        maxQualityScore: 80,
+        reviewerId: "operator-1",
+        reviewedFrom: "2026-05-30T00:00:00.000Z",
+        reviewedTo: "2026-05-31T00:00:00.000Z",
       }),
     ).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith(
-      "/api/admin/bids/qa?limit=10&q=cloud&stateCode=CA&reviewStatus=needs_review&archiveStatus=failed",
+      "/api/admin/bids/qa?limit=10&q=cloud&stateCode=CA&reviewStatus=needs_review&archiveStatus=failed&displayStatus=suppressed&sourceConfidence=low&minQualityScore=30&maxQualityScore=80&reviewerId=operator-1&reviewedFrom=2026-05-30T00%3A00%3A00.000Z&reviewedTo=2026-05-31T00%3A00%3A00.000Z",
     );
+  });
+
+  it("gets admin bid QA correction history", async () => {
+    const body = { corrections: [{ id: "correction_1", fieldName: "title" }] };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(getAdminBidQaCorrections("bid 1")).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/bids/qa/bid%201");
+  });
+
+  it("batch updates admin bid QA items", async () => {
+    const body = { updatedCount: 2, items: [{ id: "bid_1" }, { id: "bid_2" }] };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(batchUpdateAdminBidQaItems({
+      bidIds: ["bid_1", "bid_2"],
+      reviewStatus: "reviewed",
+      note: "Batch reviewed",
+    })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/bids/qa/batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ bidIds: ["bid_1", "bid_2"], reviewStatus: "reviewed", note: "Batch reviewed" }),
+    });
   });
 
   it("updates admin bid QA review status", async () => {

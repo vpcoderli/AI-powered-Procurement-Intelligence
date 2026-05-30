@@ -11,6 +11,8 @@ describe("admin page", () => {
     expect(page).toContain("listAdminUserFeatureOverrides");
     expect(page).toContain("listAdminNotifications");
     expect(page).toContain("listAdminBidQaItems");
+    expect(page).toContain("getAdminBidQaCorrections");
+    expect(page).toContain("batchUpdateAdminBidQaItems");
     expect(page).toContain("deliverAdminNotifications");
     expect(page).toContain("reconcileAdminSubscriptions");
     expect(page).toContain("updateAdminUserAccess");
@@ -35,6 +37,15 @@ describe("admin page", () => {
     expect(page).toContain('t("admin.publishBid")');
     expect(page).toContain('t("admin.suppressBid")');
     expect(page).toContain('t("admin.saveCorrections")');
+    expect(page).toContain('t("admin.batchReview")');
+    expect(page).toContain('t("admin.qaFilters")');
+    expect(page).toContain('t("admin.reviewedTo")');
+    expect(page).toContain('t("admin.correctionHistory")');
+    expect(page).toContain("bidQaFilters");
+    expect(page).toContain("selectedBidQaIds");
+    expect(page).toContain("visibleSelectedBidQaIds");
+    expect(page).toContain("setSelectedBidQaIds([])");
+    expect(page).toContain("correctionHistoryBidId");
     expect(page).toContain("correctionDrafts");
     expect(page).toContain("displayStatus");
     expect(page).toContain("correctionCount");

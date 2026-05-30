@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { bidAttachments, bidFieldCorrections, bids } from "@/server/db/schema";
 
@@ -23,6 +23,13 @@ export interface ListAdminBidQaFilters {
   stateCode?: string;
   reviewStatus?: AdminBidQaReviewStatus;
   archiveStatus?: AdminBidQaArchiveStatus;
+  displayStatus?: AdminBidQaDisplayStatus;
+  sourceConfidence?: string;
+  minQualityScore?: number;
+  maxQualityScore?: number;
+  reviewerId?: string;
+  reviewedFrom?: string;
+  reviewedTo?: string;
 }
 
 export interface UpdateAdminBidQaReviewInput {
@@ -43,6 +50,31 @@ export interface UpdateAdminBidQaCorrectionInput {
   note?: string | null;
   reviewerId: string;
   correctedAt?: string;
+}
+
+export interface BatchUpdateAdminBidQaInput {
+  bidIds: string[];
+  reviewStatus?: AdminBidQaReviewStatus;
+  displayStatus?: AdminBidQaDisplayStatus;
+  note?: string | null;
+  reviewerId: string;
+  reviewedAt?: string;
+}
+
+export interface AdminBidQaCorrectionHistoryItem {
+  id: string;
+  bidId: string;
+  fieldName: AdminBidQaCorrectionField;
+  originalValue: string | null;
+  correctedValue: string | null;
+  note: string | null;
+  correctedBy: string;
+  correctedAt: string;
+}
+
+export interface BatchUpdateAdminBidQaResult {
+  updatedCount: number;
+  items: AdminBidQaItem[];
 }
 
 export interface AdminBidQaItem {
@@ -310,6 +342,13 @@ export async function listAdminBidQaItems(
   const allItems = rows.map((row) => toQaItem(row, stats, corrections.get(row.id) ?? 0)).sort(sortQaItems);
   const filtered = allItems.filter((item) => {
     if (filters.reviewStatus && item.adminReviewStatus !== filters.reviewStatus) return false;
+    if (filters.displayStatus && item.displayStatus !== filters.displayStatus) return false;
+    if (filters.sourceConfidence && item.sourceConfidence !== filters.sourceConfidence) return false;
+    if (filters.minQualityScore !== undefined && item.qualityScore < filters.minQualityScore) return false;
+    if (filters.maxQualityScore !== undefined && item.qualityScore > filters.maxQualityScore) return false;
+    if (filters.reviewerId && item.adminReviewedBy !== filters.reviewerId) return false;
+    if (filters.reviewedFrom && (!item.adminReviewedAt || item.adminReviewedAt < filters.reviewedFrom)) return false;
+    if (filters.reviewedTo && (!item.adminReviewedAt || item.adminReviewedAt > filters.reviewedTo)) return false;
     if (filters.stateCode && item.stateCode !== filters.stateCode) return false;
     if (!matchesText(item, filters.q ?? "")) return false;
     if (!matchesArchiveStatus(item, stats.get(item.id), filters.archiveStatus)) return false;
@@ -324,6 +363,82 @@ export async function listAdminBidQaItems(
       lowQuality: allItems.filter((item) => item.qualityScore < 70).length,
     },
     items: filtered.slice(0, limit),
+  };
+}
+
+export async function listAdminBidQaCorrections(
+  db: AppDatabase,
+  bidId: string,
+): Promise<AdminBidQaCorrectionHistoryItem[]> {
+  const existing = db.select().from(bids).where(eq(bids.id, bidId)).limit(1).get();
+  if (!existing) {
+    throw new AdminBidQaNotFoundError(bidId);
+  }
+
+  return db
+    .select()
+    .from(bidFieldCorrections)
+    .where(eq(bidFieldCorrections.bidId, bidId))
+    .orderBy(desc(bidFieldCorrections.correctedAt))
+    .all()
+    .map((row) => ({
+      id: row.id,
+      bidId: row.bidId,
+      fieldName: row.fieldName as AdminBidQaCorrectionField,
+      originalValue: row.originalValue,
+      correctedValue: row.correctedValue,
+      note: row.note,
+      correctedBy: row.correctedBy,
+      correctedAt: row.correctedAt,
+    }));
+}
+
+export async function batchUpdateAdminBidQaItems(
+  db: AppDatabase,
+  input: BatchUpdateAdminBidQaInput,
+): Promise<BatchUpdateAdminBidQaResult> {
+  const bidIds = [...new Set(input.bidIds.map((id) => id.trim()).filter(Boolean))];
+  if (bidIds.length === 0 || Boolean(input.reviewStatus) === Boolean(input.displayStatus)) {
+    return { updatedCount: 0, items: [] };
+  }
+
+  const reviewedAt = input.reviewedAt ?? new Date().toISOString();
+  const note = input.note?.trim() ? input.note.trim() : null;
+  const rows = db.select().from(bids).where(inArray(bids.id, bidIds)).all();
+  const foundIds = new Set(rows.map((row) => row.id));
+  if (foundIds.size === 0) {
+    return { updatedCount: 0, items: [] };
+  }
+
+  const updateValues: Partial<typeof bids.$inferInsert> = {
+    adminReviewedAt: reviewedAt,
+    adminReviewedBy: input.reviewerId,
+    updatedAt: reviewedAt,
+  };
+
+  if (input.reviewStatus) {
+    updateValues.adminReviewStatus = input.reviewStatus;
+    updateValues.adminReviewNote = note;
+  }
+  if (input.displayStatus) {
+    updateValues.displayStatus = input.displayStatus;
+  }
+
+  db.update(bids).set(updateValues).where(inArray(bids.id, [...foundIds])).run();
+
+  const updatedRows = db.select().from(bids).where(inArray(bids.id, [...foundIds])).all();
+  const attachmentMap = attachmentStats(db.select().from(bidAttachments).where(inArray(bidAttachments.bidId, [...foundIds])).all());
+  const correctionMap = correctionCounts(
+    db.select().from(bidFieldCorrections).where(inArray(bidFieldCorrections.bidId, [...foundIds])).all(),
+  );
+  const byId = new Map(updatedRows.map((row) => [row.id, row]));
+
+  return {
+    updatedCount: updatedRows.length,
+    items: bidIds
+      .map((id) => byId.get(id))
+      .filter((row): row is typeof bids.$inferSelect => Boolean(row))
+      .map((row) => toQaItem(row, attachmentMap, correctionMap.get(row.id) ?? 0)),
   };
 }
 

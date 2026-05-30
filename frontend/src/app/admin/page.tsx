@@ -31,8 +31,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  batchUpdateAdminBidQaItems,
   createAdminUser,
   deliverAdminNotifications,
+  getAdminBidQaCorrections,
   listAdminBidQaItems,
   listAdminCrawlerLogs,
   listAdminDataSources,
@@ -48,6 +50,7 @@ import {
   updateAdminUser as updateAdminUserAccess,
   type AdminBidQaItem,
   type AdminBidQaResponse,
+  type AdminBidQaCorrectionHistoryItem,
   type AdminBidQaDisplayStatus,
   type AdminBidQaReviewStatus,
   type AdminCrawlerLog,
@@ -103,6 +106,32 @@ type InvitationDraft = {
 type BidQaCorrectionDraft = {
   title: string;
   deadlineDate: string;
+};
+
+type BidQaFilters = {
+  q: string;
+  stateCode: string;
+  reviewStatus: AdminBidQaReviewStatus | "all";
+  displayStatus: AdminBidQaDisplayStatus | "all";
+  sourceConfidence: string;
+  minQualityScore: string;
+  maxQualityScore: string;
+  reviewerId: string;
+  reviewedFrom: string;
+  reviewedTo: string;
+};
+
+const DEFAULT_BID_QA_FILTERS: BidQaFilters = {
+  q: "",
+  stateCode: "",
+  reviewStatus: "all",
+  displayStatus: "all",
+  sourceConfidence: "all",
+  minQualityScore: "",
+  maxQualityScore: "",
+  reviewerId: "",
+  reviewedFrom: "",
+  reviewedTo: "",
 };
 
 const USER_ROLES: UserRole[] = ["user", "admin", "operator", "support"];
@@ -366,6 +395,12 @@ export default function AdminPage() {
   const [pendingSourceId, setPendingSourceId] = useState<string | null>(null);
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [pendingBidQaId, setPendingBidQaId] = useState<string | null>(null);
+  const [pendingBidQaBatch, setPendingBidQaBatch] = useState(false);
+  const [bidQaFilters, setBidQaFilters] = useState<BidQaFilters>(DEFAULT_BID_QA_FILTERS);
+  const [selectedBidQaIds, setSelectedBidQaIds] = useState<string[]>([]);
+  const [correctionHistoryBidId, setCorrectionHistoryBidId] = useState<string | null>(null);
+  const [correctionHistoryItems, setCorrectionHistoryItems] = useState<AdminBidQaCorrectionHistoryItem[]>([]);
+  const [isLoadingCorrectionHistory, setIsLoadingCorrectionHistory] = useState(false);
   const [correctionDrafts, setCorrectionDrafts] = useState<Record<string, BidQaCorrectionDraft>>({});
   const [userFilters, setUserFilters] = useState<UserFilters>({});
   const [userAuditFilters, setUserAuditFilters] = useState<UserAuditFilters>({});
@@ -399,6 +434,20 @@ export default function AdminPage() {
     featureKey: userAuditFilters.featureKey,
   }), [userAuditFilters]);
 
+  const bidQaRequest = useCallback(() => ({
+    limit: 10,
+    q: bidQaFilters.q.trim() || undefined,
+    stateCode: bidQaFilters.stateCode.trim().toUpperCase() || undefined,
+    reviewStatus: bidQaFilters.reviewStatus === "all" ? undefined : bidQaFilters.reviewStatus,
+    displayStatus: bidQaFilters.displayStatus === "all" ? undefined : bidQaFilters.displayStatus,
+    sourceConfidence: bidQaFilters.sourceConfidence === "all" ? undefined : bidQaFilters.sourceConfidence,
+    minQualityScore: bidQaFilters.minQualityScore ? Number(bidQaFilters.minQualityScore) : undefined,
+    maxQualityScore: bidQaFilters.maxQualityScore ? Number(bidQaFilters.maxQualityScore) : undefined,
+    reviewerId: bidQaFilters.reviewerId.trim() || undefined,
+    reviewedFrom: bidQaFilters.reviewedFrom ? `${bidQaFilters.reviewedFrom}T00:00:00.000Z` : undefined,
+    reviewedTo: bidQaFilters.reviewedTo ? `${bidQaFilters.reviewedTo}T23:59:59.999Z` : undefined,
+  }), [bidQaFilters]);
+
   const load = useCallback(() => {
     if (!canAccessAdminConsole) return;
 
@@ -406,7 +455,7 @@ export default function AdminPage() {
     Promise.all([
       listAdminDataSources(),
       listAdminCrawlerLogs(),
-      listAdminBidQaItems({ limit: 10 }),
+      listAdminBidQaItems(bidQaRequest()),
       canManageUsers ? listAdminUsers(userFilters) : Promise.resolve({ users: [] }),
       canManageUsers ? listAdminUserAuditLogs(auditLogRequest()) : Promise.resolve({ logs: [] }),
       listAdminNotifications({ limit: 10 }),
@@ -425,7 +474,7 @@ export default function AdminPage() {
       .catch(() => {
         setState({ status: "error" });
       });
-  }, [auditLogRequest, canAccessAdminConsole, canManageUsers, userFilters]);
+  }, [auditLogRequest, bidQaRequest, canAccessAdminConsole, canManageUsers, userFilters]);
 
   useEffect(() => {
     if (isAuthLoading) return;
@@ -439,6 +488,8 @@ export default function AdminPage() {
   const logs = state.status === "ready" ? state.logs : [];
   const bidQa = state.status === "ready" ? state.bidQa : null;
   const bidQaItems = bidQa?.items ?? [];
+  const visibleSelectedBidQaIds = selectedBidQaIds.filter((id) => bidQaItems.some((item) => item.id === id));
+  const allVisibleBidQaSelected = bidQaItems.length > 0 && bidQaItems.every((item) => selectedBidQaIds.includes(item.id));
   const users = state.status === "ready" ? state.users : [];
   const userAuditLogs = state.status === "ready" ? state.userAuditLogs : [];
   const notifications = state.status === "ready" ? state.notifications : [];
@@ -472,6 +523,11 @@ export default function AdminPage() {
       .finally(() => {
         setPendingSourceId(null);
       });
+  };
+
+  const updateBidQaFilters = (updater: (current: BidQaFilters) => BidQaFilters) => {
+    setSelectedBidQaIds([]);
+    setBidQaFilters(updater);
   };
 
   const runNow = () => {
@@ -509,19 +565,25 @@ export default function AdminPage() {
       });
   };
 
+  const refreshBidQa = () =>
+    listAdminBidQaItems(bidQaRequest()).then((bidQa) => {
+      setState((current) => {
+        if (current.status !== "ready") return current;
+
+        return {
+          ...current,
+          bidQa,
+        };
+      });
+      setSelectedBidQaIds((current) => current.filter((id) => bidQa.items.some((item) => item.id === id)));
+      return bidQa;
+    });
+
   const updateBidQaStatus = (item: AdminBidQaItem, reviewStatus: AdminBidQaReviewStatus) => {
     setPendingBidQaId(item.id);
     updateAdminBidQaReview(item.id, { reviewStatus })
-      .then(() => listAdminBidQaItems({ limit: 10 }))
-      .then((bidQa) => {
-        setState((current) => {
-          if (current.status !== "ready") return current;
-
-          return {
-            ...current,
-            bidQa,
-          };
-        });
+      .then(refreshBidQa)
+      .then(() => {
         setRunMessage(t("admin.bidQaUpdated"));
       })
       .catch(() => {
@@ -535,16 +597,8 @@ export default function AdminPage() {
   const updateBidQaDisplayStatus = (item: AdminBidQaItem, displayStatus: AdminBidQaDisplayStatus) => {
     setPendingBidQaId(item.id);
     updateAdminBidQaReview(item.id, { displayStatus })
-      .then(() => listAdminBidQaItems({ limit: 10 }))
-      .then((bidQa) => {
-        setState((current) => {
-          if (current.status !== "ready") return current;
-
-          return {
-            ...current,
-            bidQa,
-          };
-        });
+      .then(refreshBidQa)
+      .then(() => {
         setRunMessage(t("admin.bidQaUpdated"));
       })
       .catch(() => {
@@ -566,16 +620,8 @@ export default function AdminPage() {
       },
       note: "Admin QA correction",
     })
-      .then(() => listAdminBidQaItems({ limit: 10 }))
-      .then((bidQa) => {
-        setState((current) => {
-          if (current.status !== "ready") return current;
-
-          return {
-            ...current,
-            bidQa,
-          };
-        });
+      .then(refreshBidQa)
+      .then(() => {
         setCorrectionDrafts((current) => {
           const next = { ...current };
           delete next[item.id];
@@ -588,6 +634,80 @@ export default function AdminPage() {
       })
       .finally(() => {
         setPendingBidQaId(null);
+      });
+  };
+
+  const toggleSelectedBidQaId = (id: string) => {
+    setSelectedBidQaIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+  };
+
+  const toggleAllVisibleBidQa = () => {
+    setSelectedBidQaIds((current) => {
+      const visibleIds = bidQaItems.map((item) => item.id);
+      if (visibleIds.length > 0 && visibleIds.every((id) => current.includes(id))) {
+        return current.filter((id) => !visibleIds.includes(id));
+      }
+
+      return [...new Set([...current, ...visibleIds])];
+    });
+  };
+
+  const batchReviewBidQa = (reviewStatus: AdminBidQaReviewStatus) => {
+    if (visibleSelectedBidQaIds.length === 0) return;
+
+    setPendingBidQaBatch(true);
+    batchUpdateAdminBidQaItems({
+      bidIds: visibleSelectedBidQaIds,
+      reviewStatus,
+      note: "Admin QA batch action",
+    })
+      .then(refreshBidQa)
+      .then(() => {
+        setRunMessage(t("admin.bidQaUpdated"));
+      })
+      .catch(() => {
+        setRunMessage(t("admin.bidQaUpdateFailed"));
+      })
+      .finally(() => {
+        setPendingBidQaBatch(false);
+      });
+  };
+
+  const batchDisplayBidQa = (displayStatus: AdminBidQaDisplayStatus) => {
+    if (visibleSelectedBidQaIds.length === 0) return;
+
+    setPendingBidQaBatch(true);
+    batchUpdateAdminBidQaItems({
+      bidIds: visibleSelectedBidQaIds,
+      displayStatus,
+    })
+      .then(refreshBidQa)
+      .then(() => {
+        setRunMessage(t("admin.bidQaUpdated"));
+      })
+      .catch(() => {
+        setRunMessage(t("admin.bidQaUpdateFailed"));
+      })
+      .finally(() => {
+        setPendingBidQaBatch(false);
+      });
+  };
+
+  const loadCorrectionHistory = (item: AdminBidQaItem) => {
+    setCorrectionHistoryBidId(item.id);
+    setIsLoadingCorrectionHistory(true);
+    getAdminBidQaCorrections(item.id)
+      .then((response) => {
+        setCorrectionHistoryItems(response.corrections);
+      })
+      .catch(() => {
+        setCorrectionHistoryItems([]);
+        setRunMessage(t("admin.bidQaUpdateFailed"));
+      })
+      .finally(() => {
+        setIsLoadingCorrectionHistory(false);
       });
   };
 
@@ -930,9 +1050,139 @@ export default function AdminPage() {
               </Badge>
             </div>
           </div>
+          <div className="grid gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-3 lg:grid-cols-[minmax(180px,1fr)_90px_150px_150px_130px_100px_100px_140px_140px_auto]">
+            <div className="lg:col-span-10 text-xs font-semibold uppercase text-slate-500">{t("admin.qaFilters")}</div>
+            <Input
+              value={bidQaFilters.q}
+              onChange={(event) => updateBidQaFilters((current) => ({ ...current, q: event.target.value }))}
+              placeholder={t("admin.searchBidQa")}
+              className="h-9 rounded-lg border-slate-200 bg-white"
+            />
+            <Input
+              value={bidQaFilters.stateCode}
+              onChange={(event) => updateBidQaFilters((current) => ({ ...current, stateCode: event.target.value }))}
+              placeholder={t("admin.state")}
+              className="h-9 rounded-lg border-slate-200 bg-white"
+            />
+            <select
+              value={bidQaFilters.reviewStatus}
+              onChange={(event) =>
+                updateBidQaFilters((current) => ({ ...current, reviewStatus: event.target.value as BidQaFilters["reviewStatus"] }))
+              }
+              aria-label={t("admin.status")}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
+            >
+              <option value="all">{t("admin.allReviewStatuses")}</option>
+              {(["unreviewed", "needs_review", "reviewed", "suppressed"] as AdminBidQaReviewStatus[]).map((status) => (
+                <option key={status} value={status}>{reviewStatusLabel(t, status)}</option>
+              ))}
+            </select>
+            <select
+              value={bidQaFilters.displayStatus}
+              onChange={(event) =>
+                updateBidQaFilters((current) => ({ ...current, displayStatus: event.target.value as BidQaFilters["displayStatus"] }))
+              }
+              aria-label={t("admin.displayStatus")}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
+            >
+              <option value="all">{t("admin.allDisplayStatuses")}</option>
+              {(["pending_qa", "published", "suppressed"] as AdminBidQaDisplayStatus[]).map((status) => (
+                <option key={status} value={status}>{displayStatusLabel(t, status)}</option>
+              ))}
+            </select>
+            <select
+              value={bidQaFilters.sourceConfidence}
+              onChange={(event) => updateBidQaFilters((current) => ({ ...current, sourceConfidence: event.target.value }))}
+              aria-label={t("admin.sourceConfidence")}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
+            >
+              <option value="all">{t("admin.allConfidence")}</option>
+              <option value="high">high</option>
+              <option value="medium">medium</option>
+              <option value="low">low</option>
+            </select>
+            <Input
+              type="number"
+              min="0"
+              max="100"
+              value={bidQaFilters.minQualityScore}
+              onChange={(event) => updateBidQaFilters((current) => ({ ...current, minQualityScore: event.target.value }))}
+              placeholder={t("admin.minScore")}
+              className="h-9 rounded-lg border-slate-200 bg-white"
+            />
+            <Input
+              type="number"
+              min="0"
+              max="100"
+              value={bidQaFilters.maxQualityScore}
+              onChange={(event) => updateBidQaFilters((current) => ({ ...current, maxQualityScore: event.target.value }))}
+              placeholder={t("admin.maxScore")}
+              className="h-9 rounded-lg border-slate-200 bg-white"
+            />
+            <Input
+              value={bidQaFilters.reviewerId}
+              onChange={(event) => updateBidQaFilters((current) => ({ ...current, reviewerId: event.target.value }))}
+              placeholder={t("admin.reviewer")}
+              className="h-9 rounded-lg border-slate-200 bg-white"
+            />
+            <Input
+              type="date"
+              value={bidQaFilters.reviewedFrom}
+              onChange={(event) => updateBidQaFilters((current) => ({ ...current, reviewedFrom: event.target.value }))}
+              aria-label={t("admin.reviewedFrom")}
+              className="h-9 rounded-lg border-slate-200 bg-white"
+            />
+            <Input
+              type="date"
+              value={bidQaFilters.reviewedTo}
+              onChange={(event) => updateBidQaFilters((current) => ({ ...current, reviewedTo: event.target.value }))}
+              aria-label={t("admin.reviewedTo")}
+              className="h-9 rounded-lg border-slate-200 bg-white"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => updateBidQaFilters(() => DEFAULT_BID_QA_FILTERS)}
+              className="h-9 rounded-lg px-3 text-slate-600"
+            >
+              {t("admin.clearAuditFilters")}
+            </Button>
+          </div>
+          {canRunOperations && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+              <div className="text-sm font-medium text-slate-600">
+                {t("admin.selectedQaItems").replace("{count}", String(visibleSelectedBidQaIds.length))}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button type="button" variant="outline" size="sm" disabled={pendingBidQaBatch || visibleSelectedBidQaIds.length === 0} onClick={() => batchReviewBidQa("reviewed")} className="h-8 rounded-lg border-slate-200 px-2">
+                  {t("admin.batchReview")}
+                </Button>
+                <Button type="button" variant="outline" size="sm" disabled={pendingBidQaBatch || visibleSelectedBidQaIds.length === 0} onClick={() => batchReviewBidQa("needs_review")} className="h-8 rounded-lg border-slate-200 px-2">
+                  {t("admin.batchNeedsReview")}
+                </Button>
+                <Button type="button" variant="outline" size="sm" disabled={pendingBidQaBatch || visibleSelectedBidQaIds.length === 0} onClick={() => batchDisplayBidQa("published")} className="h-8 rounded-lg border-slate-200 px-2">
+                  {t("admin.batchPublish")}
+                </Button>
+                <Button type="button" variant="ghost" size="sm" disabled={pendingBidQaBatch || visibleSelectedBidQaIds.length === 0} onClick={() => batchDisplayBidQa("suppressed")} className="h-8 rounded-lg px-2 text-slate-600">
+                  {t("admin.batchSuppress")}
+                </Button>
+              </div>
+            </div>
+          )}
           <Table>
             <TableHeader>
               <TableRow>
+                {canRunOperations && (
+                  <TableHead>
+                    <input
+                      type="checkbox"
+                      checked={allVisibleBidQaSelected}
+                      onChange={toggleAllVisibleBidQa}
+                      aria-label={t("admin.selectAllQaItems")}
+                      className="h-4 w-4 rounded border-slate-300"
+                    />
+                  </TableHead>
+                )}
                 <TableHead>{t("admin.bid")}</TableHead>
                 <TableHead>{t("admin.source")}</TableHead>
                 <TableHead>{t("admin.qualityScore")}</TableHead>
@@ -947,7 +1197,7 @@ export default function AdminPage() {
             <TableBody>
               {bidQaItems.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={canRunOperations ? 9 : 8} className="py-6 text-center text-sm text-slate-500">
+                  <TableCell colSpan={canRunOperations ? 10 : 8} className="py-6 text-center text-sm text-slate-500">
                     {t("admin.noBidQaItems")}
                   </TableCell>
                 </TableRow>
@@ -958,6 +1208,17 @@ export default function AdminPage() {
 
                 return (
                   <TableRow key={item.id}>
+                    {canRunOperations && (
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          checked={selectedBidQaIds.includes(item.id)}
+                          onChange={() => toggleSelectedBidQaId(item.id)}
+                          aria-label={t("admin.selectQaItem").replace("{title}", item.title)}
+                          className="h-4 w-4 rounded border-slate-300"
+                        />
+                      </TableCell>
+                    )}
                     <TableCell>
                       <div className="max-w-80 truncate font-medium text-slate-900" title={item.title}>
                         {item.title}
@@ -1047,6 +1308,16 @@ export default function AdminPage() {
                             type="button"
                             variant="outline"
                             size="sm"
+                            onClick={() => loadCorrectionHistory(item)}
+                            disabled={isLoadingCorrectionHistory && correctionHistoryBidId === item.id}
+                            className="h-8 rounded-lg border-slate-200 px-2"
+                          >
+                            {t("admin.correctionHistory")}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
                             onClick={() => saveBidQaCorrections(item)}
                             disabled={isPending || correctionDraft.title.trim().length === 0}
                             className="h-8 rounded-lg border-slate-200 px-2"
@@ -1101,6 +1372,38 @@ export default function AdminPage() {
               })}
             </TableBody>
           </Table>
+          {correctionHistoryBidId && (
+            <div className="border-t border-slate-100 px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-semibold text-slate-950">{t("admin.correctionHistory")}</div>
+                <Button type="button" variant="ghost" size="sm" onClick={() => setCorrectionHistoryBidId(null)} className="h-8 rounded-lg px-2 text-slate-600">
+                  {t("admin.close")}
+                </Button>
+              </div>
+              {isLoadingCorrectionHistory ? (
+                <div className="mt-3 text-sm text-slate-500">{t("admin.loading")}</div>
+              ) : correctionHistoryItems.length === 0 ? (
+                <div className="mt-3 text-sm text-slate-500">{t("admin.noCorrectionHistory")}</div>
+              ) : (
+                <div className="mt-3 grid gap-2">
+                  {correctionHistoryItems.map((correction) => (
+                    <div key={correction.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold text-slate-900">{correction.fieldName}</span>
+                        <span className="text-xs text-slate-500">{formatDate(correction.correctedAt)}</span>
+                        <span className="text-xs text-slate-500">{correction.correctedBy}</span>
+                      </div>
+                      <div className="mt-1 grid gap-1 text-xs text-slate-600 md:grid-cols-2">
+                        <div>{t("admin.originalValue")}: {correction.originalValue ?? "-"}</div>
+                        <div>{t("admin.correctedValue")}: {correction.correctedValue ?? "-"}</div>
+                      </div>
+                      {correction.note && <div className="mt-1 text-xs text-slate-500">{correction.note}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </section>
       )}
 

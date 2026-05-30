@@ -6,6 +6,7 @@ import type {
 import type {
   AdminBidQaArchiveStatus,
   AdminBidQaCorrectionField,
+  AdminBidQaCorrectionHistoryItem,
   AdminBidQaDisplayStatus,
   AdminBidQaItem,
   AdminBidQaResponse,
@@ -34,6 +35,7 @@ import type { ScheduleDunningRemindersResult } from "@/server/billing/dunning";
 export type {
   AdminBidQaArchiveStatus,
   AdminBidQaCorrectionField,
+  AdminBidQaCorrectionHistoryItem,
   AdminBidQaDisplayStatus,
   AdminBidQaItem,
   AdminBidQaResponse,
@@ -72,6 +74,15 @@ export interface AdminCrawlerLogsResponse {
 
 export interface UpdateAdminBidQaReviewResponse {
   item: AdminBidQaItem;
+}
+
+export interface AdminBidQaCorrectionsResponse {
+  corrections: AdminBidQaCorrectionHistoryItem[];
+}
+
+export interface BatchUpdateAdminBidQaResponse {
+  updatedCount: number;
+  items: AdminBidQaItem[];
 }
 
 export interface UpdateAdminDataSourceResponse {
@@ -257,11 +268,38 @@ export async function listAdminBidQaItems(
     stateCode?: string;
     reviewStatus?: AdminBidQaReviewStatus;
     archiveStatus?: AdminBidQaArchiveStatus;
+    displayStatus?: AdminBidQaDisplayStatus;
+    sourceConfidence?: string;
+    minQualityScore?: number;
+    maxQualityScore?: number;
+    reviewerId?: string;
+    reviewedFrom?: string;
+    reviewedTo?: string;
   } = {},
 ) {
   const response = await fetch(`/api/admin/bids/qa${buildQueryString(filters)}`);
 
   return parseResponse<AdminBidQaResponse>(response);
+}
+
+export async function getAdminBidQaCorrections(id: string) {
+  const response = await fetch(`/api/admin/bids/qa/${encodeURIComponent(id)}`);
+
+  return parseResponse<AdminBidQaCorrectionsResponse>(response);
+}
+
+export async function batchUpdateAdminBidQaItems(
+  input:
+    | { bidIds: string[]; reviewStatus: AdminBidQaReviewStatus; note?: string | null }
+    | { bidIds: string[]; displayStatus: AdminBidQaDisplayStatus },
+) {
+  const response = await fetch("/api/admin/bids/qa/batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<BatchUpdateAdminBidQaResponse>(response);
 }
 
 export async function updateAdminBidQaReview(

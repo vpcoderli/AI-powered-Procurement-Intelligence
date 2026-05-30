@@ -24,6 +24,14 @@ def state_bid():
     return bid
 
 
+def source_quality(adapter_kind, maturity, capabilities):
+    return {
+        "adapter_kind": adapter_kind,
+        "maturity": maturity,
+        "capabilities": capabilities,
+    }
+
+
 def test_fetch_state_writes_bids_and_success_log(tmp_path, monkeypatch):
     database = tmp_path / "apsi.sqlite"
     create_crawler_database(database)
@@ -57,7 +65,12 @@ def test_fetch_state_writes_bids_and_success_log(tmp_path, monkeypatch):
         "SELECT source, status, fetched_count, inserted_count, updated_count, metadata FROM crawler_logs"
     ).fetchone()
     assert log[:5] == ("ca_caleprocure", "success", 1, 1, 0)
-    assert json.loads(log[5]) == {"mode": "live", "query": "cloud", "limit": 5}
+    assert json.loads(log[5]) == {
+        "mode": "live",
+        "query": "cloud",
+        "limit": 5,
+        "source_quality": source_quality("dedicated", "verified", ["query", "pagination"]),
+    }
 
 
 def test_fetch_state_replays_ca_caleprocure_fixture_json(tmp_path):
@@ -104,6 +117,7 @@ def test_fetch_state_replays_ca_caleprocure_fixture_json(tmp_path):
         "query": "cloud",
         "limit": 5,
         "fixture_json": str(fixture),
+        "source_quality": source_quality("dedicated", "verified", ["query", "pagination"]),
     }
 
 
@@ -149,6 +163,11 @@ def test_fetch_state_replays_tx_esbd_fixture_json(tmp_path):
         "query": "data",
         "limit": 5,
         "fixture_json": str(fixture),
+        "source_quality": source_quality(
+            "dedicated",
+            "verified",
+            ["query", "detail_pages", "pagination"],
+        ),
     }
 
 
@@ -194,6 +213,11 @@ def test_fetch_state_replays_ny_contract_reporter_fixture_json(tmp_path):
         "query": "records",
         "limit": 5,
         "fixture_json": str(fixture),
+        "source_quality": source_quality(
+            "dedicated",
+            "verified",
+            ["query", "detail_pages", "pagination"],
+        ),
     }
 
 
@@ -239,6 +263,11 @@ def test_fetch_state_replays_fl_mfmp_fixture_json(tmp_path):
         "query": "communications",
         "limit": 5,
         "fixture_json": str(fixture),
+        "source_quality": source_quality(
+            "dedicated",
+            "verified",
+            ["query", "detail_pages", "pagination"],
+        ),
     }
 
 
@@ -285,6 +314,11 @@ def test_fetch_state_replays_il_bidbuy_fixture_html(tmp_path):
         "query": "data",
         "limit": 5,
         "fixture_html": str(fixture),
+        "source_quality": source_quality(
+            "dedicated",
+            "verified",
+            ["query", "attachments", "detail_pages", "pagination"],
+        ),
     }
 
 

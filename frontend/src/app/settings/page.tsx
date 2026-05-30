@@ -6,8 +6,12 @@ import {
   CheckCircle2,
   CreditCard,
   Download,
+  Pencil,
+  Plus,
   Key,
   LockKeyhole,
+  Pause,
+  Play,
   PaintBucket,
   Settings,
   Shield,
@@ -25,6 +29,13 @@ import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/context/AuthContext";
+import {
+  ApiError as SearchAlertsApiError,
+  createSearchAlert,
+  deleteSearchAlert,
+  listSearchAlerts,
+  updateSearchAlert,
+} from "@/lib/api/search-alerts";
 import {
   changePassword,
   AuthApiError,
@@ -59,6 +70,7 @@ import {
 import { canUseFeature, lockedFeatureMessage } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { ACCOUNT_TIER_LABELS, type AccountTier, type FeatureKey, type ProductPlanKey } from "@/server/auth/entitlements";
+import type { AlertFrequency, SearchAlert } from "@/server/search-alerts/types";
 
 const FEATURE_ACCESS_ITEMS: Array<{ key: FeatureKey; label: string }> = [
   { key: "bid_search", label: "Bid search" },
@@ -82,6 +94,31 @@ const USAGE_FEATURE_LABEL_KEYS: Record<AccountUsageData["items"][number]["featur
   intent_workspace: "settings.usageFeature_intent_workspace",
   search_alerts: "settings.usageFeature_search_alerts",
   team_members: "settings.usageFeature_team_members",
+};
+type SearchAlertDraft = {
+  id: string | null;
+  name: string;
+  keywords: string;
+  states: string;
+  issuerType: "all" | "federal" | "state";
+  deadline: "any" | "next7" | "next30";
+  published: "any" | "last24" | "last7";
+  sort: "relevance" | "newest" | "deadline";
+  frequency: AlertFrequency;
+  isEnabled: boolean;
+};
+
+const EMPTY_SEARCH_ALERT_DRAFT: SearchAlertDraft = {
+  id: null,
+  name: "",
+  keywords: "",
+  states: "",
+  issuerType: "all",
+  deadline: "any",
+  published: "any",
+  sort: "relevance",
+  frequency: "daily",
+  isEnabled: true,
 };
 
 export default function SettingsPage() {
@@ -109,6 +146,13 @@ export default function SettingsPage() {
   const [notificationPreferencesMessage, setNotificationPreferencesMessage] = useState("");
   const [notificationPreferencesError, setNotificationPreferencesError] = useState("");
   const [isSavingNotificationPreferences, setIsSavingNotificationPreferences] = useState(false);
+  const [searchAlertsData, setSearchAlertsData] = useState<SearchAlert[] | null>(null);
+  const [searchAlertDraft, setSearchAlertDraft] =
+    useState<SearchAlertDraft>(EMPTY_SEARCH_ALERT_DRAFT);
+  const [searchAlertMessage, setSearchAlertMessage] = useState("");
+  const [searchAlertError, setSearchAlertError] = useState("");
+  const [searchAlertActionId, setSearchAlertActionId] = useState<string | null>(null);
+  const [isSavingSearchAlert, setIsSavingSearchAlert] = useState(false);
   const [billingMessage, setBillingMessage] = useState("");
   const [billingActionTier, setBillingActionTier] = useState<AccountTier | "cancel" | "portal" | null>(null);
   const [billingInvoicesData, setBillingInvoicesData] = useState<BillingInvoicesResponse | null>(null);
@@ -179,6 +223,17 @@ export default function SettingsPage() {
         setNotificationPreferencesError(
           error instanceof Error ? error.message : t("settings.notificationPreferencesLoadError"),
         );
+      });
+
+    listSearchAlerts()
+      .then((data) => {
+        if (isCancelled) return;
+        setSearchAlertsData(data.alerts);
+        setSearchAlertError("");
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        setSearchAlertError(error instanceof Error ? error.message : t("settings.searchAlertsLoadError"));
       });
 
     return () => {
@@ -265,6 +320,69 @@ export default function SettingsPage() {
     return remaining === null
       ? t("settings.unlimitedUsage")
       : t("settings.usageRemaining").replace("{remaining}", String(remaining));
+  }
+
+  function searchAlertDateLabel(value: string | null) {
+    return value ?? t("settings.notScheduled");
+  }
+
+  function searchAlertQuerySummary(alert: SearchAlert) {
+    const keywords = alert.query.q?.trim() || t("settings.searchAlertAnyKeywords");
+    const states = alert.query.states?.length
+      ? alert.query.states.join(", ")
+      : t("settings.searchAlertAllStates");
+
+    return `${keywords} · ${states}`;
+  }
+
+  function searchAlertDraftFrom(alert: SearchAlert): SearchAlertDraft {
+    return {
+      id: alert.id,
+      name: alert.name,
+      keywords: alert.query.q ?? "",
+      states: alert.query.states?.join(", ") ?? "",
+      issuerType: alert.query.issuerType ?? "all",
+      deadline: alert.query.deadline ?? "any",
+      published: alert.query.published ?? "any",
+      sort: alert.query.sort ?? "relevance",
+      frequency: alert.frequency,
+      isEnabled: alert.isEnabled,
+    };
+  }
+
+  function searchAlertInputFromDraft(draft: SearchAlertDraft) {
+    const states = draft.states
+      .split(",")
+      .map((state) => state.trim().toUpperCase())
+      .filter(Boolean);
+
+    return {
+      name: draft.name.trim(),
+      query: {
+        q: draft.keywords.trim(),
+        states,
+        issuerType: draft.issuerType,
+        deadline: draft.deadline,
+        published: draft.published,
+        sort: draft.sort,
+      },
+      frequency: draft.frequency,
+      isEnabled: draft.isEnabled,
+    };
+  }
+
+  async function refreshSearchAlerts() {
+    const data = await listSearchAlerts();
+    setSearchAlertsData(data.alerts);
+    return data.alerts;
+  }
+
+  function searchAlertErrorMessage(error: unknown) {
+    if (error instanceof SearchAlertsApiError && error.code === "USAGE_LIMIT_REACHED") {
+      return t("settings.searchAlertLimitReached");
+    }
+
+    return error instanceof Error ? error.message : t("settings.searchAlertSaveError");
   }
 
   async function refreshSubscription() {
@@ -383,6 +501,72 @@ export default function SettingsPage() {
       );
     } finally {
       setIsSavingNotificationPreferences(false);
+    }
+  }
+
+  async function handleSearchAlertSubmit() {
+    setSearchAlertMessage("");
+    setSearchAlertError("");
+    setIsSavingSearchAlert(true);
+
+    try {
+      const input = searchAlertInputFromDraft(searchAlertDraft);
+      if (searchAlertDraft.id) {
+        await updateSearchAlert(searchAlertDraft.id, input);
+      } else {
+        await createSearchAlert(input);
+      }
+      await refreshSearchAlerts();
+      setSearchAlertDraft(EMPTY_SEARCH_ALERT_DRAFT);
+      setSearchAlertMessage(t("settings.searchAlertSaved"));
+    } catch (error) {
+      setSearchAlertError(searchAlertErrorMessage(error));
+    } finally {
+      setIsSavingSearchAlert(false);
+    }
+  }
+
+  async function handleSearchAlertToggle(alert: SearchAlert) {
+    setSearchAlertMessage("");
+    setSearchAlertError("");
+    setSearchAlertActionId(alert.id);
+
+    try {
+      const { alert: updatedAlert } = await updateSearchAlert(alert.id, { isEnabled: !alert.isEnabled });
+      setSearchAlertsData((current) =>
+        current?.map((item) => (item.id === updatedAlert.id ? updatedAlert : item)) ?? [updatedAlert],
+      );
+      setSearchAlertMessage(
+        updatedAlert.isEnabled ? t("settings.searchAlertResumed") : t("settings.searchAlertPausedMessage"),
+      );
+    } catch (error) {
+      setSearchAlertError(searchAlertErrorMessage(error));
+    } finally {
+      setSearchAlertActionId(null);
+    }
+  }
+
+  async function handleSearchAlertDelete(alert: SearchAlert) {
+    setSearchAlertMessage("");
+    setSearchAlertError("");
+
+    if (!window.confirm(t("settings.deleteSearchAlertConfirm"))) {
+      return;
+    }
+
+    setSearchAlertActionId(alert.id);
+
+    try {
+      await deleteSearchAlert(alert.id);
+      setSearchAlertsData((current) => current?.filter((item) => item.id !== alert.id) ?? []);
+      if (searchAlertDraft.id === alert.id) {
+        setSearchAlertDraft(EMPTY_SEARCH_ALERT_DRAFT);
+      }
+      setSearchAlertMessage(t("settings.searchAlertDeleted"));
+    } catch (error) {
+      setSearchAlertError(searchAlertErrorMessage(error));
+    } finally {
+      setSearchAlertActionId(null);
     }
   }
 
@@ -1118,6 +1302,307 @@ export default function SettingsPage() {
                     }
                     className="data-[state=checked]:bg-slate-900 shrink-0"
                   />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
+              <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <CardTitle className="text-lg font-semibold text-slate-900">{t("settings.searchAlertsManager")}</CardTitle>
+                    <CardDescription className="text-slate-500 font-medium">{t("settings.searchAlertsManagerDesc")}</CardDescription>
+                  </div>
+                  <Badge variant="outline" className="w-fit border-slate-200 bg-white text-slate-700">
+                    {t("settings.searchAlertCount").replace("{count}", String(searchAlertsData?.length ?? 0))}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6 p-6">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <h3 className="text-sm font-semibold text-slate-900">
+                      {searchAlertDraft.id ? t("settings.editSearchAlert") : t("settings.createSearchAlert")}
+                    </h3>
+                    {searchAlertDraft.id && (
+                      <Button
+                        variant="outline"
+                        onClick={() => setSearchAlertDraft(EMPTY_SEARCH_ALERT_DRAFT)}
+                        className="h-8 w-full rounded-lg border-slate-200 px-3 text-sm font-medium text-slate-700 sm:w-auto"
+                      >
+                        {t("settings.cancelEditSearchAlert")}
+                      </Button>
+                    )}
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="searchAlertName" className="text-slate-700 font-medium">
+                        {t("settings.searchAlertName")}
+                      </Label>
+                      <Input
+                        id="searchAlertName"
+                        value={searchAlertDraft.name}
+                        onChange={(event) =>
+                          setSearchAlertDraft((draft) => ({ ...draft, name: event.target.value }))
+                        }
+                        className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="searchAlertKeywords" className="text-slate-700 font-medium">
+                        {t("settings.searchAlertKeywords")}
+                      </Label>
+                      <Input
+                        id="searchAlertKeywords"
+                        value={searchAlertDraft.keywords}
+                        onChange={(event) =>
+                          setSearchAlertDraft((draft) => ({ ...draft, keywords: event.target.value }))
+                        }
+                        placeholder={t("settings.searchAlertKeywordsPlaceholder")}
+                        className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="searchAlertStates" className="text-slate-700 font-medium">
+                        {t("settings.searchAlertStates")}
+                      </Label>
+                      <Input
+                        id="searchAlertStates"
+                        value={searchAlertDraft.states}
+                        onChange={(event) =>
+                          setSearchAlertDraft((draft) => ({ ...draft, states: event.target.value }))
+                        }
+                        placeholder={t("settings.searchAlertStatesPlaceholder")}
+                        className="border-slate-200 focus-visible:ring-slate-900 h-10 rounded-lg"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-slate-700 font-medium">{t("settings.searchAlertFrequency")}</Label>
+                      <Select
+                        value={searchAlertDraft.frequency}
+                        onValueChange={(value) =>
+                          setSearchAlertDraft((draft) => ({
+                            ...draft,
+                            frequency: value === "weekly" ? "weekly" : "daily",
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="h-10 border-slate-200 focus:ring-slate-900 rounded-lg">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-lg border-slate-200 shadow-md">
+                          <SelectItem value="daily" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                            {t("settings.dailyDigest")}
+                          </SelectItem>
+                          <SelectItem value="weekly" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                            {t("settings.weeklySummary")}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-slate-700 font-medium">{t("settings.searchAlertIssuerType")}</Label>
+                      <Select
+                        value={searchAlertDraft.issuerType}
+                        onValueChange={(value) =>
+                          setSearchAlertDraft((draft) => ({
+                            ...draft,
+                            issuerType: value === "federal" || value === "state" ? value : "all",
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="h-10 border-slate-200 focus:ring-slate-900 rounded-lg">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-lg border-slate-200 shadow-md">
+                          <SelectItem value="all" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                            {t("settings.searchAlertIssuer_all")}
+                          </SelectItem>
+                          <SelectItem value="federal" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                            {t("settings.searchAlertIssuer_federal")}
+                          </SelectItem>
+                          <SelectItem value="state" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                            {t("settings.searchAlertIssuer_state")}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-slate-700 font-medium">{t("settings.searchAlertDeadline")}</Label>
+                      <Select
+                        value={searchAlertDraft.deadline}
+                        onValueChange={(value) =>
+                          setSearchAlertDraft((draft) => ({
+                            ...draft,
+                            deadline: value === "next7" || value === "next30" ? value : "any",
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="h-10 border-slate-200 focus:ring-slate-900 rounded-lg">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-lg border-slate-200 shadow-md">
+                          <SelectItem value="any" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                            {t("settings.searchAlertDeadline_any")}
+                          </SelectItem>
+                          <SelectItem value="next7" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                            {t("settings.searchAlertDeadline_next7")}
+                          </SelectItem>
+                          <SelectItem value="next30" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                            {t("settings.searchAlertDeadline_next30")}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-slate-700 font-medium">{t("settings.searchAlertPublished")}</Label>
+                      <Select
+                        value={searchAlertDraft.published}
+                        onValueChange={(value) =>
+                          setSearchAlertDraft((draft) => ({
+                            ...draft,
+                            published: value === "last24" || value === "last7" ? value : "any",
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="h-10 border-slate-200 focus:ring-slate-900 rounded-lg">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-lg border-slate-200 shadow-md">
+                          <SelectItem value="any" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                            {t("settings.searchAlertPublished_any")}
+                          </SelectItem>
+                          <SelectItem value="last24" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                            {t("settings.searchAlertPublished_last24")}
+                          </SelectItem>
+                          <SelectItem value="last7" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                            {t("settings.searchAlertPublished_last7")}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-slate-700 font-medium">{t("settings.searchAlertSort")}</Label>
+                      <Select
+                        value={searchAlertDraft.sort}
+                        onValueChange={(value) =>
+                          setSearchAlertDraft((draft) => ({
+                            ...draft,
+                            sort: value === "newest" || value === "deadline" ? value : "relevance",
+                          }))
+                        }
+                      >
+                        <SelectTrigger className="h-10 border-slate-200 focus:ring-slate-900 rounded-lg">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-lg border-slate-200 shadow-md">
+                          <SelectItem value="relevance" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                            {t("settings.searchAlertSort_relevance")}
+                          </SelectItem>
+                          <SelectItem value="newest" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                            {t("settings.searchAlertSort_newest")}
+                          </SelectItem>
+                          <SelectItem value="deadline" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                            {t("settings.searchAlertSort_deadline")}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <label className="flex items-center gap-3 text-sm font-medium text-slate-700">
+                      <Switch
+                        checked={searchAlertDraft.isEnabled}
+                        onCheckedChange={(checked) =>
+                          setSearchAlertDraft((draft) => ({ ...draft, isEnabled: checked }))
+                        }
+                        className="data-[state=checked]:bg-slate-900"
+                      />
+                      {t("settings.searchAlertEnabled")}
+                    </label>
+                    <Button
+                      onClick={handleSearchAlertSubmit}
+                      disabled={isSavingSearchAlert || !user || !searchAlertDraft.name.trim()}
+                      className="w-full bg-slate-900 hover:bg-slate-800 text-white font-medium shadow-sm rounded-lg px-6 h-10 sm:w-auto"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      {isSavingSearchAlert ? t("settings.saving") : t("settings.saveSearchAlert")}
+                    </Button>
+                  </div>
+                </div>
+
+                {searchAlertMessage && <p className="text-sm font-medium text-emerald-700">{searchAlertMessage}</p>}
+                {searchAlertError && <p className="text-sm font-medium text-red-600">{searchAlertError}</p>}
+                {!searchAlertsData && !searchAlertError && (
+                  <p className="text-sm font-medium text-slate-500">{t("settings.loadingSearchAlerts")}</p>
+                )}
+                {searchAlertsData?.length === 0 && (
+                  <p className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm font-medium text-slate-500">
+                    {t("settings.noSearchAlerts")}
+                  </p>
+                )}
+                <div className="space-y-3">
+                  {(searchAlertsData ?? []).map((alert) => (
+                    <div
+                      key={alert.id}
+                      className="flex flex-col gap-4 rounded-lg border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-semibold text-slate-900">{alert.name}</p>
+                          <Badge
+                            variant="outline"
+                            className={`w-fit ${
+                              alert.isEnabled
+                                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                                : "border-slate-200 bg-slate-50 text-slate-600"
+                            }`}
+                          >
+                            {alert.isEnabled ? t("settings.searchAlertActive") : t("settings.searchAlertPaused")}
+                          </Badge>
+                          <Badge variant="outline" className="w-fit border-slate-200 bg-slate-50 text-slate-700">
+                            {alert.frequency === "weekly" ? t("settings.weeklySummary") : t("settings.dailyDigest")}
+                          </Badge>
+                        </div>
+                        <p className="mt-1 text-sm font-medium text-slate-600">{searchAlertQuerySummary(alert)}</p>
+                        <p className="mt-1 text-xs font-medium text-slate-500">
+                          {t("settings.searchAlertLastMatched").replace(
+                            "{date}",
+                            searchAlertDateLabel(alert.lastMatchedAt),
+                          )}
+                        </p>
+                      </div>
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                        <Button
+                          variant="outline"
+                          onClick={() => setSearchAlertDraft(searchAlertDraftFrom(alert))}
+                          disabled={searchAlertActionId === alert.id}
+                          className="h-9 border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                        >
+                          <Pencil className="mr-2 h-4 w-4" />
+                          {t("settings.editSearchAlert")}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => handleSearchAlertToggle(alert)}
+                          disabled={searchAlertActionId === alert.id}
+                          className="h-9 border-slate-200 px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                        >
+                          {alert.isEnabled ? <Pause className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
+                          {alert.isEnabled ? t("settings.pauseSearchAlert") : t("settings.resumeSearchAlert")}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => handleSearchAlertDelete(alert)}
+                          disabled={searchAlertActionId === alert.id}
+                          className="h-9 border-red-200 px-3 text-sm font-medium text-red-700 hover:bg-red-50 hover:text-red-800"
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          {t("settings.deleteSearchAlert")}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>

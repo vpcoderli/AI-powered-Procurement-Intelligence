@@ -1,6 +1,6 @@
 # WinBids Product Requirements
 
-Updated: 2026-05-29
+Updated: 2026-05-30
 
 This directory is the local working source for WinBids product requirements after reading the shared Google Drive folder.
 
@@ -21,17 +21,17 @@ This directory is the local working source for WinBids product requirements afte
 
 ## Current Recommendation
 
-Continue implementation with **P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata**.
+Continue implementation with **Product 2 Qualification Evidence Citations v1**.
 
 Reason:
 
-- Commercial packaging and credits foundation is now implemented locally while preserving `free/pro/business/enterprise` compatibility values.
-- The next highest-risk gap is data reliability: source registry metadata, connector capability tracking, attachment/detail archival, checksums, content types, and quality flags.
-- Product 2, Knowledge Station, and Response Workspace will be stronger if bid source evidence and document archives are trustworthy first.
+- Admin QA batch filters/correction history, Search Alerts management UI, 50-state crawler guardrails, notification provider hardening, and production billing/worker runbooks are now implemented locally.
+- The next highest-risk product gap is qualification trust: generated pursuit outputs need persisted evidence citations before document-grounded Q&A, amendment awareness, or richer no-bid taxonomy can be credible.
+- This keeps the next slice small while directly supporting Product 2 requirements.
 
 Product-workflow alternative:
 
-- If the next sprint intentionally shifts to user workflow depth, prioritize **Product 2 Qualification Upgrade**.
+- If the next sprint intentionally stays on operations, prioritize **Search Alerts Notification History + Digest Verification** or **raw/staged/normalized Admin QA comparison**.
 
 ## Refresh Rule
 

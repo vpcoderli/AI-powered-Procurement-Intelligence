@@ -137,6 +137,9 @@ def test_registry_includes_exactly_50_state_sources_with_stable_metadata():
     assert all(callable(source.fixture_loader) for source in state_sources)
     assert all(supports_live_fetch(source.id) for source in state_sources)
     assert all(callable(get_live_fetcher(source.id)) for source in state_sources)
+    assert all(source.adapter_kind in {"dedicated", "generic"} for source in state_sources)
+    assert all(source.maturity in {"verified", "beta", "generic"} for source in state_sources)
+    assert all(source.capabilities for source in state_sources)
 
 
 def test_state_source_metadata_is_stable():
@@ -148,6 +151,24 @@ def test_state_source_metadata_is_stable():
     assert ca_source.state_code == "CA"
     assert ca_source.source_label == "California Cal eProcure"
     assert callable(get_fixture_loader("ca_caleprocure"))
+
+
+def test_state_source_quality_maturity_metadata_is_tracked():
+    verified_source = get_source("il_bidbuy")
+    beta_source = get_source("wa_state_procurement")
+
+    assert verified_source.adapter_kind == "dedicated"
+    assert verified_source.maturity == "verified"
+    assert verified_source.capabilities == (
+        "query",
+        "attachments",
+        "detail_pages",
+        "pagination",
+    )
+
+    assert beta_source.adapter_kind == "dedicated"
+    assert beta_source.maturity == "beta"
+    assert beta_source.capabilities == ("query", "attachments")
 
 
 def test_batch_two_state_sources_are_registered_to_dedicated_fetchers():

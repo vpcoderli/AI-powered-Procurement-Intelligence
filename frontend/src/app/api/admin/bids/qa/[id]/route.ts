@@ -5,6 +5,7 @@ import {
   isAdminBidQaCorrectionField,
   isAdminBidQaDisplayStatus,
   isAdminBidQaReviewStatus,
+  listAdminBidQaCorrections,
   updateAdminBidQaCorrection,
   updateAdminBidQaDisplayStatus,
   updateAdminBidQaReview,
@@ -133,4 +134,20 @@ export function createAdminBidQaPatch(database?: AppDatabase) {
   };
 }
 
+export function createAdminBidQaGet(database?: AppDatabase) {
+  return async function GET(request: Request, context: RouteContext) {
+    try {
+      const resolvedDb = await resolveDatabase(database);
+      await requireAdminAccess(resolvedDb, request);
+      const { id } = await context.params;
+      const corrections = await listAdminBidQaCorrections(resolvedDb, id);
+
+      return NextResponse.json({ corrections });
+    } catch (error) {
+      return routeError(error);
+    }
+  };
+}
+
+export const GET = createAdminBidQaGet();
 export const PATCH = createAdminBidQaPatch();

@@ -14,7 +14,8 @@
     "billing:stripe:sandbox": "tsx scripts/stripe-sandbox-e2e.ts",
     "crawler:once": "tsx scripts/run-crawler-once.ts",
     "worker:crawler": "tsx scripts/crawler-worker.ts",
-    "worker:notifications": "tsx scripts/notification-worker.ts"
+    "worker:notifications": "tsx scripts/notification-worker.ts",
+    "worker:notifications:check": "tsx scripts/notification-worker.ts --check"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

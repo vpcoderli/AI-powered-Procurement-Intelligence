@@ -183,6 +183,20 @@ CRAWLER_WORKER_INTERVAL_MS=300000 npm run worker:crawler
 
 上例为每 5 分钟运行一次。
 
+### 生产 billing 与通知 worker
+
+生产 billing、Stripe webhook 轮换、定时 worker 部署、dunning 提醒和 provider dashboard checklist 见：
+
+```text
+docs/operations/production-billing-worker-runbook.md
+```
+
+通知 worker 上线前可先做环境预检：
+
+```bash
+npm run worker:notifications:check
+```
+
 ### 控制每个州抓取数量
 
 可用 `STATE_CRAWLER_LIMIT` 控制州级爬虫单次抓取数量：
@@ -190,6 +204,18 @@ CRAWLER_WORKER_INTERVAL_MS=300000 npm run worker:crawler
 ```bash
 STATE_CRAWLER_LIMIT=10 npm run crawler:once
 ```
+
+### 通知投递 worker
+
+通知 outbox 默认使用本地 file provider，把待发送 payload 写到 `frontend/data/notification-outbox`，便于本地检查。
+
+运行一次通知调度和投递：
+
+```bash
+NOTIFICATION_WORKER_RUN_ONCE=1 npm run worker:notifications
+```
+
+生产邮件 provider、fallback、失败重试和排障步骤见 `docs/operations/notification-delivery-runbook.md`。
 
 ## 6. 静态 UI/UE 方案页
 
