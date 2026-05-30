@@ -290,6 +290,7 @@ export function runMigrations(db: AppDatabase) {
       initial_checklist_json TEXT NOT NULL DEFAULT '[]',
       risk_flags_json TEXT NOT NULL DEFAULT '[]',
       match_score_snapshot_json TEXT NOT NULL DEFAULT '{}',
+      evidence_citations_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -639,6 +640,17 @@ export function runMigrations(db: AppDatabase) {
   addBidAttachmentColumn("fetched_at", "TEXT");
   addBidAttachmentColumn("archive_status", "TEXT NOT NULL DEFAULT 'not_archived'");
   addBidAttachmentColumn("archive_error", "TEXT");
+
+  const intentColumns = new Set(
+    sqlite
+      .prepare("PRAGMA table_info(intent_to_bid)")
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+
+  if (!intentColumns.has("evidence_citations_json")) {
+    sqlite.exec("ALTER TABLE intent_to_bid ADD COLUMN evidence_citations_json TEXT NOT NULL DEFAULT '[]'");
+  }
 
   const dataSourceColumns = new Set(
     sqlite

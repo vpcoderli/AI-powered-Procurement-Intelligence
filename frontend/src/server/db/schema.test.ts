@@ -184,6 +184,93 @@ describe("database schema", () => {
     ).toEqual({ name: "idx_subscription_events_provider_event_id" });
   });
 
+  it("adds evidence citation snapshots to legacy intent tables", async () => {
+    directory = await mkdtemp(path.join(os.tmpdir(), "apsi-db-"));
+    const databasePath = path.join(directory, "apsi.sqlite");
+    db = createDatabase(databasePath);
+
+    db.$client.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        email TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE bids (
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        source_bid_id TEXT,
+        dedupe_key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        issuer_name TEXT NOT NULL,
+        issuer_type TEXT NOT NULL,
+        state_code TEXT NOT NULL,
+        original_category TEXT,
+        amount TEXT,
+        amount_min INTEGER,
+        amount_max INTEGER,
+        currency TEXT NOT NULL DEFAULT 'USD',
+        published_date TEXT,
+        deadline_date TEXT,
+        contact_name TEXT,
+        contact_email TEXT,
+        contact_phone TEXT,
+        source_url TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        raw_payload TEXT,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE intent_to_bid (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'intent_added',
+        ai_bid_brief TEXT NOT NULL DEFAULT '',
+        key_dates_json TEXT NOT NULL DEFAULT '{}',
+        initial_checklist_json TEXT NOT NULL DEFAULT '[]',
+        risk_flags_json TEXT NOT NULL DEFAULT '[]',
+        match_score_snapshot_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO users (id, email, created_at, updated_at)
+      VALUES ('user_1', 'buyer@example.com', '2026-05-19T00:00:00.000Z', '2026-05-19T00:00:00.000Z');
+      INSERT INTO bids (
+        id, source, dedupe_key, title, description, issuer_name, issuer_type, state_code,
+        source_url, first_seen_at, last_seen_at, created_at, updated_at
+      )
+      VALUES (
+        'bid_1', 'SAM.gov', 'legacy:1', 'Legacy bid', 'Legacy description',
+        'Example Agency', 'federal', 'US', 'https://example.gov',
+        '2026-05-19T00:00:00.000Z', '2026-05-19T00:00:00.000Z',
+        '2026-05-19T00:00:00.000Z', '2026-05-19T00:00:00.000Z'
+      );
+      INSERT INTO intent_to_bid (
+        id, user_id, bid_id, status, ai_bid_brief, key_dates_json,
+        initial_checklist_json, risk_flags_json, match_score_snapshot_json, created_at, updated_at
+      )
+      VALUES (
+        'intent_1', 'user_1', 'bid_1', 'intent_added', 'Brief', '{}',
+        '[]', '[]', '{}', '2026-05-19T00:00:00.000Z', '2026-05-19T00:00:00.000Z'
+      );
+    `);
+
+    expect(() => runMigrations(db!)).not.toThrow();
+
+    const row = db.$client
+      .prepare("SELECT evidence_citations_json FROM intent_to_bid WHERE id = ?")
+      .get("intent_1");
+
+    expect(row).toEqual({ evidence_citations_json: "[]" });
+  });
+
   it("creates supplier profile and intent tables", async () => {
     const testDb = await createTestDatabase({ seed: false });
 
@@ -227,6 +314,13 @@ describe("database schema", () => {
         .map((row) => (row as { name: string }).name);
 
       expect(organizationColumns).toContain("account_tier");
+
+      const intentColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(intent_to_bid)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(intentColumns).toContain("evidence_citations_json");
 
       const featureOverrideColumns = testDb.db.$client
         .prepare("PRAGMA table_info(organization_feature_overrides)")

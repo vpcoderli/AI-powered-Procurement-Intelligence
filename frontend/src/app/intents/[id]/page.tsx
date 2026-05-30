@@ -14,6 +14,7 @@ import {
   fetchComplianceManifest,
   fetchIntent,
   fetchPursuitDecisionBoard,
+  fetchQualificationCitations,
   fetchSubmissionGuidance,
   updateComplianceManifestItem,
   updateIntentStatus,
@@ -24,6 +25,7 @@ import { lockedFeatureMessage, useFeature } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import type { IntentDetail, IntentStatus } from "@/server/intents/types";
 import { INTENT_STATUSES } from "@/server/intents/types";
+import type { QualificationCitation } from "@/server/qualification/types";
 import type {
   ComplianceEvidenceStatus,
   ComplianceItemStatus,
@@ -72,6 +74,17 @@ function scoreTone(score: number) {
 
 function metricLabel(key: string) {
   return key.replace(/([A-Z])/g, " $1").replace(/^./, (value) => value.toUpperCase());
+}
+
+function safeEvidenceUrl(value: string) {
+  if (value.startsWith("/")) return value;
+
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? value : "";
+  } catch {
+    return "";
+  }
 }
 
 const prototypeWorkspace = "Intent Workspace";
@@ -195,6 +208,8 @@ export default function IntentWorkspacePage() {
   const [isPursuitDecisionSaving, setIsPursuitDecisionSaving] = useState(false);
   const [pursuitDecisionError, setPursuitDecisionError] = useState<Error | null>(null);
   const [pursuitDecisionNotice, setPursuitDecisionNotice] = useState("");
+  const [qualificationCitations, setQualificationCitations] = useState<QualificationCitation[]>([]);
+  const [isCitationsLoading, setIsCitationsLoading] = useState(false);
   const submissionGuidanceFeature = useFeature("submission_guidance");
   const complianceManifestFeature = useFeature("compliance_manifest");
   const pursuitDecisionFeature = useFeature("pursue_no_bid");
@@ -235,6 +250,41 @@ export default function IntentWorkspacePage() {
     return () => {
       cancelled = true;
       mountedRef.current = false;
+    };
+  }, [intentId]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled || !mountedRef.current) return;
+
+      setQualificationCitations([]);
+
+      if (!intentId) {
+        setIsCitationsLoading(false);
+        return;
+      }
+
+      setIsCitationsLoading(true);
+
+      fetchQualificationCitations(intentId)
+        .then((response) => {
+          if (cancelled || !mountedRef.current) return;
+          setQualificationCitations(response.citations);
+        })
+        .catch(() => {
+          if (cancelled || !mountedRef.current) return;
+          setQualificationCitations([]);
+        })
+        .finally(() => {
+          if (cancelled || !mountedRef.current) return;
+          setIsCitationsLoading(false);
+        });
+    });
+
+    return () => {
+      cancelled = true;
     };
   }, [intentId]);
 
@@ -701,6 +751,53 @@ export default function IntentWorkspacePage() {
                 {intent.generated.initialChecklist.length} {t("intentsPage.items")}
               </p>
             </div>
+          </div>
+          <div className="mt-5 rounded-lg border border-blue-100 bg-blue-50/60 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-black text-slate-950">{t("intentsPage.evidenceCitations")}</p>
+              <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">
+                {qualificationCitations.length}
+              </Badge>
+            </div>
+            {isCitationsLoading ? (
+              <p className="mt-3 text-sm font-semibold text-slate-500">{t("intentsPage.evidenceCitationsLoading")}</p>
+            ) : qualificationCitations.length === 0 ? (
+              <p className="mt-3 text-sm font-semibold text-slate-500">{t("intentsPage.noEvidenceCitations")}</p>
+            ) : (
+              <div className="mt-3 grid gap-2">
+                {qualificationCitations.slice(0, 6).map((citation) => {
+                  const evidenceUrl = safeEvidenceUrl(citation.url);
+
+                  return (
+                    <article key={citation.id} className="rounded-lg border border-blue-100 bg-white p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+                          {t(`intentsPage.citationSections.${citation.section}`)}
+                        </Badge>
+                        <span className="text-xs font-black text-slate-900">{citation.sourceLabel}</span>
+                        <span className="text-xs font-bold text-slate-400">
+                          {t(`intentsPage.confidence.${citation.confidence}`)}
+                        </span>
+                      </div>
+                      <p className="mt-2 line-clamp-2 break-words text-xs font-semibold leading-5 text-slate-600">
+                        {citation.excerpt}
+                      </p>
+                      {evidenceUrl ? (
+                        <Link
+                          href={evidenceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-2 inline-flex items-center text-xs font-black text-blue-700 hover:text-blue-900"
+                        >
+                          <ExternalLink size={13} className="mr-1.5" aria-hidden="true" />
+                          {t("intentsPage.openEvidence")}
+                        </Link>
+                      ) : null}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </article>
 
