@@ -8,9 +8,55 @@ This document is the working checklist for local development. Update it after ea
 
 每完成一个阶段后，都要更新下面三块：
 
-1. **Current Product Status**：哪些能力已经可用，哪些只是部分可用。
-2. **Account / Permission / Billing Tracker**：账户、admin、套餐、功能权限这条商业化主线的差距。
-3. **Recommended Next Phase**：下一阶段优先做什么，避免每次重新阅读代码后再判断。
+1. **Open Requirements Backlog**：当前未完成需求的唯一主清单，按优先级和产品域维护。
+2. **Current Product Status**：哪些能力已经可用，哪些只是部分可用。
+3. **Account / Permission / Billing Tracker**：账户、admin、套餐、功能权限这条商业化主线的差距。
+4. **Recommended Next Phase**：下一阶段优先做什么，避免每次重新阅读代码后再判断。
+
+## Open Requirements Backlog
+
+这部分是后续开发的主清单。每完成一个阶段，优先更新这里；历史阶段记录只保留背景，不再作为下一步判断依据。
+
+### P0 / Next Thin Slice
+
+| Requirement | Current state | Remaining work | Suggested next slice |
+|---|---|---|---|
+| Admin QA Batch Filters + Correction History | 单条 QA 修正、publish/suppress、correction audit 已完成。 | display status / score range / reviewer / reviewed date / source confidence 过滤；批量 reviewed / needs review / publish / suppress；原始值 vs 修正值对比；修正历史面板。 | 先做 repository/API filters + Admin UI 过滤条，再做批量操作和历史面板。 |
+
+### P1 / MVP Readiness
+
+| Requirement | Current state | Remaining work | Suggested next slice |
+|---|---|---|---|
+| 50-state crawler hardening | 50 州 registry 已覆盖；CA/TX/NY/FL/IL 为 verified dedicated，其他 45 州为 beta dedicated；非空校验和归档已接入。 | 将 45 个 beta 州逐步提升为 verified；增加调度/监控 runbook；按州记录抓取质量、失败原因、空结果告警；Source Registry / Connector Engine / Normalization QA 职责拆分文档化。 | 每批 10-15 州做 live fixture 校验和 adapter maturity 更新。 |
+| Product 2 Qualification Upgrade | Match score、AI-like brief、Submission Guidance、Compliance Manifest Lite、Pursue/No-Bid Lite 已有 deterministic 版本。 | 文档引用 citations、document-grounded Q&A、amendment/addenda awareness、evidence mapping、no-bid taxonomy、资格风险解释。 | 先做 bid evidence/citation 数据结构和只读 Q&A API stub，再接 UI。 |
+| Search Alerts Full UI | API/service foundation、quota gate、全局通知偏好已存在。 | Alert 管理页面、每个 alert 的 digest 频率/关键词/州/类别配置、暂停/恢复、通知历史、真实邮件 provider。 | 先做 Settings/Search Alerts 管理 UI + per-alert CRUD。 |
+| Production Billing / Worker Deployment Runbook | Stripe sandbox E2E verifier、checkout/webhook/portal/cancel foundation 已完成。 | 生产/测试密钥隔离、webhook endpoint rotation、scheduled worker 部署、生产 dunning worker、provider dashboard 操作说明。 | 写 production runbook，并让 worker command 支持部署环境检查。 |
+| Notification production hardening | outbox、file/console/http provider、retry worker、Admin 手动 delivery 已有。 | 生产邮件 provider、cron/process 部署、退信/失败策略、模板治理、送达状态监控。 | 接一个生产 provider 配置层，但保留本地 file/console fallback。 |
+| UI/UE production polish | 有 `/winbids-demo` 与 `/generative-art-static` 静态 demo，主应用已有部分视觉调整和中英文切换。 | 将 demo 风格系统性迁移到真实业务页面；统一表格/筛选/空状态/加载态/移动端布局；避免只停留在静态 demo。 | 先选 `/search`、`/bids/[id]`、`/admin` 三页做一轮可用性与视觉收敛。 |
+
+### P2 / Product Workflow Depth
+
+| Requirement | Current state | Remaining work | Suggested next slice |
+|---|---|---|---|
+| Knowledge Station Lite | feature key 存在，暂无产品界面。 | 工作流教练、模板/片段、可复用知识条目、基础检索、与 Intent workspace 关联。 | 做 Product 0.9 Lite：手动创建知识条目 + 在 Intent 中引用。 |
+| Response Workspace Lite | Intent workspace 有基础状态和 Submission Guidance/Compliance/Decision 模块。 | Tasks、artifacts、internal checkpoints、response package outline、团队协作状态。 | 在 Intent detail 增加 task/checkpoint model 和 UI。 |
+| Artifact Vault Lite | 附件归档存在，但供应商侧 artifact 管理未做。 | 用户上传文件、关联 intent/bid、文件分类、证据状态、基础权限。 | 先做 local storage artifact upload + intent association。 |
+| Quote / Supply Chain Lite | feature key 和套餐方向存在，未实现。 | Partner database、quote requests、quote comparison、供应商附件、业务状态流。 | 做最小 partner list + quote request draft，不先做复杂 marketplace。 |
+| Deadline Notifications | 通知 outbox foundation 已有，保存搜索偏好已有。 | Bid deadline reminder、intent task reminder、digest scheduling、用户级开关。 | 先做 deadline reminder generator + notification outbox entries。 |
+| Submission Guidance Completion | Guidance 生成、编辑、确认已存在。 | 更完整的 submission path 状态机、确认凭证、错误恢复、历史版本。 | 补 submission version/history 和 readiness completion。 |
+| Award / Tabulation Tracking | 未实现。 | Award notices、bid status monitoring、tabulation records、竞争分析输入。 | 先做 award notice 数据表 + 手动录入 UI。 |
+| Win/Loss Learning | 未实现。 | Outcome capture、reason taxonomy、future recommendation feedback loop。 | 在 Intent close-out 增加 win/loss outcome form。 |
+
+### P3 / Later / Enterprise / AI Depth
+
+| Requirement | Current state | Remaining work | Suggested next slice |
+|---|---|---|---|
+| Real credit consumption and paid credit packs | credit tables、plan copy、usage summary 已有。 | AI action 真实扣费、refund flow、credit purchase packs、admin adjustment、ledger reconciliation。 | 等 premium AI actions 接入后再做真实扣费。 |
+| Advanced usage metrics | saved bids / intents / alerts / team usage 已计数。 | quote workflow、Knowledge Station、AI call、artifact storage 等指标。 | 随对应模块落地逐项补。 |
+| Organization lifecycle polish | workspace/team 管理可用。 | invite acceptance analytics、更完整 team audit、company owner/member 与 global role 的统一策略。 | 做 team audit history 列表。 |
+| Custom enterprise permission rules | 中心 entitlement map + org feature overrides 已有。 | enterprise policy model、custom packages、contract-specific limits。 | 等真实 enterprise case 再建规则模型。 |
+| Production AI layer | 当前为 deterministic/AI-like foundation。 | LLM extraction、citations、confidence、prompt rules、uncertainty handling、cost controls。 | 从 Product 2 citations/Q&A 的受限场景开始。 |
+| Product 6 data capture | 未实现完整 intelligence。 | 数据采集、award/tabulation、price-to-win、长期学习。 | 先只做数据 capture，不做完整智能判断。 |
 
 ## Current Product Status
 
@@ -224,7 +270,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - 前端 SAM.gov/state runner 默认启用附件归档，并支持显式关闭或指定归档目录。
 - 招标详情页附件列表显示本地归档状态与失败说明，便于诊断“有数据但文件 404”的问题。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Bid Admin/Data QA Correction + Publish Controls：字段修正、原始值保留、publish/suppress、批量审核。
 2. Product 2 Qualification Upgrade：document-grounded citations、Q&A、amendment/addenda awareness、evidence mapping、no-bid taxonomy。
 3. Knowledge Station Lite：工作流教练、模板/片段、可复用知识沉淀。
@@ -238,7 +284,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - 新增 `/api/admin/bids/qa/[id]` PATCH API，admin/operator 可更新 `reviewStatus` 和 note，support 只读。
 - `/admin` 接入 Bid Data QA 队列，展示质量分、归档问题数、质量 flags、review status，并支持快速标记 Reviewed / Needs review。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Admin QA Batch Filters + Correction History：display status/score/reviewer 过滤、批量 publish/suppress/review、原始值对比、修正历史面板。
 2. Product 2 Qualification Upgrade：document-grounded citations、Q&A、amendment/addenda awareness、evidence mapping、no-bid taxonomy。
 3. Knowledge Station Lite：工作流教练、模板/片段、可复用知识沉淀。
@@ -252,12 +298,12 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `/admin` QA 队列展示展示状态和修正次数，admin/operator 可发布、隐藏、保存 title/deadline 修正；support 保持只读。
 - 中英文文案已补齐，定向测试覆盖 schema、repository、公开过滤、API route、API client、Admin UI。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Admin QA Batch Filters + Correction History：display status/score/reviewer 过滤、批量 publish/suppress/review、原始值对比、修正历史面板。
 2. Product 2 Qualification Upgrade：document-grounded citations、Q&A、amendment/addenda awareness、evidence mapping、no-bid taxonomy。
 3. Knowledge Station Lite：工作流教练、模板/片段、可复用知识沉淀。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. QA 字段修正：title、deadline、issuer、amount、category、source URL 等有限字段编辑。
 2. 原始值保留：记录 crawler original value 与 corrected value，避免覆盖证据。
 3. Publish/suppress 控制：面向搜索结果的发布状态、隐藏/恢复、批量操作。
@@ -273,7 +319,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - 新增 `credit_balances` 与 `credit_usage_events` ledger placeholder 表。
 - Settings Billing/Usage 展示新套餐名、Growth planned 状态和 credits 摘要。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. P1 Data Pipeline Hardening：Source Registry metadata、attachment/detail archival、checksum/content-type、quality flags。
 2. Bid Admin/Data QA Console Expansion。
 3. Product 2 Qualification Upgrade：citations、Q&A、amendment awareness、evidence mapping、no-bid taxonomy。
@@ -302,7 +348,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - Intent Workspace 的 Submission Path 模块会按套餐显示锁定态。
 - Settings/Profile 区域显示当前套餐和功能可用/锁定状态。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
 2. Organization team management：成员角色调整、移除、owner 转移。
 3. Submission Guidance 真实编辑与确认 UI。
@@ -316,7 +362,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - 新增 `/api/admin/users/audit-logs` 管理员接口。
 - `/admin` 用户权限区增加搜索/筛选控件与“用户权限审计”视图。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
 2. Organization team management：成员角色调整、移除、owner 转移。
 3. Submission Guidance 真实编辑与确认 UI。
@@ -330,7 +376,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `/settings` 安全页接入真实密码修改流程，并补齐中英文状态文案。
 - 新增服务、API route、前端 API client、Settings 静态检查测试。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Billing provider 同步与真实 checkout/发票/取消订阅。
 2. Organization team management：成员角色调整、移除、owner 转移。
 3. Account deletion/export 账号数据导出与删除。
@@ -345,7 +391,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `/settings` 新增 Billing 标签页，展示当前套餐、订阅状态、来源、可用套餐和升级入口占位。
 - 新增订阅服务、API route、前端 API client、Settings 静态检查和 schema 测试。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 2. Usage limits：继续覆盖 alerts、AI/高级功能调用次数，并增加使用量仪表盘。
 3. Organization team management：成员角色调整、移除、owner 转移。
@@ -361,7 +407,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - 超额时 API 返回 `USAGE_LIMIT_REACHED`、当前用量、额度和推荐升级套餐。
 - 前端 API client 识别 `USAGE_LIMIT_REACHED`；Bid Detail 的 Intent 创建失败会展示升级到 Pro 的提示。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 2. Usage limits 扩展：alerts、AI/高级功能调用次数、用量仪表盘。
 3. Organization team management：成员角色调整、移除、owner 转移。
@@ -383,7 +429,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm run build`
 - 浏览器烟测：打开 Intent 工作台，保存提交指导成功，确认已提交成功。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Compliance Manifest Lite：结构化需求、人工完成状态、备注和证据状态。
 2. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
@@ -411,7 +457,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm run build`
 - 浏览器烟测：打开 `/admin`，当前 admin 会话正常进入“管理员运维”页面。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Compliance Manifest Lite：结构化需求、人工完成状态、备注和证据状态。
 2. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
@@ -439,7 +485,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm run build`
 - 浏览器烟测：打开 `/admin`，确认“邀请用户”表单、角色/套餐选择和“创建邀请”按钮已渲染。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Organization team management：成员角色调整、移除、owner 转移。
 2. Account deletion/export 账号数据导出与删除。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
@@ -463,7 +509,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/auth/password-reset.test.ts src/server/db/schema.test.ts src/app/api/auth/password-reset/request/route.test.ts src/app/api/auth/password-reset/confirm/route.test.ts src/lib/api/auth.test.ts src/app/login/page.test.ts src/app/forgot-password/page.test.ts src/app/reset-password/page.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Organization team management：成员角色调整、移除、owner 转移。
 2. Account deletion/export 账号数据导出与删除。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
@@ -489,7 +535,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/account/workspace.test.ts src/server/db/schema.test.ts src/app/api/auth/session/route.test.ts src/app/api/account/workspace/route.test.ts src/app/api/account/workspace/members/route.test.ts src/lib/api/auth.test.ts src/app/settings/page.test.ts src/server/auth/service.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Organization team management：成员角色调整、移除、owner 转移。
 2. Account deletion/export 账号数据导出与删除。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
@@ -517,7 +563,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm run build`
 - API 烟测：owner 注册并邀请 member；owner 保存 bid 与创建 intent；member 登录后能读取同一 saved bid 和 intent。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Organization team management：成员角色调整、移除、owner 转移。
 2. Account deletion/export 账号数据导出与删除。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
@@ -544,7 +590,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm run lint`
 - `npm run build`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Compliance Manifest Lite：结构化需求、人工完成状态、备注和证据状态。
 2. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 3. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
@@ -574,7 +620,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm run build`
 - 浏览器烟测：从 bid detail 创建 Intent，打开 Intent 工作台，确认 Compliance Manifest 面板渲染 8 条清单、完成概览和证据备注输入。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Pursue / No-Bid Decision Lite：推荐、决策记录、原因和历史。
 2. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 3. Account deletion/export 账号数据导出与删除。
@@ -604,7 +650,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm run build`
 - 浏览器烟测：打开 Intent 工作台，确认 Pursue / No-Bid Decision 面板、推荐区、保存决策按钮和决策历史渲染。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. 真实 billing provider 接入：checkout、webhook、invoice、cancel、trial expiration。
 2. Account deletion/export 账号数据导出与删除。
 3. Organization team lifecycle：owner 转移流程、成员禁用/恢复、邀请接受/邮件投递。
@@ -628,7 +674,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/billing/subscriptions.test.ts src/app/api/account/subscription/checkout/route.test.ts src/app/api/account/subscription/cancel/route.test.ts src/app/api/billing/webhook/route.test.ts src/lib/api/auth.test.ts src/app/settings/page.test.ts src/server/db/schema.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Production Billing Provider Hardening：真实 provider credentials/config、webhook signature、hosted checkout redirect、customer portal。
 2. Invoice / Payment History UI：发票记录、provider invoice link、账单历史。
 3. Trial / Dunning Lifecycle：试用到期、扣款失败、逾期提醒、降级规则。
@@ -651,7 +697,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/billing/subscriptions.test.ts src/server/db/schema.test.ts src/app/api/account/billing/invoices/route.test.ts src/app/api/billing/webhook/route.test.ts src/lib/api/auth.test.ts src/app/settings/page.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Production Billing Provider Hardening：真实 provider SDK/config、hosted checkout redirect、customer portal、provider-specific event mapping、部署环境变量说明。
 2. Trial / Dunning Lifecycle：试用到期、扣款失败重试、逾期提醒、自动降级规则。
 3. Invoice / Payment History Polish：PDF 下载体验、筛选、支付重试链接、更完整的发票详情。
@@ -680,7 +726,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `git diff --check`
 - 浏览器烟测：打开 `/settings`，切换 Billing/账单标签，确认“管理账单”“打开账单门户”和发票区域渲染。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Production Billing Provider SDK/API：接真实 Stripe/其他 provider SDK、真实 hosted checkout/customer portal session 创建、sandbox credentials。
 2. Provider-specific event mapping：把真实 provider payload 转换为当前内部 `BillingProviderEvent`。
 3. Trial / Dunning Lifecycle：试用到期、扣款失败重试、逾期提醒、自动降级规则。
@@ -712,7 +758,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `git diff --check`
 - 浏览器烟测：打开 `/settings`，Security/安全 标签显示“导出账户数据”“删除账户”；Team/团队 标签显示“转让 Owner”。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Production Billing Provider SDK/API：接真实 Stripe/其他 provider SDK、真实 hosted checkout/customer portal session 创建、sandbox credentials。
 2. Provider-specific event mapping：把真实 provider payload 转换为当前内部 `BillingProviderEvent`。
 3. Trial / Dunning Lifecycle：试用到期、扣款失败重试、逾期提醒、自动降级规则。
@@ -742,7 +788,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm run lint`
 - `npm run build`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Production Billing Provider SDK/API：接真实 Stripe/其他 provider SDK、真实 hosted checkout/customer portal session 创建、sandbox credentials。
 2. Provider-specific event mapping：把真实 provider payload 转换为当前内部 `BillingProviderEvent`。
 3. Trial / Dunning Lifecycle：试用到期、扣款失败重试、逾期提醒、自动降级规则。
@@ -768,7 +814,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/account/workspace.test.ts src/server/db/schema.test.ts src/lib/api/auth.test.ts src/app/settings/page.test.ts src/app/api/account/workspace/invitations/[userId]/resend/route.test.ts src/app/api/account/workspace/invitations/[userId]/route.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Production Billing Provider SDK/API：接真实 Stripe/其他 provider SDK、真实 hosted checkout/customer portal session 创建、sandbox credentials。
 2. Provider-specific event mapping：把真实 provider payload 转换为当前内部 `BillingProviderEvent`。
 3. Trial / Dunning Lifecycle：试用到期、扣款失败重试、逾期提醒、自动降级规则。
@@ -793,7 +839,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/account/usage.test.ts src/app/api/account/usage/route.test.ts src/server/auth/feature-gate-coverage.test.ts src/lib/api/auth.test.ts src/app/settings/page.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Production Billing Provider SDK/API：接真实 Stripe/其他 provider SDK、真实 hosted checkout/customer portal session 创建、sandbox credentials。
 2. Provider-specific event mapping：把真实 provider payload 转换为当前内部 `BillingProviderEvent`。
 3. Trial / Dunning Lifecycle：试用到期、扣款失败重试、逾期提醒、自动降级规则。
@@ -818,7 +864,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/notifications/outbox-repository.test.ts src/server/notifications/delivery.test.ts src/server/notifications/providers/http.test.ts src/server/notifications/provider.test.ts src/app/api/admin/notifications/deliver/route.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Production Billing Provider SDK/API：接真实 Stripe/其他 provider SDK、真实 hosted checkout/customer portal session 创建、sandbox credentials。
 2. Provider-specific event mapping：把真实 provider payload 转换为当前内部 `BillingProviderEvent`。
 3. Trial / Dunning Lifecycle：试用到期、扣款失败重试、逾期提醒、自动降级规则。
@@ -844,7 +890,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/account/notification-preferences.test.ts src/app/api/account/notification-preferences/route.test.ts src/server/db/schema.test.ts src/server/notifications/outbox-repository.test.ts src/server/notifications/service.test.ts src/server/account/workspace.test.ts src/app/api/admin/notifications/route.test.ts src/lib/api/auth.test.ts src/lib/api/admin.test.ts src/app/settings/page.test.ts src/app/admin/page.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Production Billing Provider SDK/API：接真实 Stripe/其他 provider SDK、真实 hosted checkout/customer portal session 创建、sandbox credentials。
 2. Provider-specific event mapping：把真实 provider payload 转换为当前内部 `BillingProviderEvent`。
 3. Trial / Dunning Lifecycle：试用到期、扣款失败重试、逾期提醒、自动降级规则。
@@ -871,7 +917,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/app/api/admin/subscriptions/reconcile/route.test.ts src/lib/api/admin.test.ts src/app/admin/page.test.ts src/server/billing/subscriptions.test.ts src/server/auth/service.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Production Billing Provider SDK/API：接真实 Stripe/其他 provider SDK、真实 hosted checkout/customer portal session 创建、sandbox credentials。
 2. Provider-specific event mapping：把真实 provider payload 转换为当前内部 `BillingProviderEvent`。
 3. Payment Retry / Dunning Communications：支付失败提醒邮件、支付重试链接、逾期提示 UI。
@@ -897,7 +943,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/app/api/billing/webhook/route.test.ts src/server/billing/providers.test.ts src/server/billing/subscriptions.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 2. Payment Retry / Dunning Communications：支付失败提醒邮件、支付重试链接、逾期提示 UI。
 3. Invoice / Payment History Polish：PDF 下载体验、筛选、支付重试链接、更完整的发票详情。
@@ -922,7 +968,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/billing/subscriptions.test.ts src/app/settings/page.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Multi-step Dunning Schedule：T+0/T+2/T+5 等多阶段提醒、频控、已支付后的提醒抑制。
 2. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 3. Invoice / Payment History Polish：PDF 下载体验、筛选、更完整的发票详情。
@@ -947,7 +993,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/billing/dunning.test.ts src/app/api/admin/billing/dunning/route.test.ts src/lib/api/admin.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Scheduled Notification / Dunning Worker：部署环境中的定时任务，自动执行 dunning 调度和通知投递。
 2. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 3. Invoice / Payment History Polish：PDF 下载体验、筛选、更完整的发票详情。
@@ -977,7 +1023,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm test -- src/server/notifications/worker.test.ts scripts/notification-worker.test.ts`
 - `NOTIFICATION_WORKER_RUN_ONCE=1 NOTIFICATION_PROVIDER=console npm run worker:notifications`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
 3. Invoice / Payment History Polish：PDF 下载体验、筛选、更完整的发票详情。
@@ -999,7 +1045,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/account/lifecycle.test.ts src/server/admin/users-repository.test.ts src/app/api/account/export/route.test.ts src/app/api/account/route.test.ts src/app/api/admin/users/audit-logs/route.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
 3. Invoice / Payment History Polish：PDF 下载体验、筛选、更完整的发票详情。
@@ -1025,7 +1071,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/auth/feature-gate-coverage.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
 3. Invoice / Payment History Polish：PDF 下载体验、筛选、更完整的发票详情。
@@ -1049,7 +1095,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm test -- src/server/billing/subscriptions.test.ts src/app/api/account/billing/invoices/route.test.ts src/lib/api/auth.test.ts src/app/settings/page.test.ts`
 - `npm run lint`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
 3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
@@ -1070,7 +1116,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/auth/usage-limits.test.ts src/server/account/usage.test.ts src/app/api/account/usage/route.test.ts src/app/api/search-alerts/route.test.ts src/lib/api/auth.test.ts src/app/settings/page.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Team Seat Enforcement：邀请成员和接受邀请时强制检查 `team_members` 套餐席位。
 2. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 3. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
@@ -1093,7 +1139,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/account/workspace.test.ts src/app/api/account/workspace/members/route.test.ts src/app/api/account/workspace/invitations/accept/route.test.ts src/lib/api/auth.test.ts src/app/settings/page.test.ts src/app/accept-invite/page.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
 3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
@@ -1117,7 +1163,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm test -- src/server/db/schema.test.ts src/server/account/workspace.test.ts src/server/billing/subscriptions.test.ts src/server/admin/users-repository.test.ts src/server/account/usage.test.ts src/server/auth/service.test.ts`
 - `npm test`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
 3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
@@ -1141,7 +1187,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/auth/entitlements.test.ts src/server/admin/auth.test.ts src/app/api/admin/notifications/route.test.ts src/app/api/admin/notifications/deliver/route.test.ts src/app/api/admin/billing/dunning/route.test.ts src/app/layout.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
 3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
@@ -1165,7 +1211,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/db/schema.test.ts src/server/auth/service.test.ts src/server/auth/entitlements.test.ts src/server/admin/users-repository.test.ts src/app/api/admin/users/[id]/feature-overrides/route.test.ts src/lib/api/admin.test.ts src/app/admin/page.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
 3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
@@ -1187,7 +1233,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/app/admin/page.test.ts src/server/db/schema.test.ts src/server/auth/service.test.ts src/server/admin/users-repository.test.ts 'src/app/api/admin/users/[id]/feature-overrides/route.test.ts' src/lib/api/admin.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Stripe Sandbox E2E Verification：使用真实 test mode keys、price ids、Stripe CLI/webhook endpoint 跑完整 checkout -> webhook -> tier 更新流程。
 2. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
 3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
@@ -1209,7 +1255,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 验证：
 - `npm test -- src/server/admin/users-repository.test.ts src/app/api/admin/users/audit-logs/route.test.ts src/lib/api/admin.test.ts src/app/admin/page.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控和失败告警说明。
 2. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
 3. Advanced Usage Metrics：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
@@ -1237,7 +1283,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm audit --omit=dev --audit-level=high`
 - `git diff --check`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Production Worker Deployment Runbook：部署平台的 cron/process 配置、监控、失败告警、Stripe live webhook endpoint 和 credential rotation 说明。
 2. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
 3. Advanced Usage Metrics：未来 quote workflow、AI 调用、Knowledge Station 落地后继续扩展用量项。
@@ -1261,7 +1307,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm test -- src/lib/state-crawler-sources.test.ts src/server/crawler/state-runner.test.ts src/server/crawler/configured-runner.test.ts src/server/db/seed.test.ts src/app/api/crawler/state/run/route.test.ts src/server/admin/data-sources-repository.test.ts`
 - `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_sources.py crawler/tests/test_generic_state.py crawler/tests/test_state_live_cli.py crawler/tests/test_state_live_sources.py`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. 50-State Crawler Quality Batch 1：选择 5-8 个通用州替换成专用 adapter，补分页、查询、详情页和附件元数据。
 2. Attachment Download Archival：crawler 侧下载附件到 `frontend/data/attachments` 或配置目录，记录 checksum/size/content type/original URL。
 3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
@@ -1287,7 +1333,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm test -- src/lib/state-crawler-sources.test.ts src/server/admin/data-sources-repository.test.ts src/app/api/admin/data-sources src/app/admin/page.test.ts`
 - `npx eslint src/lib/state-crawler-sources.ts src/lib/state-crawler-sources.test.ts src/server/admin/data-sources-repository.ts src/server/admin/data-sources-repository.test.ts src/app/api/admin/data-sources/route.test.ts src/app/admin/page.tsx src/app/admin/page.test.ts src/lib/i18n/dictionaries/en.ts src/lib/i18n/dictionaries/zh.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. 50-State Crawler Quality Batch 2：继续选择 5-8 个州做专用 adapter，并补分页、详情页深抓、附件链接覆盖。
 2. Dedicated Adapter Live Validation：对 beta adapter 做真实州站点连通、字段稳定性、失败回退和限流验证。
 3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
@@ -1312,7 +1358,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_sources.py crawler/tests/test_state_dedicated_spiders_batch2_east.py crawler/tests/test_state_dedicated_spiders_batch2_west.py`
 - `npm test -- src/lib/state-crawler-sources.test.ts src/server/admin/data-sources-repository.test.ts src/app/api/admin/data-sources src/app/admin/page.test.ts`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. 50-State Crawler Quality Batch 3：继续选择 5-8 个州做专用 adapter，并补分页、详情页深抓、附件链接覆盖。
 2. Dedicated Adapter Live Validation：对 beta adapter 做真实州站点连通、字段稳定性、失败回退和限流验证。
 3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
@@ -1336,7 +1382,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_cli.py crawler/tests/test_state_live_cli.py crawler/tests/test_state_normalizers.py crawler/tests/test_state_dedicated_spiders.py crawler/tests/test_state_dedicated_spiders_batch2_east.py crawler/tests/test_state_dedicated_spiders_batch2_west.py crawler/tests/test_generic_state.py`
 - `git diff --check`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. 50-State Crawler Quality Batch 3：继续选择 5-8 个州做专用 adapter，并补分页、详情页深抓、附件链接覆盖。
 2. Dedicated Adapter Live Validation：对 beta adapter 做真实州站点连通、字段稳定性、失败回退和限流验证。
 3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
@@ -1364,7 +1410,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source va_state_procurement --limit 3 --timeout 20`
 - `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --limit 3 --timeout 20` 当前退出非零，但确认 PA/OR/MA/NJ/VA/WA 可返回非空；SC 仍在当前环境超时，OH 旧入口 404 且 OhioBuys 当前公开站点进入 browser_check/reCAPTCHA。
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. SC/OH portal access resolution：SCBO 当前环境超时；OhioBuys 需要 browser/session/reCAPTCHA 策略或替代公开数据源。
 2. 50-State Crawler Quality Batch 3：继续选择 5-8 个州做专用 adapter，并补分页、详情页深抓、附件链接覆盖。
 3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
@@ -1393,7 +1439,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source ia_state_procurement --source ga_state_procurement --source me_state_procurement --source mo_state_procurement --source nv_state_procurement --limit 3 --timeout 30`
 - Migrated temp SQLite fetch-state smoke: IA/GA/ME/MO/NV each inserted 2 bids and wrote success crawler logs.
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. SC/OH portal access resolution：SCBO 当前环境超时；OhioBuys 官方公开流程进入 browser_check/reCAPTCHA，不应绕过 CAPTCHA，需要 browser-assisted/manual 或官方 feed/API 策略。
 2. 50-State Crawler Quality Batch 4：继续选择 5-8 个 generic 州做专用 adapter，优先能稳定返回非空的 JSON/HTML 公共源。
 3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
@@ -1422,7 +1468,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source ut_state_procurement --source ks_state_procurement --source mt_state_procurement --source nm_state_procurement --source co_state_procurement --source in_state_procurement --source ms_state_procurement --source ct_state_procurement --limit 3 --timeout 30`
 - Migrated temp SQLite fetch-state smoke: UT/KS/MT/NM/CO/MS/CT each inserted 2 bids and wrote success crawler logs; IN currently has 1 public row and inserted 1 bid with a success crawler log.
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. SC/OH portal access resolution：SCBO 当前环境超时；OhioBuys 官方公开流程进入 browser_check/reCAPTCHA，不应绕过 CAPTCHA，需要 browser-assisted/manual 或官方 feed/API 策略。
 2. 50-State Crawler Quality Batch 5：继续选择 5-8 个 generic 州做专用 adapter，优先能稳定返回非空的 JSON/HTML 公共源。
 3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
@@ -1452,7 +1498,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source ok_state_procurement --source ar_state_procurement --source sd_state_procurement --source wv_state_procurement --source wy_state_procurement --limit 3 --timeout 30`
 - Migrated temp SQLite fetch-state smoke: OK/AR/SD/WV/WY each inserted 2 bids and wrote success crawler logs.
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. SC/OH portal access resolution：SCBO 当前环境超时；OhioBuys 官方公开流程进入 browser_check/reCAPTCHA，不应绕过 CAPTCHA，需要 browser-assisted/manual 或官方 feed/API 策略。
 2. 50-State Crawler Quality Batch 6：继续选择 5-8 个 generic 州做专用 adapter，优先能稳定返回非空的 JSON/HTML 公共源。
 3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
@@ -1481,7 +1527,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source al_state_procurement --source ak_state_procurement --source hi_state_procurement --source ky_state_procurement --source mn_state_procurement --source wi_state_procurement --source nh_state_procurement --limit 3 --timeout 30`
 - Migrated temp SQLite fetch-state smoke: AL/AK/HI/KY/MN/WI/NH each inserted 2 bids and wrote success crawler logs.
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. SC/OH portal access resolution：SCBO 当前环境超时；OhioBuys 官方公开流程进入 browser_check/reCAPTCHA，不应绕过 CAPTCHA，需要 browser-assisted/manual 或官方 feed/API 策略。
 2. 50-State Crawler Quality Batch 7：继续从 AZ/DE/ID/LA/MD/MI/NE/NC/ND/RI/TN/VT 等剩余 generic 州中筛选稳定非空的公开 JSON/HTML/API 源。
 3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
@@ -1511,7 +1557,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source de_state_procurement --source ri_state_procurement --source tn_state_procurement --limit 3 --timeout 30`
 - Migrated temp SQLite fetch-state smoke: DE/RI/TN each inserted 2 bids and wrote success crawler logs.
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. SC/OH portal access resolution：SCBO 当前环境超时；OhioBuys 官方公开流程进入 browser_check/reCAPTCHA，不应绕过 CAPTCHA，需要 browser-assisted/manual 或官方 feed/API 策略。
 2. 50-State Crawler Quality Batch 8：继续从 AZ/ID/LA/MD/MI/NE/NC/ND/VT 等剩余 generic 州中筛选稳定非空的公开 JSON/HTML/API 源。
 3. Attachment Download Archival：crawler 侧真正下载附件，记录 checksum、size、content type、original URL。
@@ -1567,7 +1613,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live --source mi_state_procurement --source sc_state_procurement --source oh_state_procurement --limit 3 --timeout 30`
 - Migrated temp SQLite fetch-state smoke: MI/SC/OH each inserted 2 bids and wrote success crawler logs.
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Attachment Download Archival：crawler 侧真正下载附件和详情页文档，记录 checksum、size、content type、original URL、local path、download status。
 2. Official-source maturity：如果后续拿到稳定官方 feed/API，再把 MI/SC/OH 的公共 fallback 升级为官方源；不绕过 CAPTCHA 或访问控制。
 3. Full Search Alerts UI：提醒列表、启停、编辑、按 alert 配置 digest 频率。
@@ -1594,7 +1640,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 - `npm run lint`
 - `npm run build`
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. Attachment Download Archival Downloader：真正下载附件/详情页到本地或对象存储，计算 checksum/size/content type，并把失败原因写入 archive status。
 2. Bid Admin/Data QA Console Expansion：按 quality flags、archive status、source confidence、review status 做筛选、批量审核和修复入口。
 3. Official-source maturity：后续拿到稳定官方 feed/API 后，把 MI/SC/OH 等公共 fallback 升级为官方源；不绕过 CAPTCHA 或访问控制。
@@ -1617,7 +1663,7 @@ Use this after every phase:
 验证：
 - ...
 
-当前还剩：
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
 1. ...
 2. ...
 3. ...

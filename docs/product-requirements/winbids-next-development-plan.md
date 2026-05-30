@@ -97,12 +97,13 @@ This phase should preserve the current crawler, archival, correction, and publis
 
 ## Remaining Work After This Phase
 
-1. Product 2 Qualification Upgrade: citations, Q&A, amendment refresh, evidence/artifact links, no-bid taxonomy.
-2. Knowledge Station Lite as Product 0.9 workflow coaching.
-3. Response Workspace Lite and Artifact Vault Lite.
-4. Supply Chain and Quote Lite.
-5. Deadline Notifications and Search Alerts UI.
-6. Submission Guidance Completion.
-7. Award Tracking and Learning Lite.
-8. Production Billing / Worker Deployment Runbook.
-9. Product 6 data capture only; full intelligence remains post-MVP.
+1. 50-state crawler hardening: promote beta adapters, add source quality monitoring, and document Source Registry / Connector Engine / Normalization QA responsibilities.
+2. Product 2 Qualification Upgrade: citations, Q&A, amendment refresh, evidence/artifact links, no-bid taxonomy.
+3. Search Alerts Full UI: per-alert CRUD, digest settings, pause/resume, notification history.
+4. Production Billing / Worker Deployment Runbook: production credentials, webhook rotation, scheduled worker deployment.
+5. UI/UE production polish: migrate the demo visual direction into real `/search`, `/bids/[id]`, `/admin`, and settings workflows.
+6. Knowledge Station Lite as Product 0.9 workflow coaching.
+7. Response Workspace Lite and Artifact Vault Lite.
+8. Supply Chain and Quote Lite.
+9. Deadline Notifications, Award Tracking, and Win/Loss Learning Lite.
+10. Real credit consumption, advanced usage metrics, enterprise custom rules, and production AI layer.
