@@ -167,8 +167,82 @@ SPECIAL_FETCHERS = {
     "vt_state_procurement": fetch_vt_bidnet_opportunities,
 }
 
+GENERIC_CRAWLER_METADATA = {
+    "adapter_kind": "generic",
+    "maturity": "generic",
+    "capabilities": ("query",),
+}
+
+DEDICATED_CRAWLER_METADATA_BY_ID = {
+    "al_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "ak_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "az_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "ar_state_procurement": ("beta", ("query", "detail_pages")),
+    "ca_caleprocure": ("verified", ("query", "pagination")),
+    "co_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "ct_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "de_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "fl_mfmp": ("verified", ("query", "detail_pages", "pagination")),
+    "ga_state_procurement": ("beta", ("query", "detail_pages")),
+    "hi_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "id_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "il_bidbuy": ("verified", ("query", "attachments", "detail_pages", "pagination")),
+    "in_state_procurement": ("beta", ("query", "attachments")),
+    "ia_state_procurement": ("beta", ("query", "detail_pages")),
+    "ks_state_procurement": ("beta", ("query",)),
+    "ky_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "la_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "me_state_procurement": ("beta", ("query", "attachments")),
+    "md_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "ma_state_procurement": ("beta", ("query", "attachments")),
+    "mi_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "mn_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "ms_state_procurement": ("beta", ("query", "attachments", "detail_pages")),
+    "mo_state_procurement": ("beta", ("query", "attachments")),
+    "mt_state_procurement": ("beta", ("query", "detail_pages")),
+    "ne_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "nv_state_procurement": ("beta", ("query", "detail_pages")),
+    "nh_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "nj_state_procurement": ("beta", ("query", "attachments")),
+    "nm_state_procurement": ("beta", ("query",)),
+    "ny_contract_reporter": ("verified", ("query", "detail_pages", "pagination")),
+    "nc_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "nd_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "oh_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "ok_state_procurement": ("beta", ("query",)),
+    "or_state_procurement": ("beta", ("query", "attachments")),
+    "pa_state_procurement": ("beta", ("query", "attachments")),
+    "ri_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "sc_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "sd_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "tn_state_procurement": ("beta", ("query", "detail_pages")),
+    "tx_esbd": ("verified", ("query", "detail_pages", "pagination")),
+    "ut_state_procurement": ("beta", ("query", "detail_pages")),
+    "vt_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "va_state_procurement": ("beta", ("query", "attachments")),
+    "wa_state_procurement": ("beta", ("query", "attachments")),
+    "wv_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "wi_state_procurement": ("beta", ("query", "detail_pages", "pagination")),
+    "wy_state_procurement": ("beta", ("query",)),
+}
+
+
+def _quality_metadata_for_source(source_id):
+    dedicated_metadata = DEDICATED_CRAWLER_METADATA_BY_ID.get(source_id)
+    if not dedicated_metadata:
+        return GENERIC_CRAWLER_METADATA
+
+    maturity, capabilities = dedicated_metadata
+    return {
+        "adapter_kind": "dedicated",
+        "maturity": maturity,
+        "capabilities": capabilities,
+    }
+
 
 def _build_source(state_code, source_id, label, base_url):
+    quality_metadata = _quality_metadata_for_source(source_id)
+
     return Source(
         id=source_id,
         name=label,
@@ -178,6 +252,9 @@ def _build_source(state_code, source_id, label, base_url):
         fixture_loader=load_state_fixture_opportunities,
         live_fetcher=SPECIAL_FETCHERS.get(source_id, fetch_generic_state_opportunities),
         base_url=base_url,
+        adapter_kind=quality_metadata["adapter_kind"],
+        maturity=quality_metadata["maturity"],
+        capabilities=quality_metadata["capabilities"],
     )
 
 

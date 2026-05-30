@@ -2,13 +2,18 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createNotificationProvider } from "./provider";
+import {
+  NotificationProviderConfigError,
+  createNotificationProvider,
+  resolveNotificationProviderConfig,
+} from "./provider";
 
 describe("notification provider factory", () => {
   const originalProvider = process.env.NOTIFICATION_PROVIDER;
   const originalOutboxDir = process.env.NOTIFICATION_OUTBOX_DIR;
   const originalHttpEndpoint = process.env.NOTIFICATION_HTTP_ENDPOINT;
   const originalHttpToken = process.env.NOTIFICATION_HTTP_TOKEN;
+  const originalNodeEnv = process.env.NODE_ENV;
   const fetchMock = vi.fn<typeof fetch>();
 
   function restoreEnv(key: string, value: string | undefined) {
@@ -24,6 +29,7 @@ describe("notification provider factory", () => {
     restoreEnv("NOTIFICATION_OUTBOX_DIR", originalOutboxDir);
     restoreEnv("NOTIFICATION_HTTP_ENDPOINT", originalHttpEndpoint);
     restoreEnv("NOTIFICATION_HTTP_TOKEN", originalHttpToken);
+    restoreEnv("NODE_ENV", originalNodeEnv);
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -103,5 +109,35 @@ describe("notification provider factory", () => {
     expect(fetchMock).toHaveBeenCalledWith("https://mail.example.test/send", expect.objectContaining({
       method: "POST",
     }));
+  });
+
+  it("rejects unknown provider names instead of silently falling back", () => {
+    process.env.NOTIFICATION_PROVIDER = "smtp";
+
+    expect(() => createNotificationProvider()).toThrow(NotificationProviderConfigError);
+  });
+
+  it("validates http provider endpoint configuration before sending", () => {
+    process.env.NOTIFICATION_PROVIDER = "http";
+    delete process.env.NOTIFICATION_HTTP_ENDPOINT;
+
+    expect(() => createNotificationProvider()).toThrow("NOTIFICATION_HTTP_ENDPOINT is required");
+
+    process.env.NOTIFICATION_HTTP_ENDPOINT = "mailto:ops@example.com";
+
+    expect(() => createNotificationProvider()).toThrow("NOTIFICATION_HTTP_ENDPOINT must be an http(s) URL");
+  });
+
+  it("reports production fallback providers as explicit warnings", () => {
+    delete process.env.NOTIFICATION_PROVIDER;
+    process.env.NODE_ENV = "production";
+
+    expect(resolveNotificationProviderConfig()).toEqual({
+      provider: "file",
+      outputDir: undefined,
+      warnings: [
+        "NODE_ENV=production is using the file notification provider fallback; set NOTIFICATION_PROVIDER=http for live email delivery.",
+      ],
+    });
   });
 });

@@ -6,11 +6,18 @@ describe("notification worker script", () => {
     const script = readFileSync(new URL("notification-worker.ts", import.meta.url), "utf8");
     const packageJson = readFileSync(new URL("../package.json", import.meta.url), "utf8");
 
+    expect(script).toContain("--check");
+    expect(script).toContain("validateWorkerEnvironment");
     expect(script).toContain("runNotificationWorkerOnce");
     expect(script).toContain("NOTIFICATION_WORKER_INTERVAL_MS");
     expect(script).toContain("NOTIFICATION_WORKER_RUN_ONCE");
     expect(script).toContain("NOTIFICATION_WORKER_DELIVERY_LIMIT");
     expect(script).toContain("NOTIFICATION_WORKER_DUNNING_LIMIT");
+    expect(script).toContain("NOTIFICATION_PROVIDER");
+    expect(script).toContain("NOTIFICATION_HTTP_ENDPOINT");
+    expect(script).toContain("NODE_ENV=production is using the");
+    expect(script).toContain("DATABASE_PATH");
     expect(packageJson).toContain("\"worker:notifications\"");
+    expect(packageJson).toContain("\"worker:notifications:check\"");
   });
 });

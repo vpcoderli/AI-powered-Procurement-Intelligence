@@ -40,6 +40,8 @@ npm run billing:stripe:sandbox -- --tier=pro
 
 Use `--tier=business` for the Business plan, `--origin=http://localhost:3000` to target a different local origin, `--timeout-ms=300000` to change the webhook wait timeout, and `--skip-cancel` to keep the test subscription after verification. Full setup and troubleshooting steps live in [`../docs/operations/stripe-sandbox-e2e.md`](../docs/operations/stripe-sandbox-e2e.md).
 
+Production billing deployment, live/test key isolation, webhook rotation, worker scheduling, and provider dashboard checks are covered in [`../docs/operations/production-billing-worker-runbook.md`](../docs/operations/production-billing-worker-runbook.md).
+
 ## State Crawler Validation
 
 From the repository root, run live adapter validation without writing to the local database:
@@ -113,6 +115,12 @@ Run once:
 NOTIFICATION_WORKER_RUN_ONCE=1 npm run worker:notifications
 ```
 
+Validate worker environment without opening the database:
+
+```bash
+npm run worker:notifications:check
+```
+
 Run continuously:
 
 ```bash
@@ -127,6 +135,7 @@ NOTIFICATION_WORKER_DUNNING_LIMIT=100
 NOTIFICATION_WORKER_DELIVERY_LIMIT=25
 NOTIFICATION_WORKER_MAX_ATTEMPTS=3
 NOTIFICATION_PROVIDER=file # file, console, or http
+DATABASE_PATH=data/apsi.sqlite
 ```
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.

@@ -108,6 +108,14 @@ def _require_non_empty_bids(bids, source):
     return bids
 
 
+def _source_quality_metadata(source):
+    return {
+        "adapter_kind": source.adapter_kind,
+        "maturity": source.maturity,
+        "capabilities": list(source.capabilities),
+    }
+
+
 def import_fixture(
     database,
     fixture,
@@ -263,6 +271,7 @@ def fetch_state(
     connection = sqlite3.connect(database)
     try:
         source_metadata = get_source(source)
+        metadata["source_quality"] = _source_quality_metadata(source_metadata)
         fetcher = get_live_fetcher(source)
         fetch_kwargs = {"query": query, "limit": limit}
         if fixture_json:

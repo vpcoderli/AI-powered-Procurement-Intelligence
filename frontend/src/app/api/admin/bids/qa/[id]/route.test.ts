@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as adminAuth from "@/server/admin/auth";
 import * as bidQaRepository from "@/server/admin/bid-qa-repository";
-import { createAdminBidQaPatch } from "./route";
+import { createAdminBidQaGet, createAdminBidQaPatch } from "./route";
 
 vi.mock("@/server/admin/auth", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/server/admin/auth")>();
@@ -14,6 +14,7 @@ vi.mock("@/server/admin/bid-qa-repository", async (importOriginal) => {
     updateAdminBidQaCorrection: vi.fn(),
     updateAdminBidQaDisplayStatus: vi.fn(),
     updateAdminBidQaReview: vi.fn(),
+    listAdminBidQaCorrections: vi.fn(),
   };
 });
 
@@ -203,5 +204,38 @@ describe("PATCH /api/admin/bids/qa/[id]", () => {
       "bid_1",
       expect.objectContaining({ reviewerId: "local-bypass" }),
     );
+  });
+});
+
+describe("GET /api/admin/bids/qa/[id]", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(adminAuth.requireAdminAccess).mockResolvedValue({ kind: "admin", role: "support", userId: "support_1" });
+  });
+
+  it("returns correction history for admin console readers", async () => {
+    vi.mocked(bidQaRepository.listAdminBidQaCorrections).mockResolvedValueOnce([
+      {
+        id: "correction_1",
+        bidId: "bid_1",
+        fieldName: "title",
+        originalValue: "Original",
+        correctedValue: "Corrected",
+        note: "QA",
+        correctedBy: "operator_1",
+        correctedAt: "2026-05-30T01:00:00.000Z",
+      },
+    ]);
+
+    const GET = createAdminBidQaGet({} as never);
+    const response = await GET(new Request("http://localhost/api/admin/bids/qa/bid_1"), {
+      params: Promise.resolve({ id: "bid_1" }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.corrections).toEqual([expect.objectContaining({ id: "correction_1", fieldName: "title" })]);
+    expect(adminAuth.requireAdminAccess).toHaveBeenCalledWith(expect.anything(), expect.any(Request));
+    expect(bidQaRepository.listAdminBidQaCorrections).toHaveBeenCalledWith(expect.anything(), "bid_1");
   });
 });

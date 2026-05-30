@@ -6,6 +6,7 @@ import {
   listSearchAlerts,
   updateSearchAlert,
 } from "./search-alerts";
+import type { SearchAlert } from "@/server/search-alerts/types";
 
 const mockFetch = vi.fn<typeof fetch>();
 
@@ -17,7 +18,7 @@ function jsonResponse(body: unknown, init?: ResponseInit) {
   });
 }
 
-const alert = {
+const alert: SearchAlert = {
   id: "alert_1",
   userId: "anon_existing",
   name: "Cloud bids",
@@ -35,7 +36,7 @@ const alert = {
   lastNotifiedAt: null,
   createdAt: "2026-05-19T00:00:00.000Z",
   updatedAt: "2026-05-19T00:00:00.000Z",
-} as const;
+};
 
 describe("search alerts API client", () => {
   beforeEach(() => {

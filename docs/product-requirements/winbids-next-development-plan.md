@@ -4,7 +4,7 @@ Updated: 2026-05-30
 
 ## Recommendation
 
-Continue with **Admin QA Batch Filters + Correction History** as the next implementation phase.
+Continue with **Product 2 Qualification Evidence Citations v1** as the next implementation phase.
 
 Commercial packaging and credits foundation is now in place:
 
@@ -13,19 +13,19 @@ Commercial packaging and credits foundation is now in place:
 - Credits have a foundation for included monthly credits, purchased credits, premium action costs, refunds, and future ledger events.
 - Settings Billing/Usage can surface plan names, Growth as planned, and credit summaries.
 
-The source registry, capability metadata, archive metadata columns, quality flag foundation, public attachment/detail downloader, Admin Bid QA queue, correction audit persistence, and publish/suppress controls are now in place. The next risk is operational scale: operators can fix one record, but they still need better filters, batch actions, visible correction history, and original-vs-corrected comparison.
+The source registry, capability metadata, archive metadata columns, quality flag foundation, public attachment/detail downloader, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA actions, rich QA filters, correction history, Search Alerts management UI, notification provider hardening, 50-state crawler guardrails, and production billing/worker runbooks are now in place. The next risk is qualification trust: users need generated outputs to point back to evidence before the Product 2 workflow can deepen.
 
 ## Last Completed Phase
 
-**Bid Admin/Data QA Correction + Publish Controls** made single-record QA correction actionable:
+**Admin QA Batch Filters + Correction History plus P1 operational hardening** made QA and MVP operations more scalable:
 
 Completed locally:
 
-- `bids` now stores `display_status` and public search/detail filters out suppressed records.
-- `bid_field_corrections` preserves original/corrected values, note, reviewer id, and correction timestamp.
-- Admin QA repository/API/client support review updates, display status updates, and limited field corrections.
-- `/admin` displays display status and correction counts, and lets admin/operator publish, suppress, or save title/deadline corrections.
-- Support remains read-only.
+- Admin QA repository/API/client/UI now support display status, score range, source confidence, reviewer, and reviewed-date filters.
+- Operator/admin users can select QA rows and batch mark reviewed, move to needs review, publish, or suppress.
+- `/admin` exposes correction history and original-vs-corrected values; support remains read-only.
+- Settings includes Search Alerts management for per-alert CRUD and pause/resume.
+- Notification provider validation, notification delivery runbook, production billing/worker runbook, worker deployment checks, and 50-state crawler non-empty/live validation guardrails were added.
 
 ## Previous Completed Phase
 
@@ -55,52 +55,44 @@ Completed locally:
 
 ## Phase Goal
 
-Make Admin QA efficient for operational review:
+Make Product 2 qualification outputs evidence-backed:
 
-`QA Queue -> Rich Filters -> Batch Action -> Correction History -> Original/Corrected Comparison`
+`Intent Workspace -> Generated Qualification Output -> Evidence Citation -> Source/Attachment Link -> User Trust`
 
-This phase should preserve the current crawler, archival, correction, and publish/suppress behavior while making the QA queue usable when crawler volume grows across 50 states.
+This phase should preserve the current deterministic generators while adding citation persistence and display. It should not require a production LLM to be useful.
 
 ## In Scope
 
-- QA filters:
-  - expand filtering by score range, source confidence, reviewer, reviewed date, and display status
-- Batch actions:
-  - allow selected rows to be marked reviewed, moved to needs review, published, or suppressed
-- Correction visibility:
-  - show original-vs-corrected values for corrected fields
-  - expose correction history per bid with note/reviewer/time
-- Guardrails:
-  - keep support read-only
-  - keep ordinary search/bid detail pages stable while QA workflow expands
+- Persist qualification evidence citations linked to intent/bid outputs.
+- Generate deterministic citations from bid fields, archived detail pages, attachment metadata, and existing compliance/submission outputs where available.
+- Expose read-only citation API/client helpers.
+- Show citations in Intent detail near Submission Guidance, Compliance Manifest, and Pursue/No-Bid sections.
+- Keep feature gates and existing output wire shapes stable.
 
 ## Out Of Scope
 
 - Login-only portal automation or CAPTCHA bypass.
 - Full OCR/document parsing.
-- Product 2 citation UI.
+- Free-form LLM Q&A.
+- Amendment/addenda monitoring automation.
 - Production object storage migration.
 - Broad redesign of public search/bid detail pages.
 
 ## Acceptance Criteria
 
-- Existing 50-state crawler and archive tests remain green.
-- Admin users can identify bids with failed/unavailable archive artifacts.
-- Operator/admin users can correct limited fields without changing source ingestion code.
-- Corrections preserve original crawler values and audit metadata.
-- Suppressed records are hidden from ordinary bid search/detail surfaces.
-- Operator/admin users can filter by display status, score range, reviewer, reviewed date, and source confidence.
-- Operator/admin users can perform batch review/publish/suppress on selected rows.
-- Admin QA exposes correction history and original-vs-corrected values.
+- Existing 50-state crawler, Admin QA, Search Alerts, notification, and billing tests remain green.
+- Citation records preserve source type, source label, excerpt/field reference, confidence, and generated timestamp.
+- Intent detail can display citations without requiring a paid external AI provider.
+- Submission Guidance, Compliance Manifest, and Pursue/No-Bid continue to work with current gates.
 - Search/bid detail still works for existing records.
 - `npm test`, `PYTHONPATH=crawler python3 -m pytest crawler/tests`, `npm run lint`, `npm run build`, `npm run db:migrate`, and `git diff --check` pass.
 
 ## Remaining Work After This Phase
 
-1. 50-state crawler hardening: promote beta adapters, add source quality monitoring, and document Source Registry / Connector Engine / Normalization QA responsibilities.
-2. Product 2 Qualification Upgrade: citations, Q&A, amendment refresh, evidence/artifact links, no-bid taxonomy.
-3. Search Alerts Full UI: per-alert CRUD, digest settings, pause/resume, notification history.
-4. Production Billing / Worker Deployment Runbook: production credentials, webhook rotation, scheduled worker deployment.
+1. Product 2 Qualification Upgrade continuation: document-grounded Q&A, amendment refresh, evidence/artifact links, no-bid taxonomy, qualification risk explanations.
+2. Search Alerts notification history and digest delivery verification.
+3. 50-state crawler hardening continuation: promote beta adapters, add source quality monitoring, and document Source Registry / Connector Engine / Normalization QA responsibilities.
+4. Production deployment dry run for billing, notification, and crawler workers.
 5. UI/UE production polish: migrate the demo visual direction into real `/search`, `/bids/[id]`, `/admin`, and settings workflows.
 6. Knowledge Station Lite as Product 0.9 workflow coaching.
 7. Response Workspace Lite and Artifact Vault Lite.
