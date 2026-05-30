@@ -15,8 +15,10 @@ import {
   fetchIntent,
   fetchPursuitDecisionBoard,
   fetchQualificationCitations,
+  fetchQualificationFreshness,
   fetchSubmissionGuidance,
   postQualificationQuestion,
+  refreshQualificationEvidence,
   updateComplianceManifestItem,
   updateIntentStatus,
   updatePursuitDecision,
@@ -28,6 +30,7 @@ import type { IntentDetail, IntentStatus } from "@/server/intents/types";
 import { INTENT_STATUSES } from "@/server/intents/types";
 import type {
   QualificationCitation,
+  QualificationFreshnessResponse,
   QualificationQuestionResponse,
 } from "@/server/qualification/types";
 import type {
@@ -63,6 +66,7 @@ import {
   Landmark,
   LockKeyhole,
   PackageCheck,
+  RefreshCcw,
   Route,
   ShieldAlert,
   Sparkles,
@@ -89,6 +93,19 @@ function safeEvidenceUrl(value: string) {
   } catch {
     return "";
   }
+}
+
+function formatEvidenceDate(value: string | null) {
+  if (!value) return "";
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function freshnessTone(status: QualificationFreshnessResponse["status"] | undefined) {
+  if (status === "current") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "stale") return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
 const prototypeWorkspace = "Intent Workspace";
@@ -213,7 +230,11 @@ export default function IntentWorkspacePage() {
   const [pursuitDecisionError, setPursuitDecisionError] = useState<Error | null>(null);
   const [pursuitDecisionNotice, setPursuitDecisionNotice] = useState("");
   const [qualificationCitations, setQualificationCitations] = useState<QualificationCitation[]>([]);
+  const [qualificationFreshness, setQualificationFreshness] = useState<QualificationFreshnessResponse | null>(null);
   const [isCitationsLoading, setIsCitationsLoading] = useState(false);
+  const [isFreshnessLoading, setIsFreshnessLoading] = useState(false);
+  const [isRefreshingQualification, setIsRefreshingQualification] = useState(false);
+  const [qualificationRefreshError, setQualificationRefreshError] = useState<Error | null>(null);
   const [qaQuestion, setQaQuestion] = useState("");
   const [qaAnswer, setQaAnswer] = useState<QualificationQuestionResponse | null>(null);
   const [isQaLoading, setIsQaLoading] = useState(false);
@@ -269,28 +290,36 @@ export default function IntentWorkspacePage() {
       if (cancelled || !mountedRef.current) return;
 
       setQualificationCitations([]);
+      setQualificationFreshness(null);
+      setQualificationRefreshError(null);
       setQaAnswer(null);
       setQaError(null);
 
       if (!intentId) {
         setIsCitationsLoading(false);
+        setIsFreshnessLoading(false);
         return;
       }
 
       setIsCitationsLoading(true);
+      setIsFreshnessLoading(true);
 
-      fetchQualificationCitations(intentId)
-        .then((response) => {
+      fetchQualificationFreshness(intentId)
+        .then(async (freshnessResponse) => {
+          const citationsResponse = await fetchQualificationCitations(intentId);
           if (cancelled || !mountedRef.current) return;
-          setQualificationCitations(response.citations);
+          setQualificationCitations(citationsResponse.citations);
+          setQualificationFreshness(freshnessResponse);
         })
         .catch(() => {
           if (cancelled || !mountedRef.current) return;
           setQualificationCitations([]);
+          setQualificationFreshness(null);
         })
         .finally(() => {
           if (cancelled || !mountedRef.current) return;
           setIsCitationsLoading(false);
+          setIsFreshnessLoading(false);
         });
     });
 
@@ -459,6 +488,31 @@ export default function IntentWorkspacePage() {
     } finally {
       if (mountedRef.current) {
         setIsQaLoading(false);
+      }
+    }
+  };
+
+  const handleRefreshQualificationEvidence = async () => {
+    if (!intent || isRefreshingQualification) return;
+
+    setIsRefreshingQualification(true);
+    setQualificationRefreshError(null);
+
+    try {
+      const response = await refreshQualificationEvidence(intent.id);
+      if (!mountedRef.current) return;
+
+      setIntent(response.intent);
+      setQualificationCitations(response.citations.citations);
+      setQualificationFreshness(response.freshness);
+      setQaAnswer(null);
+      setQaError(null);
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setQualificationRefreshError(err instanceof Error ? err : new Error("Failed to refresh qualification evidence"));
+    } finally {
+      if (mountedRef.current) {
+        setIsRefreshingQualification(false);
       }
     }
   };
@@ -798,6 +852,79 @@ export default function IntentWorkspacePage() {
               <Badge variant="outline" className="border-blue-200 bg-white text-blue-700">
                 {qualificationCitations.length}
               </Badge>
+            </div>
+            <div className="mt-3 rounded-lg border border-blue-100 bg-white p-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-black text-slate-950">
+                      {t("intentsPage.qualificationFreshness")}
+                    </p>
+                    <Badge
+                      variant="outline"
+                      className={`w-fit ${freshnessTone(qualificationFreshness?.status)}`}
+                    >
+                      {qualificationFreshness
+                        ? t(`intentsPage.qualificationFreshnessStatuses.${qualificationFreshness.status}`)
+                        : isFreshnessLoading
+                          ? t("intentsPage.evidenceCitationsLoading")
+                          : t("intentsPage.qualificationFreshnessStatuses.not_refreshed")}
+                    </Badge>
+                  </div>
+                  <p className="mt-2 text-xs font-semibold leading-5 text-slate-500">
+                    {qualificationFreshness?.status === "stale"
+                      ? t("intentsPage.qualificationFreshnessStale")
+                      : qualificationFreshness?.status === "current"
+                        ? t("intentsPage.qualificationFreshnessCurrent")
+                        : t("intentsPage.qualificationFreshnessNotRefreshed")}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2 text-xs font-bold text-slate-500">
+                    <span>
+                      {t("intentsPage.qualificationSignalCount").replace(
+                        "{count}",
+                        String(qualificationFreshness?.signalCount ?? 0),
+                      )}
+                    </span>
+                    <span>
+                      {t("intentsPage.qualificationLastRefreshed").replace(
+                        "{date}",
+                        formatEvidenceDate(qualificationFreshness?.lastRefreshedAt ?? null)
+                          || t("intentsPage.notAvailable"),
+                      )}
+                    </span>
+                  </div>
+                  {qualificationFreshness?.latestSignal ? (
+                    <p className="mt-2 line-clamp-2 break-words text-xs font-semibold leading-5 text-amber-700">
+                      {t("intentsPage.qualificationLatestSignal")}: {qualificationFreshness.latestSignal.label}
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-xs font-semibold text-slate-400">
+                      {t("intentsPage.qualificationNoSignals")}
+                    </p>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  onClick={() => void handleRefreshQualificationEvidence()}
+                  disabled={!intent || isFreshnessLoading || isRefreshingQualification}
+                  variant="outline"
+                  className="w-fit rounded-lg border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                >
+                  <RefreshCcw
+                    size={15}
+                    className={`mr-2 ${isRefreshingQualification ? "animate-spin" : ""}`}
+                    aria-hidden="true"
+                  />
+                  {isRefreshingQualification
+                    ? t("intentsPage.refreshingQualificationEvidence")
+                    : t("intentsPage.refreshQualificationEvidence")}
+                </Button>
+              </div>
+              {qualificationRefreshError ? (
+                <p className="mt-2 text-xs font-semibold text-rose-600">
+                  {t("intentsPage.qualificationRefreshError")}
+                </p>
+              ) : null}
             </div>
             {isCitationsLoading ? (
               <p className="mt-3 text-sm font-semibold text-slate-500">{t("intentsPage.evidenceCitationsLoading")}</p>

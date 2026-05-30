@@ -8,7 +8,9 @@ import {
   fetchIntents,
   fetchPursuitDecisionBoard,
   fetchQualificationCitations,
+  fetchQualificationFreshness,
   postQualificationQuestion,
+  refreshQualificationEvidence,
   updateComplianceManifestItem,
   fetchSubmissionGuidance,
   updateIntentStatus,
@@ -200,6 +202,28 @@ describe("intent API client", () => {
 
     expect(result).toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/citations");
+  });
+
+  it("fetches qualification freshness with an encoded intent id", async () => {
+    const body = { intentId: "intent/with space", bidId: "bid_1", status: "stale", signals: [] };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await fetchQualificationFreshness("intent/with space");
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/qualification/freshness");
+  });
+
+  it("refreshes qualification evidence with an encoded intent id", async () => {
+    const body = { intent, citations: { citations: [] }, freshness: { status: "current" } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await refreshQualificationEvidence("intent/with space");
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/qualification/freshness", {
+      method: "POST",
+    });
   });
 
   it("posts a grounded qualification question with an encoded intent id", async () => {

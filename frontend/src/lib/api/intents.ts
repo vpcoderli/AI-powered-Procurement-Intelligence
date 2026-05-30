@@ -20,8 +20,10 @@ import type {
 } from "@/server/pursuit/types";
 import type {
   QualificationCitationsResponse,
+  QualificationFreshnessResponse,
   QualificationQuestionInput,
   QualificationQuestionResponse,
+  QualificationRefreshResponse,
 } from "@/server/qualification/types";
 import { ApiError } from "./bids";
 
@@ -160,6 +162,20 @@ export async function fetchQualificationCitations(id: string) {
   const response = await fetch(`/api/intents/${encodeURIComponent(id)}/citations`);
 
   return parseResponse<QualificationCitationsResponse>(response);
+}
+
+export async function fetchQualificationFreshness(id: string) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/qualification/freshness`);
+
+  return parseResponse<QualificationFreshnessResponse>(response);
+}
+
+export async function refreshQualificationEvidence(id: string) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/qualification/freshness`, {
+    method: "POST",
+  });
+
+  return parseResponse<QualificationRefreshResponse>(response);
 }
 
 export async function postQualificationQuestion(

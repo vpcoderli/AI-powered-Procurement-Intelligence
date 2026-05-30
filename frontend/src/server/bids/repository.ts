@@ -113,6 +113,7 @@ function toBid(
     detailArchiveError: row.detailArchiveError ?? "",
     saved: savedBidIds.has(row.id),
     isActive: row.isActive === 1,
+    updatedAt: row.updatedAt,
   };
 }
 

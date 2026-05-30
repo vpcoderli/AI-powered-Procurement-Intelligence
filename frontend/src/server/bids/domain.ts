@@ -43,4 +43,5 @@ export interface Bid {
   detailArchiveError: string;
   saved: boolean;
   isActive: boolean;
+  updatedAt?: string;
 }

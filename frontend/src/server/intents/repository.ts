@@ -136,3 +136,30 @@ export function updateIntentEvidenceCitationsForUsers(
 
   return findIntentByUsersAndId(db, userIds, intentId);
 }
+
+export function updateIntentQualificationSnapshotForUsers(
+  db: AppDatabase,
+  userIds: string[],
+  intentId: string,
+  input: {
+    generated: GeneratedIntentContent;
+    match: BidMatchResult;
+    citationsJson: string;
+    timestamp: string;
+  },
+) {
+  db.update(intentToBid)
+    .set({
+      aiBidBrief: input.generated.aiBidBrief,
+      keyDatesJson: JSON.stringify(input.generated.keyDates),
+      initialChecklistJson: JSON.stringify(input.generated.initialChecklist),
+      riskFlagsJson: JSON.stringify(input.generated.riskFlags),
+      matchScoreSnapshotJson: JSON.stringify(input.match),
+      evidenceCitationsJson: input.citationsJson,
+      updatedAt: input.timestamp,
+    })
+    .where(and(inArray(intentToBid.userId, userIds), eq(intentToBid.id, intentId)))
+    .run();
+
+  return findIntentByUsersAndId(db, userIds, intentId);
+}
