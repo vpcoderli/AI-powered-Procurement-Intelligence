@@ -8,6 +8,7 @@ import {
   fetchIntents,
   fetchPursuitDecisionBoard,
   fetchQualificationCitations,
+  postQualificationQuestion,
   updateComplianceManifestItem,
   fetchSubmissionGuidance,
   updateIntentStatus,
@@ -199,6 +200,21 @@ describe("intent API client", () => {
 
     expect(result).toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/citations");
+  });
+
+  it("posts a grounded qualification question with an encoded intent id", async () => {
+    const payload = { question: "What is the deadline?" };
+    const body = { intentId: "intent/with space", bidId: "bid_1", answer: "Based on evidence." };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await postQualificationQuestion("intent/with space", payload);
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/qa", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
   });
 
   it("updates a pursuit decision", async () => {

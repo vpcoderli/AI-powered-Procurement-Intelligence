@@ -21,17 +21,17 @@ This directory is the local working source for WinBids product requirements afte
 
 ## Current Recommendation
 
-Continue implementation with **Product 2 Qualification Evidence Citations v1**.
+Continue implementation with **Search Alerts Notification History + Digest Delivery Verification**.
 
 Reason:
 
-- Admin QA batch filters/correction history, Search Alerts management UI, 50-state crawler guardrails, notification provider hardening, and production billing/worker runbooks are now implemented locally.
-- The next highest-risk product gap is qualification trust: generated pursuit outputs need persisted evidence citations before document-grounded Q&A, amendment awareness, or richer no-bid taxonomy can be credible.
-- This keeps the next slice small while directly supporting Product 2 requirements.
+- Admin QA batch filters/correction history, Search Alerts management UI, 50-state crawler guardrails, notification provider hardening, production billing/worker runbooks, Qualification Evidence Citations v1, and Document-Grounded Q&A v1 are now implemented locally.
+- The next highest-risk MVP gap is alert trust: users can configure alerts, but need delivery history and digest verification before alerting feels production-ready.
+- This keeps the next slice small while directly supporting the existing notification foundation.
 
 Product-workflow alternative:
 
-- If the next sprint intentionally stays on operations, prioritize **Search Alerts Notification History + Digest Verification** or **raw/staged/normalized Admin QA comparison**.
+- If the next sprint intentionally stays on Product 2, prioritize **amendment/addenda refresh** or **richer evidence/artifact links**.
 
 ## Refresh Rule
 

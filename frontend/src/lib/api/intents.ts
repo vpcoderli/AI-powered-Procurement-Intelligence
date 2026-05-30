@@ -18,7 +18,11 @@ import type {
   CreatePursuitDecisionInput,
   PursuitDecisionBoardResponse,
 } from "@/server/pursuit/types";
-import type { QualificationCitationsResponse } from "@/server/qualification/types";
+import type {
+  QualificationCitationsResponse,
+  QualificationQuestionInput,
+  QualificationQuestionResponse,
+} from "@/server/qualification/types";
 import { ApiError } from "./bids";
 
 function isApiErrorResponse(body: unknown): body is IntentApiErrorResponse {
@@ -156,6 +160,19 @@ export async function fetchQualificationCitations(id: string) {
   const response = await fetch(`/api/intents/${encodeURIComponent(id)}/citations`);
 
   return parseResponse<QualificationCitationsResponse>(response);
+}
+
+export async function postQualificationQuestion(
+  id: string,
+  input: QualificationQuestionInput,
+) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/qa`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<QualificationQuestionResponse>(response);
 }
 
 export async function updatePursuitDecision(
