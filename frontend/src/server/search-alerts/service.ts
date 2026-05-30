@@ -10,6 +10,7 @@ import type {
   UpdateSearchAlertInput,
 } from "./types";
 import { SearchAlertNotFoundError } from "./types";
+import { listSearchAlertDigestRunsForUser } from "./digest-history";
 
 function nowIso() {
   return new Date().toISOString();
@@ -156,13 +157,33 @@ export async function createSearchAlert(
 export async function listSearchAlerts(db: AppDatabase, userId: string) {
   await ensureUser(db, userId);
 
-  return db
+  const userAlerts = db
     .select()
     .from(alerts)
     .where(eq(alerts.userId, userId))
     .orderBy(asc(alerts.createdAt), asc(alerts.id))
     .all()
     .map(toSearchAlert);
+  const historyByAlertId = listSearchAlertDigestRunsForUser(
+    db,
+    userId,
+    userAlerts.map((alert) => alert.id),
+    3,
+  );
+
+  return userAlerts.map((alert) => ({
+    ...alert,
+    digestHistory: historyByAlertId[alert.id] ?? [],
+  }));
+}
+
+function withDigestHistory(db: AppDatabase, userId: string, alert: SearchAlert) {
+  const historyByAlertId = listSearchAlertDigestRunsForUser(db, userId, [alert.id], 3);
+
+  return {
+    ...alert,
+    digestHistory: historyByAlertId[alert.id] ?? [],
+  };
 }
 
 export async function updateSearchAlert(
@@ -202,7 +223,7 @@ export async function updateSearchAlert(
     throw new SearchAlertNotFoundError();
   }
 
-  return toSearchAlert(updated);
+  return withDigestHistory(db, userId, toSearchAlert(updated));
 }
 
 export async function deleteSearchAlert(db: AppDatabase, userId: string, id: string) {

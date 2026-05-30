@@ -34,6 +34,21 @@ const alert: SearchAlert = {
   isEnabled: true,
   lastMatchedAt: null,
   lastNotifiedAt: null,
+  digestHistory: [
+    {
+      id: "digest_run_1",
+      alertId: "alert_1",
+      userId: "anon_existing",
+      frequency: "daily",
+      status: "sent",
+      matchCount: 1,
+      notificationId: "notification_1",
+      skippedReason: null,
+      failureReason: null,
+      matchedBidIds: ["bid_1"],
+      createdAt: "2026-05-30T00:00:00.000Z",
+    },
+  ],
   createdAt: "2026-05-19T00:00:00.000Z",
   updatedAt: "2026-05-19T00:00:00.000Z",
 };

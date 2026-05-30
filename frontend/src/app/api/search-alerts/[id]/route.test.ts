@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as principal from "@/server/auth/principal";
 import { ANONYMOUS_USER_COOKIE_NAME } from "@/server/bids/user";
 import * as searchAlertService from "@/server/search-alerts/service";
-import { SearchAlertNotFoundError } from "@/server/search-alerts/types";
+import { SearchAlertNotFoundError, type SearchAlert, type SearchAlertDigestRun } from "@/server/search-alerts/types";
 import { DELETE, PATCH } from "./route";
 
 vi.mock("@/server/db/client", () => ({ db: {} }));
@@ -23,7 +23,7 @@ const resolvePrincipal = vi.mocked(principal.resolvePrincipal);
 const updateSearchAlert = vi.mocked(searchAlertService.updateSearchAlert);
 const deleteSearchAlert = vi.mocked(searchAlertService.deleteSearchAlert);
 
-const alert = {
+const alert: SearchAlert & { digestHistory: SearchAlertDigestRun[] } = {
   id: "alert_1",
   userId: "anon_existing",
   name: "Cloud bids",
@@ -39,14 +39,21 @@ const alert = {
   isEnabled: false,
   lastMatchedAt: null,
   lastNotifiedAt: null,
+  digestHistory: [],
   createdAt: "2026-05-19T00:00:00.000Z",
   updatedAt: "2026-05-19T00:00:01.000Z",
-} as const;
+};
 
 describe("PATCH /api/search-alerts/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resolvePrincipal.mockResolvedValue({ kind: "anonymous", userId: "anon_existing" });
+    resolvePrincipal.mockResolvedValue({
+      kind: "anonymous",
+      userId: "anon_existing",
+      role: "user",
+      tier: "free",
+      features: [],
+    });
   });
 
   it("toggles isEnabled for the current principal", async () => {
@@ -106,7 +113,13 @@ describe("PATCH /api/search-alerts/[id]", () => {
 describe("DELETE /api/search-alerts/[id]", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resolvePrincipal.mockResolvedValue({ kind: "anonymous", userId: "anon_existing" });
+    resolvePrincipal.mockResolvedValue({
+      kind: "anonymous",
+      userId: "anon_existing",
+      role: "user",
+      tier: "free",
+      features: [],
+    });
   });
 
   it("deletes an alert for the current principal", async () => {
@@ -126,6 +139,9 @@ describe("DELETE /api/search-alerts/[id]", () => {
     resolvePrincipal.mockResolvedValueOnce({
       kind: "anonymous",
       userId: "anon_new",
+      role: "user",
+      tier: "free",
+      features: [],
       anonymousCookie: `${ANONYMOUS_USER_COOKIE_NAME}=anon_new; Path=/`,
     });
     deleteSearchAlert.mockRejectedValueOnce(new SearchAlertNotFoundError());

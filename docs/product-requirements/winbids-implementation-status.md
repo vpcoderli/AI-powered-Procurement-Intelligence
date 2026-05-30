@@ -21,6 +21,7 @@ This document is the working checklist for local development. Update it after ea
 
 | Requirement | Current state | Remaining work | Suggested next slice |
 |---|---|---|---|
+| Search Alerts Notification History + Digest Verification | Done locally: digest runs are persisted for sent/failed/skipped alert notifications, list responses hydrate recent history, and Settings shows latest delivery status plus recent history. | Real production email provider, bounce/complaint webhooks, and operator digest monitoring remain future production hardening. | Continue Product 2 amendment/addenda awareness; revisit production email provider when credentials are available. |
 | Admin QA Batch Filters + Correction History | Done locally: Admin QA now supports display status / score range / reviewer / reviewed date / source confidence filters, selected-row batch reviewed / needs review / publish / suppress actions, correction history API/UI, and original-vs-corrected history display. | Broader editable-field UI and raw/staged/normalized side-by-side detail view remain future Bid Admin depth, not this thin slice. | Keep QA operational; next data-admin slice should be raw/staged/normalized comparison after Product 2 citations. |
 
 ### P1 / MVP Readiness
@@ -28,10 +29,10 @@ This document is the working checklist for local development. Update it after ea
 | Requirement | Current state | Remaining work | Suggested next slice |
 |---|---|---|---|
 | 50-state crawler hardening | 50 州 registry 已覆盖；CA/TX/NY/FL/IL 为 verified dedicated，其他州为 beta dedicated；非空校验、fixture/live validation、空结果失败保护和 fallback 元数据已强化。 | 将 beta 州逐步提升为 verified；增加生产调度/监控；持续替换仍依赖 fallback 的州源。 | 每批 10-15 州做 live fixture 校验、source quality 报告和 adapter maturity 更新。 |
-| Product 2 Qualification Upgrade | Match score、AI-like brief、Submission Guidance、Compliance Manifest Lite、Pursue/No-Bid Lite 已有 deterministic 版本；Qualification Evidence Citations v1 与 Document-Grounded Q&A v1 已完成，Intent 级 citation snapshot、只读 citations API/client、Pro-gated Q&A API/client、Intent detail 证据面板和基于证据问答已接入。 | Amendment/addenda awareness、richer evidence/artifact links、no-bid taxonomy、资格风险解释。 | 下一步可做 Product 2 amendment/addenda refresh；若优先补 MVP 闭环，先做 Search Alerts notification history + digest delivery verification。 |
-| Search Alerts Full UI | Settings 已新增 Search Alerts 管理界面，支持 per-alert 创建/编辑/暂停恢复/删除，并复用现有 quota gate 与通知偏好。 | 通知历史、真实邮件 provider、digest 发送监控仍需补齐。 | 下一步做 alert notification history + digest delivery verification。 |
+| Product 2 Qualification Upgrade | Match score、AI-like brief、Submission Guidance、Compliance Manifest Lite、Pursue/No-Bid Lite 已有 deterministic 版本；Qualification Evidence Citations v1 与 Document-Grounded Q&A v1 已完成，Intent 级 citation snapshot、只读 citations API/client、Pro-gated Q&A API/client、Intent detail 证据面板和基于证据问答已接入。 | Amendment/addenda awareness、richer evidence/artifact links、no-bid taxonomy、资格风险解释。 | 下一步做 Product 2 amendment/addenda awareness refresh。 |
+| Search Alerts Full UI | Settings 已新增 Search Alerts 管理界面，支持 per-alert 创建/编辑/暂停恢复/删除，并复用现有 quota gate、通知偏好和最近 digest 投递历史。 | 真实邮件 provider、bounce/complaint 回流、运营级 digest monitoring dashboard 仍需补齐。 | 接入真实邮件 provider 后补 bounce/complaint webhook 和运营监控。 |
 | Production Billing / Worker Deployment Runbook | Stripe sandbox E2E verifier、checkout/webhook/portal/cancel foundation 已完成；production billing/worker runbook 已新增；notification worker 支持部署前检查。 | 真实生产凭证填充、生产 webhook 端点创建/轮换演练、进程管理器/cron 部署执行。 | 上线前按 runbook 做一次 staging/prod dry run。 |
-| Notification production hardening | outbox、file/console/http provider、retry worker、Admin 手动 delivery、provider env validation、生产投递 runbook 已有。 | 生产邮件 provider 真实账号、退信/投诉回流、模板版本治理、投递监控 dashboard。 | 接入选定邮件 provider 后补 bounce/complaint webhook。 |
+| Notification production hardening | outbox、file/console/http provider、retry worker、Admin 手动 delivery、provider env validation、生产投递 runbook、Search Alert digest delivery history 已有。 | 生产邮件 provider 真实账号、退信/投诉回流、模板版本治理、投递监控 dashboard。 | 接入选定邮件 provider 后补 bounce/complaint webhook。 |
 | UI/UE production polish | 有 `/winbids-demo` 与 `/generative-art-static` 静态 demo，主应用已有部分视觉调整和中英文切换。 | 将 demo 风格系统性迁移到真实业务页面；统一表格/筛选/空状态/加载态/移动端布局；避免只停留在静态 demo。 | 先选 `/search`、`/bids/[id]`、`/admin` 三页做一轮可用性与视觉收敛。 |
 
 ### P2 / Product Workflow Depth
@@ -78,7 +79,7 @@ This document is the working checklist for local development. Update it after ea
 | Feature entitlement map | Central role/tier feature map for current compatibility tiers `free`, `pro`, `business`, `enterprise`; product-facing plan copy maps to Free, Pursuit Starter, Response Builder, planned Growth, and Enterprise. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, tier-aware locked states for gated features, and manifest-backed static coverage tests for current/future advanced feature API routes. |
 | Usage limits | Central saved bid, intent workspace, search alert, and team member quota checks/counts by organization tier; authenticated users are counted at workspace scope; saved bids, intents, search alerts, and team member invite/accept flows return `USAGE_LIMIT_REACHED` before creating over-limit resources; Settings shows current workspace usage vs plan limits. |
-| Notification delivery foundation | `notification_outbox`, file/console/http providers, retryable delivery worker, deployable notification/dunning worker command, user notification preferences, billing dunning reminders, invitation delivery status, admin notification history UI, and admin delivery trigger API/UI. |
+| Notification delivery foundation | `notification_outbox`, file/console/http providers, retryable delivery worker, deployable notification/dunning worker command, user notification preferences, billing dunning reminders, invitation delivery status, search alert digest delivery history, admin notification history UI, and admin delivery trigger API/UI. |
 | Subscription foundation | `account_subscriptions`, `subscription_events`, plan catalog, account subscription API, Settings Billing tab. |
 | Billing provider sync foundation | `billing_checkout_sessions`, checkout creation API, Stripe SDK/API adapter, Stripe webhook signature verification/mapping, provider event idempotency, subscription status reconciliation, lifecycle reconciliation, Settings self-service upgrade/cancel controls, and repeatable Stripe sandbox E2E verifier/runbook. |
 | Invoice / payment history foundation | `billing_invoices`, provider invoice event sync, payment-failed status handling, payment retry links, payment-failed notification outbox entries, account invoice API with status filtering and summary totals, Settings invoice history UI with filters/PDF links/retry links, and optional HMAC webhook signature verification via `BILLING_WEBHOOK_SECRET`. |
@@ -126,7 +127,7 @@ The refreshed Drive material changes the product packaging language and introduc
 | 服务端功能拦截 | Done | `requireFeature()` exists and is already used by Submission Guidance, Compliance Manifest, and Pursue / No-Bid APIs; manifest-backed coverage tests protect every registered gated API and explicitly track not-yet-implemented paid feature APIs. |
 | 前端锁定态 | Partial | `useFeature()` and locked messages exist on key workspace modules and Settings feature overview. |
 | 使用额度限制 | Partial | Saved bids, intent workspace, search alerts, and team member usage are counted by organization tier/workspace; saved bids, intents, search alert creation, team invites, and invitation acceptance enforce quota; `/api/account/usage` and Settings Usage Dashboard show current usage, remaining quota, limited-resource summary, credit summary, and upgrade prompt. |
-| 通知偏好与投递状态 | Partial | Users can persist saved-search alert and marketing preferences; disabled saved-search alerts are skipped by the notification service; invited members show latest delivery status; Admin can view notification outbox rows and manually trigger delivery. |
+| 通知偏好与投递状态 | Partial | Users can persist saved-search alert and marketing preferences; disabled saved-search alerts are recorded as skipped by the notification service; search alert cards show recent digest delivery history; invited members show latest delivery status; Admin can view notification outbox rows and manually trigger delivery. |
 | 订阅数据基础 | Partial | `account_subscriptions`, `subscription_events`, plan catalog, and Settings Billing tab exist. |
 | 自助升级/取消基础 | Partial | Settings Billing can start Pro/Business checkout sessions through local fallback or Stripe Checkout, receive provider-compatible/Stripe webhook updates, sync account tier/status, dedupe provider events, schedule provider-side cancellation at period end, reconcile expired/canceled/past-due access, and run an operator-assisted Stripe test-mode E2E verifier. |
 | 发票/支付历史基础 | Done | Provider invoice paid/payment-failed events write `billing_invoices`; payment failures enqueue deduped billing notifications; staged dunning reminders can be queued at T+2/T+5 only while invoices remain failed; users can filter invoice history in Settings, see summary totals, open invoice/PDF links, and retry failed invoices from hosted invoice links; signed webhook verification is supported when `BILLING_WEBHOOK_SECRET` is configured. |
@@ -164,7 +165,7 @@ The refreshed Drive material changes the product packaging language and introduc
 | User role model | `user`/`admin`/`operator`/`support` role enum, role update API, audit trail, role-aware frontend session payload | Optional company-level owner/member unification with global role model |
 | Subscription / tier model | `account_tier` on users, organization-level `account_tier` for workspace/team entitlement, admin tier assignment, central entitlement map, updated product-facing plan catalog, planned Growth catalog entry, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, Stripe SDK/API checkout and portal sessions, Stripe webhook mapping/signature verification, cancellation scheduling, subscription lifecycle reconciliation, filtered invoice history with summary totals/PDF links, payment retry links, payment-failed notification outbox entries, staged dunning reminders with resolved-payment suppression, optional generic webhook signature verification, and Stripe sandbox verifier/runbook | Production scheduled worker deployment and live credential/webhook operations runbook |
 | Feature access control | Central feature map, server guard, client helper, visible locked states, PRD feature slugs, saved bid/intent/search alert/team invite quota enforcement, team member usage counting, Settings usage dashboard, credit summary, organization-level feature overrides with reason/expiry metadata, audit filtering by actor/action/target/feature, and manifest-backed static coverage tests; session entitlements and workspace quotas now use organization tier; Submission Guidance and Pursue / No-Bid are currently Pursuit Starter-gated, Compliance Manifest is currently Response Builder-gated; Quote Workflow and Knowledge Station are explicitly marked as not-yet-implemented API surfaces | Real credit consumption/refund flows, optional richer beta program workflow, and custom enterprise permission rules |
-| Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails; creation is quota-gated by tier; Settings now includes alert CRUD, pause/resume, and editable filters/digest fields | Notification history, digest delivery monitoring, real email delivery provider |
+| Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails; skipped/sent/failed/duplicate digest outcomes are recorded; creation is quota-gated by tier; Settings now includes alert CRUD, pause/resume, editable filters/digest fields, and recent delivery history | Real email delivery provider, bounce/complaint handling, operator digest monitoring dashboard |
 | Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, user preferences, billing dunning reminders, deployable notification/dunning worker command, invite delivery status, admin notification history, admin delivery trigger, provider env validation, and production delivery runbook exist | Real production email provider credentials/webhooks, bounce/complaint handling, template governance |
 | Admin data QA | Source status/logs exist; bid detail surfaces attachment archival status and failure notes; Admin now has a QA queue with score, archive issue counts, review status, reviewer timestamp/by metadata, correction audit persistence, inline title/deadline correction, public suppression filtering, publish/suppress actions, rich filters, batch operations, and correction history. | Broader editable-field UI and raw/staged/normalized comparison detail |
 
@@ -183,13 +184,13 @@ The refreshed Drive material changes the product packaging language and introduc
 
 ## Recommended Next Phase
 
-Prioritize **Search Alerts Notification History + Digest Delivery Verification** next.
+Prioritize **Product 2 Amendment/Addenda Awareness v1** next.
 
 Reason:
 
-- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Response Builder-gated Compliance Manifest, Pursuit Starter-gated Pursue / No-Bid Decision, 50-state crawler registry, local attachment/detail archival, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA operations, Search Alerts UI, notification hardening, production billing/worker runbooks, qualification evidence citations, and document-grounded Q&A now exist.
+- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Response Builder-gated Compliance Manifest, Pursuit Starter-gated Pursue / No-Bid Decision, 50-state crawler registry, local attachment/detail archival, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA operations, Search Alerts UI and delivery history, notification hardening, production billing/worker runbooks, qualification evidence citations, and document-grounded Q&A now exist.
 - The remaining account gap is not basic registration; it is production deployment hardening, production worker deployment runbook, real credit consumption/refund flows when premium actions exist, custom enterprise rules when concrete use cases appear, broader advanced usage metrics, and future compliance polish.
-- The next highest MVP risk is closing the alert loop: users can create and edit search alerts, but still need visible delivery history and digest verification before alerting feels production-ready.
+- The next highest Product 2 risk is freshness: users can inspect evidence and ask questions, but amendment/addenda signals can make qualification output stale after an intent is created.
 
 ## Account / Role / Tier Direction
 
@@ -248,17 +249,31 @@ Current local limits use internal tier values. Product-facing labels should be s
 
 ## Suggested Implementation Order
 
-1. **Search Alerts Notification History + Digest Verification**
-   - Add per-alert notification history and verify digest delivery against the production-ready notification provider layer.
-
-2. **Product 2 Qualification Upgrade Continuation**
+1. **Product 2 Qualification Upgrade Continuation**
    - Add amendment/addenda refresh, richer evidence/artifact links, no-bid taxonomy, and qualification risk explanations.
 
-3. **Knowledge Station Lite**
+2. **Knowledge Station Lite**
    - Add embedded workflow coaching and reusable knowledge capture before deeper procurement intelligence.
+
+3. **Production operations polish**
+   - Dry-run worker deployment and connect real provider credentials/webhooks when available.
 
 4. **Product workflow depth**
    - Build Response Workspace, Artifact Vault, Quote Lite, deadline notifications, and award learning in thin MVP slices.
+
+## Completed Phase: Search Alerts Notification History + Digest Delivery Verification
+
+本阶段完成：
+- 新增 `search_alert_digest_runs` 表，记录 Search Alert digest 的 sent / failed / skipped 投递结果。
+- `sendMatchedAlertNotifications()` 和 notification delivery worker 会在发送成功、provider 失败/抛错、worker 重试成功、重复 digest、通知偏好关闭、缺少收件邮箱、暂不支持渠道时写入 digest run。
+- `listSearchAlerts()` 会按当前用户和 alert 列表读取最近 digest history，并作为 additive 字段返回。
+- Settings Search Alerts 卡片展示最近投递状态、匹配数量、失败/跳过原因和历史摘要。
+- 保持现有 Search Alerts CRUD、quota gate、通知偏好和 notification outbox wire shape 不变。
+
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
+1. Product 2 Amendment/Addenda Awareness：检测 addenda/amendment 信号并刷新 qualification evidence/artifacts。
+2. Production Email Provider：接入真实 provider credentials、bounce/complaint webhook 和运营监控。
+3. Crawler Source Quality Monitoring：继续提升 beta 州源成熟度与生产监控。
 
 ## Completed Phase: Attachment Download Archival Downloader
 

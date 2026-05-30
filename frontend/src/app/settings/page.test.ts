@@ -102,6 +102,11 @@ describe("settings page", () => {
     expect(page).toContain("settings.searchAlertSaved");
     expect(page).toContain("settings.searchAlertDeleted");
     expect(page).toContain("settings.searchAlertLimitReached");
+    expect(page).toContain("settings.searchAlertDeliveryHistory");
+    expect(page).toContain("settings.searchAlertNoDeliveryHistory");
+    expect(page).toContain("settings.searchAlertDigestStatus_sent");
+    expect(page).toContain("settings.searchAlertDigestSkipped_notifications_disabled");
+    expect(page).toContain("digestHistory");
     expect(page).toContain("handleSearchAlertSubmit");
     expect(page).toContain("handleSearchAlertToggle");
     expect(page).toContain("handleSearchAlertDelete");

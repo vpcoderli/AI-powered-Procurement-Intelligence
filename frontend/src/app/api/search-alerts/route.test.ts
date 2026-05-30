@@ -3,6 +3,7 @@ import * as principal from "@/server/auth/principal";
 import * as usageLimits from "@/server/auth/usage-limits";
 import { UsageLimitError } from "@/server/auth/usage-limits";
 import * as searchAlertService from "@/server/search-alerts/service";
+import type { SearchAlert, SearchAlertDigestRun } from "@/server/search-alerts/types";
 import { ANONYMOUS_USER_COOKIE_NAME } from "@/server/bids/user";
 import { GET, POST } from "./route";
 
@@ -27,7 +28,7 @@ const enforceUsageLimit = vi.mocked(usageLimits.enforceUsageLimit);
 const listSearchAlerts = vi.mocked(searchAlertService.listSearchAlerts);
 const createSearchAlert = vi.mocked(searchAlertService.createSearchAlert);
 
-const alert = {
+const alert: SearchAlert & { digestHistory: SearchAlertDigestRun[] } = {
   id: "alert_1",
   userId: "anon_new",
   name: "Cloud bids",
@@ -43,9 +44,24 @@ const alert = {
   isEnabled: true,
   lastMatchedAt: null,
   lastNotifiedAt: null,
+  digestHistory: [
+    {
+      id: "digest_run_1",
+      alertId: "alert_1",
+      userId: "anon_new",
+      frequency: "daily",
+      status: "sent",
+      matchCount: 1,
+      notificationId: "notification_1",
+      skippedReason: null,
+      failureReason: null,
+      matchedBidIds: ["bid_1"],
+      createdAt: "2026-05-30T00:00:00.000Z",
+    },
+  ],
   createdAt: "2026-05-19T00:00:00.000Z",
   updatedAt: "2026-05-19T00:00:00.000Z",
-} as const;
+};
 
 describe("GET /api/search-alerts", () => {
   beforeEach(() => {

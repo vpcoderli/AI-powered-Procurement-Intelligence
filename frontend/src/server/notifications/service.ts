@@ -4,6 +4,7 @@ import { getAccountNotificationPreferences } from "@/server/account/notification
 import type { AppDatabase } from "@/server/db/client";
 import { alerts, users } from "@/server/db/schema";
 import type { SearchAlertMatchResult } from "@/server/search-alerts/matcher";
+import { recordSearchAlertDigestRun } from "@/server/search-alerts/digest-history";
 import { enqueueNotification, markNotificationFailed, markNotificationSent } from "./outbox-repository";
 import { createNotificationProvider } from "./provider";
 import { renderAlertDigestNotification } from "./renderer";
@@ -40,6 +41,36 @@ function findUserEmail(db: AppDatabase, userId: string) {
   return user?.email?.trim() || null;
 }
 
+function digestRunId() {
+  return `digest_run_${randomUUID()}`;
+}
+
+function recordDigestRun(
+  db: AppDatabase,
+  match: MatchedAlertNotification,
+  input: {
+    status: "queued" | "sent" | "failed" | "skipped";
+    now: string;
+    notificationId?: string | null;
+    skippedReason?: "unsupported_channel" | "missing_recipient" | "notifications_disabled" | "duplicate_digest";
+    failureReason?: string | null;
+  },
+) {
+  recordSearchAlertDigestRun(db, {
+    id: digestRunId(),
+    alertId: match.alertId,
+    userId: match.userId,
+    frequency: match.frequency,
+    status: input.status,
+    matchCount: match.bidIds.length,
+    notificationId: input.notificationId ?? null,
+    skippedReason: input.skippedReason ?? null,
+    failureReason: input.failureReason ?? null,
+    matchedBidIds: match.bidIds,
+    createdAt: input.now,
+  });
+}
+
 export async function sendMatchedAlertNotifications(
   db: AppDatabase,
   matchResult: SearchAlertMatchResult,
@@ -51,17 +82,32 @@ export async function sendMatchedAlertNotifications(
 
   for (const match of matchResult.matches) {
     if (match.notificationChannel !== "email") {
+      recordDigestRun(db, match, {
+        status: "skipped",
+        now,
+        skippedReason: "unsupported_channel",
+      });
       result.skipped += 1;
       continue;
     }
 
     const email = findUserEmail(db, match.userId);
     if (!email) {
+      recordDigestRun(db, match, {
+        status: "skipped",
+        now,
+        skippedReason: "missing_recipient",
+      });
       result.skipped += 1;
       continue;
     }
 
     if (!getAccountNotificationPreferences(db, match.userId).savedSearchAlertsEnabled) {
+      recordDigestRun(db, match, {
+        status: "skipped",
+        now,
+        skippedReason: "notifications_disabled",
+      });
       result.skipped += 1;
       continue;
     }
@@ -86,24 +132,40 @@ export async function sendMatchedAlertNotifications(
     });
 
     if (!enqueueResult.created) {
+      recordDigestRun(db, match, {
+        status: "skipped",
+        now,
+        notificationId: enqueueResult.notification.id,
+        skippedReason: "duplicate_digest",
+      });
       result.skipped += 1;
       continue;
     }
 
     result.queued += 1;
     const notification = enqueueResult.notification;
-    const sendResult = await provider.send({
-      id: notification.id,
-      channel: notification.channel,
-      recipient: notification.recipient,
-      subject: notification.subject,
-      bodyText: notification.bodyText,
-      dedupeKey: notification.dedupeKey,
-      matchedBidIds: notification.matchedBidIds,
-    });
+    const sendResult = await provider
+      .send({
+        id: notification.id,
+        channel: notification.channel,
+        recipient: notification.recipient,
+        subject: notification.subject,
+        bodyText: notification.bodyText,
+        dedupeKey: notification.dedupeKey,
+        matchedBidIds: notification.matchedBidIds,
+      })
+      .catch((error: unknown) => ({
+        ok: false as const,
+        error: error instanceof Error ? error.message : "Notification provider threw an unknown error",
+      }));
 
     if (sendResult.ok) {
       markNotificationSent(db, notification.id, now);
+      recordDigestRun(db, match, {
+        status: "sent",
+        now,
+        notificationId: notification.id,
+      });
       db.update(alerts)
         .set({ lastNotifiedAt: now, updatedAt: now })
         .where(eq(alerts.id, match.alertId))
@@ -111,6 +173,12 @@ export async function sendMatchedAlertNotifications(
       result.sent += 1;
     } else {
       markNotificationFailed(db, notification.id, sendResult.error, now);
+      recordDigestRun(db, match, {
+        status: "failed",
+        now,
+        notificationId: notification.id,
+        failureReason: sendResult.error,
+      });
       result.failed += 1;
     }
   }
