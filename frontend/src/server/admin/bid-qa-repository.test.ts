@@ -1,8 +1,13 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { bidAttachments, bids } from "@/server/db/schema";
+import { bidAttachments, bidFieldCorrections, bids } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { listAdminBidQaItems, updateAdminBidQaReview } from "./bid-qa-repository";
+import {
+  listAdminBidQaItems,
+  updateAdminBidQaCorrection,
+  updateAdminBidQaDisplayStatus,
+  updateAdminBidQaReview,
+} from "./bid-qa-repository";
 
 const NOW = "2026-05-30T00:00:00.000Z";
 
@@ -128,6 +133,8 @@ describe("admin bid QA repository", () => {
       "ny_clean",
     ]);
     expect(response.items.find((item) => item.id === "ca_failed_archive")).toMatchObject({
+      displayStatus: "published",
+      correctionCount: 0,
       qualityScore: 65,
       archiveIssueCount: 2,
       archiveFailedCount: 2,
@@ -179,5 +186,72 @@ describe("admin bid QA repository", () => {
       adminReviewedBy: "admin-1",
       adminReviewedAt: "2026-05-30T01:00:00.000Z",
     });
+  });
+
+  it("updates display status for publish controls", async () => {
+    const updated = await updateAdminBidQaDisplayStatus(testDb.db, "ca_failed_archive", {
+      displayStatus: "suppressed",
+      reviewerId: "operator-1",
+      reviewedAt: "2026-05-30T02:00:00.000Z",
+    });
+
+    expect(updated).toMatchObject({
+      id: "ca_failed_archive",
+      displayStatus: "suppressed",
+      adminReviewedBy: "operator-1",
+      adminReviewedAt: "2026-05-30T02:00:00.000Z",
+    });
+
+    const row = testDb.db.select().from(bids).where(eq(bids.id, "ca_failed_archive")).get();
+    expect(row?.displayStatus).toBe("suppressed");
+  });
+
+  it("updates allowed bid fields and records original/corrected values", async () => {
+    const updated = await updateAdminBidQaCorrection(testDb.db, "tx_low_quality", {
+      corrections: {
+        title: "Texas security services corrected",
+        deadlineDate: "2026-08-01",
+      },
+      note: "Corrected from portal QA.",
+      reviewerId: "admin-1",
+      correctedAt: "2026-05-30T03:00:00.000Z",
+    });
+
+    expect(updated).toMatchObject({
+      id: "tx_low_quality",
+      title: "Texas security services corrected",
+      deadlineDate: "2026-08-01",
+      correctionCount: 2,
+    });
+
+    const row = testDb.db.select().from(bids).where(eq(bids.id, "tx_low_quality")).get();
+    expect(row).toMatchObject({
+      title: "Texas security services corrected",
+      deadlineDate: "2026-08-01",
+    });
+
+    const corrections = testDb.db
+      .select()
+      .from(bidFieldCorrections)
+      .where(eq(bidFieldCorrections.bidId, "tx_low_quality"))
+      .all();
+
+    expect(corrections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          fieldName: "title",
+          originalValue: "Texas security services",
+          correctedValue: "Texas security services corrected",
+          note: "Corrected from portal QA.",
+          correctedBy: "admin-1",
+          correctedAt: "2026-05-30T03:00:00.000Z",
+        }),
+        expect.objectContaining({
+          fieldName: "deadlineDate",
+          originalValue: null,
+          correctedValue: "2026-08-01",
+        }),
+      ]),
+    );
   });
 });

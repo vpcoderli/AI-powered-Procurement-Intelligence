@@ -28,7 +28,7 @@ This document is the working checklist for local development. Update it after ea
 | Admin auth helper | `requireAdmin()` checks authenticated non-disabled full-admin sessions; `requireAdminAccess()` supports admin/operator/support console access with route-level role restrictions; local bypass for development. |
 | Admin user access console | `/admin` lists registered users, creates invited accounts with temporary passwords, filters/searches accounts, changes role/tier/enabled state, shows access audit logs including self-service account deletion, and keeps account management limited to full admins. |
 | Admin crawler console | `/admin`, data source health, enable/disable sources, run all state crawlers, run single source, crawler logs; support can view operational state, operator/admin can run operational actions; state crawler registry now covers all 50 states. |
-| Admin bid QA console | `/admin` includes a Bid Data QA queue with quality score, review status, source/state, quality flags, archive issue counts, and operator/admin review status updates; support can view the queue read-only. |
+| Admin bid QA console | `/admin` includes a Bid Data QA queue with quality score, review status, display status, source/state, quality flags, archive issue counts, correction counts, operator/admin review status updates, inline title/deadline correction, and publish/suppress controls; support can view the queue read-only. |
 | Feature entitlement map | Central role/tier feature map for current compatibility tiers `free`, `pro`, `business`, `enterprise`; product-facing plan copy maps to Free, Pursuit Starter, Response Builder, planned Growth, and Enterprise. |
 | Feature access guards | Reusable server `requireFeature`, client `useFeature`, tier-aware locked states for gated features, and manifest-backed static coverage tests for current/future advanced feature API routes. |
 | Usage limits | Central saved bid, intent workspace, search alert, and team member quota checks/counts by organization tier; authenticated users are counted at workspace scope; saved bids, intents, search alerts, and team member invite/accept flows return `USAGE_LIMIT_REACHED` before creating over-limit resources; Settings shows current workspace usage vs plan limits. |
@@ -56,7 +56,7 @@ The refreshed Drive material changes the product packaging language and introduc
 | Plan names | Code and database use `free`, `pro`, `business`, `enterprise`. | Done locally: product copy exposes Free, Pursuit Starter, Response Builder, Growth, and Enterprise while preserving compatibility values. |
 | Plan mapping | Pursuit Starter maps to `pro`; Response Builder maps to `business`; Enterprise maps to `enterprise`; Growth exists as planned/disabled. | Future: activate Growth only after exact entitlement boundaries and billing model are confirmed. |
 | Credits | Credit vocabulary, included monthly credit metadata, premium action costs, refund semantics, Settings display, and ledger tables exist. | Future: connect real consumption/refund flows and paid credit packs when premium AI actions are implemented. |
-| P1 data architecture | 50-state crawler coverage, admin runner, archive metadata, and local public attachment/detail downloader exist. | Separate Source Registry, Connector Engine, Normalization/Data Quality, and Bid Admin/Data QA responsibilities in docs and future implementation. |
+| P1 data architecture | 50-state crawler coverage, admin runner, archive metadata, local public attachment/detail downloader, QA review queue, correction audit table, and publish/suppress controls exist. | Separate Source Registry, Connector Engine, Normalization/Data Quality, and Bid Admin/Data QA responsibilities in docs and future implementation; next polish is batch QA and richer QA filtering. |
 | Knowledge Station | Feature key exists but no product surface. | Move Knowledge Station Lite earlier as Product 0.9 workflow coaching; deeper procurement intelligence remains post-MVP. |
 
 ## Account / Permission / Billing Tracker
@@ -120,7 +120,7 @@ The refreshed Drive material changes the product packaging language and introduc
 | Feature access control | Central feature map, server guard, client helper, visible locked states, PRD feature slugs, saved bid/intent/search alert/team invite quota enforcement, team member usage counting, Settings usage dashboard, credit summary, organization-level feature overrides with reason/expiry metadata, audit filtering by actor/action/target/feature, and manifest-backed static coverage tests; session entitlements and workspace quotas now use organization tier; Submission Guidance and Pursue / No-Bid are currently Pursuit Starter-gated, Compliance Manifest is currently Response Builder-gated; Quote Workflow and Knowledge Station are explicitly marked as not-yet-implemented API surfaces | Real credit consumption/refund flows, optional richer beta program workflow, and custom enterprise permission rules |
 | Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails; creation is quota-gated by tier | Full alert management UI, per-alert digest configuration, real email delivery provider |
 | Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, user preferences, billing dunning reminders, deployable notification/dunning worker command, invite delivery status, admin notification history, and admin delivery trigger exist | Production cron/process deployment and production email provider hardening |
-| Admin data QA | Source status/logs exist; bid detail surfaces attachment archival status and failure notes; Admin now has a QA queue with score, archive issue counts, review status, reviewer timestamp/by metadata, and quick reviewed/needs-review actions. | Field correction workflow, original-vs-corrected preservation, publish/unpublish controls, batch QA actions |
+| Admin data QA | Source status/logs exist; bid detail surfaces attachment archival status and failure notes; Admin now has a QA queue with score, archive issue counts, review status, reviewer timestamp/by metadata, correction audit persistence, inline title/deadline correction, public suppression filtering, and publish/suppress actions. | Batch QA actions, richer QA filters, original-vs-corrected comparison UI, correction history panel, and broader editable-field UI |
 
 ### Not Implemented
 
@@ -137,13 +137,13 @@ The refreshed Drive material changes the product packaging language and introduc
 
 ## Recommended Next Phase
 
-Prioritize **Bid Admin/Data QA Correction + Publish Controls** next.
+Prioritize **Admin QA Batch Filters + Correction History** next.
 
 Reason:
 
-- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Response Builder-gated Compliance Manifest, Pursuit Starter-gated Pursue / No-Bid Decision, 50-state crawler registry, local attachment/detail archival, and Admin Bid QA queue now exist.
+- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Response Builder-gated Compliance Manifest, Pursuit Starter-gated Pursue / No-Bid Decision, 50-state crawler registry, local attachment/detail archival, Admin Bid QA queue, correction audit persistence, and publish/suppress controls now exist.
 - The remaining account gap is not basic registration; it is production deployment hardening, production worker deployment runbook, real credit consumption/refund flows when premium actions exist, custom enterprise rules when concrete use cases appear, broader advanced usage metrics, and future compliance polish.
-- The next highest data risk is no longer discovering bad records; it is correcting them safely and controlling publish/suppression state without losing original crawler evidence.
+- The next highest data risk is no longer single-record correction; it is making QA operations scalable with filters, batch action, and visible correction history.
 
 ## Account / Role / Tier Direction
 
@@ -202,8 +202,8 @@ Current local limits use internal tier values. Product-facing labels should be s
 
 ## Suggested Implementation Order
 
-1. **Bid Admin/Data QA Correction + Publish Controls**
-   - Add limited field correction workflow, original-vs-corrected preservation, publish/suppress state, and batch QA actions.
+1. **Admin QA Batch Filters + Correction History**
+   - Add display-status/score/reviewer filters, batch publish/suppress/review actions, original-vs-corrected comparison UI, and correction history panel.
 
 2. **Product 2 Qualification Upgrade**
    - Add citations, document-grounded Q&A, amendment/addenda awareness, evidence mapping, and no-bid taxonomy.
@@ -237,6 +237,25 @@ Current local limits use internal tier values. Product-facing labels should be s
 - 新增 `/api/admin/bids/qa` 列表 API，支持 `limit/q/stateCode/reviewStatus/archiveStatus`。
 - 新增 `/api/admin/bids/qa/[id]` PATCH API，admin/operator 可更新 `reviewStatus` 和 note，support 只读。
 - `/admin` 接入 Bid Data QA 队列，展示质量分、归档问题数、质量 flags、review status，并支持快速标记 Reviewed / Needs review。
+
+当前还剩：
+1. Admin QA Batch Filters + Correction History：display status/score/reviewer 过滤、批量 publish/suppress/review、原始值对比、修正历史面板。
+2. Product 2 Qualification Upgrade：document-grounded citations、Q&A、amendment/addenda awareness、evidence mapping、no-bid taxonomy。
+3. Knowledge Station Lite：工作流教练、模板/片段、可复用知识沉淀。
+
+## Completed Phase: Bid Admin/Data QA Correction + Publish Controls
+
+本阶段完成：
+- `bids` 增加 `display_status`，公开 search/detail 会过滤 `suppressed` 招标。
+- 新增 `bid_field_corrections`，每次修正会记录字段名、原始值、修正值、note、操作者和时间。
+- Admin QA repository/API/client 支持三类 PATCH：review status、display status、field corrections。
+- `/admin` QA 队列展示展示状态和修正次数，admin/operator 可发布、隐藏、保存 title/deadline 修正；support 保持只读。
+- 中英文文案已补齐，定向测试覆盖 schema、repository、公开过滤、API route、API client、Admin UI。
+
+当前还剩：
+1. Admin QA Batch Filters + Correction History：display status/score/reviewer 过滤、批量 publish/suppress/review、原始值对比、修正历史面板。
+2. Product 2 Qualification Upgrade：document-grounded citations、Q&A、amendment/addenda awareness、evidence mapping、no-bid taxonomy。
+3. Knowledge Station Lite：工作流教练、模板/片段、可复用知识沉淀。
 
 当前还剩：
 1. QA 字段修正：title、deadline、issuer、amount、category、source URL 等有限字段编辑。

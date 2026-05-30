@@ -5,6 +5,8 @@ import type {
 } from "@/server/admin/data-sources-repository";
 import type {
   AdminBidQaArchiveStatus,
+  AdminBidQaCorrectionField,
+  AdminBidQaDisplayStatus,
   AdminBidQaItem,
   AdminBidQaResponse,
   AdminBidQaReviewStatus,
@@ -31,6 +33,8 @@ import type { ScheduleDunningRemindersResult } from "@/server/billing/dunning";
 
 export type {
   AdminBidQaArchiveStatus,
+  AdminBidQaCorrectionField,
+  AdminBidQaDisplayStatus,
   AdminBidQaItem,
   AdminBidQaResponse,
   AdminBidQaReviewStatus,
@@ -262,7 +266,13 @@ export async function listAdminBidQaItems(
 
 export async function updateAdminBidQaReview(
   id: string,
-  input: { reviewStatus: AdminBidQaReviewStatus; note?: string | null },
+  input:
+    | { reviewStatus: AdminBidQaReviewStatus; note?: string | null }
+    | { displayStatus: AdminBidQaDisplayStatus }
+    | {
+        corrections: Partial<Record<AdminBidQaCorrectionField, string | null>>;
+        note?: string | null;
+      },
 ) {
   const response = await fetch(`/api/admin/bids/qa/${encodeURIComponent(id)}`, {
     method: "PATCH",

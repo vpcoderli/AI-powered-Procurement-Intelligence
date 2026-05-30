@@ -214,6 +214,7 @@ export function runMigrations(db: AppDatabase) {
       admin_review_note TEXT,
       admin_reviewed_at TEXT,
       admin_reviewed_by TEXT,
+      display_status TEXT NOT NULL DEFAULT 'published',
       detail_archive_status TEXT NOT NULL DEFAULT 'not_archived',
       detail_archive_path TEXT,
       detail_fetched_at TEXT,
@@ -243,6 +244,19 @@ export function runMigrations(db: AppDatabase) {
       sort_order INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS bid_field_corrections (
+      id TEXT PRIMARY KEY,
+      bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
+      field_name TEXT NOT NULL,
+      original_value TEXT,
+      corrected_value TEXT,
+      note TEXT,
+      corrected_by TEXT NOT NULL,
+      corrected_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_bid_field_corrections_bid_id ON bid_field_corrections(bid_id);
+    CREATE INDEX IF NOT EXISTS idx_bid_field_corrections_field_name ON bid_field_corrections(field_name);
 
     CREATE TABLE IF NOT EXISTS saved_bids (
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -597,6 +611,7 @@ export function runMigrations(db: AppDatabase) {
   addBidColumn("admin_review_note", "TEXT");
   addBidColumn("admin_reviewed_at", "TEXT");
   addBidColumn("admin_reviewed_by", "TEXT");
+  addBidColumn("display_status", "TEXT NOT NULL DEFAULT 'published'");
   addBidColumn("detail_archive_status", "TEXT NOT NULL DEFAULT 'not_archived'");
   addBidColumn("detail_archive_path", "TEXT");
   addBidColumn("detail_fetched_at", "TEXT");

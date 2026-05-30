@@ -268,6 +268,38 @@ describe("admin API client", () => {
     });
   });
 
+  it("updates admin bid QA display status", async () => {
+    const body = { item: { id: "bid_1", displayStatus: "suppressed" } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(updateAdminBidQaReview("bid 1", {
+      displayStatus: "suppressed",
+    })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/bids/qa/bid%201", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ displayStatus: "suppressed" }),
+    });
+  });
+
+  it("updates admin bid QA corrections", async () => {
+    const body = { item: { id: "bid_1", title: "Corrected title" } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(updateAdminBidQaReview("bid 1", {
+      corrections: { title: "Corrected title", deadlineDate: "2026-08-01" },
+      note: "QA correction",
+    })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/bids/qa/bid%201", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        corrections: { title: "Corrected title", deadlineDate: "2026-08-01" },
+        note: "QA correction",
+      }),
+    });
+  });
+
   it("lists admin notification outbox rows", async () => {
     const body = {
       notifications: [{ id: "notification_1", status: "failed" }],

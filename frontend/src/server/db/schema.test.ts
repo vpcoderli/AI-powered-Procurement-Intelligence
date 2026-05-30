@@ -6,6 +6,7 @@ import { createDatabase } from "./client";
 import { runMigrations } from "./migrate";
 import {
   bidAttachments,
+  bidFieldCorrections,
   bids,
   crawlerLocks,
   dataSources,
@@ -388,6 +389,7 @@ describe("database schema", () => {
           "admin_review_note",
           "admin_reviewed_at",
           "admin_reviewed_by",
+          "display_status",
           "detail_archive_status",
           "detail_archive_path",
           "detail_fetched_at",
@@ -411,6 +413,24 @@ describe("database schema", () => {
           "fetched_at",
           "archive_status",
           "archive_error",
+        ]),
+      );
+
+      const correctionColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(bid_field_corrections)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(correctionColumns).toEqual(
+        expect.arrayContaining([
+          "id",
+          "bid_id",
+          "field_name",
+          "original_value",
+          "corrected_value",
+          "note",
+          "corrected_by",
+          "corrected_at",
         ]),
       );
 
@@ -495,6 +515,19 @@ describe("database schema", () => {
           fetchedAt: "2026-05-19T00:00:00.000Z",
           archiveStatus: "archived",
           createdAt: "2026-05-19T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
+
+      expect(() =>
+        testDb.db.insert(bidFieldCorrections).values({
+          id: "correction_1",
+          bidId: "archive_bid_1",
+          fieldName: "title",
+          originalValue: "Archived solicitation",
+          correctedValue: "Corrected solicitation",
+          note: "QA fix",
+          correctedBy: "admin_1",
+          correctedAt: "2026-05-19T00:00:00.000Z",
         }).run(),
       ).not.toThrow();
     } finally {

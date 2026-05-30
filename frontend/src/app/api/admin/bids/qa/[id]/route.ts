@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { AdminAuthError, requireAdminAccess } from "@/server/admin/auth";
 import {
   AdminBidQaNotFoundError,
+  isAdminBidQaCorrectionField,
+  isAdminBidQaDisplayStatus,
   isAdminBidQaReviewStatus,
+  updateAdminBidQaCorrection,
+  updateAdminBidQaDisplayStatus,
   updateAdminBidQaReview,
 } from "@/server/admin/bid-qa-repository";
 import type { AppDatabase } from "@/server/db/client";
@@ -27,6 +31,10 @@ function routeError(error: unknown) {
   return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
 }
 
+function isBlankRequiredCorrection(field: string, value: string | null) {
+  return (field === "title" || field === "issuerName" || field === "sourceUrl") && (!value || value.trim().length === 0);
+}
+
 async function resolveDatabase(database?: AppDatabase) {
   if (database) return database;
 
@@ -36,11 +44,13 @@ async function resolveDatabase(database?: AppDatabase) {
 
 async function parsePatchBody(request: Request) {
   const body = (await request.json().catch(() => null)) as {
+    corrections?: unknown;
+    displayStatus?: unknown;
     reviewStatus?: unknown;
     note?: unknown;
   } | null;
 
-  if (!body || !isAdminBidQaReviewStatus(body.reviewStatus)) {
+  if (!body) {
     return null;
   }
 
@@ -50,10 +60,40 @@ async function parsePatchBody(request: Request) {
 
   const note = typeof body.note === "string" ? body.note : null;
 
-  return {
-    reviewStatus: body.reviewStatus,
-    note,
-  };
+  if (isAdminBidQaReviewStatus(body.reviewStatus) && body.displayStatus === undefined && body.corrections === undefined) {
+    return {
+      action: "review" as const,
+      reviewStatus: body.reviewStatus,
+      note,
+    };
+  }
+
+  if (isAdminBidQaDisplayStatus(body.displayStatus) && body.reviewStatus === undefined && body.corrections === undefined) {
+    return {
+      action: "display" as const,
+      displayStatus: body.displayStatus,
+    };
+  }
+
+  if (typeof body.corrections === "object" && body.corrections !== null && !Array.isArray(body.corrections)) {
+    const corrections: Record<string, string | null> = {};
+    for (const [field, value] of Object.entries(body.corrections)) {
+      if (!isAdminBidQaCorrectionField(field)) return null;
+      if (value !== null && typeof value !== "string") return null;
+      if (isBlankRequiredCorrection(field, value)) return null;
+      corrections[field] = value;
+    }
+    if (Object.keys(corrections).length === 0 || body.reviewStatus !== undefined || body.displayStatus !== undefined) {
+      return null;
+    }
+    return {
+      action: "correction" as const,
+      corrections,
+      note,
+    };
+  }
+
+  return null;
 }
 
 export function createAdminBidQaPatch(database?: AppDatabase) {
@@ -67,10 +107,24 @@ export function createAdminBidQaPatch(database?: AppDatabase) {
       const resolvedDb = await resolveDatabase(database);
       const principal = await requireAdminAccess(resolvedDb, request, { roles: ["admin", "operator"] });
       const { id } = await context.params;
-      const item = await updateAdminBidQaReview(resolvedDb, id, {
-        ...input,
-        reviewerId: principal.kind === "admin" ? principal.userId : "local-bypass",
-      });
+      const reviewerId = principal.kind === "admin" ? principal.userId : "local-bypass";
+      const item =
+        input.action === "review"
+          ? await updateAdminBidQaReview(resolvedDb, id, {
+              reviewStatus: input.reviewStatus,
+              note: input.note,
+              reviewerId,
+            })
+          : input.action === "display"
+            ? await updateAdminBidQaDisplayStatus(resolvedDb, id, {
+                displayStatus: input.displayStatus,
+                reviewerId,
+              })
+            : await updateAdminBidQaCorrection(resolvedDb, id, {
+                corrections: input.corrections,
+                note: input.note,
+                reviewerId,
+              });
 
       return NextResponse.json({ item });
     } catch (error) {

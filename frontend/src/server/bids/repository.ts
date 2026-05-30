@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, ne } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { bidAttachments, bids, savedBids, users } from "@/server/db/schema";
 import { attachmentDownloadUrl, isLocalAttachmentUrl } from "./attachments";
@@ -130,7 +130,7 @@ export async function ensureUser(db: AppDatabase, userId: string) {
 }
 
 export async function listBids(db: AppDatabase, savedBidIds: string[] = []) {
-  const rows = db.select().from(bids).orderBy(asc(bids.id)).all();
+  const rows = db.select().from(bids).where(ne(bids.displayStatus, "suppressed")).orderBy(asc(bids.id)).all();
   const attachmentMap = attachmentsForBids(
     db,
     rows.map((row) => row.id),
@@ -141,7 +141,12 @@ export async function listBids(db: AppDatabase, savedBidIds: string[] = []) {
 }
 
 export async function getBidByIdFromRepository(db: AppDatabase, id: string) {
-  const row = db.select().from(bids).where(eq(bids.id, id)).limit(1).get();
+  const row = db
+    .select()
+    .from(bids)
+    .where(and(eq(bids.id, id), ne(bids.displayStatus, "suppressed")))
+    .limit(1)
+    .get();
   if (!row) return undefined;
 
   const attachmentMap = attachmentsForBids(db, [id]);
