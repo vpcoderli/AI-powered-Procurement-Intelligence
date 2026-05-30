@@ -6,10 +6,16 @@ describe("intent detail page", () => {
     const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
 
     expect(page).toContain("fetchQualificationCitations");
+    expect(page).toContain("fetchQualificationFreshness");
+    expect(page).toContain("refreshQualificationEvidence");
     expect(page).toContain("QualificationCitation");
+    expect(page).toContain("QualificationFreshnessResponse");
     expect(page).toContain("qualificationCitations");
+    expect(page).toContain("qualificationFreshness");
     expect(page).toContain("safeEvidenceUrl");
     expect(page).toContain('t("intentsPage.evidenceCitations")');
+    expect(page).toContain('t("intentsPage.qualificationFreshness")');
+    expect(page).toContain('t("intentsPage.refreshQualificationEvidence")');
     expect(page).toContain('t("intentsPage.noEvidenceCitations")');
   });
 

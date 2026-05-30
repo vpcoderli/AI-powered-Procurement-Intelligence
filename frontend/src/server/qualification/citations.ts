@@ -52,9 +52,7 @@ function makeCitation(input: Omit<QualificationCitation, "generatedAt">, generat
   return { ...input, generatedAt };
 }
 
-function generateCitations(intent: Awaited<ReturnType<typeof getUserIntent>>, generatedAt: string) {
-  if (!intent) return [];
-
+export function buildQualificationCitations(intent: NonNullable<Awaited<ReturnType<typeof getUserIntent>>>, generatedAt: string) {
   const bid = intent.bid;
   const baseConfidence = confidence(bid.sourceConfidence);
   const citations: QualificationCitation[] = [
@@ -133,6 +131,11 @@ function generateCitations(intent: Awaited<ReturnType<typeof getUserIntent>>, ge
   }
 
   return citations;
+}
+
+function generateCitations(intent: Awaited<ReturnType<typeof getUserIntent>>, generatedAt: string) {
+  if (!intent) return [];
+  return buildQualificationCitations(intent, generatedAt);
 }
 
 export async function getOrCreateQualificationCitations(

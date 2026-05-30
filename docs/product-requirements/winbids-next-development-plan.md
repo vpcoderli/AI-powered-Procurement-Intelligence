@@ -4,7 +4,7 @@ Updated: 2026-05-30
 
 ## Recommendation
 
-Continue with **Product 2 Amendment/Addenda Awareness v1** as the next implementation phase.
+Continue with **Product 2 No-Bid Taxonomy + Qualification Risk Explanations v1** as the next implementation phase.
 
 Commercial packaging and credits foundation is now in place:
 
@@ -13,9 +13,21 @@ Commercial packaging and credits foundation is now in place:
 - Credits have a foundation for included monthly credits, purchased credits, premium action costs, refunds, and future ledger events.
 - Settings Billing/Usage can surface plan names, Growth as planned, and credit summaries.
 
-The source registry, capability metadata, archive metadata columns, quality flag foundation, public attachment/detail downloader, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA actions, rich QA filters, correction history, Search Alerts management UI and delivery history, notification provider hardening, 50-state crawler guardrails, production billing/worker runbooks, Qualification Evidence Citations v1, and Document-Grounded Q&A v1 are now in place. The next risk is qualification freshness: users can inspect evidence and ask questions, but addenda/amendments can change deadlines, requirements, and pursuit decisions after an intent has already been created.
+The source registry, capability metadata, archive metadata columns, quality flag foundation, public attachment/detail downloader, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA actions, rich QA filters, correction history, Search Alerts management UI and delivery history, notification provider hardening, 50-state crawler guardrails, production billing/worker runbooks, Qualification Evidence Citations v1, Document-Grounded Q&A v1, and Amendment/Addenda Awareness v1 are now in place. The next risk is decision clarity: users can refresh stale evidence, but no-bid reasons and qualification risk explanations are still too generic for repeatable pursuit review.
 
 ## Last Completed Phase
+
+**Product 2 Amendment/Addenda Awareness v1** made qualification evidence freshness visible and refreshable:
+
+Completed locally:
+
+- Amendment/addenda signal detection covers bid title, description, archived detail text, and attachments.
+- `GET /api/intents/[id]/qualification/freshness` reports current/stale/not-refreshed state, latest signal, signal count, and last refreshed timestamp.
+- `POST /api/intents/[id]/qualification/freshness` regenerates match snapshot, deterministic brief/checklist/risk flags, and evidence citations without overwriting user-edited submission, compliance, or decision records.
+- Intent detail shows qualification freshness beside citations and provides a refresh action that clears old Q&A answers so future questions use the refreshed snapshot.
+- Existing citations, Q&A, Submission Guidance, Compliance Manifest, and Pursue/No-Bid APIs remain additive-compatible.
+
+## Previous Completed Phase
 
 **Search Alerts Notification History + Digest Delivery Verification** made alerting auditable:
 
@@ -27,7 +39,7 @@ Completed locally:
 - Settings shows each alert's latest digest status, match count, failure/skipped reason, and recent history.
 - Existing quota gates, alert preferences, notification outbox, and API shapes remain compatible.
 
-## Previous Completed Phase
+## Earlier Completed Phase
 
 **Document-Grounded Q&A v1** made qualification interaction evidence-bound:
 
@@ -79,41 +91,40 @@ Completed locally:
 
 ## Phase Goal
 
-Make Product 2 qualification safer when bid documents change:
+Make Product 2 pursuit decisions more explainable and repeatable:
 
-`Bid Update/Addendum -> Intent Evidence Refresh -> Qualification Snapshot -> User Review`
+`Qualification Evidence -> Risk Reasons -> No-Bid Taxonomy -> User Decision`
 
-This phase should let an intent detect amendment/addenda signals, surface whether qualification artifacts may be stale, and give the user a deterministic refresh path for the bid brief, evidence citations, Q&A context, guidance, compliance, and pursue/no-bid decision.
+This phase should turn generic deterministic risks into structured pursuit reasons, clearer no-bid categories, and evidence-linked explanations users can review before deciding.
 
 ## In Scope
 
-- Add bid/intent metadata to identify amendment or addenda related evidence from title, description, attachments, or source detail text.
-- Add an intent-level qualification freshness flag and last refreshed timestamp.
-- Add a deterministic refresh service that regenerates qualification citations and existing Product 2 derived artifacts from current bid evidence.
-- Show stale/current amendment awareness state in Intent detail.
-- Keep existing Submission Guidance, Compliance Manifest, Pursue/No-Bid, citations, and Q&A APIs additive-compatible.
+- Add a no-bid reason taxonomy for fit, compliance, deadline, pricing, geography, documentation, registration, and risk categories.
+- Expand deterministic risk explanations with evidence references where available.
+- Show structured reasons in the Intent detail decision area.
+- Preserve existing decision history and user-entered notes.
+- Keep existing freshness, citations, Q&A, Submission Guidance, and Compliance Manifest APIs additive-compatible.
 
 ## Out Of Scope
 
 - Login-only portal automation or CAPTCHA bypass.
 - Real production email provider credentials.
-- Full legal/compliance interpretation of amendment text.
+- Full legal/compliance interpretation.
 - LLM-based document extraction.
 - New document downloader logic beyond using already archived bid evidence.
 - Broad redesign of Intent detail.
 
 ## Acceptance Criteria
 
-- Existing 50-state crawler, Admin QA, Search Alerts, notification, and billing tests remain green.
-- Users can see whether an intent's qualification evidence is current or may be stale because amendment/addenda signals exist.
-- Refreshing qualification evidence updates the citation snapshot and downstream deterministic Product 2 artifacts without losing user notes/history.
-- Q&A uses the refreshed citation snapshot.
-- Existing Submission Guidance, Compliance Manifest, Pursue/No-Bid, Search Alerts, and Search/bid detail still work for existing records.
+- Existing 50-state crawler, Admin QA, Search Alerts, notification, billing, freshness, citations, and Q&A tests remain green.
+- Users can see structured no-bid / pursue rationale instead of only free-form notes.
+- Decision reasons are mapped to a stable taxonomy and can be rendered in English/Chinese UI.
+- Existing Submission Guidance, Compliance Manifest, Amendment Awareness, Q&A, Search Alerts, and Search/bid detail still work for existing records.
 - `npm test`, `PYTHONPATH=crawler python3 -m pytest crawler/tests`, `npm run lint`, `npm run build`, `npm run db:migrate`, and `git diff --check` pass.
 
 ## Remaining Work After This Phase
 
-1. Product 2 Qualification Upgrade continuation: richer evidence/artifact links, no-bid taxonomy, and qualification risk explanations.
+1. Product 2 Qualification Upgrade continuation: richer evidence/artifact links after no-bid taxonomy and qualification risk explanations.
 2. 50-state crawler hardening continuation: promote beta adapters, add source quality monitoring, and document Source Registry / Connector Engine / Normalization QA responsibilities.
 3. Production deployment dry run for billing, notification, and crawler workers.
 4. UI/UE production polish: migrate the demo visual direction into real `/search`, `/bids/[id]`, `/admin`, and settings workflows.

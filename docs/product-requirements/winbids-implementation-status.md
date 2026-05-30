@@ -21,7 +21,8 @@ This document is the working checklist for local development. Update it after ea
 
 | Requirement | Current state | Remaining work | Suggested next slice |
 |---|---|---|---|
-| Search Alerts Notification History + Digest Verification | Done locally: digest runs are persisted for sent/failed/skipped alert notifications, list responses hydrate recent history, and Settings shows latest delivery status plus recent history. | Real production email provider, bounce/complaint webhooks, and operator digest monitoring remain future production hardening. | Continue Product 2 amendment/addenda awareness; revisit production email provider when credentials are available. |
+| Product 2 Amendment/Addenda Awareness v1 | Done locally: amendment/addenda signal detection covers title, descriptions, archived detail text, and attachments; intent freshness API reports current/stale/not-refreshed state; refresh API regenerates match snapshot, deterministic brief/checklist/risk flags, and evidence citations while preserving user-edited submission/compliance/decision records; Intent detail shows freshness state and refresh control. | Richer legal interpretation and LLM document extraction remain out of scope; future work should add structured no-bid taxonomy and stronger risk explanations. | Continue with Product 2 no-bid taxonomy + qualification risk explanations. |
+| Search Alerts Notification History + Digest Verification | Done locally: digest runs are persisted for sent/failed/skipped alert notifications, list responses hydrate recent history, and Settings shows latest delivery status plus recent history. | Real production email provider, bounce/complaint webhooks, and operator digest monitoring remain future production hardening. | Revisit production email provider when credentials are available. |
 | Admin QA Batch Filters + Correction History | Done locally: Admin QA now supports display status / score range / reviewer / reviewed date / source confidence filters, selected-row batch reviewed / needs review / publish / suppress actions, correction history API/UI, and original-vs-corrected history display. | Broader editable-field UI and raw/staged/normalized side-by-side detail view remain future Bid Admin depth, not this thin slice. | Keep QA operational; next data-admin slice should be raw/staged/normalized comparison after Product 2 citations. |
 
 ### P1 / MVP Readiness
@@ -29,7 +30,7 @@ This document is the working checklist for local development. Update it after ea
 | Requirement | Current state | Remaining work | Suggested next slice |
 |---|---|---|---|
 | 50-state crawler hardening | 50 州 registry 已覆盖；CA/TX/NY/FL/IL 为 verified dedicated，其他州为 beta dedicated；非空校验、fixture/live validation、空结果失败保护和 fallback 元数据已强化。 | 将 beta 州逐步提升为 verified；增加生产调度/监控；持续替换仍依赖 fallback 的州源。 | 每批 10-15 州做 live fixture 校验、source quality 报告和 adapter maturity 更新。 |
-| Product 2 Qualification Upgrade | Match score、AI-like brief、Submission Guidance、Compliance Manifest Lite、Pursue/No-Bid Lite 已有 deterministic 版本；Qualification Evidence Citations v1 与 Document-Grounded Q&A v1 已完成，Intent 级 citation snapshot、只读 citations API/client、Pro-gated Q&A API/client、Intent detail 证据面板和基于证据问答已接入。 | Amendment/addenda awareness、richer evidence/artifact links、no-bid taxonomy、资格风险解释。 | 下一步做 Product 2 amendment/addenda awareness refresh。 |
+| Product 2 Qualification Upgrade | Match score、AI-like brief、Submission Guidance、Compliance Manifest Lite、Pursue/No-Bid Lite 已有 deterministic 版本；Qualification Evidence Citations v1、Document-Grounded Q&A v1、Amendment/Addenda Awareness v1 已完成，Intent 级 citation snapshot、只读 citations API/client、freshness/refresh API/client、Pro-gated Q&A API/client、Intent detail 证据面板/新鲜度状态/刷新按钮和基于证据问答已接入。 | richer evidence/artifact links、no-bid taxonomy、资格风险解释。 | 下一步做 Product 2 no-bid taxonomy + qualification risk explanations。 |
 | Search Alerts Full UI | Settings 已新增 Search Alerts 管理界面，支持 per-alert 创建/编辑/暂停恢复/删除，并复用现有 quota gate、通知偏好和最近 digest 投递历史。 | 真实邮件 provider、bounce/complaint 回流、运营级 digest monitoring dashboard 仍需补齐。 | 接入真实邮件 provider 后补 bounce/complaint webhook 和运营监控。 |
 | Production Billing / Worker Deployment Runbook | Stripe sandbox E2E verifier、checkout/webhook/portal/cancel foundation 已完成；production billing/worker runbook 已新增；notification worker 支持部署前检查。 | 真实生产凭证填充、生产 webhook 端点创建/轮换演练、进程管理器/cron 部署执行。 | 上线前按 runbook 做一次 staging/prod dry run。 |
 | Notification production hardening | outbox、file/console/http provider、retry worker、Admin 手动 delivery、provider env validation、生产投递 runbook、Search Alert digest delivery history 已有。 | 生产邮件 provider 真实账号、退信/投诉回流、模板版本治理、投递监控 dashboard。 | 接入选定邮件 provider 后补 bounce/complaint webhook。 |
@@ -88,7 +89,7 @@ This document is the working checklist for local development. Update it after ea
 | Source ingestion foundation | SQLite schema, seed data, crawler logs, SAM.gov/state runner APIs, 50-state state runner registry, CA/TX/NY/FL/IL verified dedicated adapters, the other 45 state sources covered by beta dedicated adapters, non-empty live validation guardrails, local attachment file serving for crawler-managed files, and public attachment/detail archival with status, size, content type, checksum, fetched timestamp, and failure notes. |
 | Match scoring | Deterministic bid match score, confidence, component scores, explanation, risk notes. |
 | Intent to Bid | Add intent from bid detail, idempotent workspace-scoped intent creation, shared intent list/detail for organization members, status update. |
-| AI-like bid brief | Deterministic brief, key dates, initial checklist, risk flags, persisted evidence citations, and Pro-gated document-grounded Q&A shown in Intent detail. |
+| AI-like bid brief | Deterministic brief, key dates, initial checklist, risk flags, persisted evidence citations, amendment/addenda freshness state, refreshable qualification snapshot, and Pro-gated document-grounded Q&A shown in Intent detail. |
 | Submission Guidance | `submission_paths`, `submission_confirmations`, generator, service, current Pursuit Starter-gated API routes, API client, Intent workspace UI for generated guidance, editable submission fields, readiness/risk lists, and manual submission confirmation. |
 | Compliance Manifest Lite | `compliance_manifest_items`, generator, service, current Response Builder-gated API route, API client, and Intent workspace UI for requirement status, evidence status, and notes. |
 | Pursue / No-Bid Decision Lite | `pursuit_decisions`, recommendation generator, current Pursuit Starter-gated API route, API client, and Intent workspace UI for decision capture, reasons, notes, and history. |
@@ -184,13 +185,13 @@ The refreshed Drive material changes the product packaging language and introduc
 
 ## Recommended Next Phase
 
-Prioritize **Product 2 Amendment/Addenda Awareness v1** next.
+Prioritize **Product 2 No-Bid Taxonomy + Qualification Risk Explanations v1** next.
 
 Reason:
 
-- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Response Builder-gated Compliance Manifest, Pursuit Starter-gated Pursue / No-Bid Decision, 50-state crawler registry, local attachment/detail archival, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA operations, Search Alerts UI and delivery history, notification hardening, production billing/worker runbooks, qualification evidence citations, and document-grounded Q&A now exist.
+- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Response Builder-gated Compliance Manifest, Pursuit Starter-gated Pursue / No-Bid Decision, 50-state crawler registry, local attachment/detail archival, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA operations, Search Alerts UI and delivery history, notification hardening, production billing/worker runbooks, qualification evidence citations, document-grounded Q&A, and amendment/addenda awareness now exist.
 - The remaining account gap is not basic registration; it is production deployment hardening, production worker deployment runbook, real credit consumption/refund flows when premium actions exist, custom enterprise rules when concrete use cases appear, broader advanced usage metrics, and future compliance polish.
-- The next highest Product 2 risk is freshness: users can inspect evidence and ask questions, but amendment/addenda signals can make qualification output stale after an intent is created.
+- The next highest Product 2 risk is decision clarity: users can inspect/refresh evidence, but no-bid reasons and qualification risk explanations need a stable taxonomy for repeatable review.
 
 ## Account / Role / Tier Direction
 
@@ -250,7 +251,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 ## Suggested Implementation Order
 
 1. **Product 2 Qualification Upgrade Continuation**
-   - Add amendment/addenda refresh, richer evidence/artifact links, no-bid taxonomy, and qualification risk explanations.
+   - Add no-bid taxonomy, qualification risk explanations, and richer evidence/artifact links.
 
 2. **Knowledge Station Lite**
    - Add embedded workflow coaching and reusable knowledge capture before deeper procurement intelligence.
@@ -260,6 +261,20 @@ Current local limits use internal tier values. Product-facing labels should be s
 
 4. **Product workflow depth**
    - Build Response Workspace, Artifact Vault, Quote Lite, deadline notifications, and award learning in thin MVP slices.
+
+## Completed Phase: Product 2 Amendment/Addenda Awareness v1
+
+本阶段完成：
+- 新增 qualification freshness 服务，检测 title、description、archived detail text、attachments 中的 amendment/addenda/update/Q&A 信号。
+- 新增 `/api/intents/[id]/qualification/freshness` GET/POST，GET 返回 current/stale/not-refreshed、last refreshed、latest signal 和 signal count；POST 刷新 match snapshot、deterministic brief/checklist/risk flags 和 evidence citations。
+- 刷新逻辑不覆盖用户编辑过的 Submission Guidance、Compliance Manifest、Pursue/No-Bid decision 记录。
+- Intent detail 证据区域新增 freshness 状态面板、信号数量、最新信号和刷新按钮；刷新后清空旧 Q&A answer，后续问答使用最新 citation snapshot。
+- API client、route tests、server tests、详情页静态 coverage 和中英文文案已补齐。
+
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
+1. Product 2 No-Bid Taxonomy + Qualification Risk Explanations。
+2. Richer evidence/artifact links and compliance evidence mapping。
+3. Knowledge Station Lite、Response Workspace Lite、Artifact Vault Lite。
 
 ## Completed Phase: Search Alerts Notification History + Digest Delivery Verification
 

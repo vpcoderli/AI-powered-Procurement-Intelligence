@@ -21,13 +21,13 @@ This directory is the local working source for WinBids product requirements afte
 
 ## Current Recommendation
 
-Continue implementation with **Product 2 Amendment/Addenda Awareness v1**.
+Continue implementation with **Product 2 No-Bid Taxonomy + Qualification Risk Explanations v1**.
 
 Reason:
 
-- Admin QA batch filters/correction history, Search Alerts management UI and digest delivery history, 50-state crawler guardrails, notification provider hardening, production billing/worker runbooks, Qualification Evidence Citations v1, and Document-Grounded Q&A v1 are now implemented locally.
-- The next highest-risk Product 2 gap is keeping qualification output current when a bid receives amendments or addenda.
-- This keeps the next slice close to the existing evidence/Q&A foundation while improving bid pursuit reliability.
+- Admin QA batch filters/correction history, Search Alerts management UI and digest delivery history, 50-state crawler guardrails, notification provider hardening, production billing/worker runbooks, Qualification Evidence Citations v1, Document-Grounded Q&A v1, and Amendment/Addenda Awareness v1 are now implemented locally.
+- The next highest-risk Product 2 gap is decision quality: users can refresh evidence, but still need a stronger no-bid reason taxonomy and clearer qualification risk explanations.
+- This keeps the next slice close to the existing evidence/Q&A/freshness foundation while making pursuit decisions easier to audit.
 
 Product-workflow alternative:
 
