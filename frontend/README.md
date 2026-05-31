@@ -42,6 +42,16 @@ Use `--tier=business` for the Business plan, `--origin=http://localhost:3000` to
 
 Production billing deployment, live/test key isolation, webhook rotation, worker scheduling, and provider dashboard checks are covered in [`../docs/operations/production-billing-worker-runbook.md`](../docs/operations/production-billing-worker-runbook.md).
 
+## Risk Checklist
+
+Run the local risk checklist before handing off a development phase:
+
+```bash
+npm run risk:check
+```
+
+This verifies that all 50 states have active non-empty state bid data, bid detail route IDs round-trip safely, state attachments use the internal download route instead of broken public URLs, ordinary/admin/paid feature entitlements remain separated, and production dependencies have no moderate-or-higher audit findings.
+
 ## State Crawler Validation
 
 From the repository root, run live adapter validation without writing to the local database:

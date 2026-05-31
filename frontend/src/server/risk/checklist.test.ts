@@ -1,0 +1,105 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
+import { bids } from "@/server/db/schema";
+import type { AppDatabase } from "@/server/db/client";
+import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
+import { createRiskChecklistReport, formatRiskChecklistReport } from "./checklist";
+
+let testDb: TestDatabase | null = null;
+
+async function seededDatabase() {
+  testDb = await createTestDatabase({ seed: true });
+  seedAllStateBids(testDb.db);
+  return testDb.db;
+}
+
+function seedAllStateBids(db: AppDatabase) {
+  const timestamp = "2026-05-31T00:00:00.000Z";
+
+  for (const source of STATE_CRAWLER_SOURCES) {
+    const id = `${source.id}:risk-check-seed`;
+
+    db.insert(bids)
+      .values({
+        id,
+        source: source.label,
+        sourceBidId: id,
+        dedupeKey: id,
+        title: `${source.label} Risk Check Opportunity`,
+        description: `Non-empty ${source.stateCode} procurement description for risk checks.`,
+        fullDescription: `Detailed ${source.stateCode} procurement content used by the risk checklist.`,
+        originalCategory: "General Procurement",
+        amount: "$10,000",
+        amountMin: 10000,
+        amountMax: 10000,
+        currency: "USD",
+        publishedDate: "2026-05-01",
+        deadlineDate: "2026-06-30",
+        issuerName: source.label,
+        issuerType: "state",
+        stateCode: source.stateCode,
+        contactName: "Procurement Office",
+        contactEmail: "procurement@example.gov",
+        contactPhone: "+1 (555) 000-0000",
+        sourceUrl: source.baseUrl,
+        isActive: 1,
+        rawPayload: JSON.stringify({ tags: ["state", source.stateCode] }),
+        firstSeenAt: timestamp,
+        lastSeenAt: timestamp,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      })
+      .onConflictDoNothing()
+      .run();
+  }
+}
+
+afterEach(async () => {
+  await testDb?.cleanup();
+  testDb = null;
+});
+
+describe("risk checklist", () => {
+  it("passes for the seeded 50-state data and account feature matrix", async () => {
+    const db = await seededDatabase();
+
+    const report = await createRiskChecklistReport(db, new Date("2026-05-31T00:00:00.000Z"));
+
+    expect(report.ok).toBe(true);
+    expect(report.checks.map((check) => check.id)).toEqual([
+      "state-coverage",
+      "state-content",
+      "bid-detail-routes",
+      "attachment-downloads",
+      "account-tier-separation",
+    ]);
+    expect(formatRiskChecklistReport(report)).toContain("Risk checklist PASS");
+  });
+
+  it("fails when a state has no active bid", async () => {
+    const db = await seededDatabase();
+    db.update(bids).set({ displayStatus: "suppressed" }).where(eq(bids.stateCode, "WY")).run();
+
+    const report = await createRiskChecklistReport(db);
+
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((check) => check.id === "state-coverage")).toMatchObject({
+      ok: false,
+    });
+    expect(formatRiskChecklistReport(report)).toContain("missing state WY");
+  });
+
+  it("fails when crawler content is empty", async () => {
+    const db = await seededDatabase();
+    db.update(bids)
+      .set({ description: "", fullDescription: "" })
+      .where(eq(bids.id, "al_state_procurement:risk-check-seed"))
+      .run();
+
+    const report = await createRiskChecklistReport(db);
+
+    expect(report.ok).toBe(false);
+    expect(formatRiskChecklistReport(report)).toContain("has empty required content");
+  });
+});
