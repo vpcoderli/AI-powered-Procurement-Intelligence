@@ -38,5 +38,8 @@ describe("intent detail page", () => {
     expect(page).toContain('t(`intentsPage.pursuitReasonCategories.${detail.category}`)');
     expect(page).toContain('t(`intentsPage.pursuitReasonSeverities.${detail.severity}`)');
     expect(page).toContain('t("intentsPage.suggestedAction")');
+    expect(page).toContain("evidenceRefs");
+    expect(page).toContain("evidenceRefUrl");
+    expect(page).toContain('t("intentsPage.linkedEvidence")');
   });
 });

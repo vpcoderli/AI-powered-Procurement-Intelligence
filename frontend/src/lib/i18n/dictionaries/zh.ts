@@ -560,6 +560,7 @@ export const zh: Dictionary = {
     noDecisionHistory: "暂无决策记录。",
     reasonTaxonomy: "原因分类",
     evidenceLabel: "证据",
+    linkedEvidence: "关联证据",
     suggestedAction: "建议动作",
     noReasonDetails: "暂无结构化原因详情。",
     pursuitRecommendations: {
