@@ -2,7 +2,10 @@ import crypto from "node:crypto";
 import type { AppDatabase } from "@/server/db/client";
 import {
   createKnowledgeItemRow,
-  ensureKnowledgeScope,
+  findKnowledgeBid,
+  findKnowledgeIntentForUser,
+  findKnowledgeOrganization,
+  findKnowledgeUser,
   listKnowledgeItemRows,
   type KnowledgeItemRow,
 } from "./repository";
@@ -47,7 +50,11 @@ function truncate(value: string, maxLength: number) {
   return value.length > maxLength ? value.slice(0, maxLength) : value;
 }
 
-function normalizeRequiredText(value: string, message: string, maxLength: number) {
+function normalizeRequiredText(value: unknown, message: string, maxLength: number) {
+  if (typeof value !== "string") {
+    throw new KnowledgeValidationError(message);
+  }
+
   const normalized = value.trim();
 
   if (!normalized) {
@@ -96,8 +103,24 @@ function normalizeMetadata(value: Record<string, unknown> | undefined) {
   return value ?? {};
 }
 
-function normalizeOptionalText(value: string | null | undefined) {
+function normalizeOptionalText(value: unknown, message: string) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    throw new KnowledgeValidationError(message);
+  }
+
   const normalized = value?.trim() ?? "";
+
+  return normalized || null;
+}
+
+function normalizeOptionalId(value: unknown, message: string) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    throw new KnowledgeValidationError(message);
+  }
+
+  const normalized = value.trim();
 
   return normalized || null;
 }
@@ -135,6 +158,9 @@ export async function createKnowledgeItem(
 ): Promise<KnowledgeItem> {
   const title = normalizeRequiredText(input.title, "Knowledge title is required.", MAX_TITLE_LENGTH);
   const body = normalizeRequiredText(input.body, "Knowledge body is required.", MAX_BODY_LENGTH);
+  const sourceIntentId = normalizeOptionalId(input.sourceIntentId, "Linked intent is not available.");
+  const sourceBidId = normalizeOptionalId(input.sourceBidId, "Linked bid is not available.");
+  const sourceUrl = normalizeOptionalText(input.sourceUrl, "Knowledge source URL must be a string.");
 
   if (!isKnowledgeItemType(input.type)) {
     throw new KnowledgeValidationError("Unsupported knowledge item type.");
@@ -145,7 +171,24 @@ export async function createKnowledgeItem(
   }
 
   const timestamp = nowIso();
-  ensureKnowledgeScope(database, input.organizationId, input.userId, timestamp);
+
+  if (!findKnowledgeUser(database, input.userId) || !findKnowledgeOrganization(database, input.organizationId)) {
+    throw new KnowledgeValidationError("Knowledge principal is not available.");
+  }
+
+  if (sourceIntentId) {
+    const intent = findKnowledgeIntentForUser(database, input.userId, sourceIntentId);
+
+    if (!intent) {
+      throw new KnowledgeValidationError("Linked intent is not available.");
+    }
+
+    if (sourceBidId && sourceBidId !== intent.bidId) {
+      throw new KnowledgeValidationError("Linked bid does not match intent.");
+    }
+  } else if (sourceBidId && !findKnowledgeBid(database, sourceBidId)) {
+    throw new KnowledgeValidationError("Linked bid is not available.");
+  }
 
   const row = createKnowledgeItemRow(database, {
     id: `knowledge_${crypto.randomUUID()}`,
@@ -156,9 +199,9 @@ export async function createKnowledgeItem(
     type: input.type,
     tags: normalizeTags(input.tags),
     sourceKind: input.sourceKind,
-    sourceIntentId: input.sourceIntentId ?? null,
-    sourceBidId: input.sourceBidId ?? null,
-    sourceUrl: normalizeOptionalText(input.sourceUrl),
+    sourceIntentId,
+    sourceBidId,
+    sourceUrl,
     metadata: normalizeMetadata(input.metadata),
     timestamp,
   });
