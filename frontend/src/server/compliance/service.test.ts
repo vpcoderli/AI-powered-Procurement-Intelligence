@@ -27,6 +27,11 @@ describe("compliance manifest service", () => {
       expect(rows).toHaveLength(first.items.length);
       expect(first.items.length).toBeGreaterThan(2);
       expect(first.summary.total).toBe(first.items.length);
+      expect(first.items[0].evidenceRefs.length).toBeGreaterThan(0);
+      expect(first.items.some((item) =>
+        item.evidenceRefs.some((ref) => ref.kind === "source_url" || ref.kind === "attachment"),
+      )).toBe(true);
+      expect(second.items[0].evidenceRefs.length).toBeGreaterThan(0);
     } finally {
       await testDb.cleanup();
     }

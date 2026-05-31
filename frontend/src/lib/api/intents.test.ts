@@ -155,12 +155,21 @@ describe("intent API client", () => {
   });
 
   it("fetches compliance manifest with an encoded intent id", async () => {
-    const body = { manifest: { intentId: "intent/with space", items: [] } };
+    const body = {
+      manifest: {
+        intentId: "intent/with space",
+        items: [{
+          id: "compliance_item_1",
+          evidenceRefs: [{ kind: "source_url", label: "Original source", url: "https://example.gov/bid" }],
+        }],
+      },
+    };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));
 
     const result = await fetchComplianceManifest("intent/with space");
 
     expect(result).toEqual(body);
+    expect(result.manifest.items[0].evidenceRefs[0]).toMatchObject({ kind: "source_url" });
     expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/compliance");
   });
 

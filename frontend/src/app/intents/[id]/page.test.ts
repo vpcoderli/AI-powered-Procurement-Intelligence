@@ -42,4 +42,11 @@ describe("intent detail page", () => {
     expect(page).toContain("evidenceRefUrl");
     expect(page).toContain('t("intentsPage.linkedEvidence")');
   });
+
+  it("renders compliance evidence reference chips", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("item.evidenceRefs");
+    expect(page).toContain('t("intentsPage.linkedEvidence")');
+  });
 });
