@@ -556,6 +556,10 @@ export const en = {
     decisionNotesPlaceholder: "Add context, assumptions, or next steps...",
     decisionHistory: "Decision history",
     noDecisionHistory: "No decisions recorded yet.",
+    reasonTaxonomy: "Reason taxonomy",
+    evidenceLabel: "Evidence",
+    suggestedAction: "Suggested action",
+    noReasonDetails: "No structured reason details yet.",
     pursuitRecommendations: {
       pursue: "Pursue",
       no_bid: "No-bid",
@@ -570,6 +574,21 @@ export const en = {
       pursue: "Pursue",
       no_bid: "No-bid",
       defer: "Defer",
+    },
+    pursuitReasonCategories: {
+      fit: "Fit",
+      risk: "Risk",
+      deadline: "Deadline",
+      profile: "Profile",
+      geography: "Geography",
+      pricing: "Pricing",
+      documentation: "Documentation",
+      registration: "Registration",
+    },
+    pursuitReasonSeverities: {
+      positive: "Positive",
+      watch: "Watch",
+      blocker: "Blocker",
     },
     submissionMethods: {
       external_portal: "External portal",

@@ -1,10 +1,10 @@
 # WinBids Next Development Plan
 
-Updated: 2026-05-30
+Updated: 2026-05-31
 
 ## Recommendation
 
-Continue with **Product 2 No-Bid Taxonomy + Qualification Risk Explanations v1** as the next implementation phase.
+Continue with **Product 2 Richer Evidence / Artifact Links v1** as the next implementation phase.
 
 Commercial packaging and credits foundation is now in place:
 
@@ -13,9 +13,21 @@ Commercial packaging and credits foundation is now in place:
 - Credits have a foundation for included monthly credits, purchased credits, premium action costs, refunds, and future ledger events.
 - Settings Billing/Usage can surface plan names, Growth as planned, and credit summaries.
 
-The source registry, capability metadata, archive metadata columns, quality flag foundation, public attachment/detail downloader, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA actions, rich QA filters, correction history, Search Alerts management UI and delivery history, notification provider hardening, 50-state crawler guardrails, production billing/worker runbooks, Qualification Evidence Citations v1, Document-Grounded Q&A v1, and Amendment/Addenda Awareness v1 are now in place. The next risk is decision clarity: users can refresh stale evidence, but no-bid reasons and qualification risk explanations are still too generic for repeatable pursuit review.
+The source registry, capability metadata, archive metadata columns, quality flag foundation, public attachment/detail downloader, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA actions, rich QA filters, correction history, Search Alerts management UI and delivery history, notification provider hardening, 50-state crawler guardrails, production billing/worker runbooks, Qualification Evidence Citations v1, Document-Grounded Q&A v1, Amendment/Addenda Awareness v1, and No-Bid Taxonomy + Qualification Risk Explanations v1 are now in place. The next risk is evidence usability: structured reasons exist, but they should connect more directly to source artifacts, attachments, and generated evidence.
 
 ## Last Completed Phase
+
+**Product 2 No-Bid Taxonomy + Qualification Risk Explanations v1** made pursuit decisions more explainable:
+
+Completed locally:
+
+- `PursuitRecommendation` now includes additive `reasonDetails` with stable category, severity, summary, explanation, evidence label, and suggested action.
+- The deterministic generator maps match score, geography, pricing, deadline, documentation, addenda, registration, risk flags, and profile gaps into structured reason taxonomy.
+- Existing `reasons: string[]` and stored pursuit decision history remain compatible.
+- Intent detail renders structured reason cards inside the Pursue / No-Bid panel in English and Chinese.
+- Existing freshness, citations, Q&A, Submission Guidance, Compliance Manifest, and Pursue/No-Bid APIs remain additive-compatible.
+
+## Previous Completed Phase
 
 **Product 2 Amendment/Addenda Awareness v1** made qualification evidence freshness visible and refreshable:
 
@@ -27,7 +39,7 @@ Completed locally:
 - Intent detail shows qualification freshness beside citations and provides a refresh action that clears old Q&A answers so future questions use the refreshed snapshot.
 - Existing citations, Q&A, Submission Guidance, Compliance Manifest, and Pursue/No-Bid APIs remain additive-compatible.
 
-## Previous Completed Phase
+## Earlier Completed Phase
 
 **Search Alerts Notification History + Digest Delivery Verification** made alerting auditable:
 
@@ -91,19 +103,18 @@ Completed locally:
 
 ## Phase Goal
 
-Make Product 2 pursuit decisions more explainable and repeatable:
+Make Product 2 evidence easier to inspect and reuse:
 
-`Qualification Evidence -> Risk Reasons -> No-Bid Taxonomy -> User Decision`
+`Reason / Citation -> Source Artifact -> User Review`
 
-This phase should turn generic deterministic risks into structured pursuit reasons, clearer no-bid categories, and evidence-linked explanations users can review before deciding.
+This phase should connect structured reasons, citations, attachments, and archived source material so users can quickly inspect why a recommendation exists.
 
 ## In Scope
 
-- Add a no-bid reason taxonomy for fit, compliance, deadline, pricing, geography, documentation, registration, and risk categories.
-- Expand deterministic risk explanations with evidence references where available.
-- Show structured reasons in the Intent detail decision area.
-- Preserve existing decision history and user-entered notes.
-- Keep existing freshness, citations, Q&A, Submission Guidance, and Compliance Manifest APIs additive-compatible.
+- Link reason details to relevant citations, attachments, source URLs, and archive metadata when available.
+- Group evidence by purpose: qualification, submission, compliance, decision, and artifacts.
+- Improve Intent detail evidence navigation without redesigning the whole workspace.
+- Keep existing freshness, citations, Q&A, Submission Guidance, Compliance Manifest, and Pursue/No-Bid APIs additive-compatible.
 
 ## Out Of Scope
 
@@ -117,14 +128,14 @@ This phase should turn generic deterministic risks into structured pursuit reaso
 ## Acceptance Criteria
 
 - Existing 50-state crawler, Admin QA, Search Alerts, notification, billing, freshness, citations, and Q&A tests remain green.
-- Users can see structured no-bid / pursue rationale instead of only free-form notes.
-- Decision reasons are mapped to a stable taxonomy and can be rendered in English/Chinese UI.
-- Existing Submission Guidance, Compliance Manifest, Amendment Awareness, Q&A, Search Alerts, and Search/bid detail still work for existing records.
+- Users can jump from a recommendation reason or citation to the most relevant available source artifact.
+- Evidence group labels are stable and can be rendered in English/Chinese UI.
+- Existing Submission Guidance, Compliance Manifest, Amendment Awareness, No-Bid Taxonomy, Q&A, Search Alerts, and Search/bid detail still work for existing records.
 - `npm test`, `PYTHONPATH=crawler python3 -m pytest crawler/tests`, `npm run lint`, `npm run build`, `npm run db:migrate`, and `git diff --check` pass.
 
 ## Remaining Work After This Phase
 
-1. Product 2 Qualification Upgrade continuation: richer evidence/artifact links after no-bid taxonomy and qualification risk explanations.
+1. Product 2 Qualification Upgrade continuation: richer evidence/artifact links and compliance evidence mapping.
 2. 50-state crawler hardening continuation: promote beta adapters, add source quality monitoring, and document Source Registry / Connector Engine / Normalization QA responsibilities.
 3. Production deployment dry run for billing, notification, and crawler workers.
 4. UI/UE production polish: migrate the demo visual direction into real `/search`, `/bids/[id]`, `/admin`, and settings workflows.

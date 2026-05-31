@@ -1,6 +1,6 @@
 # WinBids Current Gap Analysis
 
-Updated: 2026-05-29
+Updated: 2026-05-31
 
 ## Current Implementation Note
 
@@ -16,6 +16,7 @@ This file is now being used as a staged implementation backlog. Some original ga
 - Local crawler attachment files can be served through a private bid attachment API when attachment rows point to a local file path inside an allowed attachment directory.
 - The refreshed Drive requirements add a commercial packaging and credits track: product-facing plans are now Free, Pursuit Starter, Response Builder, Growth, and Enterprise, while the current database still uses `free`, `pro`, `business`, and `enterprise` compatibility values.
 - Product 2 Amendment/Addenda Awareness v1 is implemented: intent qualification freshness detects amendment/addenda signals, exposes freshness/refresh APIs, and lets Intent detail refresh match/brief/checklist/risk/citation snapshots without overwriting user-edited workflow records.
+- Product 2 No-Bid Taxonomy + Qualification Risk Explanations v1 is implemented: pursuit recommendations now include structured reason details with category, severity, explanation, evidence label, and suggested action while preserving saved decision history.
 - Knowledge Station has moved earlier as a Product 0.9 / workflow coaching layer, while deeper procurement intelligence remains post-MVP.
 
 ## Summary
@@ -27,7 +28,7 @@ The local system has completed a useful Phase 1A pursuit loop:
 The remaining MVP work is not another search page. The largest remaining gaps are:
 
 1. P1 data pipeline hardening after 50-state beta coverage: Source Registry metadata, connector capability tracking, attachment/detail-page archival, checksum/content-type recording, data quality flags, and official-source upgrades where fallback sources are being used.
-2. Product 2 upgrade continuation: richer evidence/artifact links, evidence mapping, richer no-bid taxonomy, qualification risk explanations, and decision history.
+2. Product 2 upgrade continuation: richer evidence/artifact links, compliance evidence mapping, and decision history.
 3. Product 0.9 Knowledge Station Lite: embedded workflow coaching and reusable knowledge capture.
 4. Product 3-5 lightweight MVP workflows: response workspace, artifacts, sourcing/quotes, submission completion, award/status learning.
 5. Production-grade AI and citation layer.
@@ -47,7 +48,7 @@ The remaining MVP work is not another search page. The largest remaining gaps ar
 | P2 Intent to Bid | Partial/Good | Intent creation/list/detail/status | More statuses, owner notes, timeline, decision history, no-bid reasons |
 | P2 Bid Understanding | Partial/Improving | Rule-generated brief/checklist/risk flags, persisted evidence citations, deterministic document-grounded Q&A, and amendment/addenda freshness/refresh controls | Real AI extraction, document-level requirements, confidence, open questions, richer risk explanations |
 | P2 Compliance manifest | Lite implemented | Compliance manifest model/API/UI exists | Required forms, registrations, addenda, certifications, deadlines, evidence mapping need richer extraction |
-| P2 Pursue/no-bid | Lite implemented | Structured recommendation, decision capture, and history exist | No-bid taxonomy and timeline can be expanded |
+| P2 Pursue/no-bid | Lite implemented | Structured recommendation reason taxonomy, risk explanations, decision capture, and history exist | Timeline and richer evidence links can be expanded |
 | P3 Response workspace | Missing | No task/doc/quote workspace | Task board, artifact vault, reusable docs, internal checkpoints |
 | P3 Sourcing/quotes | Missing | No supplier/freight/quote objects | Partner DB, quote inquiry, quote entry, comparison, attachments |
 | P4 Submission guidance | Lite implemented | Submission path, complexity score, readiness checklist, confirmation API/UI exist | Direct submission, calendar/email integration, assignments remain out of scope |
@@ -115,7 +116,7 @@ Out of scope:
 Scope:
 
 - Extend existing source-grounded citations, document-grounded Q&A, and amendment freshness with richer evidence/artifact links.
-- Expand compliance evidence mapping and no-bid reason taxonomy.
+- Expand compliance evidence mapping and link structured reasons to source artifacts.
 - Preserve deterministic fallback behavior while preparing for production AI.
 
 This can run after data hardening or in parallel if implementation slices do not touch crawler/archive code.
@@ -216,7 +217,7 @@ Current AI-like behavior is deterministic. This is acceptable for local MVP work
 
 1. P1 Data Pipeline Hardening: Attachment Archival + Source Registry Metadata.
 2. Bid Admin/Data QA Console Expansion.
-3. Product 2 Qualification Upgrade continuation: no-bid taxonomy, qualification risk explanations, and richer evidence mapping.
+3. Product 2 Qualification Upgrade continuation: richer evidence/artifact links and compliance evidence mapping.
 4. Knowledge Station Lite: embedded workflow coaching and reusable knowledge capture.
 5. Response Workspace Lite + Artifact Vault Lite.
 6. Supply Chain and Quote Lite.
