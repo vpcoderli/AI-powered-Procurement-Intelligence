@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, like, or, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
-import { knowledgeItems, organizations, users } from "@/server/db/schema";
+import { bids, intentToBid, knowledgeItems, organizations, users } from "@/server/db/schema";
 import type { KnowledgeItemType, KnowledgeSourceKind, ListKnowledgeItemsInput } from "./types";
 
 export type KnowledgeItemRow = typeof knowledgeItems.$inferSelect;
@@ -21,25 +21,25 @@ interface CreateKnowledgeItemRowInput {
   timestamp: string;
 }
 
-export function ensureKnowledgeScope(db: AppDatabase, organizationId: string, userId: string, timestamp: string) {
-  db.insert(users)
-    .values({
-      id: userId,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    })
-    .onConflictDoNothing()
-    .run();
+export function findKnowledgeUser(db: AppDatabase, userId: string) {
+  return db.select().from(users).where(eq(users.id, userId)).limit(1).get();
+}
 
-  db.insert(organizations)
-    .values({
-      id: organizationId,
-      name: organizationId,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    })
-    .onConflictDoNothing()
-    .run();
+export function findKnowledgeOrganization(db: AppDatabase, organizationId: string) {
+  return db.select().from(organizations).where(eq(organizations.id, organizationId)).limit(1).get();
+}
+
+export function findKnowledgeIntentForUser(db: AppDatabase, userId: string, intentId: string) {
+  return db
+    .select()
+    .from(intentToBid)
+    .where(and(eq(intentToBid.userId, userId), eq(intentToBid.id, intentId)))
+    .limit(1)
+    .get();
+}
+
+export function findKnowledgeBid(db: AppDatabase, bidId: string) {
+  return db.select().from(bids).where(eq(bids.id, bidId)).limit(1).get();
 }
 
 export function createKnowledgeItemRow(db: AppDatabase, input: CreateKnowledgeItemRowInput) {
