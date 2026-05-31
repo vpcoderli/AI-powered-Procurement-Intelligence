@@ -5,13 +5,13 @@ import { GET } from "./route";
 
 vi.mock("@/server/db/client", () => ({ db: {} }));
 vi.mock("@/server/bids/attachments", () => ({
-  getLocalBidAttachment: vi.fn(),
+  getBidAttachmentDownload: vi.fn(),
 }));
 vi.mock("node:fs/promises", () => ({
   readFile: vi.fn(),
 }));
 
-const getLocalBidAttachment = vi.mocked(attachmentService.getLocalBidAttachment);
+const getBidAttachmentDownload = vi.mocked(attachmentService.getBidAttachmentDownload);
 const mockedReadFile = vi.mocked(readFile);
 
 describe("GET /api/bids/[id]/attachments/[attachmentId]", () => {
@@ -20,10 +20,14 @@ describe("GET /api/bids/[id]/attachments/[attachmentId]", () => {
   });
 
   it("returns a local attachment file from the bid attachment lookup", async () => {
-    getLocalBidAttachment.mockResolvedValueOnce({
+    getBidAttachmentDownload.mockResolvedValueOnce({
+      kind: "local",
       filePath: "/allowed/notice.pdf",
       filename: "Notice.pdf",
       mimeType: "application/pdf",
+      originalUrl: "https://example.gov/notice.pdf",
+      archiveStatus: "archived",
+      archiveError: null,
     });
     mockedReadFile.mockResolvedValueOnce(Buffer.from("contract notice"));
 
@@ -36,11 +40,11 @@ describe("GET /api/bids/[id]/attachments/[attachmentId]", () => {
     expect(response.headers.get("Content-Type")).toBe("application/pdf");
     expect(response.headers.get("Content-Disposition")).toBe('attachment; filename="Notice.pdf"');
     expect(await response.text()).toBe("contract notice");
-    expect(getLocalBidAttachment).toHaveBeenCalledWith(expect.anything(), "1", "notice_pdf");
+    expect(getBidAttachmentDownload).toHaveBeenCalledWith(expect.anything(), "1", "notice_pdf");
   });
 
-  it("returns 404 when the attachment is missing, external, unsafe, or not on disk", async () => {
-    getLocalBidAttachment.mockResolvedValueOnce(undefined);
+  it("returns 404 when the attachment row is missing", async () => {
+    getBidAttachmentDownload.mockResolvedValueOnce(undefined);
 
     const response = await GET(
       new Request("http://localhost/api/bids/1/attachments/missing"),
@@ -54,11 +58,15 @@ describe("GET /api/bids/[id]/attachments/[attachmentId]", () => {
     expect(mockedReadFile).not.toHaveBeenCalled();
   });
 
-  it("returns 404 when the resolved local file no longer exists", async () => {
-    getLocalBidAttachment.mockResolvedValueOnce({
+  it("returns a non-empty download note when the resolved local file no longer exists", async () => {
+    getBidAttachmentDownload.mockResolvedValueOnce({
+      kind: "local",
       filePath: "/allowed/missing.pdf",
       filename: "Missing.pdf",
       mimeType: null,
+      originalUrl: "https://agency.example.gov/missing.pdf",
+      archiveStatus: "archived",
+      archiveError: null,
     });
     mockedReadFile.mockRejectedValueOnce(Object.assign(new Error("missing"), { code: "ENOENT" }));
 
@@ -67,6 +75,31 @@ describe("GET /api/bids/[id]/attachments/[attachmentId]", () => {
       { params: Promise.resolve({ id: "1", attachmentId: "missing_pdf" }) },
     );
 
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toContain("text/plain");
+    expect(await response.text()).toContain("Original URL: https://agency.example.gov/missing.pdf");
+  });
+
+  it("returns a non-empty download note for unarchived external attachments", async () => {
+    getBidAttachmentDownload.mockResolvedValueOnce({
+      kind: "fallback",
+      filename: "Statement_of_Work_v2.pdf",
+      mimeType: "text/plain; charset=utf-8",
+      originalUrl: "https://sam.gov/opp/12345/sow.pdf",
+      archiveStatus: "not_archived",
+      archiveError: null,
+      reason: "Attachment is not archived locally.",
+    });
+
+    const response = await GET(
+      new Request("http://localhost/api/bids/1/attachments/sow_pdf"),
+      { params: Promise.resolve({ id: "1", attachmentId: "sow_pdf" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Disposition")).toBe(
+      'attachment; filename="Statement_of_Work_v2-download-note.txt"',
+    );
+    expect(await response.text()).toContain("Original URL: https://sam.gov/opp/12345/sow.pdf");
   });
 });
