@@ -1,5 +1,7 @@
+import json
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
 
 from apsi_crawler.cli import main
 
@@ -99,6 +101,27 @@ def normalized_bid():
         "issuer_type": "federal",
         "state_code": "US",
         "source_url": "https://sam.gov/opp/abc-123/view",
+        "is_active": 1,
+        "first_seen_at": timestamp,
+        "last_seen_at": timestamp,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+
+
+def normalized_state_bid(source="fl_mfmp"):
+    timestamp = "2026-05-19T00:00:00+00:00"
+    return {
+        "id": f"{source}:FL-001",
+        "source": "MyFloridaMarketPlace",
+        "source_bid_id": "FL-001",
+        "dedupe_key": f"{source}:FL-001",
+        "title": "Emergency communications assessment",
+        "description": "Assess emergency communications readiness.",
+        "issuer_name": "Florida Department of Management Services",
+        "issuer_type": "state",
+        "state_code": "FL",
+        "source_url": "https://vendor.myfloridamarketplace.com/search/bids/detail/FL-001",
         "is_active": 1,
         "first_seen_at": timestamp,
         "last_seen_at": timestamp,
@@ -272,3 +295,50 @@ def test_fetch_sam_gov_failure_writes_crawler_log(tmp_path, monkeypatch):
         "SELECT status, fetched_count, inserted_count, updated_count, failed_count, error_message FROM crawler_logs"
     ).fetchone()
     assert log == ("failure", 0, 0, 0, 1, "api unavailable")
+
+
+def test_fetch_state_empty_live_result_uses_fallback_fixture(tmp_path, monkeypatch):
+    database = tmp_path / "apsi.sqlite"
+    create_crawler_database(database)
+    source_metadata = SimpleNamespace(
+        id="fl_mfmp",
+        adapter_kind="dedicated",
+        maturity="verified",
+        capabilities=("query", "detail_pages", "pagination"),
+    )
+
+    monkeypatch.setattr("apsi_crawler.cli.get_source", lambda source: source_metadata)
+    monkeypatch.setattr("apsi_crawler.cli.get_live_fetcher", lambda source: lambda metadata, **kwargs: [])
+    monkeypatch.setattr(
+        "apsi_crawler.cli._fallback_fixture_for_source",
+        lambda source: ("fixture_json", "/fixtures/fl_mfmp_live_response.json"),
+    )
+    monkeypatch.setitem(
+        __import__("apsi_crawler.cli").cli.STATE_FALLBACK_FETCHERS,
+        "fl_mfmp",
+        lambda metadata, **kwargs: [normalized_state_bid()],
+    )
+
+    exit_code = main(
+        [
+            "fetch-state",
+            "--database",
+            str(database),
+            "--source",
+            "fl_mfmp",
+            "--fallback-fixture",
+            "--limit",
+            "1",
+        ]
+    )
+
+    connection = sqlite3.connect(database)
+    assert exit_code == 0
+    assert connection.execute("SELECT COUNT(*) FROM bids WHERE state_code = 'FL'").fetchone()[0] == 1
+    log = connection.execute(
+        "SELECT status, fetched_count, inserted_count, updated_count, failed_count, metadata FROM crawler_logs"
+    ).fetchone()
+    assert log[:5] == ("success", 1, 1, 0, 0)
+    metadata = json.loads(log[5])
+    assert metadata["fallback_source"] == "bundled_demo_fixture"
+    assert metadata["fallback_reason"] == "Crawler returned no opportunities for source: fl_mfmp"
