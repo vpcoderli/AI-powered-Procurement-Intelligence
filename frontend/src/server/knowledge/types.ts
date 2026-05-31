@@ -1,5 +1,6 @@
 export const KNOWLEDGE_ITEM_TYPES = ["workflow_note", "template_snippet", "requirement", "lesson"] as const;
 export const KNOWLEDGE_SOURCE_KINDS = ["manual", "intent", "bid", "generated_coach"] as const;
+export const SOURCE_KINDS = KNOWLEDGE_SOURCE_KINDS;
 export const WORKFLOW_COACH_CATEGORIES = ["deadline", "readiness", "compliance", "documents", "decision"] as const;
 export const WORKFLOW_COACH_SEVERITIES = ["info", "warning", "critical"] as const;
 

@@ -3,8 +3,13 @@ import { generateWorkflowCoachCards } from "@/lib/knowledge/coach";
 import { createTestDatabase } from "@/server/db/test-utils";
 import { createIntentForBid } from "@/server/intents/service";
 import { createKnowledgeItem, listKnowledgeItems } from "./service";
+import { KNOWLEDGE_SOURCE_KINDS, SOURCE_KINDS } from "./types";
 
 describe("knowledge service", () => {
+  it("exposes source kinds under the public constant", () => {
+    expect(SOURCE_KINDS).toBe(KNOWLEDGE_SOURCE_KINDS);
+  });
+
   it("creates and lists organization-scoped knowledge items", async () => {
     const testDb = await createTestDatabase({ seed: true });
 
