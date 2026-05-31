@@ -46,6 +46,7 @@ import {
 import type {
   PursuitDecisionBoard,
   PursuitDecisionValue,
+  PursuitEvidenceRef,
 } from "@/server/pursuit/types";
 import { PURSUIT_DECISIONS } from "@/server/pursuit/types";
 import type {
@@ -93,6 +94,10 @@ function safeEvidenceUrl(value: string) {
   } catch {
     return "";
   }
+}
+
+function evidenceRefUrl(ref: Pick<PursuitEvidenceRef, "url">) {
+  return ref.url ? safeEvidenceUrl(ref.url) : "";
 }
 
 function formatEvidenceDate(value: string | null) {
@@ -1229,10 +1234,39 @@ export default function IntentWorkspacePage() {
                         {detail.explanation}
                       </p>
                       <div className="mt-3 grid gap-2 rounded-lg border border-slate-100 bg-slate-50/70 p-3">
-                        <p className="text-xs font-bold leading-5 text-slate-500">
-                          <span className="font-black text-slate-700">{t("intentsPage.evidenceLabel")}:</span>{" "}
-                          {detail.evidenceLabel}
-                        </p>
+                        <div>
+                          <p className="text-xs font-black text-slate-700">{t("intentsPage.linkedEvidence")}:</p>
+                          {detail.evidenceRefs.length > 0 ? (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {detail.evidenceRefs.map((ref) => {
+                                const url = evidenceRefUrl(ref);
+                                const key = `${ref.kind}-${ref.citationId ?? ref.url ?? ref.label}`;
+                                const chipClassName = "inline-flex min-h-7 items-center rounded-md border border-blue-100 bg-white px-2 py-1 text-xs font-black text-blue-700";
+
+                                return url ? (
+                                  <Link
+                                    key={key}
+                                    href={url}
+                                    target={url.startsWith("/") ? undefined : "_blank"}
+                                    rel={url.startsWith("/") ? undefined : "noreferrer"}
+                                    className={`${chipClassName} hover:border-blue-200 hover:bg-blue-50`}
+                                  >
+                                    <ExternalLink size={12} className="mr-1.5 shrink-0" aria-hidden="true" />
+                                    <span className="break-words">{ref.label}</span>
+                                  </Link>
+                                ) : (
+                                  <span key={key} className={`${chipClassName} text-slate-600`}>
+                                    {ref.label}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <p className="mt-1 text-xs font-bold leading-5 text-slate-500">
+                              {detail.evidenceLabel}
+                            </p>
+                          )}
+                        </div>
                         <p className="text-xs font-bold leading-5 text-slate-500">
                           <span className="font-black text-slate-700">{t("intentsPage.suggestedAction")}:</span>{" "}
                           {detail.suggestedAction}

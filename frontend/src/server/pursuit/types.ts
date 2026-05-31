@@ -18,6 +18,21 @@ export type PursuitDecisionValue = (typeof PURSUIT_DECISIONS)[number];
 export type PursuitRecommendationConfidence = (typeof PURSUIT_RECOMMENDATION_CONFIDENCE)[number];
 export type PursuitReasonCategory = (typeof PURSUIT_REASON_CATEGORIES)[number];
 export type PursuitReasonSeverity = (typeof PURSUIT_REASON_SEVERITIES)[number];
+export type PursuitEvidenceRefKind =
+  | "citation"
+  | "bid_detail"
+  | "attachment"
+  | "source_url"
+  | "supplier_profile"
+  | "match_snapshot"
+  | "generated_output";
+
+export interface PursuitEvidenceRef {
+  kind: PursuitEvidenceRefKind;
+  label: string;
+  citationId?: string;
+  url?: string;
+}
 
 export interface PursuitReasonDetail {
   category: PursuitReasonCategory;
@@ -26,6 +41,7 @@ export interface PursuitReasonDetail {
   explanation: string;
   evidenceLabel: string;
   suggestedAction: string;
+  evidenceRefs: PursuitEvidenceRef[];
 }
 
 export interface PursuitRecommendation {

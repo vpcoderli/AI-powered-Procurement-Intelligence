@@ -558,6 +558,7 @@ export const en = {
     noDecisionHistory: "No decisions recorded yet.",
     reasonTaxonomy: "Reason taxonomy",
     evidenceLabel: "Evidence",
+    linkedEvidence: "Linked evidence",
     suggestedAction: "Suggested action",
     noReasonDetails: "No structured reason details yet.",
     pursuitRecommendations: {

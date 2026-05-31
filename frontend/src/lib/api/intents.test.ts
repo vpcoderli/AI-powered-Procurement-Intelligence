@@ -197,6 +197,11 @@ describe("intent API client", () => {
             explanation: "Match needs review.",
             evidenceLabel: "Match snapshot",
             suggestedAction: "Confirm requirements.",
+            evidenceRefs: [{
+              kind: "citation",
+              label: "Match snapshot",
+              citationId: "citation_generated_brief",
+            }],
           }],
         },
       },
@@ -207,6 +212,10 @@ describe("intent API client", () => {
 
     expect(result).toEqual(body);
     expect(result.decisionBoard.recommendation.reasonDetails[0].category).toBe("fit");
+    expect(result.decisionBoard.recommendation.reasonDetails[0].evidenceRefs[0]).toMatchObject({
+      kind: "citation",
+      citationId: "citation_generated_brief",
+    });
     expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/decision");
   });
 

@@ -52,7 +52,13 @@ describe("pursuit decision service", () => {
         explanation: expect.any(String),
         evidenceLabel: expect.any(String),
         suggestedAction: expect.any(String),
+        evidenceRefs: expect.arrayContaining([
+          expect.objectContaining({ kind: "match_snapshot", label: "Match snapshot" }),
+        ]),
       }));
+      expect(board.recommendation.reasonDetails.some((detail) =>
+        detail.evidenceRefs.some((ref) => ref.kind === "source_url" || ref.kind === "attachment"),
+      )).toBe(true);
       expect(board.currentDecision).toBeNull();
       expect(board.history).toEqual([]);
     } finally {

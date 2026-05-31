@@ -1,5 +1,7 @@
 import type { IntentDetail } from "@/server/intents/types";
+import { bidDetailPath } from "@/lib/bid-routes";
 import type {
+  PursuitEvidenceRef,
   PursuitReasonCategory,
   PursuitReasonDetail,
   PursuitReasonSeverity,
@@ -13,8 +15,45 @@ function detail(input: {
   explanation: string;
   evidenceLabel: string;
   suggestedAction: string;
+  evidenceRefs?: PursuitEvidenceRef[];
 }): PursuitReasonDetail {
-  return input;
+  return {
+    ...input,
+    evidenceRefs: input.evidenceRefs ?? [],
+  };
+}
+
+function matchSnapshotRef(): PursuitEvidenceRef {
+  return { kind: "match_snapshot", label: "Match snapshot" };
+}
+
+function generatedOutputRef(label: string, citationId = "citation_generated_brief"): PursuitEvidenceRef {
+  return { kind: "generated_output", label, citationId };
+}
+
+function supplierProfileRef(): PursuitEvidenceRef {
+  return { kind: "supplier_profile", label: "Supplier profile", url: "/profile" };
+}
+
+function bidDetailRef(intent: IntentDetail): PursuitEvidenceRef {
+  return { kind: "bid_detail", label: "Bid detail", url: bidDetailPath(intent.bid.id) };
+}
+
+function sourceUrlRef(intent: IntentDetail): PursuitEvidenceRef {
+  return { kind: "source_url", label: "Original source", citationId: "citation_source_url", url: intent.bid.sourceUrl };
+}
+
+function citationRef(label: string, citationId: string): PursuitEvidenceRef {
+  return { kind: "citation", label, citationId };
+}
+
+function attachmentRefs(intent: IntentDetail): PursuitEvidenceRef[] {
+  return intent.bid.attachments.slice(0, 3).map((attachment, index) => ({
+    kind: "attachment",
+    label: attachment.name,
+    citationId: `citation_attachment_${index + 1}`,
+    url: attachment.url,
+  }));
 }
 
 function hasAddendaRisk(intent: IntentDetail) {
@@ -47,6 +86,7 @@ function buildReasonDetails(intent: IntentDetail): PursuitReasonDetail[] {
       explanation: `The current match score is ${intent.match.score}, with supporting match signals from the supplier profile and opportunity metadata.`,
       evidenceLabel: "Match snapshot",
       suggestedAction: "Keep this opportunity in active pursuit unless downstream compliance or pricing review changes the decision.",
+      evidenceRefs: [matchSnapshotRef(), supplierProfileRef()],
     }));
   } else if (intent.match.score <= 40) {
     details.push(detail({
@@ -56,6 +96,7 @@ function buildReasonDetails(intent: IntentDetail): PursuitReasonDetail[] {
       explanation: `The current match score is ${intent.match.score}, which indicates weak alignment with the supplier profile.`,
       evidenceLabel: "Match snapshot",
       suggestedAction: "Treat as a no-bid candidate unless the supplier profile is incomplete or the team has strategic reasons to pursue.",
+      evidenceRefs: [matchSnapshotRef(), supplierProfileRef()],
     }));
   } else {
     details.push(detail({
@@ -65,6 +106,7 @@ function buildReasonDetails(intent: IntentDetail): PursuitReasonDetail[] {
       explanation: `The current match score is ${intent.match.score}, so the opportunity needs human review before proposal investment.`,
       evidenceLabel: "Match snapshot",
       suggestedAction: "Compare the requirements against capacity, pricing, and required registrations before deciding.",
+      evidenceRefs: [matchSnapshotRef(), supplierProfileRef()],
     }));
   }
 
@@ -76,6 +118,7 @@ function buildReasonDetails(intent: IntentDetail): PursuitReasonDetail[] {
       explanation: "The match engine flagged the bid location as outside the supplier's listed service states.",
       evidenceLabel: "Match risk notes",
       suggestedAction: "Confirm delivery coverage or partner coverage before pursuing.",
+      evidenceRefs: [matchSnapshotRef(), supplierProfileRef()],
     }));
   }
 
@@ -87,6 +130,7 @@ function buildReasonDetails(intent: IntentDetail): PursuitReasonDetail[] {
       explanation: "The estimated value does not fit the supplier's configured contract value preferences.",
       evidenceLabel: "Match risk notes",
       suggestedAction: "Validate margin and capacity assumptions before committing bid resources.",
+      evidenceRefs: [matchSnapshotRef(), supplierProfileRef()],
     }));
   }
 
@@ -98,6 +142,7 @@ function buildReasonDetails(intent: IntentDetail): PursuitReasonDetail[] {
       explanation: `${riskCount} generated or match risk signal${riskCount === 1 ? "" : "s"} are currently attached to this intent.`,
       evidenceLabel: "Generated risk flags",
       suggestedAction: "Resolve the highest-impact risk signals or document why they are acceptable.",
+      evidenceRefs: [generatedOutputRef("Generated risk flags"), matchSnapshotRef()],
     }));
   }
 
@@ -109,6 +154,7 @@ function buildReasonDetails(intent: IntentDetail): PursuitReasonDetail[] {
       explanation: "The opportunity does not expose a trackable deadline in the current bid record.",
       evidenceLabel: "Bid key dates",
       suggestedAction: "Verify the deadline at the source before any bid/no-bid commitment.",
+      evidenceRefs: [citationRef("Deadline", "citation_deadline"), bidDetailRef(intent), sourceUrlRef(intent)],
     }));
   } else {
     details.push(detail({
@@ -118,6 +164,7 @@ function buildReasonDetails(intent: IntentDetail): PursuitReasonDetail[] {
       explanation: `The current deadline is ${intent.bid.deadlineDate}.`,
       evidenceLabel: "Bid key dates",
       suggestedAction: "Use this date to schedule internal review, pricing, and submission checkpoints.",
+      evidenceRefs: [citationRef("Deadline", "citation_deadline"), bidDetailRef(intent), sourceUrlRef(intent)],
     }));
   }
 
@@ -129,6 +176,7 @@ function buildReasonDetails(intent: IntentDetail): PursuitReasonDetail[] {
       explanation: `${intent.match.missingProfileHints.length} supplier profile input${intent.match.missingProfileHints.length === 1 ? "" : "s"} are missing or incomplete.`,
       evidenceLabel: "Supplier profile",
       suggestedAction: "Update the supplier profile, then refresh qualification evidence before relying on the recommendation.",
+      evidenceRefs: [supplierProfileRef(), matchSnapshotRef()],
     }));
   }
 
@@ -140,6 +188,7 @@ function buildReasonDetails(intent: IntentDetail): PursuitReasonDetail[] {
       explanation: "The current bid record has no listed attachments or includes a documentation risk signal.",
       evidenceLabel: "Bid attachments",
       suggestedAction: "Open the source record and confirm all forms, addenda, and attachments are available.",
+      evidenceRefs: [...attachmentRefs(intent), bidDetailRef(intent), sourceUrlRef(intent)],
     }));
   }
 
@@ -151,6 +200,7 @@ function buildReasonDetails(intent: IntentDetail): PursuitReasonDetail[] {
       explanation: "The opportunity text or generated risks mention addenda/amendment handling.",
       evidenceLabel: "Bid evidence",
       suggestedAction: "Confirm the latest amendment/addenda set and acknowledgement requirements before submitting.",
+      evidenceRefs: [...attachmentRefs(intent), bidDetailRef(intent), sourceUrlRef(intent)],
     }));
   }
 
@@ -162,6 +212,7 @@ function buildReasonDetails(intent: IntentDetail): PursuitReasonDetail[] {
       explanation: "The opportunity text or checklist includes registration or portal account language.",
       evidenceLabel: "Submission evidence",
       suggestedAction: "Confirm account access early enough to avoid submission blockers.",
+      evidenceRefs: [sourceUrlRef(intent), generatedOutputRef("Generated checklist")],
     }));
   }
 
