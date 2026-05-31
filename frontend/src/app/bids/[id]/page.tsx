@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, fetchBid } from "@/lib/api/bids";
 import { createIntent } from "@/lib/api/intents";
 import { fetchBidMatch } from "@/lib/api/match";
+import { bidIdFromRouteParam } from "@/lib/bid-routes";
 import type { Bid } from "@/lib/mock-data";
 import type { IntentDetail } from "@/server/intents/types";
 import type { BidMatchResult } from "@/server/match/types";
@@ -102,7 +103,8 @@ export default function BidDetailsPage() {
   
   // Handling the id parameter unwrapping per Next.js 15+ patterns if needed,
   // but for simple client components useParams() is fine.
-  const bidId = typeof params?.id === 'string' ? params.id : Array.isArray(params?.id) ? params.id[0] : '';
+  const rawBidId = typeof params?.id === 'string' ? params.id : Array.isArray(params?.id) ? params.id[0] : '';
+  const bidId = rawBidId ? bidIdFromRouteParam(rawBidId) : '';
   
   const saved = isSaved(bidId);
   const addToIntentLabel = fallbackLabel(t("detail.pursuitAddToIntent"), "detail.pursuitAddToIntent", ADD_TO_INTENT_FALLBACK);

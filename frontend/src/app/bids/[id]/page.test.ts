@@ -7,6 +7,8 @@ describe("bid detail pursuit panel", () => {
 
     expect(page).toContain("fetchBidMatch");
     expect(page).toContain("createIntent");
+    expect(page).toContain("bidIdFromRouteParam");
+    expect(page).toContain("const bidId = rawBidId ? bidIdFromRouteParam(rawBidId) : ''");
     expect(page).toContain("Add to Intent");
     expect(page).toContain("match.score");
     expect(page).toContain("createIntentRequestRef");
