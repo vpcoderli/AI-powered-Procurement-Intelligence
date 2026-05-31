@@ -278,9 +278,8 @@ def fetch_state(
             fetch_kwargs["fixture_json"] = fixture_json
         if fixture_html:
             fetch_kwargs["fixture_html"] = fixture_html
-        try:
-            bids = fetcher(source_metadata, **fetch_kwargs)
-        except Exception as error:
+
+        def fallback_bids(reason):
             fallback = (
                 _fallback_fixture_for_source(source_metadata.id)
                 if fallback_fixture and not fixture_json and not fixture_html
@@ -288,14 +287,24 @@ def fetch_state(
             )
             fallback_fetcher = STATE_FALLBACK_FETCHERS.get(source_metadata.id)
             if not fallback or not fallback_fetcher:
-                raise
+                return None
 
             fixture_kind, fixture_path = fallback
             metadata["fallback_fixture"] = fixture_path
-            metadata["fallback_reason"] = str(error)
+            metadata["fallback_reason"] = reason
             metadata["fallback_source"] = "bundled_demo_fixture"
             fallback_kwargs = {"query": query, "limit": limit, fixture_kind: fixture_path}
-            bids = fallback_fetcher(source_metadata, **fallback_kwargs)
+            return fallback_fetcher(source_metadata, **fallback_kwargs)
+
+        try:
+            bids = fetcher(source_metadata, **fetch_kwargs)
+        except Exception as error:
+            bids = fallback_bids(str(error))
+            if bids is None:
+                raise
+
+        if not bids:
+            bids = fallback_bids(f"Crawler returned no opportunities for source: {source_metadata.id}") or bids
 
         _require_non_empty_bids(bids, source_metadata.id)
         if archive_documents:
