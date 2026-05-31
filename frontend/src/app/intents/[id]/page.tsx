@@ -1207,6 +1207,44 @@ export default function IntentWorkspacePage() {
                   </li>
                 ))}
               </ul>
+              <div className="mt-5">
+                <p className="text-xs font-black uppercase text-slate-400">
+                  {t("intentsPage.reasonTaxonomy")}
+                </p>
+                <div className="mt-3 grid gap-3">
+                  {(pursuitDecisionBoard?.recommendation.reasonDetails ?? []).map((detail) => (
+                    <article key={`${detail.category}-${detail.summary}`} className="rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className="border-blue-100 bg-blue-50 text-blue-700">
+                          {t(`intentsPage.pursuitReasonCategories.${detail.category}`)}
+                        </Badge>
+                        <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-700">
+                          {t(`intentsPage.pursuitReasonSeverities.${detail.severity}`)}
+                        </Badge>
+                      </div>
+                      <p className="mt-2 break-words text-sm font-black leading-6 text-slate-950">
+                        {detail.summary}
+                      </p>
+                      <p className="mt-1 break-words text-xs font-semibold leading-5 text-slate-600">
+                        {detail.explanation}
+                      </p>
+                      <div className="mt-3 grid gap-2 rounded-lg border border-slate-100 bg-slate-50/70 p-3">
+                        <p className="text-xs font-bold leading-5 text-slate-500">
+                          <span className="font-black text-slate-700">{t("intentsPage.evidenceLabel")}:</span>{" "}
+                          {detail.evidenceLabel}
+                        </p>
+                        <p className="text-xs font-bold leading-5 text-slate-500">
+                          <span className="font-black text-slate-700">{t("intentsPage.suggestedAction")}:</span>{" "}
+                          {detail.suggestedAction}
+                        </p>
+                      </div>
+                    </article>
+                  ))}
+                  {pursuitDecisionBoard && pursuitDecisionBoard.recommendation.reasonDetails.length === 0 ? (
+                    <p className="text-sm font-semibold text-slate-500">{t("intentsPage.noReasonDetails")}</p>
+                  ) : null}
+                </div>
+              </div>
             </div>
 
             <div className="space-y-4">

@@ -558,6 +558,10 @@ export const zh: Dictionary = {
     decisionNotesPlaceholder: "添加背景、假设或下一步...",
     decisionHistory: "决策历史",
     noDecisionHistory: "暂无决策记录。",
+    reasonTaxonomy: "原因分类",
+    evidenceLabel: "证据",
+    suggestedAction: "建议动作",
+    noReasonDetails: "暂无结构化原因详情。",
     pursuitRecommendations: {
       pursue: "继续投标",
       no_bid: "放弃投标",
@@ -572,6 +576,21 @@ export const zh: Dictionary = {
       pursue: "继续投标",
       no_bid: "放弃投标",
       defer: "暂缓",
+    },
+    pursuitReasonCategories: {
+      fit: "匹配度",
+      risk: "风险",
+      deadline: "截止日期",
+      profile: "供应商资料",
+      geography: "服务区域",
+      pricing: "价格/金额",
+      documentation: "文件",
+      registration: "注册",
+    },
+    pursuitReasonSeverities: {
+      positive: "正向",
+      watch: "关注",
+      blocker: "阻断",
     },
     submissionMethods: {
       external_portal: "外部门户",

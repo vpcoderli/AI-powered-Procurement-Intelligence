@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as principal from "@/server/auth/principal";
+import type { RequestPrincipal } from "@/server/auth/principal";
 import * as pursuitService from "@/server/pursuit/service";
 import { IntentNotFoundError } from "@/server/intents/types";
 import type { PursuitDecisionBoard } from "@/server/pursuit/types";
@@ -23,20 +24,20 @@ const resolvePrincipal = vi.mocked(principal.resolvePrincipal);
 const getPursuitDecisionBoard = vi.mocked(pursuitService.getPursuitDecisionBoard);
 const createPursuitDecision = vi.mocked(pursuitService.createPursuitDecision);
 
-const proPrincipal = {
+const proPrincipal: RequestPrincipal = {
   kind: "authenticated" as const,
   userId: "user_1",
   role: "user" as const,
   tier: "pro" as const,
-  features: ["bid_search", "submission_guidance", "pursue_no_bid"] as const,
+  features: ["bid_search", "submission_guidance", "pursue_no_bid"],
 };
 
-const freePrincipal = {
+const freePrincipal: RequestPrincipal = {
   kind: "authenticated" as const,
   userId: "user_free",
   role: "user" as const,
   tier: "free" as const,
-  features: ["bid_search"] as const,
+  features: ["bid_search"],
 };
 
 const board: PursuitDecisionBoard = {
@@ -47,6 +48,14 @@ const board: PursuitDecisionBoard = {
     recommendation: "review",
     confidence: "medium",
     reasons: ["Review pricing and compliance before pursuing."],
+    reasonDetails: [{
+      category: "fit",
+      severity: "watch",
+      summary: "Review pricing and compliance before pursuing.",
+      explanation: "The current match score requires human review.",
+      evidenceLabel: "Match snapshot",
+      suggestedAction: "Confirm pricing and compliance before deciding.",
+    }],
   },
   currentDecision: null,
   history: [],
@@ -68,6 +77,7 @@ describe("GET /api/intents/[id]/decision", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({ decisionBoard: board });
+    expect(body.decisionBoard.recommendation.reasonDetails[0].category).toBe("fit");
     expect(getPursuitDecisionBoard).toHaveBeenCalledWith(expect.anything(), "user_1", "intent_1");
   });
 

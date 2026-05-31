@@ -185,12 +185,28 @@ describe("intent API client", () => {
   });
 
   it("fetches pursuit decision board with an encoded intent id", async () => {
-    const body = { decisionBoard: { intentId: "intent/with space", history: [] } };
+    const body = {
+      decisionBoard: {
+        intentId: "intent/with space",
+        history: [],
+        recommendation: {
+          reasonDetails: [{
+            category: "fit",
+            severity: "watch",
+            summary: "Review fit.",
+            explanation: "Match needs review.",
+            evidenceLabel: "Match snapshot",
+            suggestedAction: "Confirm requirements.",
+          }],
+        },
+      },
+    };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));
 
     const result = await fetchPursuitDecisionBoard("intent/with space");
 
     expect(result).toEqual(body);
+    expect(result.decisionBoard.recommendation.reasonDetails[0].category).toBe("fit");
     expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/decision");
   });
 

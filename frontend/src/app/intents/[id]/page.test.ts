@@ -29,4 +29,14 @@ describe("intent detail page", () => {
     expect(page).toContain('t("intentsPage.askEvidenceQuestion")');
     expect(page).toContain('t("intentsPage.groundedAnswer")');
   });
+
+  it("renders structured pursue/no-bid reason details", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("reasonDetails");
+    expect(page).toContain('t("intentsPage.reasonTaxonomy")');
+    expect(page).toContain('t(`intentsPage.pursuitReasonCategories.${detail.category}`)');
+    expect(page).toContain('t(`intentsPage.pursuitReasonSeverities.${detail.severity}`)');
+    expect(page).toContain('t("intentsPage.suggestedAction")');
+  });
 });
