@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { useSavedBids } from "@/context/SavedBidsContext";
 import type { Bid } from "@/lib/mock-data";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import { bidDetailPath } from "@/lib/bid-routes";
 
 interface BidCardProps {
   bid: Bid;
@@ -20,7 +21,7 @@ export function BidCard({ bid }: BidCardProps) {
 
   return (
     <Card className="winbids-bid-card relative h-full border-slate-200 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-blue-200 group">
-      <Link href={`/bids/${bid.id}`} className="block h-full">
+      <Link href={bidDetailPath(bid.id)} className="block h-full">
         <CardContent className="p-6 flex flex-col h-full">
           <div className="flex justify-between items-start mb-4">
             <div className="flex flex-col gap-2 pr-10">
