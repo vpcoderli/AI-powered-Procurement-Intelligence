@@ -645,4 +645,50 @@ describe("database schema", () => {
       await testDb.cleanup();
     }
   });
+
+  it("creates the knowledge_items table and indexes", async () => {
+    const testDb = await createTestDatabase();
+
+    try {
+      const tables = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const indexes = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const columns = testDb.db.$client
+        .prepare("PRAGMA table_info(knowledge_items)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(tables).toContain("knowledge_items");
+      expect(columns).toEqual(expect.arrayContaining([
+        "id",
+        "organization_id",
+        "created_by_user_id",
+        "title",
+        "body",
+        "type",
+        "tags_json",
+        "source_kind",
+        "source_intent_id",
+        "source_bid_id",
+        "source_url",
+        "metadata_json",
+        "created_at",
+        "updated_at",
+      ]));
+      expect(indexes).toEqual(expect.arrayContaining([
+        "idx_knowledge_items_organization_id",
+        "idx_knowledge_items_created_by_user_id",
+        "idx_knowledge_items_source_intent_id",
+        "idx_knowledge_items_source_bid_id",
+        "idx_knowledge_items_created_at",
+      ]));
+    } finally {
+      await testDb.cleanup();
+    }
+  });
 });

@@ -295,6 +295,23 @@ export function runMigrations(db: AppDatabase) {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS knowledge_items (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      type TEXT NOT NULL,
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      source_kind TEXT NOT NULL,
+      source_intent_id TEXT REFERENCES intent_to_bid(id) ON DELETE SET NULL,
+      source_bid_id TEXT REFERENCES bids(id) ON DELETE SET NULL,
+      source_url TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS submission_paths (
       id TEXT PRIMARY KEY,
       intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
@@ -499,6 +516,11 @@ export function runMigrations(db: AppDatabase) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_intent_to_bid_user_bid ON intent_to_bid(user_id, bid_id);
     CREATE INDEX IF NOT EXISTS idx_intent_to_bid_user_id ON intent_to_bid(user_id);
     CREATE INDEX IF NOT EXISTS idx_intent_to_bid_bid_id ON intent_to_bid(bid_id);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_items_organization_id ON knowledge_items(organization_id);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_items_created_by_user_id ON knowledge_items(created_by_user_id);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_items_source_intent_id ON knowledge_items(source_intent_id);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_items_source_bid_id ON knowledge_items(source_bid_id);
+    CREATE INDEX IF NOT EXISTS idx_knowledge_items_created_at ON knowledge_items(created_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_submission_paths_intent_id ON submission_paths(intent_id);
     CREATE INDEX IF NOT EXISTS idx_submission_paths_user_id ON submission_paths(user_id);
     CREATE INDEX IF NOT EXISTS idx_submission_paths_bid_id ON submission_paths(bid_id);
