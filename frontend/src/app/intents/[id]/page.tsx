@@ -1727,6 +1727,35 @@ export default function IntentWorkspacePage() {
                           )}
                         </div>
                         <p className="mt-2 break-words text-sm font-black leading-6 text-slate-950">{item.title}</p>
+                        {item.evidenceRefs.length > 0 ? (
+                          <div className="mt-3">
+                            <p className="text-xs font-black text-slate-500">{t("intentsPage.linkedEvidence")}</p>
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {item.evidenceRefs.map((ref) => {
+                                const url = evidenceRefUrl(ref);
+                                const key = `${item.id}-${ref.kind}-${ref.citationId ?? ref.url ?? ref.label}`;
+                                const chipClassName = "inline-flex min-h-7 items-center rounded-md border border-blue-100 bg-blue-50 px-2 py-1 text-xs font-black text-blue-700";
+
+                                return url ? (
+                                  <Link
+                                    key={key}
+                                    href={url}
+                                    target={url.startsWith("/") ? undefined : "_blank"}
+                                    rel={url.startsWith("/") ? undefined : "noreferrer"}
+                                    className={`${chipClassName} hover:border-blue-200 hover:bg-white`}
+                                  >
+                                    <ExternalLink size={12} className="mr-1.5 shrink-0" aria-hidden="true" />
+                                    <span className="break-words">{ref.label}</span>
+                                  </Link>
+                                ) : (
+                                  <span key={key} className={`${chipClassName} bg-white text-slate-600`}>
+                                    {ref.label}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
                       <div className="grid gap-2 sm:grid-cols-2 lg:w-[360px]">
                         <Select

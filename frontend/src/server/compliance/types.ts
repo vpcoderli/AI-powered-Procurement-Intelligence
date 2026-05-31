@@ -27,6 +27,7 @@ export interface GeneratedComplianceItem {
   title: string;
   category: ComplianceCategory;
   evidenceStatus: ComplianceEvidenceStatus;
+  evidenceRefs: PursuitEvidenceRef[];
 }
 
 export interface ComplianceManifestItem extends GeneratedComplianceItem {
@@ -77,3 +78,4 @@ export function isComplianceEvidenceStatus(value: unknown): value is ComplianceE
     COMPLIANCE_EVIDENCE_STATUSES.includes(value as ComplianceEvidenceStatus)
   );
 }
+import type { PursuitEvidenceRef } from "@/server/pursuit/types";
