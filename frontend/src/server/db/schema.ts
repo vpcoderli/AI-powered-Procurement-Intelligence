@@ -177,6 +177,37 @@ export const creditUsageEvents = sqliteTable(
   }),
 );
 
+export const knowledgeItems = sqliteTable(
+  "knowledge_items",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    type: text("type").notNull(),
+    tagsJson: text("tags_json").notNull().default("[]"),
+    sourceKind: text("source_kind").notNull(),
+    sourceIntentId: text("source_intent_id").references(() => intentToBid.id, { onDelete: "set null" }),
+    sourceBidId: text("source_bid_id").references(() => bids.id, { onDelete: "set null" }),
+    sourceUrl: text("source_url"),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    organizationIdx: index("idx_knowledge_items_organization_id").on(table.organizationId),
+    creatorIdx: index("idx_knowledge_items_created_by_user_id").on(table.createdByUserId),
+    sourceIntentIdx: index("idx_knowledge_items_source_intent_id").on(table.sourceIntentId),
+    sourceBidIdx: index("idx_knowledge_items_source_bid_id").on(table.sourceBidId),
+    createdIdx: index("idx_knowledge_items_created_at").on(table.createdAt),
+  }),
+);
+
 export const sessions = sqliteTable(
   "sessions",
   {
