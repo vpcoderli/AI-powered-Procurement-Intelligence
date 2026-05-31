@@ -45,10 +45,12 @@ describe("bid attachment files", () => {
 
     const attachment = await getLocalBidAttachment(testDb.db, "1", "notice_pdf");
 
-    expect(attachment).toEqual({
+    expect(attachment).toMatchObject({
+      kind: "local",
       filePath: await realpath(attachmentPath),
       filename: "Notice.pdf",
       mimeType: "application/pdf",
+      archiveStatus: "not_archived",
     });
   });
 
@@ -98,10 +100,13 @@ describe("bid attachment files", () => {
 
     const attachment = await getLocalBidAttachment(testDb.db, "1", "storage_path_pdf");
 
-    expect(attachment).toEqual({
+    expect(attachment).toMatchObject({
+      kind: "local",
       filePath: await realpath(attachmentPath),
       filename: "Storage Path.pdf",
       mimeType: "application/pdf",
+      originalUrl: "https://example.gov/files/notice.pdf",
+      archiveStatus: "archived",
     });
   });
 

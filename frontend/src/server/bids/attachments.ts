@@ -6,10 +6,26 @@ import type { AppDatabase } from "@/server/db/client";
 import { bidAttachments } from "@/server/db/schema";
 
 export interface LocalBidAttachment {
+  kind: "local";
   filePath: string;
   filename: string;
   mimeType: string | null;
+  originalUrl: string;
+  archiveStatus: string;
+  archiveError: string | null;
 }
+
+export interface FallbackBidAttachment {
+  kind: "fallback";
+  filename: string;
+  mimeType: "text/plain; charset=utf-8";
+  originalUrl: string;
+  archiveStatus: string;
+  archiveError: string | null;
+  reason: string;
+}
+
+export type BidAttachmentDownload = LocalBidAttachment | FallbackBidAttachment;
 
 export function isExternalAttachmentUrl(value: string) {
   return /^https?:\/\//i.test(value);
@@ -104,6 +120,16 @@ export async function getLocalBidAttachment(
   bidId: string,
   attachmentId: string,
 ): Promise<LocalBidAttachment | undefined> {
+  const attachment = await getBidAttachmentDownload(db, bidId, attachmentId);
+
+  return attachment?.kind === "local" ? attachment : undefined;
+}
+
+export async function getBidAttachmentDownload(
+  db: AppDatabase,
+  bidId: string,
+  attachmentId: string,
+): Promise<BidAttachmentDownload | undefined> {
   const row = db
     .select()
     .from(bidAttachments)
@@ -113,12 +139,29 @@ export async function getLocalBidAttachment(
 
   if (!row) return undefined;
 
+  const originalUrl = row.originalUrl ?? row.url;
   const filePath = await resolveAllowedLocalPath(row.storagePath ?? row.url);
-  if (!filePath) return undefined;
+  if (!filePath) {
+    return {
+      kind: "fallback",
+      filename: row.name,
+      mimeType: "text/plain; charset=utf-8",
+      originalUrl,
+      archiveStatus: row.archiveStatus,
+      archiveError: row.archiveError,
+      reason: row.storagePath
+        ? "The archived attachment file is not available on disk."
+        : "The attachment has not been archived locally yet.",
+    };
+  }
 
   return {
+    kind: "local",
     filePath,
     filename: row.name,
     mimeType: row.mimeType ?? row.contentType,
+    originalUrl,
+    archiveStatus: row.archiveStatus,
+    archiveError: row.archiveError,
   };
 }

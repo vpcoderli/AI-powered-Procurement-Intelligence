@@ -62,7 +62,7 @@ describe("bid repository", () => {
     expect(bid).toBeUndefined();
   });
 
-  it("keeps external attachment URLs unchanged and rewrites local ones to the download API", async () => {
+  it("routes all attachments through the download API and preserves original external URLs", async () => {
     const timestamp = "2026-05-28T00:00:00.000Z";
     testDb.db.insert(bidAttachments)
       .values([
@@ -89,9 +89,10 @@ describe("bid repository", () => {
 
     const bid = await getBidByIdFromRepository(testDb.db, "1");
 
-    expect(bid?.attachments.find((attachment) => attachment.name === "External.pdf")?.url).toBe(
-      "https://example.gov/files/external.pdf",
-    );
+    const external = bid?.attachments.find((attachment) => attachment.name === "External.pdf");
+
+    expect(external?.url).toBe("/api/bids/1/attachments/external_attachment");
+    expect(external?.originalUrl).toBe("https://example.gov/files/external.pdf");
     expect(bid?.attachments.find((attachment) => attachment.name === "Local.pdf")?.url).toBe(
       "/api/bids/1/attachments/local_attachment",
     );
