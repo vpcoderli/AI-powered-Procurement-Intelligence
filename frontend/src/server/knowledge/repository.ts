@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, like, or, type SQL } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
-import { bids, intentToBid, knowledgeItems, organizations, users } from "@/server/db/schema";
+import { bids, intentToBid, knowledgeItems, organizationMemberships, organizations, users } from "@/server/db/schema";
 import type { KnowledgeItemType, KnowledgeSourceKind, ListKnowledgeItemsInput } from "./types";
 
 export type KnowledgeItemRow = typeof knowledgeItems.$inferSelect;
@@ -27,6 +27,19 @@ export function findKnowledgeUser(db: AppDatabase, userId: string) {
 
 export function findKnowledgeOrganization(db: AppDatabase, organizationId: string) {
   return db.select().from(organizations).where(eq(organizations.id, organizationId)).limit(1).get();
+}
+
+export function findActiveKnowledgeOrganizationMembership(db: AppDatabase, userId: string, organizationId: string) {
+  return db
+    .select()
+    .from(organizationMemberships)
+    .where(and(
+      eq(organizationMemberships.userId, userId),
+      eq(organizationMemberships.organizationId, organizationId),
+      eq(organizationMemberships.status, "active"),
+    ))
+    .limit(1)
+    .get();
 }
 
 export function findKnowledgeIntentForUser(db: AppDatabase, userId: string, intentId: string) {
