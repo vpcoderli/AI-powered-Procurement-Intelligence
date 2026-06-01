@@ -44,7 +44,7 @@ This document is the working checklist for local development. Update it after ea
 
 | Requirement | Current state | Remaining work | Suggested next slice |
 |---|---|---|---|
-| Knowledge Station Lite | feature key 存在，暂无产品界面。 | 工作流教练、模板/片段、可复用知识条目、基础检索、与 Intent workspace 关联。 | 做 Product 0.9 Lite：手动创建知识条目 + 在 Intent 中引用。 |
+| Knowledge Station Lite | Done locally: Enterprise-gated Intent workflow coach, reusable organization-scoped knowledge items, protected list/create APIs, Intent panel, and minimal `/knowledge` library are implemented. | Full retrieval, embeddings, admin publishing workflow, artifact uploads, usage metrics, and credit metering remain future depth. | Continue with Admin risk-check visualization or Response Workspace Lite. |
 | Response Workspace Lite | Intent workspace 有基础状态和 Submission Guidance/Compliance/Decision 模块。 | Tasks、artifacts、internal checkpoints、response package outline、团队协作状态。 | 在 Intent detail 增加 task/checkpoint model 和 UI。 |
 | Artifact Vault Lite | 附件归档存在，但供应商侧 artifact 管理未做。 | 用户上传文件、关联 intent/bid、文件分类、证据状态、基础权限。 | 先做 local storage artifact upload + intent association。 |
 | Quote / Supply Chain Lite | feature key 和套餐方向存在，未实现。 | Partner database、quote requests、quote comparison、供应商附件、业务状态流。 | 做最小 partner list + quote request draft，不先做复杂 marketplace。 |
