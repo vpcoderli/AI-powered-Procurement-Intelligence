@@ -3,12 +3,14 @@ import { eq } from "drizzle-orm";
 import { generateWorkflowCoachCards } from "@/lib/knowledge/coach";
 import { createTestDatabase } from "@/server/db/test-utils";
 import type { AppDatabase } from "@/server/db/client";
-import { organizations, users } from "@/server/db/schema";
+import { knowledgeItems, organizationMemberships, organizations, users } from "@/server/db/schema";
 import { createIntentForBid } from "@/server/intents/service";
 import { createKnowledgeItem, KnowledgeValidationError, listKnowledgeItems } from "./service";
 import { KNOWLEDGE_SOURCE_KINDS, SOURCE_KINDS } from "./types";
 
-function createKnowledgeScope(db: AppDatabase) {
+function createKnowledgeScope(db: AppDatabase, options: { membershipStatus?: string | null } = {}) {
+  const membershipStatus = options.membershipStatus === undefined ? "active" : options.membershipStatus;
+
   db.insert(organizations)
     .values({
       id: "org_seed",
@@ -18,6 +20,26 @@ function createKnowledgeScope(db: AppDatabase) {
     })
     .onConflictDoNothing()
     .run();
+
+  if (membershipStatus) {
+    db.insert(organizationMemberships)
+      .values({
+        organizationId: "org_seed",
+        userId: "anon_seed",
+        role: "member",
+        status: membershipStatus,
+        createdAt: "2026-05-19T00:00:00.000Z",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+      })
+      .onConflictDoUpdate({
+        target: [organizationMemberships.organizationId, organizationMemberships.userId],
+        set: {
+          status: membershipStatus,
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        },
+      })
+      .run();
+  }
 }
 
 describe("knowledge service", () => {
@@ -238,6 +260,56 @@ describe("knowledge service", () => {
 
       expect(testDb.db.select().from(users).where(eq(users.id, "missing_user")).limit(1).get()).toBeUndefined();
       expect(testDb.db.select().from(organizations).where(eq(organizations.id, "missing_org")).limit(1).get()).toBeUndefined();
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("rejects existing users and organizations without membership", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      createKnowledgeScope(testDb.db, { membershipStatus: null });
+
+      await expect(createKnowledgeItem(testDb.db, {
+        organizationId: "org_seed",
+        userId: "anon_seed",
+        title: "No membership",
+        body: "Existing users still need active organization membership.",
+        type: "lesson",
+        tags: [],
+        sourceKind: "manual",
+      })).rejects.toThrow("Knowledge organization membership is not available.");
+
+      expect(
+        testDb.db.select().from(knowledgeItems).where(eq(knowledgeItems.organizationId, "org_seed")).all(),
+      ).toHaveLength(0);
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("rejects disabled and invited memberships", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      for (const status of ["disabled", "invited"]) {
+        createKnowledgeScope(testDb.db, { membershipStatus: status });
+
+        await expect(createKnowledgeItem(testDb.db, {
+          organizationId: "org_seed",
+          userId: "anon_seed",
+          title: `${status} membership`,
+          body: "Only active organization membership can create knowledge.",
+          type: "lesson",
+          tags: [],
+          sourceKind: "manual",
+        })).rejects.toThrow("Knowledge organization membership is not available.");
+
+        expect(
+          testDb.db.select().from(knowledgeItems).where(eq(knowledgeItems.organizationId, "org_seed")).all(),
+        ).toHaveLength(0);
+      }
     } finally {
       await testDb.cleanup();
     }

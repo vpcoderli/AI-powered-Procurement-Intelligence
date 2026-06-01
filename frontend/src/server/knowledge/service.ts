@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { AppDatabase } from "@/server/db/client";
 import {
   createKnowledgeItemRow,
+  findActiveKnowledgeOrganizationMembership,
   findKnowledgeBid,
   findKnowledgeIntentForUser,
   findKnowledgeOrganization,
@@ -174,6 +175,10 @@ export async function createKnowledgeItem(
 
   if (!findKnowledgeUser(database, input.userId) || !findKnowledgeOrganization(database, input.organizationId)) {
     throw new KnowledgeValidationError("Knowledge principal is not available.");
+  }
+
+  if (!findActiveKnowledgeOrganizationMembership(database, input.userId, input.organizationId)) {
+    throw new KnowledgeValidationError("Knowledge organization membership is not available.");
   }
 
   if (sourceIntentId) {
