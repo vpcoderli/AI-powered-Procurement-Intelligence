@@ -199,6 +199,44 @@ describe("knowledge service", () => {
     }
   });
 
+  it("allows intent links created by active organization members", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      createKnowledgeScope(testDb.db);
+      const intent = await createIntentForBid(testDb.db, "other_seed", "1");
+
+      testDb.db.insert(organizationMemberships)
+        .values({
+          organizationId: "org_seed",
+          userId: "other_seed",
+          role: "member",
+          status: "active",
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        })
+        .onConflictDoNothing()
+        .run();
+
+      const item = await createKnowledgeItem(testDb.db, {
+        organizationId: "org_seed",
+        userId: "anon_seed",
+        title: "Workspace-shared lesson",
+        body: "Allow saving knowledge from a teammate's shared intent.",
+        type: "lesson",
+        tags: [],
+        sourceKind: "intent",
+        sourceIntentId: intent.id,
+        sourceBidId: intent.bid.id,
+      });
+
+      expect(item.sourceIntentId).toBe(intent.id);
+      expect(item.sourceBidId).toBe(intent.bid.id);
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
   it("rejects intent and bid mismatches", async () => {
     const testDb = await createTestDatabase({ seed: true });
 

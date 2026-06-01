@@ -28,6 +28,7 @@ import { createKnowledgeItem, fetchKnowledgeItems } from "@/lib/api/knowledge";
 import { lockedFeatureMessage, useFeature } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { generateWorkflowCoachCards } from "@/lib/knowledge/coach";
+import { safeKnowledgeSourceUrl } from "@/lib/knowledge/source-url";
 import type { IntentDetail, IntentStatus } from "@/server/intents/types";
 import { INTENT_STATUSES } from "@/server/intents/types";
 import type { KnowledgeItem, WorkflowCoachCard } from "@/server/knowledge/types";
@@ -89,14 +90,7 @@ function metricLabel(key: string) {
 }
 
 function safeEvidenceUrl(value: string) {
-  if (value.startsWith("/")) return value;
-
-  try {
-    const url = new URL(value);
-    return url.protocol === "http:" || url.protocol === "https:" ? value : "";
-  } catch {
-    return "";
-  }
+  return safeKnowledgeSourceUrl(value);
 }
 
 function evidenceRefUrl(ref: Pick<PursuitEvidenceRef, "url">) {
