@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Home, Bookmark, Settings, Search, ShieldCheck, ClipboardList, UserRound, Route } from "lucide-react"
+import { Home, Bookmark, Settings, Search, ShieldCheck, ClipboardList, UserRound, Route, BookOpen } from "lucide-react"
 import { useLanguage } from "@/lib/i18n/LanguageContext"
 import { useAuth } from "@/context/AuthContext"
 import {
@@ -51,6 +51,15 @@ export function AppSidebar() {
       url: "/intents",
       icon: ClipboardList,
     },
+    ...(user?.features.includes("knowledge_station")
+      ? [
+          {
+            title: t("knowledge.library"),
+            url: "/knowledge",
+            icon: BookOpen,
+          },
+        ]
+      : []),
     {
       title: "Submission Path",
       url: "/intents",
