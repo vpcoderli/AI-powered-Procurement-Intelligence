@@ -32,11 +32,15 @@ export const FEATURE_API_COVERAGE: readonly FeatureApiCoverageEntry[] = [
     feature: "bid.brief.full.generate",
     methods: ["POST"],
   },
+  {
+    sourcePath: "../../app/api/knowledge/route.ts",
+    feature: "knowledge_station",
+    methods: ["GET", "POST"],
+  },
 ] as const;
 
-export const UNIMPLEMENTED_PAID_FEATURE_API_COVERAGE = [
+export const UNIMPLEMENTED_PAID_FEATURE_API_COVERAGE: readonly FeatureKey[] = [
   "quote_workflow",
-  "knowledge_station",
   "compliance.manifest.generate",
   "readiness.review.run",
   "response.workspace.create",
@@ -47,4 +51,4 @@ export const UNIMPLEMENTED_PAID_FEATURE_API_COVERAGE = [
   "award.tabulation.analyze",
   "price.to.win.run",
   "team.member.invite",
-] as const satisfies readonly FeatureKey[];
+] as const;
