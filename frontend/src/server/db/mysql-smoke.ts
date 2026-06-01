@@ -1,5 +1,11 @@
 import type { Pool } from "mysql2/promise";
 import { listAdminCrawlerLogsFromMysql } from "@/server/admin/data-sources-repository";
+import { exportMysqlAccountData } from "@/server/account/lifecycle";
+import {
+  getAccountNotificationPreferencesFromMysql,
+  updateAccountNotificationPreferencesFromMysql,
+} from "@/server/account/notification-preferences";
+import { getAccountUsageFromMysql } from "@/server/account/usage";
 import { getMysqlAccountWorkspace, updateMysqlOrganizationName } from "@/server/account/mysql-workspace";
 import { getMysqlSessionUser, loginMysqlUser, logoutMysqlSession, registerMysqlUser } from "@/server/auth/mysql-service";
 import { requestPasswordResetFromMysql, resetPasswordWithTokenFromMysql } from "@/server/auth/password-reset";
@@ -58,6 +64,9 @@ export interface MysqlSmokeInspection {
   intentVerified: boolean;
   billingVerified: boolean;
   workspaceVerified: boolean;
+  accountUsageVerified: boolean;
+  notificationPreferencesVerified: boolean;
+  accountExportVerified: boolean;
   searchAlertVerified: boolean;
   passwordResetVerified: boolean;
   authSessionVerified: boolean;
@@ -137,6 +146,15 @@ export function validateMysqlSmokeInspection(inspection: MysqlSmokeInspection) {
       : null,
     !inspection.workspaceVerified
       ? "expected MySQL workspace lifecycle to verify"
+      : null,
+    !inspection.accountUsageVerified
+      ? "expected MySQL account usage lifecycle to verify"
+      : null,
+    !inspection.notificationPreferencesVerified
+      ? "expected MySQL notification preferences lifecycle to verify"
+      : null,
+    !inspection.accountExportVerified
+      ? "expected MySQL account export lifecycle to verify"
       : null,
     !inspection.searchAlertVerified
       ? "expected MySQL search alert lifecycle to verify"
@@ -333,6 +351,15 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
       isEnabled: false,
     });
     const searchAlertsBeforeDelete = await listSearchAlertsFromMysql(pool, registered.user.id);
+    await saveSavedBidIdFromMysql(pool, registered.user.id, bid.id);
+    const savedBidIds = await listSavedBidIdsFromMysql(pool, registered.user.id);
+    const accountUsage = await getAccountUsageFromMysql(pool, registered.user.id);
+    const defaultPreferences = await getAccountNotificationPreferencesFromMysql(pool, registered.user.id);
+    const updatedPreferences = await updateAccountNotificationPreferencesFromMysql(pool, registered.user.id, {
+      savedSearchAlertsEnabled: false,
+      defaultAlertFrequency: "weekly",
+    });
+    const accountExport = await exportMysqlAccountData(pool, registered.user.id);
     await deleteSearchAlertFromMysql(pool, registered.user.id, searchAlert.id);
     const searchAlertsAfterDelete = await listSearchAlertsFromMysql(pool, registered.user.id);
     const reset = await requestPasswordResetFromMysql(pool, authEmail);
@@ -343,8 +370,6 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
       .catch(() => true);
     const loginAfterReset = await loginMysqlUser(pool, authEmail, "new-strong-password");
     const resetClearedSession = (await getMysqlSessionUser(pool, loginBeforeReset.sessionToken)) === null;
-    await saveSavedBidIdFromMysql(pool, registered.user.id, bid.id);
-    const savedBidIds = await listSavedBidIdsFromMysql(pool, registered.user.id);
     await removeSavedBidIdFromMysql(pool, registered.user.id, bid.id);
     const savedBidIdsAfterRemoval = await listSavedBidIdsFromMysql(pool, registered.user.id);
     const loggedIn = await loginMysqlUser(pool, authEmail, "new-strong-password");
@@ -386,6 +411,21 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
       workspaceVerified:
         workspaceBefore.organization.id.length > 0 &&
         workspaceAfter.organization.name === "MySQL Smoke Workspace",
+      accountUsageVerified:
+        accountUsage.tier === "pro" &&
+        accountUsage.workspaceUserIds.includes(registered.user.id) &&
+        accountUsage.items.some((item) => item.feature === "saved_bids" && item.used === 1) &&
+        accountUsage.items.some((item) => item.feature === "search_alerts" && item.used === 1),
+      notificationPreferencesVerified:
+        defaultPreferences.savedSearchAlertsEnabled &&
+        defaultPreferences.defaultAlertFrequency === "daily" &&
+        !updatedPreferences.savedSearchAlertsEnabled &&
+        updatedPreferences.defaultAlertFrequency === "weekly",
+      accountExportVerified:
+        accountExport.account.email === authEmail &&
+        accountExport.workspace?.organization.name === "MySQL Smoke Workspace" &&
+        accountExport.savedBids.some((item) => item.bidId === bid.id) &&
+        accountExport.searchAlerts.some((item) => item.id === searchAlert.id),
       searchAlertVerified:
         searchAlert.name === "MySQL Smoke Alert" &&
         updatedSearchAlert.isEnabled === false &&

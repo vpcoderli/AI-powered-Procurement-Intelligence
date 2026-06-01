@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acceptWorkspaceInvitation,
   inviteWorkspaceMember,
@@ -12,6 +12,7 @@ import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
   AccountDeletionRequiresOwnerTransferError,
   exportAccountData,
+  exportMysqlAccountData,
   softDeleteAccount,
   transferWorkspaceOwnership,
 } from "./lifecycle";
@@ -93,6 +94,78 @@ describe("account lifecycle service", () => {
     expect(exportData.savedBids).toHaveLength(1);
     expect(exportData.supplierProfile?.companyName).toBe("Acme Supply");
     expect(exportData.searchAlerts).toHaveLength(1);
+  });
+
+  it("exports MySQL account data with camel-cased sections", async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("FROM users") && sql.includes("LIMIT 1")) {
+        return [[{
+          id: "user_1",
+          email: "buyer@example.com",
+          displayName: "Buyer One",
+          role: "user",
+          accountTier: "business",
+          isDisabled: 0,
+          createdAt: "2026-06-01T00:00:00.000Z",
+          updatedAt: "2026-06-01T00:00:00.000Z",
+          lastLoginAt: null,
+        }], undefined];
+      }
+
+      if (sql.includes("organizations.id AS organizationId")) {
+        return [[{ organizationId: "org_1", organizationName: "Buyer Workspace", role: "owner", accountTier: "business" }], undefined];
+      }
+
+      if (sql.includes("FROM organizations") && sql.includes("WHERE id = ?")) {
+        return [[{
+          id: "org_1",
+          name: "Buyer Workspace",
+          accountTier: "business",
+          createdAt: "2026-06-01T00:00:00.000Z",
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        }], undefined];
+      }
+
+      if (sql.includes("FROM organization_memberships") && sql.includes("INNER JOIN users")) {
+        return [[{
+          userId: "user_1",
+          email: "buyer@example.com",
+          displayName: "Buyer One",
+          role: "owner",
+          status: "active",
+          createdAt: "2026-06-01T00:00:00.000Z",
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        }], undefined];
+      }
+
+      if (sql.includes("FROM saved_bids")) {
+        return [[{ user_id: "user_1", bid_id: "bid_1", created_at: "2026-06-01T00:01:00.000Z" }], undefined];
+      }
+
+      if (sql.includes("FROM supplier_profiles")) {
+        return [[{ user_id: "user_1", company_name: "Acme Supply" }], undefined];
+      }
+
+      if (sql.includes("FROM alerts")) {
+        return [[{ id: "alert_1", user_id: "user_1", name: "CA IT" }], undefined];
+      }
+
+      return [[], undefined];
+    });
+
+    const exportData = await exportMysqlAccountData({ query }, "user_1");
+
+    expect(exportData.account).toMatchObject({
+      id: "user_1",
+      email: "buyer@example.com",
+      displayName: "Buyer One",
+      tier: "business",
+      isDisabled: false,
+    });
+    expect(exportData.workspace?.organization.name).toBe("Buyer Workspace");
+    expect(exportData.savedBids[0]).toMatchObject({ userId: "user_1", bidId: "bid_1" });
+    expect(exportData.supplierProfile).toMatchObject({ userId: "user_1", companyName: "Acme Supply" });
+    expect(exportData.searchAlerts[0]).toMatchObject({ id: "alert_1", userId: "user_1" });
   });
 
   it("soft-deletes a member account, clears sessions, and removes active workspace access", async () => {

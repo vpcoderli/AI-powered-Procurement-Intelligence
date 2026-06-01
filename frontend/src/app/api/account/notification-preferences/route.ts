@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 import {
   getAccountNotificationPreferences,
+  getAccountNotificationPreferencesFromMysql,
   updateAccountNotificationPreferences,
+  updateAccountNotificationPreferencesFromMysql,
   type UpdateAccountNotificationPreferencesInput,
 } from "@/server/account/notification-preferences";
 import { readSessionToken } from "@/server/auth/session";
 import { getSessionUser } from "@/server/auth/service";
+import { getMysqlSessionUser } from "@/server/auth/mysql-service";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -16,7 +20,12 @@ async function currentUser(request: Request) {
   const sessionToken = readSessionToken(request);
   if (!sessionToken) return null;
 
-  return getSessionUser(db, sessionToken);
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const user = mysql
+    ? await getMysqlSessionUser(mysql, sessionToken)
+    : await getSessionUser(db, sessionToken);
+
+  return user ? { mysql, user } : null;
 }
 
 async function readBody(request: Request) {
@@ -52,23 +61,27 @@ function preferenceInput(body: unknown): UpdateAccountNotificationPreferencesInp
 }
 
 export async function GET(request: Request) {
-  const user = await currentUser(request);
+  const current = await currentUser(request);
 
-  if (!user) {
+  if (!current) {
     return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
   }
 
   try {
-    return NextResponse.json(getAccountNotificationPreferences(db, user.id));
+    return NextResponse.json(
+      current.mysql
+        ? await getAccountNotificationPreferencesFromMysql(current.mysql, current.user.id)
+        : getAccountNotificationPreferences(db, current.user.id),
+    );
   } catch {
     return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
   }
 }
 
 export async function PATCH(request: Request) {
-  const user = await currentUser(request);
+  const current = await currentUser(request);
 
-  if (!user) {
+  if (!current) {
     return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
   }
 
@@ -79,7 +92,11 @@ export async function PATCH(request: Request) {
   }
 
   try {
-    return NextResponse.json(updateAccountNotificationPreferences(db, user.id, input));
+    return NextResponse.json(
+      current.mysql
+        ? await updateAccountNotificationPreferencesFromMysql(current.mysql, current.user.id, input)
+        : updateAccountNotificationPreferences(db, current.user.id, input),
+    );
   } catch {
     return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
   }

@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { alerts, bids, intentToBid, organizationMemberships, organizations, savedBids, users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { getAccountUsage } from "./usage";
+import { getAccountUsage, getAccountUsageFromMysql } from "./usage";
 
 describe("account usage service", () => {
   let testDb: TestDatabase;
@@ -101,6 +101,85 @@ describe("account usage service", () => {
     }).run();
 
     expect(getAccountUsage(testDb.db, "user_owner")).toEqual({
+      tier: "business",
+      workspaceUserIds: ["user_owner", "user_member"],
+      creditSummary: {
+        includedMonthlyCredits: 150,
+        purchasedCredits: 0,
+        availableCredits: 150,
+        resetsAt: null,
+      },
+      items: [
+        {
+          feature: "saved_bids",
+          used: 2,
+          limit: 250,
+          remaining: 248,
+          isLimited: false,
+          requiredTier: "enterprise",
+        },
+        {
+          feature: "intent_workspace",
+          used: 1,
+          limit: 100,
+          remaining: 99,
+          isLimited: false,
+          requiredTier: "enterprise",
+        },
+        {
+          feature: "search_alerts",
+          used: 1,
+          limit: 50,
+          remaining: 49,
+          isLimited: false,
+          requiredTier: "enterprise",
+        },
+        {
+          feature: "team_members",
+          used: 2,
+          limit: 10,
+          remaining: 8,
+          isLimited: false,
+          requiredTier: "enterprise",
+        },
+      ],
+    });
+  });
+
+  it("reports MySQL workspace-scoped usage against the current tier limits", async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes("FROM users")) {
+        return [[{ id: "user_owner", email: "owner@example.com", accountTier: "free" }], undefined];
+      }
+
+      if (sql.includes("organizations.id AS organizationId")) {
+        return [[{ organizationId: "org_1", organizationName: "Acme Federal Team", role: "owner", accountTier: "business" }], undefined];
+      }
+
+      if (sql.includes("SELECT user_id AS userId")) {
+        return [[{ userId: "user_owner" }, { userId: "user_member" }], undefined];
+      }
+
+      if (sql.includes("COUNT(DISTINCT bid_id) AS used") && sql.includes("saved_bids")) {
+        return [[{ used: 2 }], undefined];
+      }
+
+      if (sql.includes("COUNT(DISTINCT bid_id) AS used") && sql.includes("intent_to_bid")) {
+        return [[{ used: 1 }], undefined];
+      }
+
+      if (sql.includes("FROM alerts")) {
+        return [[{ used: 1 }], undefined];
+      }
+
+      if (sql.includes("FROM organization_memberships") && sql.includes("status IN")) {
+        return [[{ used: 2 }], undefined];
+      }
+
+      return [[], undefined];
+    });
+
+    await expect(getAccountUsageFromMysql({ query }, "user_owner")).resolves.toEqual({
       tier: "business",
       workspaceUserIds: ["user_owner", "user_member"],
       creditSummary: {

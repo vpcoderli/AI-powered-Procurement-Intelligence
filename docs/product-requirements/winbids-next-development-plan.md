@@ -40,7 +40,7 @@ Remaining depth:
 - Full admin UI for config registry.
 - More event writes across permissions, plan limits, upload failures, source changes, AI states, duplicates, deadlines, quotes, and awards.
 - Production AWS deployment execution, not just docs.
-- MySQL runtime cutover after the expanded runtime slice: auth/session, account profile/password/delete, workspace read/update, admin auth gate, billing, supplier profile, bid search/detail/saved-bids, intent create/list/detail/status, crawler health, and admin crawler logs now have MySQL paths. Continue converting the remaining SQLite-bound paths: password reset, account export/preferences/usage, workspace invites/members/ownership, attachment metadata lookup, search alerts, deeper intent panels, admin/config/QA writes, notification/event workers, crawler write/import, and data import.
+- MySQL runtime cutover after the expanded runtime slice: auth/session/password reset, account profile/password/delete, workspace read/update, admin auth gate, billing, supplier profile, bid search/detail/saved-bids/attachment metadata, search alerts CRUD/quota, intent create/list/detail/status, crawler health, and admin crawler logs now have MySQL paths. Continue converting the remaining SQLite-bound paths: account export/preferences/usage, workspace invites/members/ownership, search alert digest history, deeper intent panels, admin/config/QA writes, notification/event workers, crawler write/import, and data import.
 
 ### P0B. Source Legal-Use and Ingestion Governance
 

@@ -13,14 +13,12 @@
 ## Current Inventory
 
 - Production files still touching SQLite-style database APIs: 122.
-- Already MySQL-aware: migration runner, smoke verifier, auth/session/logout/register/login, admin auth gate, account profile/password/delete, workspace read/update, billing subscription/checkout/portal/cancel/webhook/invoices, supplier profile, bid search/detail/saved-bids, intent create/list/detail/status, `/api/health/scrapers`, and `/api/admin/crawler-logs`.
+- Already MySQL-aware: migration runner, smoke verifier, auth/session/logout/register/login/password reset, admin auth gate, account profile/password/delete, workspace read/update, billing subscription/checkout/portal/cancel/webhook/invoices, supplier profile, bid search/detail/saved-bids/attachment metadata, search alerts CRUD/quota, intent create/list/detail/status, `/api/health/scrapers`, and `/api/admin/crawler-logs`.
 - Remaining high-risk sync domains:
-  - Auth password reset.
   - Account export/usage/preferences and workspace invites/member management/ownership.
-  - Attachment metadata download lookup.
   - Compliance, submission, response workspace, pursuit, qualification.
   - Admin users, admin bid QA, config registry, events/outbox.
-  - Notifications/search alerts/workers.
+  - Search alert digest history, notifications, and workers.
   - Crawler locks/log writes/orchestration.
 
 ## Execution Rules
@@ -61,7 +59,7 @@
 - Modify: auth route tests and add MySQL runtime tests.
 
 - [x] Implement MySQL register/login/session/logout.
-- [ ] Implement MySQL password reset request/confirm.
+- [x] Implement MySQL password reset request/confirm.
 - [x] Implement MySQL admin access check.
 - [x] Extend smoke to register/login/read session/logout against MySQL.
 
@@ -73,7 +71,7 @@
 - Modify: account and billing route tests.
 
 - [x] Implement MySQL account profile, password change, delete.
-- [ ] Implement MySQL account export, notification preferences, usage, and password reset.
+- [ ] Implement MySQL account export, notification preferences, and usage.
 - [ ] Implement MySQL workspace membership/invites/ownership.
 - [x] Implement MySQL workspace read/update.
 - [x] Implement MySQL subscription, tier, invoice, checkout, portal, cancel, webhook updates.
@@ -90,9 +88,9 @@
 
 - [x] Implement MySQL bid detail read.
 - [x] Implement MySQL saved bid list/save/delete/merge.
-- [ ] Implement MySQL attachment metadata lookup while preserving local file download behavior.
+- [x] Implement MySQL attachment metadata lookup while preserving local file download behavior.
 - [x] Extend smoke to verify search, detail, and saved bid lifecycle.
-- [ ] Extend smoke to verify attachment metadata lookup.
+- [x] Extend smoke to verify attachment metadata lookup.
 
 ## Task 5: Intent And Pursuit Workflow Runtime
 
@@ -125,6 +123,7 @@
 - [ ] Implement MySQL admin bid QA read/write/batch/corrections.
 - [ ] Implement MySQL config registry list/upsert/patch with audit events.
 - [ ] Implement MySQL event log/outbox.
+- [x] Implement MySQL search alert CRUD and quota enforcement.
 - [ ] Implement MySQL notification outbox and search alert digest history.
 - [ ] Extend smoke to validate event write and notification outbox lifecycle.
 
@@ -163,8 +162,9 @@
 - [x] `/api/admin/crawler-logs` MySQL read path.
 - [x] `/api/bids` search MySQL read path.
 - [x] Auth/session/account profile/password/delete MySQL runtime.
+- [x] Password reset MySQL runtime.
 - [x] Workspace read/update and admin auth gate MySQL runtime.
 - [x] Billing subscription/checkout/portal/cancel/webhook/invoice MySQL runtime.
-- [x] Supplier profile, bid detail, saved bids, and intent create/list/detail/status MySQL runtime.
-- [x] Docker MySQL smoke covers schema, crawler health/admin logs, bid search/detail, saved bids, supplier profile, intent, billing, workspace, and auth session.
+- [x] Supplier profile, bid detail, attachment metadata, saved bids, search alerts, and intent create/list/detail/status MySQL runtime.
+- [x] Docker MySQL smoke covers schema, crawler health/admin logs, bid search/detail, attachment metadata, saved bids, supplier profile, search alerts, intent, billing, workspace, password reset, and auth session.
 - [ ] Full MySQL runtime cutover.
