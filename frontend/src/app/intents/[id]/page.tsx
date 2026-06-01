@@ -16,12 +16,14 @@ import {
   fetchPursuitDecisionBoard,
   fetchQualificationCitations,
   fetchQualificationFreshness,
+  fetchResponseWorkspace,
   fetchSubmissionGuidance,
   postQualificationQuestion,
   refreshQualificationEvidence,
   updateComplianceManifestItem,
   updateIntentStatus,
   updatePursuitDecision,
+  updateResponseWorkspaceItem,
   updateSubmissionGuidance,
 } from "@/lib/api/intents";
 import { createKnowledgeItem, fetchKnowledgeItems } from "@/lib/api/knowledge";
@@ -53,6 +55,13 @@ import type {
   PursuitEvidenceRef,
 } from "@/server/pursuit/types";
 import { PURSUIT_DECISIONS } from "@/server/pursuit/types";
+import type {
+  ResponseWorkspace,
+  ResponseWorkspaceItem,
+  ResponseWorkspaceItemKind,
+  ResponseWorkspaceItemStatus,
+} from "@/server/response-workspace/types";
+import { RESPONSE_WORKSPACE_ITEM_STATUSES } from "@/server/response-workspace/types";
 import type {
   SubmissionConfirmation,
   SubmissionGuidance,
@@ -125,6 +134,13 @@ const submissionMethods: SubmissionMethod[] = [
 const complianceStatuses: ComplianceItemStatus[] = [...COMPLIANCE_ITEM_STATUSES];
 const complianceEvidenceStatuses: ComplianceEvidenceStatus[] = [...COMPLIANCE_EVIDENCE_STATUSES];
 const pursuitDecisionOptions: PursuitDecisionValue[] = [...PURSUIT_DECISIONS];
+const responseWorkspaceStatusOptions: ResponseWorkspaceItemStatus[] = [...RESPONSE_WORKSPACE_ITEM_STATUSES];
+const responseWorkspaceKinds: ResponseWorkspaceItemKind[] = [
+  "task",
+  "checkpoint",
+  "artifact",
+  "outline_section",
+];
 const knowledgeTypeOptions: KnowledgeItem["type"][] = [
   "workflow_note",
   "template_snippet",
@@ -259,6 +275,11 @@ export default function IntentWorkspacePage() {
   const [isPursuitDecisionSaving, setIsPursuitDecisionSaving] = useState(false);
   const [pursuitDecisionError, setPursuitDecisionError] = useState<Error | null>(null);
   const [pursuitDecisionNotice, setPursuitDecisionNotice] = useState("");
+  const [responseWorkspace, setResponseWorkspace] = useState<ResponseWorkspace | null>(null);
+  const [isResponseWorkspaceLoading, setIsResponseWorkspaceLoading] = useState(false);
+  const [responseWorkspaceSavingItemId, setResponseWorkspaceSavingItemId] = useState<string | null>(null);
+  const [responseWorkspaceError, setResponseWorkspaceError] = useState<Error | null>(null);
+  const [responseWorkspaceNotice, setResponseWorkspaceNotice] = useState("");
   const [qualificationCitations, setQualificationCitations] = useState<QualificationCitation[]>([]);
   const [qualificationFreshness, setQualificationFreshness] = useState<QualificationFreshnessResponse | null>(null);
   const [isCitationsLoading, setIsCitationsLoading] = useState(false);
@@ -279,6 +300,7 @@ export default function IntentWorkspacePage() {
   const submissionGuidanceFeature = useFeature("submission_guidance");
   const complianceManifestFeature = useFeature("compliance_manifest");
   const pursuitDecisionFeature = useFeature("pursue_no_bid");
+  const responseWorkspaceFeature = useFeature("response.workspace.create");
   const qualificationQaFeature = useFeature("bid.brief.full.generate");
   const knowledgeStationFeature = useFeature("knowledge_station");
 
@@ -495,6 +517,43 @@ export default function IntentWorkspacePage() {
       cancelled = true;
     };
   }, [intentId, pursuitDecisionFeature.enabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled || !mountedRef.current) return;
+
+      setResponseWorkspace(null);
+      setResponseWorkspaceNotice("");
+      setResponseWorkspaceError(null);
+
+      if (!intentId || !responseWorkspaceFeature.enabled) {
+        setIsResponseWorkspaceLoading(false);
+        return;
+      }
+
+      setIsResponseWorkspaceLoading(true);
+
+      fetchResponseWorkspace(intentId)
+        .then((response) => {
+          if (cancelled || !mountedRef.current) return;
+          setResponseWorkspace(response.workspace);
+        })
+        .catch((err) => {
+          if (cancelled || !mountedRef.current) return;
+          setResponseWorkspaceError(err instanceof Error ? err : new Error("Failed to load response workspace"));
+        })
+        .finally(() => {
+          if (cancelled || !mountedRef.current) return;
+          setIsResponseWorkspaceLoading(false);
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [intentId, responseWorkspaceFeature.enabled]);
 
   useEffect(() => {
     let cancelled = false;
@@ -755,6 +814,47 @@ export default function IntentWorkspacePage() {
     } finally {
       if (mountedRef.current) {
         setIsPursuitDecisionSaving(false);
+      }
+    }
+  };
+
+  function updateLocalResponseWorkspaceItem(
+    itemId: string,
+    patch: Partial<Pick<ResponseWorkspaceItem, "status" | "notes" | "title" | "dueAt">>,
+  ) {
+    setResponseWorkspace((current) => current
+      ? {
+          ...current,
+          items: current.items.map((item) => (item.id === itemId ? { ...item, ...patch } : item)),
+        }
+      : current);
+  }
+
+  const handleResponseWorkspaceItemUpdate = async (
+    item: ResponseWorkspaceItem,
+    patch: Partial<Pick<ResponseWorkspaceItem, "status" | "notes" | "title" | "dueAt">>,
+  ) => {
+    if (!intent || !responseWorkspaceFeature.enabled || responseWorkspaceSavingItemId) return;
+
+    setResponseWorkspaceSavingItemId(item.id);
+    setResponseWorkspaceNotice("");
+    setResponseWorkspaceError(null);
+
+    try {
+      const response = await updateResponseWorkspaceItem(intent.id, {
+        itemId: item.id,
+        ...patch,
+      });
+      if (!mountedRef.current) return;
+
+      setResponseWorkspace(response.workspace);
+      setResponseWorkspaceNotice(t("intentsPage.responseWorkspaceSaved"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setResponseWorkspaceError(err instanceof Error ? err : new Error("Failed to save response workspace"));
+    } finally {
+      if (mountedRef.current) {
+        setResponseWorkspaceSavingItemId(null);
       }
     }
   };
@@ -1227,22 +1327,28 @@ export default function IntentWorkspacePage() {
               ["submission", Route],
               ["compliance", FileCheck2],
               ["decision", ClipboardCheck],
+              ["response", PackageCheck],
               ["award", PackageCheck],
             ].map(([key, Icon]) => {
               const ModuleIcon = Icon as typeof Target;
               const isSubmissionLocked = key === "submission" && !submissionGuidanceFeature.enabled;
               const isComplianceLocked = key === "compliance" && !complianceManifestFeature.enabled;
               const isDecisionLocked = key === "decision" && !pursuitDecisionFeature.enabled;
-              const isLocked = isSubmissionLocked || isComplianceLocked || isDecisionLocked;
+              const isResponseLocked = key === "response" && !responseWorkspaceFeature.enabled;
+              const isLocked = isSubmissionLocked || isComplianceLocked || isDecisionLocked || isResponseLocked;
               const requiredTier = isComplianceLocked
                 ? complianceManifestFeature.requiredTier
                 : isDecisionLocked
                   ? pursuitDecisionFeature.requiredTier
+                  : isResponseLocked
+                    ? responseWorkspaceFeature.requiredTier
                   : submissionGuidanceFeature.requiredTier;
               const lockedMessage = isComplianceLocked
                 ? lockedFeatureMessage("compliance_manifest")
                 : isDecisionLocked
                   ? lockedFeatureMessage("pursue_no_bid")
+                  : isResponseLocked
+                    ? lockedFeatureMessage("response.workspace.create")
                   : lockedFeatureMessage("submission_guidance");
               return (
                 <div
@@ -1532,6 +1638,147 @@ export default function IntentWorkspacePage() {
                 </div>
               </div>
             </div>
+          </div>
+        )}
+      </section>
+
+      <section
+        className={`winbids-panel responseWorkspace rounded-lg border p-5 shadow-sm ${
+          responseWorkspaceFeature.enabled ? "border-slate-200 bg-white" : "border-amber-200 bg-amber-50/60"
+        }`}
+      >
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-700">
+              {responseWorkspaceFeature.enabled
+                ? t("intentsPage.responseWorkspace")
+                : t("intentsPage.nextPhasePreview")}
+            </p>
+            <h2 className="mt-1 flex items-center gap-2 text-2xl font-black text-slate-950">
+              <PackageCheck size={21} className="text-blue-700" aria-hidden="true" />
+              {t("intentsPage.responseWorkspace")}
+            </h2>
+            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
+              {t("intentsPage.responseWorkspaceDescription")}
+            </p>
+          </div>
+          <span className="w-fit rounded-full border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-700">
+            {responseWorkspaceFeature.enabled
+              ? responseWorkspace
+                ? `${responseWorkspace.summary.done}/${responseWorkspace.summary.total} ${t("intentsPage.responseWorkspaceDone")}`
+                : t("intentsPage.responseWorkspaceLoading")
+              : lockedFeatureMessage("response.workspace.create")}
+          </span>
+        </div>
+
+        {!responseWorkspaceFeature.enabled ? (
+          <p className="mt-4 text-sm font-semibold leading-6 text-amber-800">
+            {lockedFeatureMessage("response.workspace.create")}
+          </p>
+        ) : (
+          <div className="mt-5 space-y-4">
+            <div className="grid gap-3 sm:grid-cols-4">
+              {[
+                ["total", responseWorkspace?.summary.total ?? 0],
+                ["done", responseWorkspace?.summary.done ?? 0],
+                ["blocked", responseWorkspace?.summary.blocked ?? 0],
+                ["outlineSections", responseWorkspace?.summary.outlineSections ?? 0],
+              ].map(([key, value]) => (
+                <div key={key as string} className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+                  <p className="text-xs font-black uppercase text-slate-400">
+                    {t(`intentsPage.responseWorkspaceSummary.${key as string}`)}
+                  </p>
+                  <p className="mt-1 text-2xl font-black text-slate-950">{value}</p>
+                </div>
+              ))}
+            </div>
+
+            {isResponseWorkspaceLoading ? (
+              <p className="text-sm font-semibold text-slate-500">{t("intentsPage.responseWorkspaceLoading")}</p>
+            ) : (
+              <div className="grid gap-4 lg:grid-cols-2">
+                {responseWorkspaceKinds.map((kind) => {
+                  const items = responseWorkspace?.items.filter((item) => item.kind === kind) ?? [];
+
+                  return (
+                    <article key={kind} className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-sm font-black text-slate-950">
+                          {t(`intentsPage.responseWorkspaceKinds.${kind}`)}
+                        </h3>
+                        <Badge variant="outline" className="border-slate-200 bg-white text-slate-700">
+                          {items.length} {t("intentsPage.items")}
+                        </Badge>
+                      </div>
+                      <div className="mt-3 grid gap-3">
+                        {items.map((item) => (
+                          <div key={item.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0">
+                                <p className="break-words text-sm font-black leading-6 text-slate-950">
+                                  {item.title}
+                                </p>
+                                {item.dueAt ? (
+                                  <p className="mt-1 text-xs font-bold text-slate-400">
+                                    {t("intentsPage.responseWorkspaceDue")}: {item.dueAt.slice(0, 10)}
+                                  </p>
+                                ) : null}
+                              </div>
+                              <Select
+                                value={item.status}
+                                onValueChange={(value) =>
+                                  void handleResponseWorkspaceItemUpdate(item, {
+                                    status: value as ResponseWorkspaceItemStatus,
+                                  })
+                                }
+                                disabled={Boolean(responseWorkspaceSavingItemId)}
+                              >
+                                <SelectTrigger className="h-9 min-w-40 rounded-lg border-slate-200 bg-white shadow-sm focus:ring-slate-900">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent className="rounded-lg border-slate-200 shadow-lg">
+                                  {responseWorkspaceStatusOptions.map((status) => (
+                                    <SelectItem key={status} value={status}>
+                                      {t(`intentsPage.responseWorkspaceStatuses.${status}`)}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <textarea
+                              value={item.notes}
+                              onChange={(event) => updateLocalResponseWorkspaceItem(item.id, { notes: event.target.value })}
+                              onBlur={(event) =>
+                                void handleResponseWorkspaceItemUpdate(item, { notes: event.currentTarget.value })
+                              }
+                              disabled={Boolean(responseWorkspaceSavingItemId)}
+                              placeholder={t("intentsPage.responseWorkspaceNotesPlaceholder")}
+                              className="mt-3 min-h-16 w-full resize-y rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                            />
+                            {responseWorkspaceSavingItemId === item.id ? (
+                              <p className="mt-2 text-xs font-bold text-slate-400">
+                                {t("intentsPage.submissionSaving")}
+                              </p>
+                            ) : null}
+                          </div>
+                        ))}
+                        {items.length === 0 ? (
+                          <p className="text-sm font-semibold text-slate-500">
+                            {t("intentsPage.responseWorkspaceEmpty")}
+                          </p>
+                        ) : null}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+
+            <p className="min-h-5 text-sm font-semibold text-slate-500">
+              {responseWorkspaceError
+                ? t("intentsPage.responseWorkspaceSaveError")
+                : responseWorkspaceNotice}
+            </p>
           </div>
         )}
       </section>

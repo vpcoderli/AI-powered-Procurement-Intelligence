@@ -15,6 +15,10 @@ import type {
   UpdateComplianceManifestItemInput,
 } from "@/server/compliance/types";
 import type {
+  ResponseWorkspaceResponse,
+  UpdateResponseWorkspaceItemInput,
+} from "@/server/response-workspace/types";
+import type {
   CreatePursuitDecisionInput,
   PursuitDecisionBoardResponse,
 } from "@/server/pursuit/types";
@@ -150,6 +154,25 @@ export async function updateComplianceManifestItem(
   });
 
   return parseResponse<ComplianceManifestResponse>(response);
+}
+
+export async function fetchResponseWorkspace(id: string) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/response-workspace`);
+
+  return parseResponse<ResponseWorkspaceResponse>(response);
+}
+
+export async function updateResponseWorkspaceItem(
+  id: string,
+  input: UpdateResponseWorkspaceItemInput,
+) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/response-workspace`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<ResponseWorkspaceResponse>(response);
 }
 
 export async function fetchPursuitDecisionBoard(id: string) {
