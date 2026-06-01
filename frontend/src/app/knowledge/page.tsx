@@ -13,19 +13,29 @@ import { fetchKnowledgeItems } from "@/lib/api/knowledge";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { KNOWLEDGE_ITEM_TYPES, type KnowledgeItem, type KnowledgeItemType } from "@/server/knowledge/types";
 
-const knowledgeStationTitle = "Knowledge Station";
 const allTypes = "all";
 
 type TypeFilter = typeof allTypes | KnowledgeItemType;
 
-function formatDate(value: string) {
+function safeKnowledgeSourceUrl(value: string) {
+  if (value.startsWith("/")) return value;
+
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "http:" || protocol === "https:" ? value : "";
+  } catch {
+    return "";
+  }
+}
+
+function formatDate(value: string, locale: string) {
   const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {
     return value;
   }
 
-  return new Intl.DateTimeFormat("en", {
+  return new Intl.DateTimeFormat(locale, {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -50,11 +60,15 @@ function sourceLinks(item: KnowledgeItem) {
   }
 
   if (item.sourceUrl) {
-    links.push({
-      href: item.sourceUrl,
-      labelKey: "knowledge.sourceUrl",
-      external: true,
-    });
+    const sourceUrl = safeKnowledgeSourceUrl(item.sourceUrl);
+
+    if (sourceUrl) {
+      links.push({
+        href: sourceUrl,
+        labelKey: "knowledge.sourceUrl",
+        external: !sourceUrl.startsWith("/"),
+      });
+    }
   }
 
   return links;
@@ -62,7 +76,7 @@ function sourceLinks(item: KnowledgeItem) {
 
 export default function KnowledgeLibraryPage() {
   const { user } = useAuth();
-  const { t } = useLanguage();
+  const { language, t } = useLanguage();
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>(allTypes);
   const [items, setItems] = useState<KnowledgeItem[]>([]);
@@ -125,7 +139,7 @@ export default function KnowledgeLibraryPage() {
         <section className="winbids-hero-panel rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
-              <p className="winbids-kicker">{knowledgeStationTitle}</p>
+              <p className="winbids-kicker">{t("knowledge.title")}</p>
               <h1 className="mt-2 text-3xl font-black tracking-normal text-slate-950">{t("knowledge.lockedTitle")}</h1>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">{t("knowledge.libraryLockedBody")}</p>
             </div>
@@ -143,7 +157,7 @@ export default function KnowledgeLibraryPage() {
       <section className="winbids-hero-panel rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <p className="winbids-kicker">{knowledgeStationTitle}</p>
+            <p className="winbids-kicker">{t("knowledge.title")}</p>
             <h1 className="mt-2 text-3xl font-black tracking-normal text-slate-950 md:text-5xl">
               {t("knowledge.library")}
             </h1>
@@ -230,7 +244,7 @@ export default function KnowledgeLibraryPage() {
                     <Badge variant="outline" className="rounded-md border-slate-200 bg-slate-50 text-slate-600">
                       {t(`knowledge.types.${item.type}`)}
                     </Badge>
-                    <span className="text-xs font-semibold text-slate-500">{formatDate(item.updatedAt)}</span>
+                    <span className="text-xs font-semibold text-slate-500">{formatDate(item.updatedAt, language)}</span>
                   </div>
                   <h2 className="mt-3 break-words text-xl font-black text-slate-950">{item.title}</h2>
                 </div>
