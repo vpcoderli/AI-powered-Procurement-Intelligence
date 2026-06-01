@@ -608,6 +608,35 @@ export const pursuitDecisions = sqliteTable(
   }),
 );
 
+export const responseWorkspaceItems = sqliteTable(
+  "response_workspace_items",
+  {
+    id: text("id").primaryKey(),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intentToBid.id, { onDelete: "cascade" }),
+    bidId: text("bid_id")
+      .notNull()
+      .references(() => bids.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    title: text("title").notNull(),
+    status: text("status").notNull().default("todo"),
+    notes: text("notes").notNull().default(""),
+    dueAt: text("due_at"),
+    sortOrder: integer("sort_order").notNull().default(0),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    intentIdx: index("idx_response_workspace_items_intent_id").on(table.intentId),
+    userIdx: index("idx_response_workspace_items_user_id").on(table.userId),
+    statusIdx: index("idx_response_workspace_items_status").on(table.status),
+  }),
+);
+
 export const alerts = sqliteTable(
   "alerts",
   {

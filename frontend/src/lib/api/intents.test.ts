@@ -9,12 +9,14 @@ import {
   fetchPursuitDecisionBoard,
   fetchQualificationCitations,
   fetchQualificationFreshness,
+  fetchResponseWorkspace,
   postQualificationQuestion,
   refreshQualificationEvidence,
   updateComplianceManifestItem,
   fetchSubmissionGuidance,
   updateIntentStatus,
   updatePursuitDecision,
+  updateResponseWorkspaceItem,
   updateSubmissionGuidance,
 } from "./intents";
 
@@ -187,6 +189,41 @@ describe("intent API client", () => {
 
     expect(result).toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/compliance", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  });
+
+  it("fetches response workspace with an encoded intent id", async () => {
+    const body = {
+      workspace: {
+        intentId: "intent/with space",
+        summary: { total: 1, done: 0, blocked: 0 },
+        items: [{ id: "response_workspace_item_1", status: "todo" }],
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await fetchResponseWorkspace("intent/with space");
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/response-workspace");
+  });
+
+  it("updates a response workspace item", async () => {
+    const payload = {
+      itemId: "response_workspace_item_1",
+      status: "done" as const,
+      notes: "Ready for review.",
+    };
+    const body = { workspace: { intentId: "intent/with space", items: [{ id: payload.itemId }] } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await updateResponseWorkspaceItem("intent/with space", payload);
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/response-workspace", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

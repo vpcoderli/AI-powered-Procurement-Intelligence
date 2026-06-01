@@ -10,10 +10,12 @@ import {
   bids,
   crawlerLocks,
   dataSources,
+  intentToBid,
   notificationOutbox,
   organizationMemberships,
   organizations,
   passwordResetTokens,
+  responseWorkspaceItems,
   searchAlertDigestRuns,
   userNotificationPreferences,
   users,
@@ -303,6 +305,7 @@ describe("database schema", () => {
       expect(tables).toContain("submission_confirmations");
       expect(tables).toContain("compliance_manifest_items");
       expect(tables).toContain("pursuit_decisions");
+      expect(tables).toContain("response_workspace_items");
       expect(tables).toContain("admin_user_audit_logs");
       expect(tables).toContain("account_subscriptions");
       expect(tables).toContain("subscription_events");
@@ -687,6 +690,73 @@ describe("database schema", () => {
         "idx_knowledge_items_source_bid_id",
         "idx_knowledge_items_created_at",
       ]));
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("creates response workspace items with intent indexes", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      const tables = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const indexes = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const columns = testDb.db.$client
+        .prepare("PRAGMA table_info(response_workspace_items)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(tables).toContain("response_workspace_items");
+      expect(columns).toEqual(expect.arrayContaining([
+        "id",
+        "intent_id",
+        "bid_id",
+        "user_id",
+        "kind",
+        "title",
+        "status",
+        "notes",
+        "due_at",
+        "sort_order",
+        "created_at",
+        "updated_at",
+      ]));
+      expect(indexes).toEqual(expect.arrayContaining([
+        "idx_response_workspace_items_intent_id",
+        "idx_response_workspace_items_user_id",
+        "idx_response_workspace_items_status",
+      ]));
+
+      testDb.db.insert(intentToBid).values({
+        id: "intent_seed",
+        userId: "anon_seed",
+        bidId: "1",
+        status: "intent_added",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+
+      expect(() =>
+        testDb.db.insert(responseWorkspaceItems).values({
+          id: "response_workspace_item_1",
+          intentId: "intent_seed",
+          bidId: "1",
+          userId: "anon_seed",
+          kind: "task",
+          title: "Draft technical approach",
+          status: "todo",
+          notes: "",
+          sortOrder: 1,
+          createdAt: "2026-06-01T00:00:00.000Z",
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
     } finally {
       await testDb.cleanup();
     }

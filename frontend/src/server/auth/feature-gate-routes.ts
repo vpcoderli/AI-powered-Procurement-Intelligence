@@ -28,6 +28,11 @@ export const FEATURE_API_COVERAGE: readonly FeatureApiCoverageEntry[] = [
     methods: ["GET", "PATCH"],
   },
   {
+    sourcePath: "../../app/api/intents/[id]/response-workspace/route.ts",
+    feature: "response.workspace.create",
+    methods: ["GET", "PATCH"],
+  },
+  {
     sourcePath: "../../app/api/intents/[id]/qa/route.ts",
     feature: "bid.brief.full.generate",
     methods: ["POST"],
@@ -43,7 +48,6 @@ export const UNIMPLEMENTED_PAID_FEATURE_API_COVERAGE = [
   "quote_workflow",
   "compliance.manifest.generate",
   "readiness.review.run",
-  "response.workspace.create",
   "artifact.vault.upload",
   "response.section.draft",
   "package.review.run",
