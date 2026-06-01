@@ -62,7 +62,7 @@ describe("feature gate coverage", () => {
 
   it("documents every paid feature as either implemented with protected routes or explicitly not implemented", () => {
     const implemented = new Set(FEATURE_API_COVERAGE.map((route) => route.feature));
-    const unimplemented = new Set(UNIMPLEMENTED_PAID_FEATURE_API_COVERAGE);
+    const unimplemented = new Set<FeatureKey>(UNIMPLEMENTED_PAID_FEATURE_API_COVERAGE);
 
     expect([...implemented].filter((feature) => unimplemented.has(feature))).toEqual([]);
     expect([...implemented, ...unimplemented].sort()).toEqual([...PAID_PRODUCT_FEATURE_KEYS].sort());
