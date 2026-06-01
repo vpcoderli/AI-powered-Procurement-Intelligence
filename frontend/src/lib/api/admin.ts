@@ -31,6 +31,7 @@ import type {
 import type { NotificationOutboxRow, NotificationStatus } from "@/server/notifications/types";
 import type { SubscriptionLifecycleReconcileResult } from "@/server/billing/subscriptions";
 import type { ScheduleDunningRemindersResult } from "@/server/billing/dunning";
+import type { RiskChecklistReport } from "@/server/risk/checklist";
 
 export type {
   AdminBidQaArchiveStatus,
@@ -70,6 +71,10 @@ type AdminApiErrorCode =
 
 export interface AdminCrawlerLogsResponse {
   logs: AdminCrawlerLog[];
+}
+
+export interface AdminRiskChecklistResponse {
+  report: RiskChecklistReport;
 }
 
 export interface UpdateAdminBidQaReviewResponse {
@@ -167,6 +172,12 @@ export async function listAdminDataSources() {
   const response = await fetch("/api/admin/data-sources");
 
   return parseResponse<AdminDataSourcesResponse>(response);
+}
+
+export async function getAdminRiskChecklist() {
+  const response = await fetch("/api/admin/risk-check");
+
+  return parseResponse<AdminRiskChecklistResponse>(response);
 }
 
 function buildQueryString(params: Record<string, string | number | undefined>) {

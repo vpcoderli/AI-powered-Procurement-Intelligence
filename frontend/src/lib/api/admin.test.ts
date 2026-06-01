@@ -4,6 +4,7 @@ import {
   batchUpdateAdminBidQaItems,
   createAdminUser,
   deliverAdminNotifications,
+  getAdminRiskChecklist,
   getAdminBidQaCorrections,
   listAdminUserFeatureOverrides,
   listAdminNotifications,
@@ -51,6 +52,20 @@ describe("admin API client", () => {
 
     await expect(listAdminDataSources()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources");
+  });
+
+  it("gets admin risk checklist report", async () => {
+    const body = {
+      report: {
+        ok: true,
+        checkedAt: "2026-06-01T00:00:00.000Z",
+        checks: [{ id: "state-coverage", label: "50 state data coverage", ok: true, summary: "50/50 states" }],
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(getAdminRiskChecklist()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/risk-check");
   });
 
   it("lists admin users", async () => {

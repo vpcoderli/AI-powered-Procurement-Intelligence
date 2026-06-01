@@ -34,6 +34,7 @@ import {
   batchUpdateAdminBidQaItems,
   createAdminUser,
   deliverAdminNotifications,
+  getAdminRiskChecklist,
   getAdminBidQaCorrections,
   listAdminBidQaItems,
   listAdminCrawlerLogs,
@@ -58,6 +59,7 @@ import {
   type AdminDataSourcesResponse,
   type AdminUserFeatureOverridesResponse,
   type AdminNotificationsResponse,
+  type AdminRiskChecklistResponse,
   type AdminUserAuditLog,
   type AdminUserAuditAction,
   type AdminUserAuditActorKind,
@@ -77,6 +79,7 @@ type LoadState =
       data: AdminDataSourcesResponse;
       logs: AdminCrawlerLog[];
       bidQa: AdminBidQaResponse;
+      riskReport: AdminRiskChecklistResponse["report"];
       users: AdminUser[];
       userAuditLogs: AdminUserAuditLog[];
       notifications: AdminNotificationsResponse["notifications"];
@@ -351,6 +354,61 @@ function SummaryCard({
   );
 }
 
+function riskCheckTone(ok: boolean) {
+  return ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700";
+}
+
+function RiskCheck({
+  report,
+  t,
+}: {
+  report: AdminRiskChecklistResponse["report"];
+  t: (key: string) => string;
+}) {
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex items-center gap-2 font-semibold text-slate-950">
+          {report.ok ? <ShieldCheck size={18} /> : <AlertTriangle size={18} />}
+          {t("admin.riskCheck")}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline" className={riskCheckTone(report.ok)}>
+            {report.ok ? t("admin.riskCheckPassed") : t("admin.riskCheckFailed")}
+          </Badge>
+          <span className="text-xs font-medium text-slate-500">
+            {t("admin.riskCheckCheckedAt").replace("{time}", formatDate(report.checkedAt))}
+          </span>
+        </div>
+      </div>
+      <div className="grid gap-3 p-4 lg:grid-cols-5">
+        {report.checks.map((check) => (
+          <div key={check.id} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="break-words text-sm font-semibold text-slate-950">{check.label}</div>
+                <div className="mt-1 text-xs leading-5 text-slate-600">{check.summary}</div>
+              </div>
+              <Badge variant="outline" className={riskCheckTone(check.ok)}>
+                {check.ok ? t("admin.riskCheckOk") : t("admin.riskCheckIssue")}
+              </Badge>
+            </div>
+            {check.details && check.details.length > 0 ? (
+              <ul className="mt-2 space-y-1 text-xs leading-5 text-rose-700">
+                {check.details.slice(0, 3).map((detail) => (
+                  <li key={detail}>{detail}</li>
+                ))}
+              </ul>
+            ) : (
+              <div className="mt-2 text-xs leading-5 text-slate-500">{t("admin.riskCheckNoIssues")}</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function AdminAccessState({
   icon: Icon,
   title,
@@ -454,16 +512,18 @@ export default function AdminPage() {
     setState({ status: "loading" });
     Promise.all([
       listAdminDataSources(),
+      getAdminRiskChecklist(),
       listAdminCrawlerLogs(),
       listAdminBidQaItems(bidQaRequest()),
       canManageUsers ? listAdminUsers(userFilters) : Promise.resolve({ users: [] }),
       canManageUsers ? listAdminUserAuditLogs(auditLogRequest()) : Promise.resolve({ logs: [] }),
       listAdminNotifications({ limit: 10 }),
     ])
-      .then(([data, logsResponse, bidQa, usersResponse, userAuditLogsResponse, notificationsResponse]) => {
+      .then(([data, riskResponse, logsResponse, bidQa, usersResponse, userAuditLogsResponse, notificationsResponse]) => {
         setState({
           status: "ready",
           data,
+          riskReport: riskResponse.report,
           logs: logsResponse.logs,
           bidQa,
           users: usersResponse.users,
@@ -484,6 +544,7 @@ export default function AdminPage() {
   }, [canAccessAdminConsole, isAuthLoading, load]);
 
   const summary = state.status === "ready" ? state.data.summary : null;
+  const riskReport = state.status === "ready" ? state.riskReport : null;
   const sources = state.status === "ready" ? state.data.sources : [];
   const logs = state.status === "ready" ? state.logs : [];
   const bidQa = state.status === "ready" ? state.bidQa : null;
@@ -1030,6 +1091,8 @@ export default function AdminPage() {
           <SummaryCard label={t("admin.failingSources")} value={summary.failingSources} icon={AlertTriangle} />
         </div>
       )}
+
+      {riskReport && <RiskCheck report={riskReport} t={t} />}
 
       {state.status === "ready" && bidQa && (
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
