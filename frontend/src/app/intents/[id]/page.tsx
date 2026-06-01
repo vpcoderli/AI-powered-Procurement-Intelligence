@@ -786,7 +786,7 @@ export default function IntentWorkspacePage() {
         sourceKind: "generated_coach",
         sourceIntentId: intent.id,
         sourceBidId: intent.bid.id,
-        sourceUrl: card.href,
+        sourceUrl: card.href ?? intent.bid.sourceUrl,
       });
       if (!mountedRef.current) return;
 
