@@ -24,10 +24,13 @@ import {
   updatePursuitDecision,
   updateSubmissionGuidance,
 } from "@/lib/api/intents";
+import { createKnowledgeItem, fetchKnowledgeItems } from "@/lib/api/knowledge";
 import { lockedFeatureMessage, useFeature } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import { generateWorkflowCoachCards } from "@/lib/knowledge/coach";
 import type { IntentDetail, IntentStatus } from "@/server/intents/types";
 import { INTENT_STATUSES } from "@/server/intents/types";
+import type { KnowledgeItem, WorkflowCoachCard } from "@/server/knowledge/types";
 import type {
   QualificationCitation,
   QualificationFreshnessResponse,
@@ -115,6 +118,7 @@ function freshnessTone(status: QualificationFreshnessResponse["status"] | undefi
 
 const prototypeWorkspace = "Intent Workspace";
 const submissionPath = "Submission Path";
+const knowledgeStationPanel = "Knowledge Station";
 
 const submissionMethods: SubmissionMethod[] = [
   "external_portal",
@@ -127,6 +131,12 @@ const submissionMethods: SubmissionMethod[] = [
 const complianceStatuses: ComplianceItemStatus[] = [...COMPLIANCE_ITEM_STATUSES];
 const complianceEvidenceStatuses: ComplianceEvidenceStatus[] = [...COMPLIANCE_EVIDENCE_STATUSES];
 const pursuitDecisionOptions: PursuitDecisionValue[] = [...PURSUIT_DECISIONS];
+const knowledgeTypeOptions: KnowledgeItem["type"][] = [
+  "workflow_note",
+  "template_snippet",
+  "requirement",
+  "lesson",
+];
 
 type SubmissionDraft = Pick<
   SubmissionGuidance,
@@ -151,6 +161,13 @@ interface PursuitDecisionDraft {
   notes: string;
 }
 
+interface KnowledgeDraft {
+  title: string;
+  type: KnowledgeItem["type"];
+  tags: string;
+  body: string;
+}
+
 const defaultSubmissionDraft: SubmissionDraft = {
   method: "unknown",
   portalUrl: "",
@@ -164,6 +181,13 @@ const defaultPursuitDecisionDraft: PursuitDecisionDraft = {
   decision: "defer",
   reasons: "",
   notes: "",
+};
+
+const defaultKnowledgeDraft: KnowledgeDraft = {
+  title: "",
+  type: "workflow_note",
+  tags: "",
+  body: "",
 };
 
 function currentDatetimeLocal() {
@@ -188,6 +212,13 @@ function toIsoFromDatetimeLocal(value: string) {
   const date = new Date(value);
 
   return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
+}
+
+function parseKnowledgeTags(value: string) {
+  return value
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
 }
 
 const pursuitLanes = [
@@ -244,10 +275,18 @@ export default function IntentWorkspacePage() {
   const [qaAnswer, setQaAnswer] = useState<QualificationQuestionResponse | null>(null);
   const [isQaLoading, setIsQaLoading] = useState(false);
   const [qaError, setQaError] = useState<Error | null>(null);
+  const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>([]);
+  const [knowledgeNotice, setKnowledgeNotice] = useState("");
+  const [knowledgeError, setKnowledgeError] = useState<Error | null>(null);
+  const [knowledgeDraft, setKnowledgeDraft] = useState<KnowledgeDraft>(defaultKnowledgeDraft);
+  const [isKnowledgeLoading, setIsKnowledgeLoading] = useState(false);
+  const [isKnowledgeSaving, setIsKnowledgeSaving] = useState(false);
+  const [savingKnowledgeCoachCardId, setSavingKnowledgeCoachCardId] = useState<string | null>(null);
   const submissionGuidanceFeature = useFeature("submission_guidance");
   const complianceManifestFeature = useFeature("compliance_manifest");
   const pursuitDecisionFeature = useFeature("pursue_no_bid");
   const qualificationQaFeature = useFeature("bid.brief.full.generate");
+  const knowledgeStationFeature = useFeature("knowledge_station");
 
   const intentId = typeof params?.id === "string" ? params.id : Array.isArray(params?.id) ? params.id[0] : "";
 
@@ -463,9 +502,52 @@ export default function IntentWorkspacePage() {
     };
   }, [intentId, pursuitDecisionFeature.enabled]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled || !mountedRef.current) return;
+
+      setKnowledgeItems([]);
+      setKnowledgeNotice("");
+      setKnowledgeError(null);
+      setKnowledgeDraft(defaultKnowledgeDraft);
+
+      if (!intent || !knowledgeStationFeature.enabled) {
+        setIsKnowledgeLoading(false);
+        return;
+      }
+
+      setIsKnowledgeLoading(true);
+
+      fetchKnowledgeItems({ intentId: intent.id, bidId: intent.bid.id, limit: 10 })
+        .then((response) => {
+          if (cancelled || !mountedRef.current) return;
+          setKnowledgeItems(response.items);
+        })
+        .catch((err) => {
+          if (cancelled || !mountedRef.current) return;
+          setKnowledgeError(err instanceof Error ? err : new Error("Failed to load knowledge items"));
+        })
+        .finally(() => {
+          if (cancelled || !mountedRef.current) return;
+          setIsKnowledgeLoading(false);
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [intent, knowledgeStationFeature.enabled]);
+
   const matchComponents = useMemo(() => {
     if (!intent) return [];
     return Object.entries(intent.match.components);
+  }, [intent]);
+
+  const workflowCoachCards = useMemo<WorkflowCoachCard[]>(() => {
+    if (!intent) return [];
+    return generateWorkflowCoachCards(intent);
   }, [intent]);
 
   const handleAskEvidenceQuestion = async () => {
@@ -679,6 +761,85 @@ export default function IntentWorkspacePage() {
     } finally {
       if (mountedRef.current) {
         setIsPursuitDecisionSaving(false);
+      }
+    }
+  };
+
+  const prependKnowledgeItem = (item: KnowledgeItem) => {
+    setKnowledgeItems((current) => [item, ...current.filter((currentItem) => currentItem.id !== item.id)].slice(0, 10));
+  };
+
+  const handleSaveCoachKnowledge = async (card: WorkflowCoachCard) => {
+    if (!intent || !knowledgeStationFeature.enabled || isKnowledgeSaving) return;
+
+    setIsKnowledgeSaving(true);
+    setSavingKnowledgeCoachCardId(card.id);
+    setKnowledgeNotice("");
+    setKnowledgeError(null);
+
+    try {
+      const response = await createKnowledgeItem({
+        title: card.title,
+        body: `${card.guidance}\n\n${card.suggestedAction}`,
+        type: "workflow_note",
+        tags: [card.category, card.severity],
+        sourceKind: "generated_coach",
+        sourceIntentId: intent.id,
+        sourceBidId: intent.bid.id,
+        sourceUrl: card.href,
+      });
+      if (!mountedRef.current) return;
+
+      prependKnowledgeItem(response.item);
+      setKnowledgeNotice(t("knowledge.saved"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setKnowledgeError(err instanceof Error ? err : new Error("Failed to save knowledge item"));
+    } finally {
+      if (mountedRef.current) {
+        setIsKnowledgeSaving(false);
+        setSavingKnowledgeCoachCardId(null);
+      }
+    }
+  };
+
+  const handleCreateKnowledgeItem = async () => {
+    if (!intent || !knowledgeStationFeature.enabled || isKnowledgeSaving) return;
+
+    const title = knowledgeDraft.title.trim();
+    const body = knowledgeDraft.body.trim();
+
+    if (!title || !body) {
+      setKnowledgeError(new Error("Knowledge title and body are required"));
+      return;
+    }
+
+    setIsKnowledgeSaving(true);
+    setKnowledgeNotice("");
+    setKnowledgeError(null);
+
+    try {
+      const response = await createKnowledgeItem({
+        title,
+        body,
+        type: knowledgeDraft.type,
+        tags: parseKnowledgeTags(knowledgeDraft.tags),
+        sourceKind: "manual",
+        sourceIntentId: intent.id,
+        sourceBidId: intent.bid.id,
+        sourceUrl: intent.bid.sourceUrl,
+      });
+      if (!mountedRef.current) return;
+
+      prependKnowledgeItem(response.item);
+      setKnowledgeDraft(defaultKnowledgeDraft);
+      setKnowledgeNotice(t("knowledge.saved"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setKnowledgeError(err instanceof Error ? err : new Error("Failed to save knowledge item"));
+    } finally {
+      if (mountedRef.current) {
+        setIsKnowledgeSaving(false);
       }
     }
   };
@@ -1376,6 +1537,226 @@ export default function IntentWorkspacePage() {
                   )}
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <section
+        aria-label={`${knowledgeStationPanel} workflow coach`}
+        className={`winbids-panel knowledgeStation rounded-lg border p-5 shadow-sm ${
+          knowledgeStationFeature.enabled ? "border-slate-200 bg-white" : "border-amber-200 bg-amber-50/60"
+        }`}
+      >
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-700">
+              {knowledgeStationFeature.enabled ? t("knowledge.library") : t("knowledge.lockedTitle")}
+            </p>
+            <h2 className="mt-1 flex items-center gap-2 text-2xl font-black text-slate-950">
+              <Sparkles size={21} className="text-blue-700" aria-hidden="true" />
+              {t("knowledge.title")}
+            </h2>
+          </div>
+          <span className="w-fit rounded-full border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-700">
+            {knowledgeStationFeature.enabled
+              ? `${knowledgeItems.length}/10 ${t("knowledge.recentItems")}`
+              : lockedFeatureMessage("knowledge_station")}
+          </span>
+        </div>
+
+        {!knowledgeStationFeature.enabled ? (
+          <div className="mt-5 rounded-lg border border-amber-200 bg-white/70 p-4">
+            <div className="flex items-start gap-3">
+              <LockKeyhole className="mt-0.5 shrink-0 text-amber-700" size={18} aria-hidden="true" />
+              <div>
+                <p className="text-sm font-black text-slate-950">{t("knowledge.lockedTitle")}</p>
+                <p className="mt-1 text-sm font-semibold leading-6 text-amber-800">
+                  {t("knowledge.lockedBody")} {lockedFeatureMessage("knowledge_station")}
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)]">
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm font-black text-slate-950">{t("knowledge.workflowCoach")}</p>
+                <div className="mt-3 grid gap-3">
+                  {workflowCoachCards.map((card) => {
+                    const sourceUrl = card.href ? safeEvidenceUrl(card.href) : "";
+
+                    return (
+                      <article key={card.id} className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="outline" className="border-blue-100 bg-blue-50 text-blue-700">
+                                {card.category}
+                              </Badge>
+                              <Badge variant="outline" className="border-slate-200 bg-white text-slate-700">
+                                {card.severity}
+                              </Badge>
+                            </div>
+                            <p className="mt-2 break-words text-sm font-black leading-6 text-slate-950">
+                              {card.title}
+                            </p>
+                            <p className="mt-1 break-words text-sm font-semibold leading-6 text-slate-600">
+                              {card.guidance}
+                            </p>
+                            <p className="mt-2 break-words text-xs font-bold leading-5 text-slate-500">
+                              <span className="font-black text-slate-700">{t("intentsPage.suggestedAction")}:</span>{" "}
+                              {card.suggestedAction}
+                            </p>
+                            {sourceUrl ? (
+                              <Link
+                                href={sourceUrl}
+                                target={sourceUrl.startsWith("/") ? undefined : "_blank"}
+                                rel={sourceUrl.startsWith("/") ? undefined : "noreferrer"}
+                                className="mt-2 inline-flex items-center text-xs font-black text-blue-700 hover:text-blue-900"
+                              >
+                                <ExternalLink size={13} className="mr-1.5" aria-hidden="true" />
+                                {card.sourceLabel ?? t("intentsPage.openEvidence")}
+                              </Link>
+                            ) : null}
+                          </div>
+                          <Button
+                            type="button"
+                            onClick={() => void handleSaveCoachKnowledge(card)}
+                            disabled={isKnowledgeSaving}
+                            variant="outline"
+                            className="w-fit rounded-lg border-slate-200 bg-white text-slate-700"
+                          >
+                            {savingKnowledgeCoachCardId === card.id
+                              ? t("intentsPage.submissionSaving")
+                              : t("knowledge.saveFromCoach")}
+                          </Button>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <p className="text-sm font-black text-slate-950">{t("knowledge.createNote")}</p>
+                <div className="mt-3 grid gap-3">
+                  <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                    {t("knowledge.titleField")}
+                    <Input
+                      value={knowledgeDraft.title}
+                      onChange={(event) =>
+                        setKnowledgeDraft((current) => ({ ...current, title: event.target.value }))
+                      }
+                      disabled={isKnowledgeSaving}
+                      className="h-9 border-slate-200 bg-white"
+                    />
+                  </label>
+                  <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                    {t("knowledge.type")}
+                    <Select
+                      value={knowledgeDraft.type}
+                      onValueChange={(value) =>
+                        setKnowledgeDraft((current) => ({ ...current, type: value as KnowledgeItem["type"] }))
+                      }
+                      disabled={isKnowledgeSaving}
+                    >
+                      <SelectTrigger className="h-9 rounded-lg border-slate-200 bg-white shadow-sm focus:ring-slate-900">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-lg border-slate-200 shadow-lg">
+                        {knowledgeTypeOptions.map((type) => (
+                          <SelectItem key={type} value={type}>
+                            {t(`knowledge.types.${type}`)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                  <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                    {t("knowledge.tags")}
+                    <Input
+                      value={knowledgeDraft.tags}
+                      onChange={(event) =>
+                        setKnowledgeDraft((current) => ({ ...current, tags: event.target.value }))
+                      }
+                      disabled={isKnowledgeSaving}
+                      placeholder={t("knowledge.tagsPlaceholder")}
+                      className="h-9 border-slate-200 bg-white"
+                    />
+                  </label>
+                  <label className="grid gap-1.5 text-sm font-bold text-slate-700">
+                    {t("knowledge.body")}
+                    <textarea
+                      value={knowledgeDraft.body}
+                      onChange={(event) =>
+                        setKnowledgeDraft((current) => ({ ...current, body: event.target.value }))
+                      }
+                      disabled={isKnowledgeSaving}
+                      placeholder={t("knowledge.bodyPlaceholder")}
+                      className="min-h-24 w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
+                    />
+                  </label>
+                  <Button
+                    type="button"
+                    onClick={() => void handleCreateKnowledgeItem()}
+                    disabled={isKnowledgeSaving || !knowledgeDraft.title.trim() || !knowledgeDraft.body.trim()}
+                    className="w-fit rounded-lg bg-slate-950 text-white hover:bg-slate-800"
+                  >
+                    {isKnowledgeSaving ? t("intentsPage.submissionSaving") : t("common.save")}
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-black text-slate-950">{t("knowledge.recentItems")}</p>
+                  {isKnowledgeLoading ? (
+                    <span className="text-xs font-bold text-slate-400">{t("intentsPage.submissionLoading")}</span>
+                  ) : null}
+                </div>
+                <div className="mt-3 grid gap-2">
+                  {knowledgeItems.length === 0 && !isKnowledgeLoading ? (
+                    <p className="text-sm font-semibold text-slate-500">{t("knowledge.empty")}</p>
+                  ) : null}
+                  {knowledgeItems.map((item) => (
+                    <article key={item.id} className="rounded-lg border border-slate-100 bg-slate-50/70 p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline" className="border-slate-200 bg-white text-slate-700">
+                          {t(`knowledge.types.${item.type}`)}
+                        </Badge>
+                        <span className="text-xs font-bold text-slate-400">{item.createdAt}</span>
+                      </div>
+                      <p className="mt-2 break-words text-sm font-black leading-6 text-slate-950">{item.title}</p>
+                      <p className="mt-1 line-clamp-2 break-words text-xs font-semibold leading-5 text-slate-600">
+                        {item.body}
+                      </p>
+                      {item.tags.length > 0 ? (
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          {item.tags.map((tag) => (
+                            <span
+                              key={`${item.id}-${tag}`}
+                              className="rounded-md border border-blue-100 bg-white px-2 py-1 text-xs font-black text-blue-700"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </div>
+
+              <p className="min-h-5 text-sm font-semibold text-slate-500">
+                {knowledgeError
+                  ? knowledgeError.message.toLowerCase().includes("load")
+                    ? t("knowledge.loadFailed")
+                    : t("knowledge.saveFailed")
+                  : knowledgeNotice}
+              </p>
             </div>
           </div>
         )}
