@@ -10,9 +10,9 @@ This runbook tracks the migration from local SQLite to MySQL. The current implem
 - MySQL dependency and migration tooling are available through `mysql2`.
 - `npm run db:mysql:migrate` creates the MySQL schema from the existing SQLite migration source with compatibility conversion.
 - The compatibility migration has been smoke-tested against a disposable MySQL 8 container: a fresh schema created 37 tables, recorded `sqlite-ddl-compat-v1`, and accepted a bid row with a 5,000-character `description`.
-- MySQL-aware runtime paths now cover: auth register/login/session/logout, account profile/password/delete, workspace read/update, admin auth gate, billing subscription/checkout/portal/cancel/webhook/invoices, supplier profile, bid search/detail/saved-bids, intent create/list/detail/status, crawler health, and admin crawler logs.
-- The repeatable smoke verifier now inserts crawler/bid rows and confirms scraper-health, admin crawler-log, bid search/detail, saved bid lifecycle, supplier profile lifecycle, intent lifecycle, billing lifecycle, workspace lifecycle, and auth session lifecycle on MySQL.
-- Full runtime cutover is still blocked by remaining synchronous repository calls in deeper modules such as password reset, workspace invitations/member management, account export/usage/preferences, attachment metadata download lookup, search alerts, compliance/submission/response-workspace/pursuit/qualification panels, admin users/config/bid QA writes, notification/event workers, and crawler write/import paths.
+- MySQL-aware runtime paths now cover: auth register/login/session/logout/password reset, account profile/password/delete, workspace read/update, admin auth gate, billing subscription/checkout/portal/cancel/webhook/invoices, supplier profile, bid search/detail/saved-bids/attachment metadata, search alerts CRUD/quota, intent create/list/detail/status, crawler health, and admin crawler logs.
+- The repeatable smoke verifier now inserts crawler/bid rows and confirms scraper-health, admin crawler-log, bid search/detail, attachment metadata fallback, saved bid lifecycle, supplier profile lifecycle, intent lifecycle, billing lifecycle, workspace lifecycle, search alert lifecycle, password reset lifecycle, and auth session lifecycle on MySQL.
+- Full runtime cutover is still blocked by remaining synchronous repository calls in deeper modules such as workspace invitations/member management, account export/usage/preferences, search alert digest history, compliance/submission/response-workspace/pursuit/qualification panels, admin users/config/bid QA writes, notification/event workers, and crawler write/import paths.
 
 ## Environment
 
@@ -69,7 +69,7 @@ Migration check: <n> statements applied, <m> statements skipped.
 Current expanded smoke output includes:
 
 ```text
-bid detail verified=true, saved bid verified=true, profile verified=true, intent verified=true, billing verified=true, workspace verified=true, auth session verified=true
+bid detail verified=true, attachment verified=true, saved bid verified=true, profile verified=true, intent verified=true, billing verified=true, workspace verified=true, search alert verified=true, password reset verified=true, auth session verified=true
 ```
 
 The migration is safe to re-run. Existing indexes are skipped on duplicate-name errors while `CREATE TABLE IF NOT EXISTS` statements remain no-op table checks.
@@ -91,9 +91,9 @@ SELECT * FROM mysql_migrations;
 
 The migration entry point alone does not switch the app runtime. Complete these before declaring MySQL as the active database:
 
-1. Finish MySQL repository coverage for the remaining account/workspace APIs: password reset, export, notification preferences, usage, invitations, members, and ownership transfer.
-2. Finish MySQL coverage for attachment metadata download lookup and crawler bid upsert/import writes.
-3. Finish MySQL coverage for search alerts, notification/event workers, config registry, admin users, admin bid QA, feature overrides, and audit logs.
+1. Finish MySQL repository coverage for the remaining account/workspace APIs: export, notification preferences, usage, invitations, members, and ownership transfer.
+2. Finish MySQL coverage for crawler bid upsert/import writes.
+3. Finish MySQL coverage for search alert digest history, notification/event workers, config registry, admin users, admin bid QA, feature overrides, and audit logs.
 4. Finish MySQL coverage for compliance, submission, response workspace, pursuit decisions, qualification freshness, and evidence citations.
 5. Replace SQLite raw SQL and `PRAGMA` usage in MySQL-mode tests/scripts.
 6. Add a seeded-data migration/import path from `frontend/data/apsi.sqlite` into MySQL.

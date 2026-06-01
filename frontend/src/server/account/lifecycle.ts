@@ -5,8 +5,10 @@ import {
   WorkspacePermissionError,
   getAccountWorkspace,
 } from "@/server/account/workspace";
+import { getMysqlAccountWorkspace } from "@/server/account/mysql-workspace";
 import { normalizeAccountTier, normalizeUserRole, type AccountTier, type UserRole } from "@/server/auth/entitlements";
 import type { AppDatabase } from "@/server/db/client";
+import { mysqlSelectMany, mysqlSelectOne } from "@/server/db/mysql-runtime";
 import {
   accountSubscriptions,
   alerts,
@@ -27,6 +29,10 @@ import {
   users,
   adminUserAuditLogs,
 } from "@/server/db/schema";
+
+interface MysqlAccountExportReader {
+  query: (sql: string, values?: unknown[]) => Promise<[unknown[], unknown?]>;
+}
 
 const ACCOUNT_EXPORT_INCLUDED_SECTIONS = [
   "account",
@@ -102,6 +108,40 @@ function nowIso() {
 
 function findUser(db: AppDatabase, userId: string) {
   return db.select().from(users).where(eq(users.id, userId)).limit(1).get();
+}
+
+function camelizeKey(key: string) {
+  return key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+}
+
+function camelizeRecord<T extends Record<string, unknown>>(row: T) {
+  return Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [camelizeKey(key), value]),
+  ) as Record<string, unknown>;
+}
+
+function camelizeRows(rows: Record<string, unknown>[]) {
+  return rows.map((row) => camelizeRecord(row));
+}
+
+async function mysqlExportRows(mysql: MysqlAccountExportReader, tableName: string, userId: string) {
+  return camelizeRows(
+    await mysqlSelectMany<Record<string, unknown>>(
+      mysql,
+      `SELECT * FROM ${tableName} WHERE user_id = ? ORDER BY created_at ASC`,
+      [userId],
+    ),
+  );
+}
+
+async function mysqlExportOne(mysql: MysqlAccountExportReader, tableName: string, userId: string) {
+  const row = await mysqlSelectOne<Record<string, unknown>>(
+    mysql,
+    `SELECT * FROM ${tableName} WHERE user_id = ? LIMIT 1`,
+    [userId],
+  );
+
+  return row ? camelizeRecord(row) : null;
 }
 
 function activeMemberships(db: AppDatabase, userId: string) {
@@ -227,6 +267,84 @@ export function exportAccountData(db: AppDatabase, userId: string): AccountExpor
       .orderBy(asc(pursuitDecisions.createdAt))
       .all(),
     searchAlerts: db.select().from(alerts).where(eq(alerts.userId, userId)).orderBy(asc(alerts.createdAt)).all(),
+  };
+}
+
+export async function exportMysqlAccountData(
+  mysql: MysqlAccountExportReader,
+  userId: string,
+): Promise<AccountExportData> {
+  const user = await mysqlSelectOne<{
+    id: string;
+    email: string | null;
+    displayName: string | null;
+    role: string | null;
+    accountTier: string | null;
+    isDisabled: number | string | boolean | null;
+    createdAt: string;
+    updatedAt: string;
+    lastLoginAt: string | null;
+  }>(
+    mysql,
+    `
+      SELECT
+        id,
+        email,
+        display_name AS displayName,
+        role,
+        account_tier AS accountTier,
+        is_disabled AS isDisabled,
+        created_at AS createdAt,
+        updated_at AS updatedAt,
+        last_login_at AS lastLoginAt
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+    `,
+    [userId],
+  );
+
+  if (!user?.email) {
+    throw new AccountLifecycleUserNotFoundError();
+  }
+
+  const generatedAt = nowIso();
+
+  return {
+    generatedAt,
+    metadata: {
+      formatVersion: 1,
+      product: "WinBids",
+      generatedAt,
+      subjectUserId: user.id,
+      subjectEmail: user.email,
+      retentionNotice: "Business records, audit logs, and billing records may be retained for legal and operational continuity.",
+      includedSections: [...ACCOUNT_EXPORT_INCLUDED_SECTIONS],
+    },
+    account: {
+      id: user.id,
+      email: user.email,
+      displayName: user.displayName,
+      role: normalizeUserRole(user.role),
+      tier: normalizeAccountTier(user.accountTier),
+      isDisabled: user.isDisabled === true || user.isDisabled === 1 || user.isDisabled === "1",
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      lastLoginAt: user.lastLoginAt,
+    },
+    workspace: await getMysqlAccountWorkspace(mysql as never, userId),
+    subscription: await mysqlExportOne(mysql, "account_subscriptions", userId) as AccountExportData["subscription"],
+    billingCheckoutSessions: await mysqlExportRows(mysql, "billing_checkout_sessions", userId) as AccountExportData["billingCheckoutSessions"],
+    billingInvoices: await mysqlExportRows(mysql, "billing_invoices", userId) as AccountExportData["billingInvoices"],
+    subscriptionEvents: await mysqlExportRows(mysql, "subscription_events", userId) as AccountExportData["subscriptionEvents"],
+    savedBids: await mysqlExportRows(mysql, "saved_bids", userId) as AccountExportData["savedBids"],
+    supplierProfile: await mysqlExportOne(mysql, "supplier_profiles", userId) as AccountExportData["supplierProfile"],
+    intents: await mysqlExportRows(mysql, "intent_to_bid", userId) as AccountExportData["intents"],
+    submissionPaths: await mysqlExportRows(mysql, "submission_paths", userId) as AccountExportData["submissionPaths"],
+    submissionConfirmations: await mysqlExportRows(mysql, "submission_confirmations", userId) as AccountExportData["submissionConfirmations"],
+    complianceManifestItems: await mysqlExportRows(mysql, "compliance_manifest_items", userId) as AccountExportData["complianceManifestItems"],
+    pursuitDecisions: await mysqlExportRows(mysql, "pursuit_decisions", userId) as AccountExportData["pursuitDecisions"],
+    searchAlerts: await mysqlExportRows(mysql, "alerts", userId) as AccountExportData["searchAlerts"],
   };
 }
 
