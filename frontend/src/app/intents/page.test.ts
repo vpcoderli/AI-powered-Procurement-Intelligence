@@ -50,6 +50,11 @@ describe("intent pages", () => {
     expect(detailPage).toContain("lockedFeatureMessage");
     expect(detailPage).toContain("Intent Workspace");
     expect(detailPage).toContain("Submission Path");
+    expect(detailPage).toContain("Knowledge Station");
+    expect(detailPage).toContain("workflow coach");
+    expect(detailPage).toContain("knowledge_station");
+    expect(detailPage).toContain("createKnowledgeItem");
+    expect(detailPage).toContain("fetchKnowledgeItems");
     expect(detailPage).toContain("winbids-detail-workspace");
     expect(detailPage).toContain("winbids-hero-panel");
     expect(detailPage).toContain("winbids-panel");
