@@ -55,6 +55,7 @@ describe("intent pages", () => {
     expect(detailPage).toContain("knowledge_station");
     expect(detailPage).toContain("createKnowledgeItem");
     expect(detailPage).toContain("fetchKnowledgeItems");
+    expect(detailPage).toContain("card.href ?? intent.bid.sourceUrl");
     expect(detailPage).toContain("winbids-detail-workspace");
     expect(detailPage).toContain("winbids-hero-panel");
     expect(detailPage).toContain("winbids-panel");
