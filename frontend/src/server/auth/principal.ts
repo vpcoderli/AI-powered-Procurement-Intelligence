@@ -1,10 +1,11 @@
 import type { AppDatabase } from "@/server/db/client";
 import type { PublicWorkspace } from "@/server/account/workspace";
-import { ensureUser } from "@/server/bids/repository";
+import { ensureUser, ensureUserFromMysql } from "@/server/bids/repository";
 import {
   createAnonymousUserCookie,
   resolveAnonymousUser,
 } from "@/server/bids/user";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import {
   featuresForUser,
   type AccountTier,
@@ -12,6 +13,7 @@ import {
   type UserRole,
 } from "./entitlements";
 import { getSessionUser } from "./service";
+import { getMysqlSessionUser } from "./mysql-service";
 import { readSessionToken } from "./session";
 
 export type RequestPrincipal =
@@ -37,9 +39,10 @@ export async function resolvePrincipal(
   request: Request,
 ): Promise<RequestPrincipal> {
   const sessionToken = readSessionToken(request);
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
 
   if (sessionToken) {
-    const sessionUser = await getSessionUser(db, sessionToken);
+    const sessionUser = mysql ? await getMysqlSessionUser(mysql, sessionToken) : await getSessionUser(db, sessionToken);
 
     if (sessionUser) {
       return {
@@ -54,7 +57,11 @@ export async function resolvePrincipal(
   }
 
   const anonymousUser = resolveAnonymousUser(request);
-  await ensureUser(db, anonymousUser.userId);
+  if (mysql) {
+    await ensureUserFromMysql(mysql, anonymousUser.userId);
+  } else {
+    await ensureUser(db, anonymousUser.userId);
+  }
   const anonymousEntitlements = {
     role: "user" as const,
     tier: "free" as const,

@@ -5,6 +5,7 @@ import { getBidByIdFromRepository } from "@/server/bids/repository";
 import { queryBidsFromDatabase } from "@/server/bids/service";
 import type { Bid } from "@/server/bids/domain";
 import type { AppDatabase } from "@/server/db/client";
+import { dataSources } from "@/server/db/schema";
 import { featuresForUser, hasFeature } from "@/server/auth/entitlements";
 
 export interface RiskChecklistCheck {
@@ -19,6 +20,10 @@ export interface RiskChecklistReport {
   ok: boolean;
   checkedAt: string;
   checks: RiskChecklistCheck[];
+}
+
+export interface RiskChecklistOptions {
+  requireSourceApproval?: boolean;
 }
 
 function check(id: string, label: string, ok: boolean, summary: string, details: string[] = []): RiskChecklistCheck {
@@ -131,7 +136,58 @@ function accountFeatureMatrixCheck() {
   return failures;
 }
 
-export async function createRiskChecklistReport(db: AppDatabase, now = new Date()): Promise<RiskChecklistReport> {
+function shouldRequireSourceApproval(options: RiskChecklistOptions) {
+  if (typeof options.requireSourceApproval === "boolean") return options.requireSourceApproval;
+  if (process.env.RISK_CHECK_REQUIRE_SOURCE_APPROVAL === "true") return true;
+  return process.env.NODE_ENV === "production";
+}
+
+function sourceGovernanceFailures(db: AppDatabase, options: { requireSourceApproval: boolean }) {
+  const rows = db.select().from(dataSources).all();
+  const rowsByState = new Map(rows.filter((row) => row.issuerType === "state").map((row) => [row.stateCode, row]));
+  const failures: string[] = [];
+
+  for (const source of STATE_CRAWLER_SOURCES) {
+    if (!source.approvalStatus || !source.accessPattern || !source.legalReviewStatus || !source.sourceOwner) {
+      failures.push(`${source.stateCode} ${source.id} is missing registry governance metadata`);
+      continue;
+    }
+
+    const row = rowsByState.get(source.stateCode);
+    const isEnabled = row ? row.isEnabled === 1 : true;
+    const approvalStatus = row?.approvalStatus ?? source.approvalStatus;
+    const accessPattern = row?.accessPattern ?? source.accessPattern;
+    const legalReviewStatus = row?.legalReviewStatus ?? source.legalReviewStatus;
+    const approvedForIngestion = row?.approvedForIngestion === undefined || row.approvedForIngestion === null
+      ? source.approvedForIngestion
+      : row.approvedForIngestion === 1;
+
+    if (!isEnabled) continue;
+
+    if (approvalStatus === "blocked") {
+      failures.push(`${source.stateCode} ${source.id} is enabled but blocked for ingestion`);
+    }
+
+    if (accessPattern === "login_required" || accessPattern === "restricted" || legalReviewStatus === "restricted") {
+      failures.push(`${source.stateCode} ${source.id} is enabled with restricted access governance`);
+    }
+
+    if (
+      options.requireSourceApproval &&
+      (!approvedForIngestion || approvalStatus !== "approved" || legalReviewStatus !== "approved_public")
+    ) {
+      failures.push(`${source.stateCode} ${source.id} is enabled but not approved for production ingestion`);
+    }
+  }
+
+  return failures;
+}
+
+export async function createRiskChecklistReport(
+  db: AppDatabase,
+  now = new Date(),
+  options: RiskChecklistOptions = {},
+): Promise<RiskChecklistReport> {
   const stateResponse = await queryBidsFromDatabase(db, { issuerType: "state" });
   const stateBids = stateResponse.bids;
   const requiredStates = requiredStateCodes();
@@ -142,6 +198,8 @@ export async function createRiskChecklistReport(db: AppDatabase, now = new Date(
   const lookupFailures = await detailLookupFailures(db, stateBids);
   const safeAttachmentFailures = await attachmentFailures(db, stateBids);
   const accountFeatureFailures = accountFeatureMatrixCheck();
+  const requireSourceApproval = shouldRequireSourceApproval(options);
+  const governanceFailures = sourceGovernanceFailures(db, { requireSourceApproval });
 
   const checks = [
     check(
@@ -181,6 +239,15 @@ export async function createRiskChecklistReport(db: AppDatabase, now = new Date(
       accountFeatureFailures.length === 0,
       "free, pro, business, and admin entitlement matrix checked",
       accountFeatureFailures,
+    ),
+    check(
+      "source-ingestion-governance",
+      "Source ingestion governance metadata",
+      governanceFailures.length === 0,
+      `${requiredStates.length} state crawler sources checked for approval metadata, restricted-source blocks, and ${
+        requireSourceApproval ? "production approval readiness" : "local ingestion readiness"
+      }`,
+      governanceFailures,
     ),
   ];
 

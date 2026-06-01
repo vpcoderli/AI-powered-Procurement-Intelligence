@@ -17,7 +17,21 @@ This document is the working checklist for local development. Update it after ea
 
 这部分是后续开发的主清单。每完成一个阶段，优先更新这里；历史阶段记录只保留背景，不再作为下一步判断依据。
 
-### P0 / Completed This Phase
+### P0 / Foundation Standards Alignment
+
+Drive Phase II added cross-cutting P0 requirements on 2026-05-29/2026-05-30. These now take priority before deeper business workflow modules.
+
+| Requirement | Current state | Remaining work | Suggested next slice |
+|---|---|---|---|
+| P0 Standards Alignment Lite | Done locally as the first foundation slice: Phase II requirements are reflected in local roadmap docs; the P0 implementation plan exists at `docs/superpowers/plans/2026-06-01-p0-standards-alignment-lite.md`; config, event, UX-state, source-governance, and transferability foundations are implemented. | Deeper page-by-page UX state rollout, more product event coverage, richer admin config UI, production AWS execution, and source approval workflow depth remain. | Continue with Artifact Vault Lite, while carrying the P0 standards into every new module. |
+| Transferability Pack | Done locally: `docs/transferability/` now contains setup, env vars, deployment, data/migrations, runbook, known limitations, AWS service map, and secrets/access docs with local/production boundaries and no real secrets. | Production-specific values, final AWS account IDs, live deployment ownership, and real backup/restore execution still require production environment decisions. | Keep updated after each deployment or production operations phase. |
+| Config Registry Foundation | Done locally: `config_registry` table/migration, unique config-key guard, seed defaults, read/upsert helpers, admin GET/POST/PATCH APIs, validation tests, transactional audit event linkage, and denied access audit events exist. | Full admin UI, broader config domains, effective-date management UI, and migration from hard-coded feature maps remain future depth. | Use this foundation when implementing Artifact Vault/Quote/Notification/AI configuration. |
+| Audit/Event Foundation | Done locally: `event_log`, `event_outbox`, request/correlation id helper, metadata redaction, idempotency with uniqueness-conflict fallback, outbox destinations, tests, and admin config audit writes exist. | Wire more product events: source changes, plan limit reached, upload failed, AI unavailable/low confidence, duplicate/merge, deadline override, quote/award events. | Add event writes as each future module ships. |
+| Universal UX States | Done locally: reusable `UniversalState` component and stable state code model cover Loading, Empty, Error, Permission Denied, AI Unavailable, Low Confidence, Upload Failed, Source Unavailable, Duplicate Opportunity, Expired Deadline, and Plan Limit; `/admin`, `/search`, `/bids/[id]`, `/intents/[id]`, and `/settings` now use it for primary auth/error/empty/loading/plan-limit states. | Continue rolling structured state codes into API responses and lower-level inline module errors as future modules are touched. | Apply to Artifact Vault upload failed, permission denied, plan limit, empty, and error states from day one. |
+| Source Legal-Use / Ingestion Governance | Done locally: 50-state registry has governance defaults, `data_sources` supports approval overrides, Admin source projection exposes approval state, Admin UI shows approval badges/notes, and risk-check includes local ingestion plus production approval readiness modes. | Editable approval workflow, APSI Registration Vault implementation, and Python crawler metadata parity remain future depth. | Carry into P1 source maturity and production crawler work. |
+| MySQL Cutover | Advanced locally: `mysql2`, migration/smoke scripts, MySQL URL validation, compatibility DDL, runbook/docs, MySQL 8 container smoke verification, and MySQL runtime paths for auth/session, account profile/password/delete, workspace read/update, admin auth gate, billing subscription/checkout/portal/cancel/webhook/invoices, supplier profile, bid search/detail/saved-bids, intent create/list/detail/status, crawler health, and admin crawler logs. | Remaining SQLite-bound runtime areas: password reset, account export/preferences/usage, workspace invitations/member/ownership operations, attachment metadata download lookup, search alerts, compliance/submission/response workspace/pursuit/qualification panels, admin users/config/bid QA writes, notification/event workers, crawler write/import paths, and SQLite-to-MySQL seed/data import. | Continue async repository cutover on remaining account/workspace and intent-dependent panels, then crawler write/import and admin/data QA. |
+
+### P0 / Completed Recently
 
 | Requirement | Current state | Remaining work | Suggested next slice |
 |---|---|---|---|
@@ -105,10 +119,19 @@ This document is the working checklist for local development. Update it after ea
 
 ## Latest Requirements Alignment
 
-The refreshed Drive material changes the product packaging language and introduces credits as a first-class commercial concept.
+The refreshed Drive material now has two layers:
+
+1. Commercial packaging and credits from the previous refresh.
+2. Phase II foundation standards from 2026-05-29/2026-05-30, which introduce cross-cutting production, configuration, audit, transferability, UX-state, and source-governance requirements.
 
 | Requirement Track | Current Local State | Alignment Needed |
 |---|---|---|
+| Phase II P0 Foundation Refined | Local app has strong dev foundations, risk checks, runbooks, and feature gates. | Add AWS-first service map, environment separation docs, source/security controls, QA/release gates, observability expectations, and transferability ownership docs. |
+| Configurable Before Custom | Feature map and organization feature overrides exist. | Add general configuration registry, seeded defaults, admin configuration matrix, change reason, effective dates, audit linkage, and documented deferred configuration. |
+| Audit Event Logging Matrix | Several module-specific logs/tables exist. | Add unified event schema, shared writer, request/correlation ids, event outbox, activity/integration/usage/AI-output event coverage, and safe metadata rules. |
+| Transferability Requirements | Setup and operations docs exist in pieces. | Build a complete Transferability Pack so a future developer/operator can set up, configure, deploy, troubleshoot, and continue development without hidden context. |
+| Universal UX States | Some screens have loading/error/empty/locked states. | Add reusable state components, structured API state codes, coverage matrix, QA cases, and frontend/backend handling for all required universal states. |
+| Source ingestion governance | 50-state source registry, health, non-empty checks, and attachment/detail archival exist. | Add legal-use approval metadata, APSI Registration Vault design, explicit blocked/needs-review source statuses, and risk checks for approval-required sources. |
 | Plan names | Code and database use `free`, `pro`, `business`, `enterprise`. | Done locally: product copy exposes Free, Pursuit Starter, Response Builder, Growth, and Enterprise while preserving compatibility values. |
 | Plan mapping | Pursuit Starter maps to `pro`; Response Builder maps to `business`; Enterprise maps to `enterprise`; Growth exists as planned/disabled. | Future: activate Growth only after exact entitlement boundaries and billing model are confirmed. |
 | Credits | Credit vocabulary, included monthly credit metadata, premium action costs, refund semantics, Settings display, and ledger tables exist. | Future: connect real consumption/refund flows and paid credit packs when premium AI actions are implemented. |
@@ -192,14 +215,14 @@ The refreshed Drive material changes the product packaging language and introduc
 
 ## Recommended Next Phase
 
-Prioritize **Artifact Vault Lite** or **Quote / Supply Chain Lite** next.
+Prioritize **Artifact Vault Lite** next, with the new P0 standards applied from the start.
 
 Reason:
 
-- The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Response Builder-gated Compliance Manifest, Pursuit Starter-gated Pursue / No-Bid Decision, 50-state crawler registry, local attachment/detail archival, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA operations, Search Alerts UI and delivery history, notification hardening, production billing/worker runbooks, qualification evidence citations, document-grounded Q&A, amendment/addenda awareness, no-bid taxonomy/risk explanations, richer evidence/artifact links, and compliance evidence mapping now exist.
-- The recurring risk handoff check now exists in both CLI and Admin UI, so route regressions, empty state data, broken attachment links, entitlement separation regressions, and moderate-or-higher production audit issues have a shared verification surface.
-- The remaining account gap is not basic registration; it is production deployment hardening, production worker deployment runbook, real credit consumption/refund flows when premium actions exist, custom enterprise rules when concrete use cases appear, broader advanced usage metrics, and future compliance polish.
-- Product 2 deterministic evidence traceability, Knowledge Station Lite, Admin risk-check visibility, and Response Workspace Lite are now good enough for the next workflow layer; the next useful step is attaching supplier-managed artifacts or quote/sourcing records to the response plan.
+- The first P0 foundation slice is now in place: transferability skeleton, config registry, event log/outbox, request context, universal UX state component, source governance metadata, and risk-check coverage.
+- Artifact Vault Lite is the next workflow dependency because Response Workspace already has artifact placeholders but no supplier-managed uploads, upload failed state, artifact permissions, or evidence records.
+- Every new Artifact Vault endpoint/UI must now use the P0 standards: config-aware limits, audit events, `UniversalState` upload failed/plan limit/permission denied states, source/evidence-safe storage docs, and risk-check updates.
+- After Artifact Vault Lite, resume workflow depth in this order: Quote / Supply Chain Lite, Deadline Notifications, Response Workspace depth, Award / Tabulation Tracking, Win/Loss Learning.
 
 ## Account / Role / Tier Direction
 

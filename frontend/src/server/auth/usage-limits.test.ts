@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { alerts, bids, intentToBid, organizationMemberships, organizations, savedBids, users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
   UsageLimitError,
+  enforceMysqlSearchAlertUsageLimit,
   enforceUsageLimit,
   getUsageLimitStatus,
   usageLimitForTier,
@@ -235,5 +236,26 @@ describe("usage limits", () => {
         scopeUserIds: ["user_free", "user_member"],
       }),
     ).toThrow(UsageLimitError);
+  });
+
+  it("enforces the MySQL search alert quota", async () => {
+    const mysql = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes("organization_memberships")) {
+          return [[{ userId: "user_free" }], []];
+        }
+        if (sql.includes("COUNT")) {
+          return [[{ used: 2 }], []];
+        }
+        return [[], []];
+      }),
+    };
+
+    await expect(
+      enforceMysqlSearchAlertUsageLimit(mysql, {
+        userId: "user_free",
+        tier: "free",
+      }),
+    ).rejects.toThrow(UsageLimitError);
   });
 });

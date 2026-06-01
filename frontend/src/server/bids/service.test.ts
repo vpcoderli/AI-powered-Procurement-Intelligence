@@ -4,6 +4,7 @@ import type { Bid } from "./domain";
 import {
   getBidByIdFromRepository,
   listBids,
+  listBidsFromMysql,
   listSavedBidIds,
   removeSavedBidId,
   saveSavedBidId,
@@ -13,6 +14,7 @@ import {
   getSavedBids,
   queryBids,
   queryBidsFromDatabase,
+  queryBidsFromMysql,
   removeSavedBid,
   saveBid,
 } from "./service";
@@ -20,12 +22,14 @@ import {
 vi.mock("./repository", () => ({
   getBidByIdFromRepository: vi.fn(),
   listBids: vi.fn(),
+  listBidsFromMysql: vi.fn(),
   listSavedBidIds: vi.fn(),
   removeSavedBidId: vi.fn(),
   saveSavedBidId: vi.fn(),
 }));
 
 const repositoryListBids = vi.mocked(listBids);
+const repositoryListBidsFromMysql = vi.mocked(listBidsFromMysql);
 const repositoryGetBidById = vi.mocked(getBidByIdFromRepository);
 const repositoryListSavedBidIds = vi.mocked(listSavedBidIds);
 const repositorySaveSavedBidId = vi.mocked(saveSavedBidId);
@@ -52,6 +56,7 @@ describe("bid service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     repositoryListBids.mockImplementation(async (_db, savedIds = []) => cloneBids(savedIds));
+    repositoryListBidsFromMysql.mockImplementation(async (_mysql, savedIds = []) => cloneBids(savedIds));
     repositoryGetBidById.mockImplementation(async (_db, id) => bidById(id));
     repositoryListSavedBidIds.mockResolvedValue([]);
     repositorySaveSavedBidId.mockResolvedValue([]);
@@ -74,6 +79,17 @@ describe("bid service", () => {
       "Enterprise Cloud Migration Services",
     ]);
     expect(repositoryListBids).toHaveBeenCalledWith(injectedDb);
+  });
+
+  it("queries bids from an injected MySQL reader", async () => {
+    const mysql = { query: vi.fn() };
+
+    const result = await queryBidsFromMysql(mysql, { q: "cloud" }, { referenceDate });
+
+    expect(result.bids.map((bid) => bid.title)).toEqual([
+      "Enterprise Cloud Migration Services",
+    ]);
+    expect(repositoryListBidsFromMysql).toHaveBeenCalledWith(mysql);
   });
 
   it("filters bids by keyword across searchable fields", async () => {

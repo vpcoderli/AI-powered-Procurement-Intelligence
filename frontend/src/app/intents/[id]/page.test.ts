@@ -49,4 +49,14 @@ describe("intent detail page", () => {
     expect(page).toContain("item.evidenceRefs");
     expect(page).toContain('t("intentsPage.linkedEvidence")');
   });
+
+  it("uses UniversalState for intent detail load failures and gated feature sections", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain('import { UniversalState } from "@/components/universal-state"');
+    expect(page).toContain('code="error"');
+    expect(page).toContain('code="plan_limit"');
+    expect(page).toContain('title={t("intentsPage.errorTitle")}');
+    expect(page).toContain('message={t("intentsPage.detailErrorDescription")}');
+  });
 });

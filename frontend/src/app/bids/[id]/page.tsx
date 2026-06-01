@@ -9,6 +9,7 @@ import { Button as BaseButton, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { UniversalState } from "@/components/universal-state";
 import { ApiError, fetchBid } from "@/lib/api/bids";
 import { createIntent } from "@/lib/api/intents";
 import { fetchBidMatch } from "@/lib/api/match";
@@ -258,12 +259,14 @@ export default function BidDetailsPage() {
 
   if (!bid && error instanceof ApiError && error.code === "BID_NOT_FOUND") {
     return (
-      <div className="flex flex-col items-center justify-center h-[50vh] gap-4">
-        <h2 className="text-xl font-semibold text-gray-700">{t("detail.notFoundTitle")}</h2>
-        <p className="text-sm text-gray-500">{t("detail.notFoundDescription")}</p>
-        <Button onClick={() => router.back()} variant="outline">
-          <ArrowLeft className="mr-2 h-4 w-4" /> {t("detail.backToResults")}
-        </Button>
+      <div className="mx-auto flex min-h-[50vh] max-w-3xl items-center justify-center">
+        <UniversalState
+          actions={[{ label: t("detail.backToResults"), onClick: () => router.back(), variant: "secondary" }]}
+          className="w-full bg-white"
+          code="empty"
+          message={t("detail.notFoundDescription")}
+          title={t("detail.notFoundTitle")}
+        />
       </div>
     );
   }
@@ -271,13 +274,13 @@ export default function BidDetailsPage() {
   if (!bid) {
     return (
       <div className="max-w-4xl mx-auto pt-4">
-        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center">
-          <p className="text-slate-900 font-semibold mb-2">{t("dashboard.errorTitle")}</p>
-          <p className="text-sm text-slate-500 mb-4">{t("dashboard.errorDescription")}</p>
-          <Button onClick={() => router.back()} variant="outline">
-            <ArrowLeft className="mr-2 h-4 w-4" /> {t("detail.backToResults")}
-          </Button>
-        </div>
+        <UniversalState
+          actions={[{ label: t("detail.backToResults"), onClick: () => router.back(), variant: "secondary" }]}
+          className="bg-white"
+          code="error"
+          message={t("dashboard.errorDescription")}
+          title={t("dashboard.errorTitle")}
+        />
       </div>
     );
   }
@@ -417,9 +420,19 @@ export default function BidDetailsPage() {
                   </div>
                 </div>
                 <div className="flex flex-col gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-h-5 text-sm font-medium text-slate-500">
-                    {pursuitMessage}
-                  </div>
+                  {pursuitError && isUsageLimitError(pursuitError) ? (
+                    <UniversalState
+                      actions={[{ href: "/settings", label: t("settings.billing"), variant: "secondary" }]}
+                      className="border-amber-200 bg-amber-50/60 p-3 shadow-none"
+                      code="plan_limit"
+                      message={t("settings.availablePlansDesc")}
+                      title={t("detail.intentLimitReached")}
+                    />
+                  ) : (
+                    <div className="min-h-5 text-sm font-medium text-slate-500">
+                      {pursuitMessage}
+                    </div>
+                  )}
                   {intent ? (
                     <Button asChild className="bg-slate-900 hover:bg-slate-800 text-white shadow-sm">
                       <Link href={`/intents/${intent.id}`}>

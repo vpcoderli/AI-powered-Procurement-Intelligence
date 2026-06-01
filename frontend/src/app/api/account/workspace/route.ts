@@ -7,7 +7,13 @@ import {
   getAccountWorkspace,
   updateOrganizationName,
 } from "@/server/account/workspace";
+import {
+  getMysqlAccountWorkspace,
+  updateMysqlOrganizationName,
+} from "@/server/account/mysql-workspace";
+import { getMysqlSessionUser } from "@/server/auth/mysql-service";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -17,7 +23,9 @@ async function currentUser(request: Request) {
   const sessionToken = readSessionToken(request);
   if (!sessionToken) return null;
 
-  return getSessionUser(db, sessionToken);
+  return isMysqlDatabaseUrlConfigured()
+    ? getMysqlSessionUser(resolveMysqlPool(), sessionToken)
+    : getSessionUser(db, sessionToken);
 }
 
 async function readBody(request: Request) {
@@ -36,7 +44,11 @@ export async function GET(request: Request) {
   }
 
   try {
-    return NextResponse.json(getAccountWorkspace(db, user.id));
+    return NextResponse.json(
+      isMysqlDatabaseUrlConfigured()
+        ? await getMysqlAccountWorkspace(resolveMysqlPool(), user.id)
+        : getAccountWorkspace(db, user.id),
+    );
   } catch {
     return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
   }
@@ -56,7 +68,11 @@ export async function PATCH(request: Request) {
   }
 
   try {
-    return NextResponse.json(updateOrganizationName(db, user.id, { name: body.name }));
+    return NextResponse.json(
+      isMysqlDatabaseUrlConfigured()
+        ? await updateMysqlOrganizationName(resolveMysqlPool(), user.id, { name: body.name })
+        : updateOrganizationName(db, user.id, { name: body.name }),
+    );
   } catch (error) {
     if (error instanceof WorkspacePermissionError) {
       return errorResponse("FORBIDDEN", error.message, 403);

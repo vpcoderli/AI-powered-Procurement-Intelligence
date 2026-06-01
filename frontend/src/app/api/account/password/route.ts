@@ -7,7 +7,9 @@ import {
   changeUserPassword,
   getSessionUser,
 } from "@/server/auth/service";
+import { changeMysqlUserPassword, getMysqlSessionUser } from "@/server/auth/mysql-service";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -40,16 +42,25 @@ export async function POST(request: Request) {
   }
 
   try {
-    const sessionUser = await getSessionUser(db, sessionToken);
+    const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+    const sessionUser = mysql
+      ? await getMysqlSessionUser(mysql, sessionToken)
+      : await getSessionUser(db, sessionToken);
 
     if (!sessionUser) {
       return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
     }
 
-    await changeUserPassword(db, sessionUser.id, {
+    const input = {
       currentPassword: body.currentPassword,
       newPassword: body.newPassword,
-    });
+    };
+
+    if (mysql) {
+      await changeMysqlUserPassword(mysql, sessionUser.id, input);
+    } else {
+      await changeUserPassword(db, sessionUser.id, input);
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error) {

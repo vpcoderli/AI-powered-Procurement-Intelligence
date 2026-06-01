@@ -8,8 +8,11 @@ import {
   bidAttachments,
   bidFieldCorrections,
   bids,
+  configRegistry,
   crawlerLocks,
   dataSources,
+  eventLog,
+  eventOutbox,
   intentToBid,
   notificationOutbox,
   organizationMemberships,
@@ -318,6 +321,9 @@ describe("database schema", () => {
       expect(tables).toContain("organizations");
       expect(tables).toContain("organization_memberships");
       expect(tables).toContain("organization_feature_overrides");
+      expect(tables).toContain("config_registry");
+      expect(tables).toContain("event_log");
+      expect(tables).toContain("event_outbox");
       expect(tables).toContain("user_notification_preferences");
 
       const userColumns = testDb.db.$client
@@ -355,6 +361,32 @@ describe("database schema", () => {
           "reason",
           "expires_at",
           "created_by_user_id",
+          "created_at",
+          "updated_at",
+        ]),
+      );
+
+      const configRegistryColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(config_registry)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(configRegistryColumns).toEqual(
+        expect.arrayContaining([
+          "id",
+          "scope_type",
+          "scope_id",
+          "module",
+          "config_key",
+          "config_value_json",
+          "schema_version",
+          "status",
+          "effective_from",
+          "effective_to",
+          "created_by",
+          "updated_by",
+          "change_reason",
+          "audit_event_id",
           "created_at",
           "updated_at",
         ]),
@@ -473,6 +505,92 @@ describe("database schema", () => {
         ),
       ).not.toThrow();
 
+      expect(() =>
+        testDb.db.insert(configRegistry).values({
+          id: "cfg_test",
+          scopeType: "global",
+          scopeId: null,
+          module: "source",
+          configKey: "approval_defaults",
+          configValueJson: JSON.stringify({ approvalStatus: "needs_review" }),
+          schemaVersion: 1,
+          status: "active",
+          effectiveFrom: null,
+          effectiveTo: null,
+          createdBy: "user_1",
+          updatedBy: "user_1",
+          changeReason: "Schema test config.",
+          auditEventId: null,
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
+
+      const eventLogColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(event_log)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(eventLogColumns).toEqual(
+        expect.arrayContaining([
+          "id",
+          "event_name",
+          "occurred_at",
+          "environment",
+          "organization_id",
+          "actor_type",
+          "actor_id",
+          "actor_role",
+          "target_type",
+          "target_id",
+          "source",
+          "outcome",
+          "severity",
+          "request_id",
+          "correlation_id",
+          "idempotency_key",
+          "metadata_json",
+          "before_after_json",
+          "retention_class",
+          "created_at",
+        ]),
+      );
+
+      expect(() => {
+        testDb.db.insert(eventLog).values({
+          id: "event_1",
+          eventName: "admin.config.updated",
+          occurredAt: "2026-05-19T00:00:00.000Z",
+          environment: "test",
+          organizationId: "org_1",
+          actorType: "admin",
+          actorId: "user_1",
+          actorRole: "admin",
+          targetType: "config",
+          targetId: "cfg_test",
+          source: "schema-test",
+          outcome: "success",
+          severity: "info",
+          requestId: "req_1",
+          correlationId: "corr_1",
+          idempotencyKey: "schema:event_1",
+          metadataJson: "{}",
+          beforeAfterJson: "{}",
+          retentionClass: "audit",
+          createdAt: "2026-05-19T00:00:00.000Z",
+        }).run();
+        testDb.db.insert(eventOutbox).values({
+          id: "event_outbox_1",
+          eventLogId: "event_1",
+          destination: "ops-alerts",
+          status: "pending",
+          attemptCount: 0,
+          lastError: null,
+          createdAt: "2026-05-19T00:00:00.000Z",
+          deliveredAt: null,
+        }).run();
+      }).not.toThrow();
+
       const workspaceInvitationColumns = testDb.db.$client
         .prepare("PRAGMA table_info(workspace_invitations)")
         .all()
@@ -568,6 +686,13 @@ describe("database schema", () => {
           "supports_attachment_metadata",
           "supports_detail_page_fetch",
           "fallback_notes",
+          "approved_for_ingestion",
+          "approval_status",
+          "access_pattern",
+          "legal_review_status",
+          "source_owner",
+          "approval_notes",
+          "last_approval_reviewed_at",
         ]),
       );
 
@@ -590,6 +715,13 @@ describe("database schema", () => {
           supportsAttachmentMetadata: 0,
           supportsDetailPageFetch: 1,
           fallbackNotes: "403 fallback fixture available",
+          approvedForIngestion: 1,
+          approvalStatus: "approved",
+          accessPattern: "public_http",
+          legalReviewStatus: "approved_public",
+          sourceOwner: "APSI Data Ops",
+          approvalNotes: "Schema test approval.",
+          lastApprovalReviewedAt: "2026-06-01T00:00:00.000Z",
           createdAt: "2026-05-19T00:00:00.000Z",
           updatedAt: "2026-05-19T00:00:00.000Z",
         }).run(),

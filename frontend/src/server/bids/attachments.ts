@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { and, eq } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { bidAttachments } from "@/server/db/schema";
 
 export interface LocalBidAttachment {
@@ -26,6 +27,26 @@ export interface FallbackBidAttachment {
 }
 
 export type BidAttachmentDownload = LocalBidAttachment | FallbackBidAttachment;
+
+interface MysqlAttachmentReader {
+  query: (
+    sql: string,
+    values?: unknown[],
+  ) => Promise<[MysqlBidAttachmentRow[]] | [MysqlBidAttachmentRow[], unknown]>;
+}
+
+interface MysqlBidAttachmentRow {
+  id: string;
+  bidId: string;
+  name: string;
+  url: string;
+  originalUrl: string | null;
+  storagePath: string | null;
+  contentType: string | null;
+  mimeType: string | null;
+  archiveStatus: string;
+  archiveError: string | null;
+}
 
 export function isExternalAttachmentUrl(value: string) {
   return /^https?:\/\//i.test(value);
@@ -130,12 +151,71 @@ export async function getBidAttachmentDownload(
   bidId: string,
   attachmentId: string,
 ): Promise<BidAttachmentDownload | undefined> {
+  if (isMysqlDatabaseUrlConfigured()) {
+    return getBidAttachmentDownloadFromMysql(resolveMysqlPool(), bidId, attachmentId);
+  }
+
   const row = db
     .select()
     .from(bidAttachments)
     .where(and(eq(bidAttachments.bidId, bidId), eq(bidAttachments.id, attachmentId)))
     .limit(1)
     .get();
+
+  if (!row) return undefined;
+
+  const originalUrl = row.originalUrl ?? row.url;
+  const filePath = await resolveAllowedLocalPath(row.storagePath ?? row.url);
+  if (!filePath) {
+    return {
+      kind: "fallback",
+      filename: row.name,
+      mimeType: "text/plain; charset=utf-8",
+      originalUrl,
+      archiveStatus: row.archiveStatus,
+      archiveError: row.archiveError,
+      reason: row.storagePath
+        ? "The archived attachment file is not available on disk."
+        : "The attachment has not been archived locally yet.",
+    };
+  }
+
+  return {
+    kind: "local",
+    filePath,
+    filename: row.name,
+    mimeType: row.mimeType ?? row.contentType,
+    originalUrl,
+    archiveStatus: row.archiveStatus,
+    archiveError: row.archiveError,
+  };
+}
+
+export async function getBidAttachmentDownloadFromMysql(
+  mysql: MysqlAttachmentReader,
+  bidId: string,
+  attachmentId: string,
+): Promise<BidAttachmentDownload | undefined> {
+  const [rows] = await mysql.query(
+    `
+      SELECT
+        id,
+        bid_id AS bidId,
+        name,
+        url,
+        original_url AS originalUrl,
+        storage_path AS storagePath,
+        content_type AS contentType,
+        mime_type AS mimeType,
+        archive_status AS archiveStatus,
+        archive_error AS archiveError
+      FROM bid_attachments
+      WHERE bid_id = ? AND id = ?
+      LIMIT 1
+    `,
+    [bidId, attachmentId],
+  );
+  const row = rows[0];
 
   if (!row) return undefined;
 

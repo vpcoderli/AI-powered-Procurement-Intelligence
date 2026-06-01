@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { UniversalState } from "@/components/universal-state";
 import {
   confirmSubmission,
   fetchComplianceManifest,
@@ -117,6 +118,23 @@ function freshnessTone(status: QualificationFreshnessResponse["status"] | undefi
   if (status === "current") return "border-emerald-200 bg-emerald-50 text-emerald-700";
   if (status === "stale") return "border-amber-200 bg-amber-50 text-amber-700";
   return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function LockedFeatureState({
+  message,
+  title,
+}: {
+  message: string;
+  title: string;
+}) {
+  return (
+    <UniversalState
+      className="mt-4 border-amber-200 bg-amber-50/60 p-4 shadow-none"
+      code="plan_limit"
+      message={message}
+      title={title}
+    />
+  );
 }
 
 const prototypeWorkspace = "Intent Workspace";
@@ -968,13 +986,13 @@ export default function IntentWorkspacePage() {
   if (loadError || !intent) {
     return (
       <div className="max-w-4xl mx-auto pt-4">
-        <div className="rounded-xl border border-dashed border-slate-300 bg-white p-8 text-center">
-          <p className="text-slate-900 font-semibold mb-2">{t("intentsPage.errorTitle")}</p>
-          <p className="text-sm text-slate-500 mb-4">{t("intentsPage.detailErrorDescription")}</p>
-          <Button onClick={() => router.back()} variant="outline">
-            <ArrowLeft className="mr-2 h-4 w-4" /> {t("detail.backToResults")}
-          </Button>
-        </div>
+        <UniversalState
+          actions={[{ label: t("detail.backToResults"), onClick: () => router.back(), variant: "secondary" }]}
+          className="bg-white"
+          code="error"
+          message={t("intentsPage.detailErrorDescription")}
+          title={t("intentsPage.errorTitle")}
+        />
       </div>
     );
   }
@@ -1446,9 +1464,10 @@ export default function IntentWorkspacePage() {
         </div>
 
         {!pursuitDecisionFeature.enabled ? (
-          <p className="mt-4 text-sm font-semibold leading-6 text-amber-800">
-            {lockedFeatureMessage("pursue_no_bid")}
-          </p>
+          <LockedFeatureState
+            message={lockedFeatureMessage("pursue_no_bid")}
+            title={t("intentsPage.pursuitDecision")}
+          />
         ) : (
           <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(300px,1.05fr)]">
             <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
@@ -1672,9 +1691,10 @@ export default function IntentWorkspacePage() {
         </div>
 
         {!responseWorkspaceFeature.enabled ? (
-          <p className="mt-4 text-sm font-semibold leading-6 text-amber-800">
-            {lockedFeatureMessage("response.workspace.create")}
-          </p>
+          <LockedFeatureState
+            message={lockedFeatureMessage("response.workspace.create")}
+            title={t("intentsPage.responseWorkspace")}
+          />
         ) : (
           <div className="mt-5 space-y-4">
             <div className="grid gap-3 sm:grid-cols-4">
@@ -1807,17 +1827,10 @@ export default function IntentWorkspacePage() {
         </div>
 
         {!knowledgeStationFeature.enabled ? (
-          <div className="mt-5 rounded-lg border border-amber-200 bg-white/70 p-4">
-            <div className="flex items-start gap-3">
-              <LockKeyhole className="mt-0.5 shrink-0 text-amber-700" size={18} aria-hidden="true" />
-              <div>
-                <p className="text-sm font-black text-slate-950">{t("knowledge.lockedTitle")}</p>
-                <p className="mt-1 text-sm font-semibold leading-6 text-amber-800">
-                  {t("knowledge.lockedBody")} {lockedFeatureMessage("knowledge_station")}
-                </p>
-              </div>
-            </div>
-          </div>
+          <LockedFeatureState
+            message={`${t("knowledge.lockedBody")} ${lockedFeatureMessage("knowledge_station")}`}
+            title={t("knowledge.lockedTitle")}
+          />
         ) : (
           <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(300px,0.9fr)]">
             <div className="space-y-4">
@@ -2041,9 +2054,10 @@ export default function IntentWorkspacePage() {
               <Truck size={18} className="text-blue-700" aria-hidden="true" />
               <span>{t("intentsPage.receiptCapture")}</span>
             </div>
-            <p className="mt-4 text-sm font-semibold leading-6 text-amber-800">
-              {lockedFeatureMessage("submission_guidance")}
-            </p>
+            <LockedFeatureState
+              message={lockedFeatureMessage("submission_guidance")}
+              title={t("intentsPage.submissionGuidance")}
+            />
           </>
         ) : (
           <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1.05fr)_minmax(300px,0.95fr)]">
@@ -2309,9 +2323,10 @@ export default function IntentWorkspacePage() {
         </div>
 
         {!complianceManifestFeature.enabled ? (
-          <p className="mt-4 text-sm font-semibold leading-6 text-amber-800">
-            {lockedFeatureMessage("compliance_manifest")}
-          </p>
+          <LockedFeatureState
+            message={lockedFeatureMessage("compliance_manifest")}
+            title={t("intentsPage.complianceManifest")}
+          />
         ) : (
           <div className="mt-5 space-y-4">
             <div className="grid gap-3 sm:grid-cols-4">

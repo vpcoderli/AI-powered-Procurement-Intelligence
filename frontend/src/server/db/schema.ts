@@ -314,6 +314,87 @@ export const organizationFeatureOverrides = sqliteTable(
   }),
 );
 
+export const configRegistry = sqliteTable(
+  "config_registry",
+  {
+    id: text("id").primaryKey(),
+    scopeType: text("scope_type").notNull().default("global"),
+    scopeId: text("scope_id"),
+    module: text("module").notNull(),
+    configKey: text("config_key").notNull(),
+    configValueJson: text("config_value_json").notNull().default("{}"),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    status: text("status").notNull().default("active"),
+    effectiveFrom: text("effective_from"),
+    effectiveTo: text("effective_to"),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    updatedBy: text("updated_by").references(() => users.id, { onDelete: "set null" }),
+    changeReason: text("change_reason").notNull(),
+    auditEventId: text("audit_event_id"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    lookupIdx: index("idx_config_registry_lookup").on(table.scopeType, table.scopeId, table.module, table.configKey),
+    moduleIdx: index("idx_config_registry_module").on(table.module),
+    statusIdx: index("idx_config_registry_status").on(table.status),
+  }),
+);
+
+export const eventLog = sqliteTable(
+  "event_log",
+  {
+    id: text("id").primaryKey(),
+    eventName: text("event_name").notNull(),
+    occurredAt: text("occurred_at").notNull(),
+    environment: text("environment").notNull().default("local"),
+    organizationId: text("organization_id"),
+    actorType: text("actor_type").notNull().default("system"),
+    actorId: text("actor_id"),
+    actorRole: text("actor_role"),
+    targetType: text("target_type"),
+    targetId: text("target_id"),
+    source: text("source").notNull(),
+    outcome: text("outcome").notNull(),
+    severity: text("severity").notNull().default("info"),
+    requestId: text("request_id"),
+    correlationId: text("correlation_id"),
+    idempotencyKey: text("idempotency_key"),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    beforeAfterJson: text("before_after_json").notNull().default("{}"),
+    retentionClass: text("retention_class").notNull().default("standard"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    nameIdx: index("idx_event_log_event_name").on(table.eventName),
+    occurredIdx: index("idx_event_log_occurred_at").on(table.occurredAt),
+    organizationIdx: index("idx_event_log_organization_id").on(table.organizationId),
+    targetIdx: index("idx_event_log_target").on(table.targetType, table.targetId),
+    requestIdx: index("idx_event_log_request_id").on(table.requestId),
+    idempotencyIdx: uniqueIndex("idx_event_log_idempotency_key").on(table.idempotencyKey),
+  }),
+);
+
+export const eventOutbox = sqliteTable(
+  "event_outbox",
+  {
+    id: text("id").primaryKey(),
+    eventLogId: text("event_log_id")
+      .notNull()
+      .references(() => eventLog.id, { onDelete: "cascade" }),
+    destination: text("destination").notNull(),
+    status: text("status").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt: text("created_at").notNull(),
+    deliveredAt: text("delivered_at"),
+  },
+  (table) => ({
+    eventIdx: index("idx_event_outbox_event_log_id").on(table.eventLogId),
+    statusIdx: index("idx_event_outbox_status_created").on(table.status, table.createdAt),
+  }),
+);
+
 export const organizationMemberships = sqliteTable(
   "organization_memberships",
   {
@@ -765,6 +846,13 @@ export const dataSources = sqliteTable("data_sources", {
   supportsAttachmentMetadata: integer("supports_attachment_metadata"),
   supportsDetailPageFetch: integer("supports_detail_page_fetch"),
   fallbackNotes: text("fallback_notes"),
+  approvedForIngestion: integer("approved_for_ingestion"),
+  approvalStatus: text("approval_status"),
+  accessPattern: text("access_pattern"),
+  legalReviewStatus: text("legal_review_status"),
+  sourceOwner: text("source_owner"),
+  approvalNotes: text("approval_notes"),
+  lastApprovalReviewedAt: text("last_approval_reviewed_at"),
   lastSuccessAt: text("last_success_at"),
   lastFailureAt: text("last_failure_at"),
   consecutiveFailures: integer("consecutive_failures").notNull().default(0),

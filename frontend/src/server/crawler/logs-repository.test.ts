@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { crawlerLogs } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { listScraperHealthSources } from "./logs-repository";
+import { listScraperHealthSources, listScraperHealthSourcesFromMysql } from "./logs-repository";
 
 describe("crawler logs repository", () => {
   let testDb: TestDatabase;
@@ -71,5 +71,55 @@ describe("crawler logs repository", () => {
         updatedCount: 0,
       },
     ]);
+  });
+
+  it("maps MySQL crawler log rows into scraper health sources", async () => {
+    const queryCalls: string[] = [];
+    const mysql = {
+      async query(sql: string) {
+        queryCalls.push(sql);
+
+        return [
+          [
+            {
+              source: "SAM.gov",
+              lastStatus: "success",
+              lastRunAt: "2026-05-19T00:02:00.000Z",
+              fetchedCount: 2,
+              insertedCount: 1,
+              updatedCount: 1,
+            },
+            {
+              source: "State Portal",
+              lastStatus: "failed",
+              lastRunAt: "2026-05-18T00:02:00.000Z",
+              fetchedCount: 0,
+              insertedCount: 0,
+              updatedCount: 0,
+            },
+          ],
+        ];
+      },
+    };
+
+    await expect(listScraperHealthSourcesFromMysql(mysql)).resolves.toEqual([
+      {
+        source: "SAM.gov",
+        lastStatus: "success",
+        lastRunAt: "2026-05-19T00:02:00.000Z",
+        fetchedCount: 2,
+        insertedCount: 1,
+        updatedCount: 1,
+      },
+      {
+        source: "State Portal",
+        lastStatus: "failed",
+        lastRunAt: "2026-05-18T00:02:00.000Z",
+        fetchedCount: 0,
+        insertedCount: 0,
+        updatedCount: 0,
+      },
+    ]);
+    expect(queryCalls[0]).toContain("ROW_NUMBER() OVER");
   });
 });

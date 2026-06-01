@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
-import { bids } from "@/server/db/schema";
+import { bids, dataSources } from "@/server/db/schema";
 import type { AppDatabase } from "@/server/db/client";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { createRiskChecklistReport, formatRiskChecklistReport } from "./checklist";
@@ -55,6 +55,17 @@ function seedAllStateBids(db: AppDatabase) {
   }
 }
 
+function approveAllStateSourcesForProduction(db: AppDatabase) {
+  db.update(dataSources)
+    .set({
+      approvedForIngestion: 1,
+      approvalStatus: "approved",
+      legalReviewStatus: "approved_public",
+      accessPattern: "public_http",
+    })
+    .run();
+}
+
 afterEach(async () => {
   await testDb?.cleanup();
   testDb = null;
@@ -73,6 +84,7 @@ describe("risk checklist", () => {
       "bid-detail-routes",
       "attachment-downloads",
       "account-tier-separation",
+      "source-ingestion-governance",
     ]);
     expect(formatRiskChecklistReport(report)).toContain("Risk checklist PASS");
   });
@@ -101,5 +113,48 @@ describe("risk checklist", () => {
 
     expect(report.ok).toBe(false);
     expect(formatRiskChecklistReport(report)).toContain("has empty required content");
+  });
+
+  it("fails when an enabled source is blocked by ingestion governance", async () => {
+    const db = await seededDatabase();
+    db.update(dataSources)
+      .set({
+        approvalStatus: "blocked",
+        accessPattern: "restricted",
+        legalReviewStatus: "restricted",
+      })
+      .where(eq(dataSources.stateCode, "CA"))
+      .run();
+
+    const report = await createRiskChecklistReport(db);
+
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((check) => check.id === "source-ingestion-governance")).toMatchObject({
+      ok: false,
+    });
+    expect(formatRiskChecklistReport(report)).toContain("enabled but blocked for ingestion");
+  });
+
+  it("requires explicit approval for production source ingestion checks", async () => {
+    const db = await seededDatabase();
+
+    const report = await createRiskChecklistReport(db, new Date("2026-05-31T00:00:00.000Z"), {
+      requireSourceApproval: true,
+    });
+
+    expect(report.ok).toBe(false);
+    expect(formatRiskChecklistReport(report)).toContain("enabled but not approved for production ingestion");
+  });
+
+  it("passes production source ingestion checks after all state sources are approved", async () => {
+    const db = await seededDatabase();
+    approveAllStateSourcesForProduction(db);
+
+    const report = await createRiskChecklistReport(db, new Date("2026-05-31T00:00:00.000Z"), {
+      requireSourceApproval: true,
+    });
+
+    expect(report.ok).toBe(true);
+    expect(formatRiskChecklistReport(report)).toContain("Risk checklist PASS");
   });
 });

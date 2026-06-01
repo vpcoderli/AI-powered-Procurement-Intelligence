@@ -1,5 +1,7 @@
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { readSupplierProfile, saveSupplierProfile } from "./repository";
+import { getMysqlSupplierProfile, upsertMysqlSupplierProfile } from "./mysql-service";
 import type { SupplierProfile, SupplierProfileInput } from "./types";
 
 type StoredSupplierProfile = Omit<SupplierProfile, "completionScore">;
@@ -58,6 +60,10 @@ function normalizeInput(input: SupplierProfileInput) {
 }
 
 export async function getSupplierProfile(db: AppDatabase, userId: string): Promise<SupplierProfile> {
+  if (isMysqlDatabaseUrlConfigured()) {
+    return getMysqlSupplierProfile(resolveMysqlPool(), userId);
+  }
+
   return withCompletion(await readSupplierProfile(db, userId));
 }
 
@@ -66,6 +72,10 @@ export async function upsertSupplierProfile(
   userId: string,
   input: SupplierProfileInput,
 ): Promise<SupplierProfile> {
+  if (isMysqlDatabaseUrlConfigured()) {
+    return upsertMysqlSupplierProfile(resolveMysqlPool(), userId, input);
+  }
+
   const current = await readSupplierProfile(db, userId);
   const normalized = normalizeInput(input);
   const next: StoredSupplierProfile = {

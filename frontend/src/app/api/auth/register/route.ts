@@ -6,9 +6,11 @@ import {
   WeakPasswordError,
   registerUser,
 } from "@/server/auth/service";
+import { registerMysqlUser } from "@/server/auth/mysql-service";
 import { createSessionCookie } from "@/server/auth/session";
-import { mergeSavedBidIds } from "@/server/bids/repository";
+import { mergeSavedBidIds, mergeSavedBidIdsFromMysql } from "@/server/bids/repository";
 import { clearAnonymousUserCookie, resolveAnonymousUser } from "@/server/bids/user";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -40,7 +42,15 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await registerUser(db, {
+    const mysqlEnabled = isMysqlDatabaseUrlConfigured();
+    const mysql = mysqlEnabled ? resolveMysqlPool() : null;
+    const result = mysql
+      ? await registerMysqlUser(mysql, {
+          email: body.email,
+          password: body.password,
+          displayName: body.displayName,
+        })
+      : await registerUser(db, {
       email: body.email,
       password: body.password,
       displayName: body.displayName,
@@ -48,7 +58,11 @@ export async function POST(request: Request) {
     const anonymousUser = resolveAnonymousUser(request);
 
     if (!anonymousUser.isNewUser) {
-      await mergeSavedBidIds(db, anonymousUser.userId, result.user.id);
+      if (mysql) {
+        await mergeSavedBidIdsFromMysql(mysql, anonymousUser.userId, result.user.id);
+      } else {
+        await mergeSavedBidIds(db, anonymousUser.userId, result.user.id);
+      }
     }
 
     const response = NextResponse.json({ user: result.user }, { status: 201 });

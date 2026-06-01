@@ -28,6 +28,8 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { UniversalState } from "@/components/universal-state";
+import type { UniversalStateCode } from "@/lib/universal-state";
 import { useAuth } from "@/context/AuthContext";
 import {
   ApiError as SearchAlertsApiError,
@@ -120,6 +122,25 @@ const EMPTY_SEARCH_ALERT_DRAFT: SearchAlertDraft = {
   frequency: "daily",
   isEnabled: true,
 };
+
+function SettingsInlineState({
+  code,
+  message,
+  title,
+}: {
+  code: UniversalStateCode;
+  message: string;
+  title: string;
+}) {
+  return (
+    <UniversalState
+      className="border-slate-200 bg-slate-50/70 p-3 shadow-none"
+      code={code}
+      message={message}
+      title={title}
+    />
+  );
+}
 
 export default function SettingsPage() {
   const { t } = useLanguage();
@@ -908,9 +929,11 @@ export default function SettingsPage() {
                         )}
                       </div>
                       {!enabled && (
-                        <p className="mt-2 text-xs font-medium leading-5 text-slate-500">
-                          {lockedFeatureMessage(feature.key)}
-                        </p>
+                        <SettingsInlineState
+                          code="plan_limit"
+                          message={lockedFeatureMessage(feature.key)}
+                          title={feature.label}
+                        />
                       )}
                     </div>
                   );
@@ -924,9 +947,19 @@ export default function SettingsPage() {
                 <CardDescription className="text-slate-500 font-medium">{t("settings.usageDashboardDesc")}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4 p-6">
-                {usageError && <p className="text-sm font-medium text-red-600">{usageError}</p>}
+                {usageError && (
+                  <SettingsInlineState
+                    code="error"
+                    message={usageError}
+                    title={t("settings.usageDashboard")}
+                  />
+                )}
                 {!usageData && !usageError && (
-                  <p className="text-sm font-medium text-slate-500">{t("settings.loadingUsage")}</p>
+                  <SettingsInlineState
+                    code="loading"
+                    message={t("settings.loadingUsage")}
+                    title={t("settings.usageDashboard")}
+                  />
                 )}
                 {usageData && (
                   <div className="grid gap-3 md:grid-cols-2">
