@@ -110,7 +110,7 @@ The refreshed Drive material changes the product packaging language and introduc
 | Plan mapping | Pursuit Starter maps to `pro`; Response Builder maps to `business`; Enterprise maps to `enterprise`; Growth exists as planned/disabled. | Future: activate Growth only after exact entitlement boundaries and billing model are confirmed. |
 | Credits | Credit vocabulary, included monthly credit metadata, premium action costs, refund semantics, Settings display, and ledger tables exist. | Future: connect real consumption/refund flows and paid credit packs when premium AI actions are implemented. |
 | P1 data architecture | 50-state crawler coverage, admin runner, archive metadata, local public attachment/detail downloader, QA review queue, correction audit table, publish/suppress controls, batch QA actions, richer QA filtering, and correction history exist. | Separate Source Registry, Connector Engine, Normalization/Data Quality, and Bid Admin/Data QA responsibilities in docs and future implementation; next data-admin polish is raw/staged/normalized comparison. |
-| Knowledge Station | Feature key exists but no product surface. | Move Knowledge Station Lite earlier as Product 0.9 workflow coaching; deeper procurement intelligence remains post-MVP. |
+| Knowledge Station | Done locally: Enterprise-gated Intent workflow coach, reusable organization-scoped knowledge items, protected list/create APIs, Intent panel, and minimal `/knowledge` library are implemented. | Future depth: retrieval, embeddings, admin publishing workflow, artifact uploads, usage metrics, and credit metering. |
 
 ## Account / Permission / Billing Tracker
 
@@ -170,7 +170,7 @@ The refreshed Drive material changes the product packaging language and introduc
 | Admin vs user separation | Admin APIs enforce full-admin role for account management and feature overrides; disabled admins are rejected; admin/operator/support can access `/admin`; operator/support receive lower-permission controls; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | Optional per-route permission audit UI and custom enterprise back-office roles |
 | User role model | `user`/`admin`/`operator`/`support` role enum, role update API, audit trail, role-aware frontend session payload | Optional company-level owner/member unification with global role model |
 | Subscription / tier model | `account_tier` on users, organization-level `account_tier` for workspace/team entitlement, admin tier assignment, central entitlement map, updated product-facing plan catalog, planned Growth catalog entry, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, Stripe SDK/API checkout and portal sessions, Stripe webhook mapping/signature verification, cancellation scheduling, subscription lifecycle reconciliation, filtered invoice history with summary totals/PDF links, payment retry links, payment-failed notification outbox entries, staged dunning reminders with resolved-payment suppression, optional generic webhook signature verification, and Stripe sandbox verifier/runbook | Production scheduled worker deployment and live credential/webhook operations runbook |
-| Feature access control | Central feature map, server guard, client helper, visible locked states, PRD feature slugs, saved bid/intent/search alert/team invite quota enforcement, team member usage counting, Settings usage dashboard, credit summary, organization-level feature overrides with reason/expiry metadata, audit filtering by actor/action/target/feature, and manifest-backed static coverage tests; session entitlements and workspace quotas now use organization tier; Submission Guidance and Pursue / No-Bid are currently Pursuit Starter-gated, Compliance Manifest is currently Response Builder-gated; Quote Workflow and Knowledge Station are explicitly marked as not-yet-implemented API surfaces | Real credit consumption/refund flows, optional richer beta program workflow, and custom enterprise permission rules |
+| Feature access control | Central feature map, server guard, client helper, visible locked states, PRD feature slugs, saved bid/intent/search alert/team invite quota enforcement, team member usage counting, Settings usage dashboard, credit summary, organization-level feature overrides with reason/expiry metadata, audit filtering by actor/action/target/feature, and manifest-backed static coverage tests; session entitlements and workspace quotas now use organization tier; Submission Guidance and Pursue / No-Bid are currently Pursuit Starter-gated, Compliance Manifest is currently Response Builder-gated, Knowledge Station is currently Enterprise-gated, and Quote Workflow remains explicitly marked as a not-yet-implemented API surface | Real credit consumption/refund flows, optional richer beta program workflow, and custom enterprise permission rules |
 | Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails; skipped/sent/failed/duplicate digest outcomes are recorded; creation is quota-gated by tier; Settings now includes alert CRUD, pause/resume, editable filters/digest fields, and recent delivery history | Real email delivery provider, bounce/complaint handling, operator digest monitoring dashboard |
 | Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, user preferences, billing dunning reminders, deployable notification/dunning worker command, invite delivery status, admin notification history, admin delivery trigger, provider env validation, and production delivery runbook exist | Real production email provider credentials/webhooks, bounce/complaint handling, template governance |
 | Admin data QA | Source status/logs exist; bid detail surfaces attachment archival status and failure notes; Admin now has a QA queue with score, archive issue counts, review status, reviewer timestamp/by metadata, correction audit persistence, inline title/deadline correction, public suppression filtering, publish/suppress actions, rich filters, batch operations, and correction history. | Broader editable-field UI and raw/staged/normalized comparison detail |
@@ -185,19 +185,19 @@ The refreshed Drive material changes the product packaging language and introduc
 | Sourcing / quote workflow | Partner database, quote requests, quote comparison, attachment storage. |
 | Award / tabulation tracking | Award notices, bid status monitoring, tabulation records. |
 | Win/loss learning | Outcome capture, reason taxonomy, future recommendation improvements. |
-| Knowledge Station | Product 0.9 workflow coaching, reusable knowledge items, snippets, templates, retrieval. |
+| Knowledge Station depth | Retrieval, embeddings, admin publishing workflow, artifact uploads, usage metrics, and credit metering. |
 | Production AI layer | LLM-backed extraction with citations, confidence, prompt rules, uncertainty handling. |
 
 ## Recommended Next Phase
 
-Prioritize **Knowledge Station Lite** next.
+Prioritize **Admin risk-check visualization** or **Response Workspace Lite** next.
 
 Reason:
 
 - The data model, session payload, account settings, password reset flow, organization/member foundation, workspace-shared saved bids/intents, team role management/removal, subscription foundation, admin user management, search/filtering, audit logs, feature map, reusable feature guards, Submission Guidance, Response Builder-gated Compliance Manifest, Pursuit Starter-gated Pursue / No-Bid Decision, 50-state crawler registry, local attachment/detail archival, Admin Bid QA queue, correction audit persistence, publish/suppress controls, batch QA operations, Search Alerts UI and delivery history, notification hardening, production billing/worker runbooks, qualification evidence citations, document-grounded Q&A, amendment/addenda awareness, no-bid taxonomy/risk explanations, richer evidence/artifact links, and compliance evidence mapping now exist.
 - The recurring risk handoff check now exists, so route regressions, empty state data, broken attachment links, entitlement separation regressions, and moderate-or-higher production audit issues have a single local verification command.
 - The remaining account gap is not basic registration; it is production deployment hardening, production worker deployment runbook, real credit consumption/refund flows when premium actions exist, custom enterprise rules when concrete use cases appear, broader advanced usage metrics, and future compliance polish.
-- Product 2 deterministic evidence traceability is now good enough for the next workflow layer; Knowledge Station Lite is the next useful step for coaching and reusable knowledge capture inside pursuit work.
+- Product 2 deterministic evidence traceability and Knowledge Station Lite are now good enough for the next workflow layer; the next useful step is either visualizing risk-check operations for admins or starting a thin Response Workspace.
 
 ## Account / Role / Tier Direction
 
@@ -259,8 +259,8 @@ Current local limits use internal tier values. Product-facing labels should be s
 1. **Product 2 Qualification Upgrade Continuation**
    - Deeper AI extraction and document-level evidence mapping can wait until real model integration.
 
-2. **Knowledge Station Lite**
-   - Add embedded workflow coaching and reusable knowledge capture before deeper procurement intelligence.
+2. **Admin risk-check visualization**
+   - Surface route/data/attachment/account-tier verification results in the admin experience before deeper procurement intelligence.
 
 3. **Production operations polish**
    - Dry-run worker deployment and connect real provider credentials/webhooks when available.
@@ -1110,7 +1110,7 @@ Current local limits use internal tier values. Product-facing labels should be s
 
 本阶段完成：
 - 新增 `feature-gate-routes.ts`，把当前高级功能 API 的权限覆盖集中登记为 `FEATURE_API_COVERAGE`。
-- 明确登记当前尚未实现 API 的付费功能：`quote_workflow`、`knowledge_station`。
+- 明确登记当时尚未实现 API 的付费功能：`quote_workflow`、`knowledge_station`；后续 Knowledge Station Lite 已接入受保护 API，当前仅 `quote_workflow` 保持未实现登记。
 - `feature-gate-coverage.test.ts` 从手写路径升级为 manifest-backed coverage audit。
 - 覆盖测试现在会检查：
   - 每个登记路由都包含 `requireFeature()`、对应 feature key、`FeatureAccessError`。

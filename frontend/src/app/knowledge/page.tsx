@@ -11,22 +11,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/context/AuthContext";
 import { fetchKnowledgeItems } from "@/lib/api/knowledge";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import { safeKnowledgeSourceUrl } from "@/lib/knowledge/source-url";
 import { KNOWLEDGE_ITEM_TYPES, type KnowledgeItem, type KnowledgeItemType } from "@/server/knowledge/types";
 
 const allTypes = "all";
 
 type TypeFilter = typeof allTypes | KnowledgeItemType;
-
-function safeKnowledgeSourceUrl(value: string) {
-  if (value.startsWith("/")) return value;
-
-  try {
-    const { protocol } = new URL(value);
-    return protocol === "http:" || protocol === "https:" ? value : "";
-  } catch {
-    return "";
-  }
-}
 
 function formatDate(value: string, locale: string) {
   const date = new Date(value);

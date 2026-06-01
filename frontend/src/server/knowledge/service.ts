@@ -4,7 +4,7 @@ import {
   createKnowledgeItemRow,
   findActiveKnowledgeOrganizationMembership,
   findKnowledgeBid,
-  findKnowledgeIntentForUser,
+  findKnowledgeIntentForActiveOrganizationMember,
   findKnowledgeOrganization,
   findKnowledgeUser,
   listKnowledgeItemRows,
@@ -182,7 +182,7 @@ export async function createKnowledgeItem(
   }
 
   if (sourceIntentId) {
-    const intent = findKnowledgeIntentForUser(database, input.userId, sourceIntentId);
+    const intent = findKnowledgeIntentForActiveOrganizationMember(database, input.organizationId, sourceIntentId);
 
     if (!intent) {
       throw new KnowledgeValidationError("Linked intent is not available.");

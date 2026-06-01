@@ -42,13 +42,22 @@ export function findActiveKnowledgeOrganizationMembership(db: AppDatabase, userI
     .get();
 }
 
-export function findKnowledgeIntentForUser(db: AppDatabase, userId: string, intentId: string) {
+export function findKnowledgeIntentForActiveOrganizationMember(
+  db: AppDatabase,
+  organizationId: string,
+  intentId: string,
+) {
   return db
-    .select()
+    .select({ intent: intentToBid })
     .from(intentToBid)
-    .where(and(eq(intentToBid.userId, userId), eq(intentToBid.id, intentId)))
+    .innerJoin(organizationMemberships, eq(organizationMemberships.userId, intentToBid.userId))
+    .where(and(
+      eq(intentToBid.id, intentId),
+      eq(organizationMemberships.organizationId, organizationId),
+      eq(organizationMemberships.status, "active"),
+    ))
     .limit(1)
-    .get();
+    .get()?.intent;
 }
 
 export function findKnowledgeBid(db: AppDatabase, bidId: string) {

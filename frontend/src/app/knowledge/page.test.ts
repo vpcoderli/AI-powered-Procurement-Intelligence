@@ -18,7 +18,7 @@ describe("knowledge library page", () => {
     const page = readFileSync(new URL("page.tsx", routeDirectory), "utf8");
 
     expect(page).toContain("safeKnowledgeSourceUrl");
-    expect(page).toContain("protocol === \"http:\" || protocol === \"https:\"");
+    expect(page).toContain("@/lib/knowledge/source-url");
     expect(page).toContain("formatDate(item.updatedAt, language)");
     expect(page).not.toContain("href: item.sourceUrl");
     expect(page).not.toContain("Intl.DateTimeFormat(\"en\"");
