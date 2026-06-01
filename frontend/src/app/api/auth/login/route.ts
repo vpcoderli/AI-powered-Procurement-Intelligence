@@ -6,9 +6,11 @@ import {
   InvalidCredentialsError,
   loginUser,
 } from "@/server/auth/service";
-import { mergeSavedBidIds } from "@/server/bids/repository";
+import { loginMysqlUser } from "@/server/auth/mysql-service";
+import { mergeSavedBidIds, mergeSavedBidIdsFromMysql } from "@/server/bids/repository";
 import { clearAnonymousUserCookie, resolveAnonymousUser } from "@/server/bids/user";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -35,11 +37,18 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await loginUser(db, body.email, body.password);
+    const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+    const result = mysql
+      ? await loginMysqlUser(mysql, body.email, body.password)
+      : await loginUser(db, body.email, body.password);
     const anonymousUser = resolveAnonymousUser(request);
 
     if (!anonymousUser.isNewUser) {
-      await mergeSavedBidIds(db, anonymousUser.userId, result.user.id);
+      if (mysql) {
+        await mergeSavedBidIdsFromMysql(mysql, anonymousUser.userId, result.user.id);
+      } else {
+        await mergeSavedBidIds(db, anonymousUser.userId, result.user.id);
+      }
     }
 
     const response = NextResponse.json({ user: result.user });

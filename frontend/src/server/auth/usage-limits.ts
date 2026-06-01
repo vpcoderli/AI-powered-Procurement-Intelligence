@@ -1,5 +1,8 @@
 import { and, eq, inArray } from "drizzle-orm";
+import type { Pool } from "mysql2/promise";
 import { listWorkspaceMemberUserIds } from "@/server/account/workspace";
+import { listMysqlWorkspaceMemberUserIds } from "@/server/account/mysql-workspace";
+import type { MysqlBidsReader } from "@/server/bids/repository";
 import type { AppDatabase } from "@/server/db/client";
 import { alerts, intentToBid, organizationMemberships, savedBids } from "@/server/db/schema";
 import type { AccountTier } from "./entitlements";
@@ -256,6 +259,105 @@ export function enforceUsageLimit(
       used: status.used,
       limit: status.limit,
       requiredTier: status.requiredTier,
+    });
+  }
+}
+
+export async function enforceMysqlSavedBidUsageLimit(
+  mysql: MysqlBidsReader,
+  input: { userId: string; tier: AccountTier; resourceId?: string },
+) {
+  const limit = usageLimitForTier(input.tier, "saved_bids");
+  if (limit === null) return;
+
+  if (input.resourceId) {
+    const [existingRows] = await mysql.query(
+      "SELECT bid_id AS bidId FROM saved_bids WHERE user_id = ? AND bid_id = ? LIMIT 1",
+      [input.userId, input.resourceId],
+    );
+
+    if ((existingRows as unknown[]).length > 0) {
+      return;
+    }
+  }
+
+  const [rows] = await mysql.query(
+    "SELECT COUNT(DISTINCT bid_id) AS used FROM saved_bids WHERE user_id = ?",
+    [input.userId],
+  );
+  const used = Number((rows as unknown as Array<{ used: number | string }>)[0]?.used ?? 0);
+
+  if (used >= limit) {
+    throw new UsageLimitError({
+      feature: "saved_bids",
+      tier: input.tier,
+      used,
+      limit,
+      requiredTier: nextTierByFeatureAndTier.saved_bids[input.tier] ?? null,
+    });
+  }
+}
+
+export async function enforceMysqlIntentUsageLimit(
+  mysql: Pool,
+  input: { userId: string; tier: AccountTier; resourceId?: string },
+) {
+  const limit = usageLimitForTier(input.tier, "intent_workspace");
+  if (limit === null) return;
+
+  const userIds = await listMysqlWorkspaceMemberUserIds(mysql, input.userId);
+  const placeholders = userIds.map(() => "?").join(", ");
+
+  if (input.resourceId) {
+    const [existingRows] = await mysql.query(
+      `SELECT bid_id AS bidId FROM intent_to_bid WHERE user_id IN (${placeholders}) AND bid_id = ? LIMIT 1`,
+      [...userIds, input.resourceId],
+    );
+
+    if ((existingRows as unknown[]).length > 0) {
+      return;
+    }
+  }
+
+  const [rows] = await mysql.query(
+    `SELECT COUNT(DISTINCT bid_id) AS used FROM intent_to_bid WHERE user_id IN (${placeholders})`,
+    userIds,
+  );
+  const used = Number((rows as unknown as Array<{ used: number | string }>)[0]?.used ?? 0);
+
+  if (used >= limit) {
+    throw new UsageLimitError({
+      feature: "intent_workspace",
+      tier: input.tier,
+      used,
+      limit,
+      requiredTier: nextTierByFeatureAndTier.intent_workspace[input.tier] ?? null,
+    });
+  }
+}
+
+export async function enforceMysqlSearchAlertUsageLimit(
+  mysql: Pick<Pool, "query">,
+  input: { userId: string; tier: AccountTier },
+) {
+  const limit = usageLimitForTier(input.tier, "search_alerts");
+  if (limit === null) return;
+
+  const userIds = await listMysqlWorkspaceMemberUserIds(mysql as Pool, input.userId);
+  const placeholders = userIds.map(() => "?").join(", ");
+  const [rows] = await mysql.query(
+    `SELECT COUNT(id) AS used FROM alerts WHERE user_id IN (${placeholders})`,
+    userIds,
+  );
+  const used = Number((rows as unknown as Array<{ used: number | string }>)[0]?.used ?? 0);
+
+  if (used >= limit) {
+    throw new UsageLimitError({
+      feature: "search_alerts",
+      tier: input.tier,
+      used,
+      limit,
+      requiredTier: nextTierByFeatureAndTier.search_alerts[input.tier] ?? null,
     });
   }
 }

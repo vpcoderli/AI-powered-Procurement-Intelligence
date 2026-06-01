@@ -8,6 +8,19 @@ type StateCrawlerSourceDefinition = {
 export type CrawlerAdapterKind = "dedicated" | "generic" | "none";
 export type CrawlerMaturity = "verified" | "beta" | "generic" | "none";
 export type CrawlerCapability = "query" | "attachments" | "detail_pages" | "pagination";
+export type SourceApprovalStatus = "approved" | "needs_review" | "blocked";
+export type SourceAccessPattern = "public_http" | "public_api" | "browser_required" | "login_required" | "restricted" | "unknown";
+export type SourceLegalReviewStatus = "approved_public" | "not_reviewed" | "restricted";
+
+export type SourceGovernanceMetadata = {
+  approvedForIngestion: boolean;
+  approvalStatus: SourceApprovalStatus;
+  accessPattern: SourceAccessPattern;
+  legalReviewStatus: SourceLegalReviewStatus;
+  sourceOwner: string;
+  approvalNotes: string;
+  lastApprovalReviewedAt: string | null;
+};
 
 const STATE_CRAWLER_SOURCE_DEFINITIONS = [
   { stateCode: "AL", id: "al_state_procurement", label: "Alabama State Procurement", baseUrl: "https://purchasing.alabama.gov" },
@@ -69,6 +82,30 @@ type CrawlerMetadata = {
   maturity: Exclude<CrawlerMaturity, "none">;
   capabilities: readonly CrawlerCapability[];
 };
+
+function governanceForMetadata(metadata: CrawlerMetadata): SourceGovernanceMetadata {
+  if (metadata.maturity === "verified") {
+    return {
+      approvedForIngestion: true,
+      approvalStatus: "approved",
+      accessPattern: "public_http",
+      legalReviewStatus: "approved_public",
+      sourceOwner: "APSI Data Ops",
+      approvalNotes: "Verified public state procurement source used by the local crawler registry.",
+      lastApprovalReviewedAt: "2026-06-01T00:00:00.000Z",
+    };
+  }
+
+  return {
+    approvedForIngestion: false,
+    approvalStatus: "needs_review",
+    accessPattern: "public_http",
+    legalReviewStatus: "not_reviewed",
+    sourceOwner: "APSI Data Ops",
+    approvalNotes: "Beta source requires legal/source-quality review before production ingestion approval.",
+    lastApprovalReviewedAt: null,
+  };
+}
 
 const GENERIC_CRAWLER_METADATA = {
   adapterKind: "generic",
@@ -336,7 +373,8 @@ function metadataForSourceId(id: StateCrawlerSourceDefinitionId): CrawlerMetadat
 export const STATE_CRAWLER_SOURCES = STATE_CRAWLER_SOURCE_DEFINITIONS.map((source) => ({
   ...source,
   ...metadataForSourceId(source.id),
-})) as readonly ((typeof STATE_CRAWLER_SOURCE_DEFINITIONS)[number] & CrawlerMetadata)[];
+  ...governanceForMetadata(metadataForSourceId(source.id)),
+})) as readonly ((typeof STATE_CRAWLER_SOURCE_DEFINITIONS)[number] & CrawlerMetadata & SourceGovernanceMetadata)[];
 
 export type StateCrawlerSourceId = StateCrawlerSourceDefinitionId;
 export type StateCrawlerSourceMetadata = (typeof STATE_CRAWLER_SOURCES)[number];

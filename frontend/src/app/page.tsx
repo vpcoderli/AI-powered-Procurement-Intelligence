@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { UniversalState } from "@/components/universal-state";
 import { BidCard } from "@/components/bids/BidCard";
 import { fetchBids } from "@/lib/api/bids";
 import { STATE_FILTERS, type Bid, type IssuerType, type SortOption } from "@/lib/mock-data";
@@ -289,18 +290,16 @@ export default function Dashboard() {
             ))}
 
           {!isLoading && hasError && (
-            <div className="text-center py-16 border border-dashed border-slate-300 bg-white rounded-xl">
-              <p className="text-slate-900 font-semibold mb-2">{t("dashboard.errorTitle")}</p>
-              <p className="text-sm text-slate-500 mb-4">{t("dashboard.errorDescription")}</p>
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-2">
-                <Button onClick={retryFetch} className="bg-slate-900 hover:bg-slate-800 text-white font-semibold">
-                  {t("dashboard.retry")}
-                </Button>
-                <Button variant="link" onClick={clearFilters} className="text-slate-900 font-semibold hover:text-slate-700">
-                  {t("dashboard.clearFilters")}
-                </Button>
-              </div>
-            </div>
+            <UniversalState
+              actions={[
+                { label: t("dashboard.retry"), onClick: retryFetch },
+                { label: t("dashboard.clearFilters"), onClick: clearFilters, variant: "secondary" },
+              ]}
+              className="bg-white py-8"
+              code="error"
+              message={t("dashboard.errorDescription")}
+              title={t("dashboard.errorTitle")}
+            />
           )}
 
           {!isLoading && !hasError && bids.map((bid) => (
@@ -308,13 +307,13 @@ export default function Dashboard() {
           ))}
 
           {!isLoading && !hasError && bids.length === 0 && (
-            <div className="text-center py-16 border border-dashed border-slate-300 bg-white rounded-xl">
-              <p className="text-slate-900 font-semibold mb-2">{t("dashboard.noResultsTitle")}</p>
-              <p className="text-sm text-slate-500 mb-4">{t("dashboard.noResultsDescription")}</p>
-              <Button variant="link" onClick={clearFilters} className="text-slate-900 font-semibold hover:text-slate-700">
-                {t("dashboard.clearFilters")}
-              </Button>
-            </div>
+            <UniversalState
+              actions={[{ label: t("dashboard.clearFilters"), onClick: clearFilters, variant: "secondary" }]}
+              className="bg-white py-8"
+              code="empty"
+              message={t("dashboard.noResultsDescription")}
+              title={t("dashboard.noResultsTitle")}
+            />
           )}
         </div>
       </main>

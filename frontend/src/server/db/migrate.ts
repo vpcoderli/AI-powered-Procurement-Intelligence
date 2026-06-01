@@ -159,6 +159,59 @@ export function runMigrations(db: AppDatabase) {
       PRIMARY KEY (organization_id, feature_key)
     );
 
+    CREATE TABLE IF NOT EXISTS config_registry (
+      id TEXT PRIMARY KEY,
+      scope_type TEXT NOT NULL DEFAULT 'global',
+      scope_id TEXT,
+      module TEXT NOT NULL,
+      config_key TEXT NOT NULL,
+      config_value_json TEXT NOT NULL DEFAULT '{}',
+      schema_version INTEGER NOT NULL DEFAULT 1,
+      status TEXT NOT NULL DEFAULT 'active',
+      effective_from TEXT,
+      effective_to TEXT,
+      created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      updated_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+      change_reason TEXT NOT NULL,
+      audit_event_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS event_log (
+      id TEXT PRIMARY KEY,
+      event_name TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      environment TEXT NOT NULL DEFAULT 'local',
+      organization_id TEXT,
+      actor_type TEXT NOT NULL DEFAULT 'system',
+      actor_id TEXT,
+      actor_role TEXT,
+      target_type TEXT,
+      target_id TEXT,
+      source TEXT NOT NULL,
+      outcome TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'info',
+      request_id TEXT,
+      correlation_id TEXT,
+      idempotency_key TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      before_after_json TEXT NOT NULL DEFAULT '{}',
+      retention_class TEXT NOT NULL DEFAULT 'standard',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS event_outbox (
+      id TEXT PRIMARY KEY,
+      event_log_id TEXT NOT NULL REFERENCES event_log(id) ON DELETE CASCADE,
+      destination TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      created_at TEXT NOT NULL,
+      delivered_at TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS workspace_invitations (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -482,6 +535,13 @@ export function runMigrations(db: AppDatabase) {
       supports_attachment_metadata INTEGER,
       supports_detail_page_fetch INTEGER,
       fallback_notes TEXT,
+      approved_for_ingestion INTEGER,
+      approval_status TEXT,
+      access_pattern TEXT,
+      legal_review_status TEXT,
+      source_owner TEXT,
+      approval_notes TEXT,
+      last_approval_reviewed_at TEXT,
       last_success_at TEXT,
       last_failure_at TEXT,
       consecutive_failures INTEGER NOT NULL DEFAULT 0,
@@ -519,6 +579,18 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_organization_memberships_organization_id ON organization_memberships(organization_id);
     CREATE INDEX IF NOT EXISTS idx_organization_feature_overrides_org ON organization_feature_overrides(organization_id);
     CREATE INDEX IF NOT EXISTS idx_organization_feature_overrides_feature ON organization_feature_overrides(feature_key);
+    CREATE INDEX IF NOT EXISTS idx_config_registry_lookup ON config_registry(scope_type, scope_id, module, config_key);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_config_registry_unique_key ON config_registry(scope_type, COALESCE(scope_id, ''), module, config_key);
+    CREATE INDEX IF NOT EXISTS idx_config_registry_module ON config_registry(module);
+    CREATE INDEX IF NOT EXISTS idx_config_registry_status ON config_registry(status);
+    CREATE INDEX IF NOT EXISTS idx_event_log_event_name ON event_log(event_name);
+    CREATE INDEX IF NOT EXISTS idx_event_log_occurred_at ON event_log(occurred_at);
+    CREATE INDEX IF NOT EXISTS idx_event_log_organization_id ON event_log(organization_id);
+    CREATE INDEX IF NOT EXISTS idx_event_log_target ON event_log(target_type, target_id);
+    CREATE INDEX IF NOT EXISTS idx_event_log_request_id ON event_log(request_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_event_log_idempotency_key ON event_log(idempotency_key);
+    CREATE INDEX IF NOT EXISTS idx_event_outbox_event_log_id ON event_outbox(event_log_id);
+    CREATE INDEX IF NOT EXISTS idx_event_outbox_status_created ON event_outbox(status, created_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_bids_dedupe_key ON bids(dedupe_key);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_bids_source_source_bid_id ON bids(source, source_bid_id);
     CREATE INDEX IF NOT EXISTS idx_bids_active_deadline ON bids(is_active, deadline_date);
@@ -734,4 +806,11 @@ export function runMigrations(db: AppDatabase) {
   addDataSourceColumn("supports_attachment_metadata", "INTEGER");
   addDataSourceColumn("supports_detail_page_fetch", "INTEGER");
   addDataSourceColumn("fallback_notes", "TEXT");
+  addDataSourceColumn("approved_for_ingestion", "INTEGER");
+  addDataSourceColumn("approval_status", "TEXT");
+  addDataSourceColumn("access_pattern", "TEXT");
+  addDataSourceColumn("legal_review_status", "TEXT");
+  addDataSourceColumn("source_owner", "TEXT");
+  addDataSourceColumn("approval_notes", "TEXT");
+  addDataSourceColumn("last_approval_reviewed_at", "TEXT");
 }

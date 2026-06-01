@@ -111,4 +111,14 @@ describe("settings page", () => {
     expect(page).toContain("handleSearchAlertToggle");
     expect(page).toContain("handleSearchAlertDelete");
   });
+
+  it("uses UniversalState for settings loading, error, and plan-limit states", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain('import { UniversalState } from "@/components/universal-state"');
+    expect(page).toContain('code="loading"');
+    expect(page).toContain('code="error"');
+    expect(page).toContain('code="plan_limit"');
+    expect(page).toContain("SettingsInlineState");
+  });
 });

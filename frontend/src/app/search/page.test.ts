@@ -18,4 +18,14 @@ describe("search route", () => {
     expect(dashboardPage).toContain("winbids-filter-panel");
     expect(dashboardPage).toContain("Discovery-first queue");
   });
+
+  it("uses UniversalState for dashboard error and empty states", () => {
+    const dashboardPage = readFileSync(new URL("../page.tsx", import.meta.url), "utf8");
+
+    expect(dashboardPage).toContain('import { UniversalState } from "@/components/universal-state"');
+    expect(dashboardPage).toContain('code="error"');
+    expect(dashboardPage).toContain('code="empty"');
+    expect(dashboardPage).toContain('title={t("dashboard.errorTitle")}');
+    expect(dashboardPage).toContain('title={t("dashboard.noResultsTitle")}');
+  });
 });

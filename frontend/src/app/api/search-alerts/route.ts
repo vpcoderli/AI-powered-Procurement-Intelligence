@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
-import { UsageLimitError, enforceUsageLimit } from "@/server/auth/usage-limits";
+import { UsageLimitError, enforceMysqlSearchAlertUsageLimit, enforceUsageLimit } from "@/server/auth/usage-limits";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import * as searchAlertService from "@/server/search-alerts/service";
 import type { CreateSearchAlertInput } from "@/server/search-alerts/types";
 
@@ -145,11 +146,18 @@ export async function POST(request: Request) {
   const principal = await resolvePrincipal(db, request);
 
   try {
-    enforceUsageLimit(db, {
-      userId: principal.userId,
-      tier: principal.tier,
-      feature: "search_alerts",
-    });
+    if (isMysqlDatabaseUrlConfigured()) {
+      await enforceMysqlSearchAlertUsageLimit(resolveMysqlPool(), {
+        userId: principal.userId,
+        tier: principal.tier,
+      });
+    } else {
+      enforceUsageLimit(db, {
+        userId: principal.userId,
+        tier: principal.tier,
+        feature: "search_alerts",
+      });
+    }
     const alert = await searchAlertService.createSearchAlert(db, principal.userId, input);
 
     return jsonWithPrincipalCookie({ alert }, principal);

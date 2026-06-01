@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
-import { UsageLimitError, enforceUsageLimit } from "@/server/auth/usage-limits";
+import { UsageLimitError, enforceMysqlSavedBidUsageLimit, enforceUsageLimit } from "@/server/auth/usage-limits";
 import * as bidService from "@/server/bids/service";
 import { BidNotFoundError } from "@/server/bids/types";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function invalidRequest() {
   return NextResponse.json(
@@ -88,12 +89,20 @@ export async function POST(request: Request) {
   const principal = await resolvePrincipal(db, request);
 
   try {
-    enforceUsageLimit(db, {
-      userId: principal.userId,
-      tier: principal.tier ?? "free",
-      feature: "saved_bids",
-      resourceId: body.bidId,
-    });
+    if (isMysqlDatabaseUrlConfigured()) {
+      await enforceMysqlSavedBidUsageLimit(resolveMysqlPool(), {
+        userId: principal.userId,
+        tier: principal.tier ?? "free",
+        resourceId: body.bidId,
+      });
+    } else {
+      enforceUsageLimit(db, {
+        userId: principal.userId,
+        tier: principal.tier ?? "free",
+        feature: "saved_bids",
+        resourceId: body.bidId,
+      });
+    }
 
     return jsonWithPrincipalCookie(await bidService.saveBid(principal.userId, body.bidId), principal);
   } catch (error) {

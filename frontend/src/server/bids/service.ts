@@ -2,13 +2,20 @@ import { STATE_FILTERS } from "@/lib/mock-data";
 import { db } from "@/server/db/client";
 import type { AppDatabase } from "@/server/db/client";
 import { listWorkspaceMemberUserIds } from "@/server/account/workspace";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import type { Bid } from "./domain";
 import {
   getBidByIdFromRepository,
+  getBidByIdFromMysql,
   listBids,
+  listBidsFromMysql,
+  type MysqlBidsReader,
   listSavedBidIds,
+  listSavedBidIdsFromMysql,
   removeSavedBidId,
+  removeSavedBidIdFromMysql,
   saveSavedBidId,
+  saveSavedBidIdFromMysql,
 } from "./repository";
 import {
   BidNotFoundError,
@@ -123,17 +130,20 @@ export async function queryBids(
   query: BidQuery,
   options: BidQueryOptions = {},
 ): Promise<BidListResponse> {
+  if (isMysqlDatabaseUrlConfigured()) {
+    return queryBidsFromMysql(resolveMysqlPool(), query, options);
+  }
+
   return queryBidsFromDatabase(db, query, options);
 }
 
-export async function queryBidsFromDatabase(
-  database: AppDatabase,
+function queryBidsFromList(
+  allBids: Bid[],
   query: BidQuery,
   options: BidQueryOptions = {},
-): Promise<BidListResponse> {
+): BidListResponse {
   const filters = normalizeQuery(query);
   const referenceDate = startOfDay(options.referenceDate ?? new Date());
-  const allBids = await listBids(database);
   const filteredBids = allBids.filter(
     (bid) =>
       bid.isActive &&
@@ -152,15 +162,66 @@ export async function queryBidsFromDatabase(
   };
 }
 
+export async function queryBidsFromDatabase(
+  database: AppDatabase,
+  query: BidQuery,
+  options: BidQueryOptions = {},
+): Promise<BidListResponse> {
+  const allBids = await listBids(database);
+  return queryBidsFromList(allBids, query, options);
+}
+
+export async function queryBidsFromMysql(
+  mysql: MysqlBidsReader,
+  query: BidQuery,
+  options: BidQueryOptions = {},
+): Promise<BidListResponse> {
+  const allBids = await listBidsFromMysql(mysql);
+  return queryBidsFromList(allBids, query, options);
+}
+
 export async function getBidById(id: string): Promise<Bid | undefined> {
+  if (isMysqlDatabaseUrlConfigured()) {
+    return getBidByIdFromMysql(resolveMysqlPool(), id);
+  }
+
   return getBidByIdFromRepository(db, id);
 }
 
+export async function getBidByIdFromMysqlRuntime(mysql: MysqlBidsReader, id: string): Promise<Bid | undefined> {
+  return getBidByIdFromMysql(mysql, id);
+}
+
 export async function getSavedBids(userId: string): Promise<SavedBidsResponse> {
+  if (isMysqlDatabaseUrlConfigured()) {
+    return savedBidsResponseFromMysql(resolveMysqlPool(), userId);
+  }
+
   return savedBidsResponse(db, userId);
 }
 
+async function savedBidsResponseFromMysql(mysql: MysqlBidsReader, userId: string): Promise<SavedBidsResponse> {
+  const savedIds = await listSavedBidIdsFromMysql(mysql, userId);
+  const savedIdSet = new Set(savedIds);
+  const bids = await listBidsFromMysql(mysql, savedIds);
+
+  return {
+    savedBidIds: savedIds,
+    bids: bids.filter((bid) => savedIdSet.has(bid.id)),
+  };
+}
+
 export async function saveBid(userId: string, id: string): Promise<SavedBidsResponse> {
+  if (isMysqlDatabaseUrlConfigured()) {
+    const mysql = resolveMysqlPool();
+    if (!(await getBidByIdFromMysql(mysql, id))) {
+      throw new BidNotFoundError();
+    }
+
+    await saveSavedBidIdFromMysql(mysql, userId, id);
+    return savedBidsResponseFromMysql(mysql, userId);
+  }
+
   if (!(await getBidById(id))) {
     throw new BidNotFoundError();
   }
@@ -172,6 +233,12 @@ export async function saveBid(userId: string, id: string): Promise<SavedBidsResp
 }
 
 export async function removeSavedBid(userId: string, id: string): Promise<SavedBidsResponse> {
+  if (isMysqlDatabaseUrlConfigured()) {
+    const mysql = resolveMysqlPool();
+    await removeSavedBidIdFromMysql(mysql, userId, id);
+    return savedBidsResponseFromMysql(mysql, userId);
+  }
+
   const scopeUserIds = savedBidScope(db, userId);
   await removeSavedBidId(db, userId, id, scopeUserIds);
 

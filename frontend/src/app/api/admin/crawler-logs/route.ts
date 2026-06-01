@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireAdminAccess, AdminAuthError } from "@/server/admin/auth";
-import { listAdminCrawlerLogs } from "@/server/admin/data-sources-repository";
+import {
+  listAdminCrawlerLogs,
+  listAdminCrawlerLogsFromMysql,
+  type MysqlAdminCrawlerLogsReader,
+} from "@/server/admin/data-sources-repository";
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -30,12 +35,52 @@ async function resolveDatabase(database?: AppDatabase) {
   return client.db;
 }
 
-export function createAdminCrawlerLogsGet(database?: AppDatabase) {
+interface AdminCrawlerLogsDependencies {
+  database?: AppDatabase;
+  mysql?: MysqlAdminCrawlerLogsReader;
+}
+
+function isDatabaseDependency(value: AdminCrawlerLogsDependencies | AppDatabase | undefined): value is AppDatabase {
+  return Boolean(value && "select" in value);
+}
+
+async function resolveDependencies(dependencies?: AdminCrawlerLogsDependencies | AppDatabase) {
+  if (isDatabaseDependency(dependencies)) {
+    return {
+      authDatabase: dependencies,
+      logsDatabase: dependencies,
+    };
+  }
+
+  const authDatabase = await resolveDatabase(dependencies?.database);
+  if (dependencies?.mysql) {
+    return {
+      authDatabase,
+      logsMysql: dependencies.mysql,
+    };
+  }
+
+  if (isMysqlDatabaseUrlConfigured()) {
+    return {
+      authDatabase,
+      logsMysql: resolveMysqlPool(),
+    };
+  }
+
+  return {
+    authDatabase,
+    logsDatabase: authDatabase,
+  };
+}
+
+export function createAdminCrawlerLogsGet(dependencies?: AdminCrawlerLogsDependencies | AppDatabase) {
   return async function GET(request: Request) {
     try {
-      const resolvedDb = await resolveDatabase(database);
-      await requireAdminAccess(resolvedDb, request);
-      const logs = await listAdminCrawlerLogs(resolvedDb, { limit: limitFromUrl(request) });
+      const resolved = await resolveDependencies(dependencies);
+      await requireAdminAccess(resolved.authDatabase, request);
+      const logs = resolved.logsMysql
+        ? await listAdminCrawlerLogsFromMysql(resolved.logsMysql, { limit: limitFromUrl(request) })
+        : await listAdminCrawlerLogs(resolved.logsDatabase, { limit: limitFromUrl(request) });
 
       return NextResponse.json({ logs });
     } catch (error) {

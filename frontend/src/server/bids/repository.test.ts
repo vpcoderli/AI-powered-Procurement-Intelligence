@@ -12,6 +12,7 @@ import { registerUser } from "@/server/auth/service";
 import {
   getBidByIdFromRepository,
   listBids,
+  listBidsFromMysql,
   listSavedBidIds,
   mergeSavedBidIds,
   removeSavedBidId,
@@ -37,6 +38,93 @@ describe("bid repository", () => {
     expect(bids).toHaveLength(6);
     expect(bids.find((bid) => bid.id === "1")?.saved).toBe(true);
     expect(bids.find((bid) => bid.id === "2")?.saved).toBe(false);
+  });
+
+  it("maps MySQL bid rows with attachments into public bid objects", async () => {
+    const queryCalls: string[] = [];
+    const mysql = {
+      async query(sql: string) {
+        queryCalls.push(sql);
+
+        if (sql.includes("FROM bid_attachments")) {
+          return [
+            [
+              {
+                id: "attachment_1",
+                bidId: "mysql_bid_1",
+                name: "Solicitation.pdf",
+                url: "https://agency.example.gov/solicitation.pdf",
+                originalUrl: "https://agency.example.gov/solicitation.pdf",
+                storagePath: "data/attachments/mysql/solicitation.pdf",
+                byteSize: 4096,
+                contentType: "application/pdf",
+                checksumSha256: "sha256-value",
+                fetchedAt: "2026-05-20T00:00:00.000Z",
+                archiveStatus: "archived",
+                archiveError: null,
+                sizeLabel: "4 KB",
+                mimeType: null,
+                sortOrder: 1,
+              },
+            ],
+          ];
+        }
+
+        return [
+          [
+            {
+              id: "mysql_bid_1",
+              title: "MySQL Cloud Services",
+              source: "SAM.gov",
+              sourceUrl: "https://sam.gov/opp/mysql_bid_1",
+              issuerName: "Federal Cloud Agency",
+              issuerType: "federal",
+              stateCode: "US",
+              originalCategory: "IT Services",
+              description: "Cloud migration services",
+              fullDescription: "Full cloud migration scope",
+              amount: "$100,000",
+              publishedDate: "2026-05-19",
+              deadlineDate: "2026-06-01",
+              contactName: "Jane Buyer",
+              contactEmail: "jane@example.gov",
+              contactPhone: "555-0100",
+              rawPayload: JSON.stringify({ tags: ["Cloud", "Federal"] }),
+              sourceConfidence: "high",
+              qualityFlagsJson: JSON.stringify(["detail_archived"]),
+              adminReviewStatus: "reviewed",
+              detailArchiveStatus: "archived",
+              detailArchivePath: "data/attachments/details/mysql_bid_1.html",
+              detailFetchedAt: "2026-05-20T00:00:00.000Z",
+              detailChecksumSha256: "detail-sha",
+              detailArchiveError: null,
+              isActive: 1,
+              updatedAt: "2026-05-20T00:00:00.000Z",
+            },
+          ],
+        ];
+      },
+    };
+
+    await expect(listBidsFromMysql(mysql, ["mysql_bid_1"])).resolves.toEqual([
+      expect.objectContaining({
+        id: "mysql_bid_1",
+        title: "MySQL Cloud Services",
+        saved: true,
+        tags: ["Cloud", "Federal"],
+        qualityFlags: ["detail_archived"],
+        attachments: [
+          expect.objectContaining({
+            name: "Solicitation.pdf",
+            url: "/api/bids/mysql_bid_1/attachments/attachment_1",
+            originalUrl: "https://agency.example.gov/solicitation.pdf",
+            archiveStatus: "archived",
+          }),
+        ],
+      }),
+    ]);
+    expect(queryCalls[0]).toContain("display_status <> 'suppressed'");
+    expect(queryCalls[1]).toContain("FROM bid_attachments");
   });
 
   it("gets a bid with attachments by id", async () => {

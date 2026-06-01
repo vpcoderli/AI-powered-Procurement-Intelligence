@@ -52,6 +52,19 @@ npm run risk:check
 
 This verifies that all 50 states have active non-empty state bid data, bid detail route IDs round-trip safely, state attachments use the internal download route instead of broken public URLs, ordinary/admin/paid feature entitlements remain separated, and production dependencies have no moderate-or-higher audit findings.
 
+## MySQL Migration Preparation
+
+SQLite is still the active local runtime, but MySQL migration tooling is available for cutover preparation:
+
+```bash
+DATABASE_URL=mysql://USER:PASSWORD@HOST:3306/winbids npm run db:mysql:migrate
+DATABASE_URL=mysql://USER:PASSWORD@HOST:3306/winbids npm run db:mysql:smoke
+```
+
+This migration path has been smoke-tested against MySQL 8 with a fresh schema, an idempotent re-run, a long bid-description insert, crawler-log reads, and bid-search reads. The `db:mysql:smoke` command redacts credentials in logs. Indexed text columns are converted to `VARCHAR(191)`, while long content columns are preserved as `LONGTEXT`.
+
+The runtime cutover still requires converting synchronous SQLite repository calls to async MySQL operations. The tracking runbook is in [`../docs/operations/mysql-cutover.md`](../docs/operations/mysql-cutover.md).
+
 ## State Crawler Validation
 
 From the repository root, run live adapter validation without writing to the local database:

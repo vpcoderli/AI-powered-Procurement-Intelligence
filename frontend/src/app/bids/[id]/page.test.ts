@@ -24,4 +24,15 @@ describe("bid detail pursuit panel", () => {
     expect(page).toContain("detail.archiveError");
     expect(page).not.toContain("rounded-xl border border-slate-200 bg-white p-5");
   });
+
+  it("uses UniversalState for bid detail not-found, error, and plan-limit states", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain('import { UniversalState } from "@/components/universal-state"');
+    expect(page).toContain('code="empty"');
+    expect(page).toContain('code="error"');
+    expect(page).toContain('code="plan_limit"');
+    expect(page).toContain('title={t("detail.notFoundTitle")}');
+    expect(page).toContain('title={t("dashboard.errorTitle")}');
+  });
 });

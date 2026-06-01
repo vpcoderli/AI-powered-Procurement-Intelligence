@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loginUser, registerUser, WeakPasswordError } from "@/server/auth/service";
 import { passwordResetTokens, sessions } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
@@ -7,7 +7,9 @@ import {
   ExpiredPasswordResetTokenError,
   InvalidPasswordResetTokenError,
   requestPasswordReset,
+  requestPasswordResetFromMysql,
   resetPasswordWithToken,
+  resetPasswordWithTokenFromMysql,
 } from "./password-reset";
 
 describe("password reset service", () => {
@@ -102,5 +104,43 @@ describe("password reset service", () => {
     await expect(
       resetPasswordWithToken(testDb.db, expired.resetToken ?? "", "another-strong-password"),
     ).rejects.toBeInstanceOf(ExpiredPasswordResetTokenError);
+  });
+
+  it("runs the MySQL password reset request and confirm lifecycle", async () => {
+    const tokenRows: Record<string, unknown>[] = [];
+    const mysql = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes("FROM users")) {
+          return [[{ id: "user_mysql", isDisabled: 0 }], []];
+        }
+        if (sql.includes("FROM password_reset_tokens")) {
+          return [[{
+            id: "password_reset_mysql",
+            userId: "user_mysql",
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+            usedAt: null,
+            isDisabled: 0,
+          }], []];
+        }
+        return [[], []];
+      }),
+      execute: vi.fn(async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("INSERT INTO password_reset_tokens")) {
+          tokenRows.push({ id: values[0], userId: values[1], tokenHash: values[2] });
+        }
+        return [{ affectedRows: 1 }, []];
+      }),
+    };
+
+    const requestResult = await requestPasswordResetFromMysql(mysql, "buyer@example.com");
+    await expect(
+      resetPasswordWithTokenFromMysql(mysql, requestResult.resetToken ?? "", "new-strong-password"),
+    ).resolves.toEqual({ ok: true });
+
+    expect(requestResult.resetToken).toMatch(/^reset_/);
+    expect(tokenRows).toHaveLength(1);
+    expect(mysql.execute).toHaveBeenCalledWith(expect.stringContaining("UPDATE users"), expect.any(Array));
+    expect(mysql.execute).toHaveBeenCalledWith(expect.stringContaining("UPDATE password_reset_tokens"), expect.any(Array));
+    expect(mysql.execute).toHaveBeenCalledWith(expect.stringContaining("DELETE FROM sessions"), ["user_mysql"]);
   });
 });

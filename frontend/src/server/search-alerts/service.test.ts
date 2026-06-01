@@ -1,7 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { recordSearchAlertDigestRun } from "./digest-history";
-import { createSearchAlert, deleteSearchAlert, listSearchAlerts, updateSearchAlert } from "./service";
+import {
+  createSearchAlert,
+  createSearchAlertFromMysql,
+  deleteSearchAlert,
+  deleteSearchAlertFromMysql,
+  listSearchAlerts,
+  listSearchAlertsFromMysql,
+  updateSearchAlert,
+  updateSearchAlertFromMysql,
+} from "./service";
 
 describe("search alerts service", () => {
   let testDb: TestDatabase;
@@ -131,5 +140,78 @@ describe("search alerts service", () => {
         status: "sent",
       }),
     ]);
+  });
+
+  it("runs the MySQL alert create/list/update/delete lifecycle", async () => {
+    const rowsByAlertId = new Map<string, Record<string, unknown>>();
+    const mysql = {
+      execute: vi.fn(async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("INSERT INTO users")) return [{ affectedRows: 1 }, []];
+        if (sql.includes("INSERT INTO alerts")) {
+          rowsByAlertId.set(values[0] as string, {
+            id: values[0],
+            userId: values[1],
+            name: values[2],
+            query: values[3],
+            states: values[4],
+            issuerType: values[5],
+            deadlinePreset: values[6],
+            publishedPreset: values[7],
+            frequency: values[8],
+            isEnabled: values[9],
+            lastMatchedAt: null,
+            lastNotifiedAt: null,
+            createdAt: values[10],
+            updatedAt: values[11],
+          });
+        }
+        if (sql.includes("UPDATE alerts")) {
+          const existing = rowsByAlertId.get(values.at(-1) as string);
+          if (existing) {
+            existing.name = values[0];
+            existing.isEnabled = values[6];
+            existing.updatedAt = values[7];
+          }
+        }
+        if (sql.includes("DELETE FROM alerts")) {
+          rowsByAlertId.delete(values[1] as string);
+        }
+        return [{ affectedRows: 1 }, []];
+      }),
+      query: vi.fn(async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("FROM alerts") && sql.includes("WHERE user_id = ? AND id = ?")) {
+          const row = rowsByAlertId.get(values[1] as string);
+          return [[row && row.userId === values[0] ? row : undefined].filter(Boolean), []];
+        }
+        if (sql.includes("FROM alerts") && sql.includes("WHERE user_id = ?")) {
+          return [[...rowsByAlertId.values()].filter((row) => row.userId === values[0]), []];
+        }
+        return [[], []];
+      }),
+    };
+
+    const created = await createSearchAlertFromMysql(mysql, "user_mysql", {
+      name: "Cloud bids",
+      query: { q: "cloud", states: ["CA"], issuerType: "state", deadline: "next7" },
+      frequency: "daily",
+      isEnabled: true,
+    });
+    const updated = await updateSearchAlertFromMysql(mysql, "user_mysql", created.id, {
+      name: "Cloud bids updated",
+      isEnabled: false,
+    });
+
+    expect((await listSearchAlertsFromMysql(mysql, "user_mysql")).map((alert) => alert.id)).toEqual([created.id]);
+    expect(updated).toMatchObject({
+      id: created.id,
+      name: "Cloud bids updated",
+      isEnabled: false,
+    });
+
+    await expect(deleteSearchAlertFromMysql(mysql, "user_other", created.id)).rejects.toThrow(
+      "Search alert not found",
+    );
+    await deleteSearchAlertFromMysql(mysql, "user_mysql", created.id);
+    await expect(listSearchAlertsFromMysql(mysql, "user_mysql")).resolves.toEqual([]);
   });
 });

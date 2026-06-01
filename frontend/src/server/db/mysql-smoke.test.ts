@@ -1,0 +1,365 @@
+import { describe, expect, it } from "vitest";
+import { buildMysqlSmokeBid, redactMysqlDatabaseUrl, validateMysqlSmokeInspection } from "./mysql-smoke";
+
+describe("mysql smoke verifier helpers", () => {
+  it("redacts database credentials before printing connection details", () => {
+    expect(redactMysqlDatabaseUrl("mysql://user:secret@localhost:3306/winbids")).toBe(
+      "mysql://user:***@localhost:3306/winbids",
+    );
+    expect(redactMysqlDatabaseUrl("mysql://localhost:3306/winbids")).toBe("mysql://localhost:3306/winbids");
+  });
+
+  it("builds a smoke bid with long content for LONGTEXT validation", () => {
+    const bid = buildMysqlSmokeBid("2026-06-01T00:00:00.000Z");
+
+    expect(bid.id).toMatch(/^mysql_smoke_/);
+    expect(bid.description).toHaveLength(5000);
+    expect(bid.source).toBe("mysql_smoke");
+    expect(bid.createdAt).toBe("2026-06-01T00:00:00.000Z");
+  });
+
+  it("rejects incomplete MySQL smoke inspection results", () => {
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 37,
+        descriptionType: "longtext",
+      sourceType: "varchar(191)",
+      organizationIdType: "varchar(191)",
+      storedDescriptionLength: 5000,
+      scraperHealthSourceCount: 1,
+      adminCrawlerLogCount: 1,
+      bidSearchCount: 1,
+      bidDetailVerified: true,
+      attachmentVerified: true,
+      savedBidVerified: true,
+      profileVerified: true,
+      intentVerified: true,
+      billingVerified: true,
+      workspaceVerified: true,
+      searchAlertVerified: true,
+      passwordResetVerified: true,
+      authSessionVerified: true,
+    }),
+  ).not.toThrow();
+
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 36,
+        descriptionType: "varchar(191)",
+        sourceType: "longtext",
+      organizationIdType: "longtext",
+      storedDescriptionLength: 191,
+      scraperHealthSourceCount: 0,
+      adminCrawlerLogCount: 0,
+      bidSearchCount: 0,
+      bidDetailVerified: false,
+      attachmentVerified: false,
+      savedBidVerified: false,
+      profileVerified: false,
+      intentVerified: false,
+      billingVerified: false,
+      workspaceVerified: false,
+      searchAlertVerified: false,
+      passwordResetVerified: false,
+      authSessionVerified: false,
+    }),
+  ).toThrow("MySQL smoke verification failed");
+
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 37,
+        descriptionType: "longtext",
+        sourceType: "varchar(191)",
+        organizationIdType: "varchar(191)",
+        storedDescriptionLength: 5000,
+        scraperHealthSourceCount: 0,
+        adminCrawlerLogCount: 1,
+        bidSearchCount: 1,
+        bidDetailVerified: true,
+        attachmentVerified: true,
+        savedBidVerified: true,
+        profileVerified: true,
+        intentVerified: true,
+        billingVerified: true,
+        workspaceVerified: true,
+        searchAlertVerified: true,
+        passwordResetVerified: true,
+        authSessionVerified: true,
+      }),
+    ).toThrow("expected MySQL scraper health query to return at least one source");
+
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 37,
+        descriptionType: "longtext",
+        sourceType: "varchar(191)",
+        organizationIdType: "varchar(191)",
+        storedDescriptionLength: 5000,
+        scraperHealthSourceCount: 1,
+        adminCrawlerLogCount: 0,
+        bidSearchCount: 1,
+        bidDetailVerified: true,
+        attachmentVerified: true,
+        savedBidVerified: true,
+        profileVerified: true,
+        intentVerified: true,
+        billingVerified: true,
+        workspaceVerified: true,
+        searchAlertVerified: true,
+        passwordResetVerified: true,
+        authSessionVerified: true,
+      }),
+    ).toThrow("expected MySQL admin crawler log query to return at least one log");
+
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 37,
+        descriptionType: "longtext",
+        sourceType: "varchar(191)",
+        organizationIdType: "varchar(191)",
+        storedDescriptionLength: 5000,
+        scraperHealthSourceCount: 1,
+        adminCrawlerLogCount: 1,
+        bidSearchCount: 0,
+        bidDetailVerified: true,
+        attachmentVerified: true,
+        savedBidVerified: true,
+        profileVerified: true,
+        intentVerified: true,
+        billingVerified: true,
+        workspaceVerified: true,
+        searchAlertVerified: true,
+        passwordResetVerified: true,
+        authSessionVerified: true,
+      }),
+    ).toThrow("expected MySQL bid search query to return at least one bid");
+
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 37,
+        descriptionType: "longtext",
+        sourceType: "varchar(191)",
+        organizationIdType: "varchar(191)",
+        storedDescriptionLength: 5000,
+        scraperHealthSourceCount: 1,
+        adminCrawlerLogCount: 1,
+        bidSearchCount: 1,
+        bidDetailVerified: false,
+        attachmentVerified: true,
+        savedBidVerified: true,
+        profileVerified: true,
+        intentVerified: true,
+        billingVerified: true,
+        workspaceVerified: true,
+        searchAlertVerified: true,
+        passwordResetVerified: true,
+        authSessionVerified: true,
+      }),
+    ).toThrow("expected MySQL bid detail query to verify");
+
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 37,
+        descriptionType: "longtext",
+        sourceType: "varchar(191)",
+        organizationIdType: "varchar(191)",
+        storedDescriptionLength: 5000,
+        scraperHealthSourceCount: 1,
+        adminCrawlerLogCount: 1,
+        bidSearchCount: 1,
+        bidDetailVerified: true,
+        attachmentVerified: false,
+        savedBidVerified: true,
+        profileVerified: true,
+        intentVerified: true,
+        billingVerified: true,
+        workspaceVerified: true,
+        searchAlertVerified: true,
+        passwordResetVerified: true,
+        authSessionVerified: true,
+      }),
+    ).toThrow("expected MySQL attachment metadata lifecycle to verify");
+
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 37,
+        descriptionType: "longtext",
+        sourceType: "varchar(191)",
+        organizationIdType: "varchar(191)",
+        storedDescriptionLength: 5000,
+        scraperHealthSourceCount: 1,
+        adminCrawlerLogCount: 1,
+        bidSearchCount: 1,
+        bidDetailVerified: true,
+        attachmentVerified: true,
+        savedBidVerified: false,
+        profileVerified: true,
+        intentVerified: true,
+        billingVerified: true,
+        workspaceVerified: true,
+        searchAlertVerified: true,
+        passwordResetVerified: true,
+        authSessionVerified: true,
+      }),
+    ).toThrow("expected MySQL saved bid lifecycle to verify");
+
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 37,
+        descriptionType: "longtext",
+        sourceType: "varchar(191)",
+        organizationIdType: "varchar(191)",
+        storedDescriptionLength: 5000,
+        scraperHealthSourceCount: 1,
+        adminCrawlerLogCount: 1,
+        bidSearchCount: 1,
+        bidDetailVerified: true,
+        attachmentVerified: true,
+        savedBidVerified: true,
+        profileVerified: false,
+        intentVerified: true,
+        billingVerified: true,
+        workspaceVerified: true,
+        searchAlertVerified: true,
+        passwordResetVerified: true,
+        authSessionVerified: true,
+      }),
+    ).toThrow("expected MySQL supplier profile lifecycle to verify");
+
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 37,
+        descriptionType: "longtext",
+        sourceType: "varchar(191)",
+        organizationIdType: "varchar(191)",
+        storedDescriptionLength: 5000,
+        scraperHealthSourceCount: 1,
+        adminCrawlerLogCount: 1,
+        bidSearchCount: 1,
+        bidDetailVerified: true,
+        attachmentVerified: true,
+        savedBidVerified: true,
+        profileVerified: true,
+        intentVerified: false,
+        billingVerified: true,
+        workspaceVerified: true,
+        authSessionVerified: true,
+      }),
+    ).toThrow("expected MySQL intent lifecycle to verify");
+
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 37,
+        descriptionType: "longtext",
+        sourceType: "varchar(191)",
+        organizationIdType: "varchar(191)",
+        storedDescriptionLength: 5000,
+        scraperHealthSourceCount: 1,
+        adminCrawlerLogCount: 1,
+        bidSearchCount: 1,
+        bidDetailVerified: true,
+        attachmentVerified: true,
+        savedBidVerified: true,
+        profileVerified: true,
+        intentVerified: true,
+        billingVerified: false,
+        workspaceVerified: true,
+        searchAlertVerified: true,
+        passwordResetVerified: true,
+        authSessionVerified: true,
+      }),
+    ).toThrow("expected MySQL billing lifecycle to verify");
+
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 37,
+        descriptionType: "longtext",
+        sourceType: "varchar(191)",
+        organizationIdType: "varchar(191)",
+        storedDescriptionLength: 5000,
+        scraperHealthSourceCount: 1,
+        adminCrawlerLogCount: 1,
+        bidSearchCount: 1,
+        bidDetailVerified: true,
+        attachmentVerified: true,
+        savedBidVerified: true,
+        profileVerified: true,
+        intentVerified: true,
+        billingVerified: true,
+        workspaceVerified: false,
+        searchAlertVerified: true,
+        passwordResetVerified: true,
+        authSessionVerified: true,
+      }),
+    ).toThrow("expected MySQL workspace lifecycle to verify");
+
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 37,
+        descriptionType: "longtext",
+        sourceType: "varchar(191)",
+        organizationIdType: "varchar(191)",
+        storedDescriptionLength: 5000,
+        scraperHealthSourceCount: 1,
+        adminCrawlerLogCount: 1,
+        bidSearchCount: 1,
+        bidDetailVerified: true,
+        attachmentVerified: true,
+        savedBidVerified: true,
+        profileVerified: true,
+        intentVerified: true,
+        billingVerified: true,
+        workspaceVerified: true,
+        searchAlertVerified: false,
+        passwordResetVerified: true,
+        authSessionVerified: true,
+      }),
+    ).toThrow("expected MySQL search alert lifecycle to verify");
+
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 37,
+        descriptionType: "longtext",
+        sourceType: "varchar(191)",
+        organizationIdType: "varchar(191)",
+        storedDescriptionLength: 5000,
+        scraperHealthSourceCount: 1,
+        adminCrawlerLogCount: 1,
+        bidSearchCount: 1,
+        bidDetailVerified: true,
+        attachmentVerified: true,
+        savedBidVerified: true,
+        profileVerified: true,
+        intentVerified: true,
+        billingVerified: true,
+        workspaceVerified: true,
+        searchAlertVerified: true,
+        passwordResetVerified: false,
+        authSessionVerified: true,
+      }),
+    ).toThrow("expected MySQL password reset lifecycle to verify");
+
+    expect(() =>
+      validateMysqlSmokeInspection({
+        tableCount: 37,
+        descriptionType: "longtext",
+        sourceType: "varchar(191)",
+        organizationIdType: "varchar(191)",
+        storedDescriptionLength: 5000,
+        scraperHealthSourceCount: 1,
+        adminCrawlerLogCount: 1,
+        bidSearchCount: 1,
+        bidDetailVerified: true,
+        attachmentVerified: true,
+        savedBidVerified: true,
+        profileVerified: true,
+        intentVerified: true,
+        billingVerified: true,
+        workspaceVerified: true,
+        searchAlertVerified: true,
+        passwordResetVerified: true,
+        authSessionVerified: false,
+      }),
+    ).toThrow("expected MySQL auth session lifecycle to verify");
+  });
+});

@@ -5,8 +5,10 @@ import {
   applyBillingProviderEvent,
   type BillingProviderEvent,
 } from "@/server/billing/subscriptions";
+import { applyMysqlBillingProviderEvent } from "@/server/billing/mysql-subscriptions";
 import { constructStripeWebhookEvent, normalizeStripeWebhookEvent } from "@/server/billing/providers";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -68,12 +70,16 @@ function constructStripeEvent(rawBody: string, signature: string | null) {
 
 export async function POST(request: Request) {
   const rawBody = await readBodyText(request);
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
 
   if (shouldUseStripeWebhook(request)) {
     try {
-      return NextResponse.json(applyBillingProviderEvent(db, normalizeStripeWebhookEvent(
+      const event = normalizeStripeWebhookEvent(
         constructStripeEvent(rawBody, request.headers.get("stripe-signature")),
-      )));
+      );
+      return NextResponse.json(
+        mysql ? await applyMysqlBillingProviderEvent(mysql, event) : applyBillingProviderEvent(db, event),
+      );
     } catch (error) {
       if (error instanceof InvalidSubscriptionInputError) {
         return errorResponse("INVALID_REQUEST", error.message, 400);
@@ -100,7 +106,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    return NextResponse.json(applyBillingProviderEvent(db, body));
+    return NextResponse.json(
+      mysql
+        ? await applyMysqlBillingProviderEvent(mysql, body)
+        : applyBillingProviderEvent(db, body),
+    );
   } catch (error) {
     if (error instanceof InvalidSubscriptionInputError) {
       return errorResponse("INVALID_REQUEST", error.message, 400);

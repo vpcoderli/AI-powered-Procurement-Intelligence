@@ -6,7 +6,9 @@ import {
   getSessionUser,
   updateUserProfile,
 } from "@/server/auth/service";
+import { getMysqlSessionUser, updateMysqlUserProfile } from "@/server/auth/mysql-service";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -39,15 +41,19 @@ export async function PATCH(request: Request) {
   }
 
   try {
-    const sessionUser = await getSessionUser(db, sessionToken);
+    const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+    const sessionUser = mysql
+      ? await getMysqlSessionUser(mysql, sessionToken)
+      : await getSessionUser(db, sessionToken);
 
     if (!sessionUser) {
       return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
     }
 
-    const user = await updateUserProfile(db, sessionUser.id, {
-      displayName: body.displayName,
-    });
+    const input = { displayName: body.displayName };
+    const user = mysql
+      ? await updateMysqlUserProfile(mysql, sessionUser.id, input)
+      : await updateUserProfile(db, sessionUser.id, input);
 
     return NextResponse.json({ user });
   } catch (error) {

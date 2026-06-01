@@ -6,7 +6,10 @@ import {
   InvalidSubscriptionInputError,
   createCheckoutSession,
 } from "@/server/billing/subscriptions";
+import { createMysqlCheckoutSession } from "@/server/billing/mysql-subscriptions";
+import { getMysqlSessionUser } from "@/server/auth/mysql-service";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -34,17 +37,25 @@ export async function POST(request: Request) {
   }
 
   try {
-    const sessionUser = await getSessionUser(db, sessionToken);
+    const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+    const sessionUser = mysql
+      ? await getMysqlSessionUser(mysql, sessionToken)
+      : await getSessionUser(db, sessionToken);
 
     if (!sessionUser) {
       return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
     }
 
     return NextResponse.json(
-      await createCheckoutSession(db, sessionUser.id, {
-        tier: body.tier,
-        origin: new URL(request.url).origin,
-      }),
+      await (mysql
+        ? createMysqlCheckoutSession(mysql, sessionUser.id, {
+            tier: body.tier,
+            origin: new URL(request.url).origin,
+          })
+        : createCheckoutSession(db, sessionUser.id, {
+            tier: body.tier,
+            origin: new URL(request.url).origin,
+          })),
     );
   } catch (error) {
     if (error instanceof InvalidSubscriptionInputError) {

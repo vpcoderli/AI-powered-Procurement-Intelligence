@@ -3,6 +3,7 @@ import { crawlerLogs, dataSources } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
   listAdminCrawlerLogs,
+  listAdminCrawlerLogsFromMysql,
   listAdminDataSources,
   updateAdminDataSource,
 } from "./data-sources-repository";
@@ -259,6 +260,47 @@ describe("admin data sources repository", () => {
       supportsAttachmentMetadata: true,
       supportsDetailPageFetch: true,
       fallbackNotes: null,
+      approvedForIngestion: true,
+      approvalStatus: "approved",
+      accessPattern: "public_http",
+      legalReviewStatus: "approved_public",
+      sourceOwner: "APSI Data Ops",
+    });
+  });
+
+  it("uses data source governance overrides before registry defaults", async () => {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id: "oregon_buys",
+        label: "OregonBuys",
+        issuerType: "state",
+        stateCode: "OR",
+        isEnabled: 1,
+        cadence: "daily",
+        approvedForIngestion: 1,
+        approvalStatus: "approved",
+        accessPattern: "public_http",
+        legalReviewStatus: "approved_public",
+        sourceOwner: "APSI Legal",
+        approvalNotes: "Approved after manual legal review.",
+        lastApprovalReviewedAt: "2026-06-01T00:00:00.000Z",
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+      .run();
+
+    const result = await listAdminDataSources(testDb.db);
+    const source = result.sources.find((item) => item.id === "oregon_buys");
+
+    expect(source).toMatchObject({
+      crawlerMaturity: "beta",
+      approvedForIngestion: true,
+      approvalStatus: "approved",
+      legalReviewStatus: "approved_public",
+      sourceOwner: "APSI Legal",
+      approvalNotes: "Approved after manual legal review.",
+      lastApprovalReviewedAt: "2026-06-01T00:00:00.000Z",
     });
   });
 
@@ -364,5 +406,71 @@ describe("admin data sources repository", () => {
       }),
     ]);
     expect(JSON.stringify(logs)).not.toContain("secret raw stack");
+  });
+
+  it("maps recent MySQL crawler logs without raw stack traces", async () => {
+    const queryCalls: string[] = [];
+    const mysql = {
+      async query(sql: string, values?: unknown[]) {
+        queryCalls.push(`${sql} ${JSON.stringify(values ?? [])}`);
+
+        return [
+          [
+            {
+              id: "log_mysql",
+              source: "SAM.gov",
+              runId: "run_mysql",
+              status: "failed",
+              startedAt: "2026-05-19T00:00:00.000Z",
+              finishedAt: "2026-05-19T00:01:00.000Z",
+              durationMs: 60000,
+              fetchedCount: 0,
+              insertedCount: 0,
+              updatedCount: 0,
+              skippedCount: 0,
+              failedCount: 1,
+              errorCode: "CrawlerFailed",
+              errorMessage: "Crawler failed",
+              metadata: JSON.stringify({
+                fallback_source: "bundled_demo_fixture",
+                fallback_reason: "Live source rejected request",
+                fallback_fixture: "/fixtures/sam.json",
+              }),
+              errorStack: "do not leak",
+            },
+          ],
+        ];
+      },
+    };
+
+    await expect(listAdminCrawlerLogsFromMysql(mysql, { limit: 500 })).resolves.toEqual([
+      {
+        id: "log_mysql",
+        source: "SAM.gov",
+        runId: "run_mysql",
+        status: "failed",
+        startedAt: "2026-05-19T00:00:00.000Z",
+        finishedAt: "2026-05-19T00:01:00.000Z",
+        durationMs: 60000,
+        fetchedCount: 0,
+        insertedCount: 0,
+        updatedCount: 0,
+        skippedCount: 0,
+        failedCount: 1,
+        errorCode: "CrawlerFailed",
+        errorMessage: "Crawler failed",
+        metadata: JSON.stringify({
+          fallback_source: "bundled_demo_fixture",
+          fallback_reason: "Live source rejected request",
+          fallback_fixture: "/fixtures/sam.json",
+        }),
+        fallbackSource: "bundled_demo_fixture",
+        fallbackReason: "Live source rejected request",
+        fallbackFixture: "/fixtures/sam.json",
+      },
+    ]);
+    expect(JSON.stringify(await listAdminCrawlerLogsFromMysql(mysql, { limit: 500 }))).not.toContain("do not leak");
+    expect(queryCalls[0]).toContain("LIMIT ?");
+    expect(queryCalls[0]).toContain("[100]");
   });
 });

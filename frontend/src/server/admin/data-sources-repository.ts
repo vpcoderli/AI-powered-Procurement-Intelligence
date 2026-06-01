@@ -5,6 +5,9 @@ import {
   type CrawlerAdapterKind,
   type CrawlerCapability,
   type CrawlerMaturity,
+  type SourceAccessPattern,
+  type SourceApprovalStatus,
+  type SourceLegalReviewStatus,
 } from "@/lib/state-crawler-sources";
 import type { AppDatabase } from "@/server/db/client";
 import { crawlerLogs, dataSources } from "@/server/db/schema";
@@ -59,6 +62,13 @@ export interface AdminDataSource {
   supportsAttachmentMetadata: boolean;
   supportsDetailPageFetch: boolean;
   fallbackNotes: string | null;
+  approvedForIngestion: boolean;
+  approvalStatus: SourceApprovalStatus;
+  accessPattern: SourceAccessPattern;
+  legalReviewStatus: SourceLegalReviewStatus;
+  sourceOwner: string;
+  approvalNotes: string | null;
+  lastApprovalReviewedAt: string | null;
   createdAt: string;
   updatedAt: string;
   latestLog: AdminCrawlerLog | null;
@@ -74,6 +84,28 @@ export interface AdminDataSourceSummary {
 export interface AdminDataSourcesResponse {
   summary: AdminDataSourceSummary;
   sources: AdminDataSource[];
+}
+
+interface MysqlAdminCrawlerLogRow {
+  id: string;
+  source: string;
+  runId: string;
+  status: string;
+  startedAt: string;
+  finishedAt: string | null;
+  durationMs: number | string | null;
+  fetchedCount: number | string;
+  insertedCount: number | string;
+  updatedCount: number | string;
+  skippedCount: number | string;
+  failedCount: number | string;
+  errorCode: string | null;
+  errorMessage: string | null;
+  metadata: string | null;
+}
+
+export interface MysqlAdminCrawlerLogsReader {
+  query: (sql: string, values?: unknown[]) => Promise<[MysqlAdminCrawlerLogRow[]] | [MysqlAdminCrawlerLogRow[], unknown]>;
 }
 
 export class AdminDataSourceNotFoundError extends Error {
@@ -162,6 +194,40 @@ function toAdminLog(row: typeof crawlerLogs.$inferSelect): AdminCrawlerLog {
   };
 }
 
+function toNullableNumber(value: number | string | null) {
+  if (value === null) return null;
+  return Number(value);
+}
+
+function toNumber(value: number | string) {
+  return Number(value);
+}
+
+function toAdminLogFromMysql(row: MysqlAdminCrawlerLogRow): AdminCrawlerLog {
+  const parsedMetadata = parseLogMetadata(row.metadata);
+
+  return {
+    id: row.id,
+    source: row.source,
+    runId: row.runId,
+    status: row.status,
+    startedAt: row.startedAt,
+    finishedAt: row.finishedAt,
+    durationMs: toNullableNumber(row.durationMs),
+    fetchedCount: toNumber(row.fetchedCount),
+    insertedCount: toNumber(row.insertedCount),
+    updatedCount: toNumber(row.updatedCount),
+    skippedCount: toNumber(row.skippedCount),
+    failedCount: toNumber(row.failedCount),
+    errorCode: row.errorCode,
+    errorMessage: row.errorMessage,
+    metadata: row.metadata,
+    fallbackSource: parsedMetadata.fallbackSource,
+    fallbackReason: parsedMetadata.fallbackReason,
+    fallbackFixture: parsedMetadata.fallbackFixture,
+  };
+}
+
 function defaultProviderFamily(row: typeof dataSources.$inferSelect) {
   if (row.issuerType === "state") return "state_portal";
   if (row.issuerType === "federal") return "federal_portal";
@@ -183,6 +249,11 @@ function hasCapability(capabilities: CrawlerCapability[], capability: CrawlerCap
   return capabilities.includes(capability);
 }
 
+function booleanOverride(value: number | null, fallback: boolean) {
+  if (value === null) return fallback;
+  return value === 1;
+}
+
 function toAdminSource(
   row: typeof dataSources.$inferSelect,
   latestLog: AdminCrawlerLog | null,
@@ -190,6 +261,15 @@ function toAdminSource(
   const crawlerMetadata = row.issuerType === "state" ? getStateCrawlerSourceMetadata(row.stateCode) : null;
   const crawlerCapabilities = [...(crawlerMetadata?.capabilities ?? [])];
   const crawlerMaturity = crawlerMetadata?.maturity ?? "none";
+  const defaultGovernance = crawlerMetadata ?? {
+    approvedForIngestion: row.issuerType !== "state",
+    approvalStatus: "approved" as SourceApprovalStatus,
+    accessPattern: "public_http" as SourceAccessPattern,
+    legalReviewStatus: "approved_public" as SourceLegalReviewStatus,
+    sourceOwner: "APSI Data Ops",
+    approvalNotes: "Default public non-state source governance.",
+    lastApprovalReviewedAt: null,
+  };
 
   return {
     id: row.id,
@@ -226,6 +306,14 @@ function toAdminSource(
       hasCapability(crawlerCapabilities, "detail_pages"),
     ),
     fallbackNotes: row.fallbackNotes,
+    approvedForIngestion: booleanOverride(row.approvedForIngestion, defaultGovernance.approvedForIngestion),
+    approvalStatus: (row.approvalStatus as SourceApprovalStatus | null) ?? defaultGovernance.approvalStatus,
+    accessPattern: (row.accessPattern as SourceAccessPattern | null) ?? defaultGovernance.accessPattern,
+    legalReviewStatus:
+      (row.legalReviewStatus as SourceLegalReviewStatus | null) ?? defaultGovernance.legalReviewStatus,
+    sourceOwner: row.sourceOwner ?? defaultGovernance.sourceOwner,
+    approvalNotes: row.approvalNotes ?? defaultGovernance.approvalNotes,
+    lastApprovalReviewedAt: row.lastApprovalReviewedAt ?? defaultGovernance.lastApprovalReviewedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     latestLog,
@@ -309,4 +397,37 @@ export async function listAdminCrawlerLogs(
     .limit(limit)
     .all()
     .map(toAdminLog);
+}
+
+export async function listAdminCrawlerLogsFromMysql(
+  mysql: MysqlAdminCrawlerLogsReader,
+  options: { limit?: number } = {},
+): Promise<AdminCrawlerLog[]> {
+  const limit = Math.min(Math.max(options.limit ?? 25, 1), 100);
+  const [rows] = await mysql.query(
+    `
+      SELECT
+        id,
+        source,
+        run_id AS runId,
+        status,
+        started_at AS startedAt,
+        finished_at AS finishedAt,
+        duration_ms AS durationMs,
+        fetched_count AS fetchedCount,
+        inserted_count AS insertedCount,
+        updated_count AS updatedCount,
+        skipped_count AS skippedCount,
+        failed_count AS failedCount,
+        error_code AS errorCode,
+        error_message AS errorMessage,
+        metadata
+      FROM crawler_logs
+      ORDER BY started_at DESC
+      LIMIT ?
+    `,
+    [limit],
+  );
+
+  return rows.map(toAdminLogFromMysql);
 }

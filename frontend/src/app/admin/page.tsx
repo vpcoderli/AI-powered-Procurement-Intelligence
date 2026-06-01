@@ -1,7 +1,6 @@
 "use client";
 
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import Link from "next/link";
 import {
   Activity,
   AlertTriangle,
@@ -16,11 +15,12 @@ import {
   UserCog,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { UniversalState } from "@/components/universal-state";
 import { useAuth } from "@/context/AuthContext";
 import {
   Table,
@@ -262,6 +262,12 @@ function crawlerTone(value: string | null | undefined) {
   return "border-slate-200 bg-white text-slate-500";
 }
 
+function sourceApprovalTone(value: AdminDataSource["approvalStatus"]) {
+  if (value === "approved") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (value === "blocked") return "border-rose-200 bg-rose-50 text-rose-700";
+  return "border-amber-200 bg-amber-50 text-amber-700";
+}
+
 function crawlerAdapterLabel(t: (key: string) => string, adapterKind: AdminDataSource["crawlerAdapterKind"]) {
   if (adapterKind === "dedicated") return t("admin.crawlerAdapter_dedicated");
   if (adapterKind === "generic") return t("admin.crawlerAdapter_generic");
@@ -280,6 +286,12 @@ function crawlerCapabilityLabel(t: (key: string) => string, capability: AdminDat
   if (capability === "detail_pages") return t("admin.crawlerCapability_detail_pages");
   if (capability === "pagination") return t("admin.crawlerCapability_pagination");
   return t("admin.crawlerCapability_query");
+}
+
+function sourceApprovalLabel(t: (key: string) => string, source: AdminDataSource) {
+  if (source.approvalStatus === "approved") return t("admin.sourceApproval_approved");
+  if (source.approvalStatus === "blocked") return t("admin.sourceApproval_blocked");
+  return t("admin.sourceApproval_needs_review");
 }
 
 function sourceRequirementLabels(t: (key: string) => string, source: AdminDataSource) {
@@ -410,12 +422,12 @@ function RiskCheck({
 }
 
 function AdminAccessState({
-  icon: Icon,
+  code,
   title,
   description,
   action,
 }: {
-  icon: typeof ShieldCheck;
+  code: "loading" | "permission_denied";
   title: string;
   description: string;
   action?: {
@@ -425,23 +437,13 @@ function AdminAccessState({
 }) {
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-5 pb-8">
-      <section className="rounded-lg border border-slate-200 bg-white p-6 text-center shadow-sm">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
-          <Icon size={22} aria-hidden="true" />
-        </div>
-        <h1 className="mt-4 text-2xl font-semibold tracking-normal text-slate-950">{title}</h1>
-        <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600">{description}</p>
-        {action ? (
-          <Link
-            href={action.href}
-            className={buttonVariants({
-              className: "mt-5 h-10 rounded-lg bg-slate-900 px-4 text-white hover:bg-slate-800",
-            })}
-          >
-            {action.label}
-          </Link>
-        ) : null}
-      </section>
+      <UniversalState
+        actions={action ? [{ href: action.href, label: action.label }] : undefined}
+        className="bg-white p-6"
+        code={code}
+        message={description}
+        title={title}
+      />
     </main>
   );
 }
@@ -986,7 +988,7 @@ export default function AdminPage() {
   if (isAuthLoading) {
     return (
       <AdminAccessState
-        icon={ShieldCheck}
+        code="loading"
         title={t("admin.authLoading")}
         description={t("admin.authLoadingDescription")}
       />
@@ -996,7 +998,7 @@ export default function AdminPage() {
   if (!user) {
     return (
       <AdminAccessState
-        icon={ShieldCheck}
+        code="permission_denied"
         title={t("admin.loginRequiredTitle")}
         description={t("admin.loginRequiredDescription")}
         action={{ href: "/login", label: t("admin.loginAction") }}
@@ -1007,7 +1009,7 @@ export default function AdminPage() {
   if (!canAccessAdminConsole) {
     return (
       <AdminAccessState
-        icon={ShieldCheck}
+        code="permission_denied"
         title={t("admin.forbiddenTitle")}
         description={t("admin.forbiddenDescription")}
         action={{ href: "/", label: t("admin.returnToDashboard") }}
@@ -1074,13 +1076,12 @@ export default function AdminPage() {
       )}
 
       {state.status === "error" && (
-        <div className="rounded-lg border border-rose-200 bg-rose-50 p-5 text-rose-800">
-          <div className="flex items-center gap-2 font-semibold">
-            <AlertTriangle size={18} />
-            {t("admin.errorTitle")}
-          </div>
-          <p className="mt-1 text-sm">{t("admin.errorDescription")}</p>
-        </div>
+        <UniversalState
+          actions={[{ label: t("admin.refresh"), onClick: load }]}
+          code="error"
+          message={t("admin.errorDescription")}
+          title={t("admin.errorTitle")}
+        />
       )}
 
       {summary && (
@@ -2033,6 +2034,17 @@ export default function AdminPage() {
                       <Badge variant="outline" className="border-slate-200 bg-white text-slate-600">
                         {source.activationStatus}
                       </Badge>
+                      <Badge variant="outline" className={sourceApprovalTone(source.approvalStatus)}>
+                        {sourceApprovalLabel(t, source)}
+                      </Badge>
+                      {!source.approvedForIngestion && (
+                        <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+                          {t("admin.sourceApprovalRequired")}
+                        </Badge>
+                      )}
+                      <Badge variant="outline" className="border-slate-200 bg-white text-slate-600">
+                        {source.accessPattern}
+                      </Badge>
                       {source.supportsAttachmentMetadata && (
                         <Badge variant="outline" className="border-violet-200 bg-violet-50 text-violet-700">
                           {t("admin.sourceSupportsArchive")}
@@ -2047,6 +2059,11 @@ export default function AdminPage() {
                     {source.fallbackNotes && (
                       <div className="mt-1 max-w-64 truncate text-xs text-amber-700" title={source.fallbackNotes}>
                         {source.fallbackNotes}
+                      </div>
+                    )}
+                    {source.approvalNotes && (
+                      <div className="mt-1 max-w-64 truncate text-xs text-slate-500" title={source.approvalNotes}>
+                        {source.approvalNotes}
                       </div>
                     )}
                   </TableCell>

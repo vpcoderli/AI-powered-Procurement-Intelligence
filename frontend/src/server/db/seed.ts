@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
 import { MOCK_BIDS } from "../../lib/mock-data";
+import { seedDefaultConfigEntries } from "../config/registry";
 import type { AppDatabase } from "./client";
 import { bidAttachments, bids, dataSources, supplierProfiles, users } from "./schema";
 
@@ -27,6 +28,8 @@ function seededAttachmentId(bidId: string, index: number) {
 }
 
 export async function seedDatabase(db: AppDatabase) {
+  seedDefaultConfigEntries(db, SEED_TIMESTAMP);
+
   db.insert(users)
     .values({
       id: "anon_seed",

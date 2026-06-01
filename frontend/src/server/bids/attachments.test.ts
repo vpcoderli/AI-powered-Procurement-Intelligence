@@ -1,10 +1,10 @@
 import { mkdir, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { bidAttachments } from "@/server/db/schema";
-import { getLocalBidAttachment } from "./attachments";
+import { getBidAttachmentDownloadFromMysql, getLocalBidAttachment } from "./attachments";
 
 describe("bid attachment files", () => {
   let testDb: TestDatabase;
@@ -163,5 +163,40 @@ describe("bid attachment files", () => {
       .run();
 
     await expect(getLocalBidAttachment(testDb.db, "1", "traversal_pdf")).resolves.toBeUndefined();
+  });
+
+  it("reads MySQL attachment metadata and returns a non-empty fallback for unarchived external files", async () => {
+    const mysql = {
+      query: vi.fn().mockResolvedValueOnce([
+        [
+          {
+            id: "sow_pdf",
+            bidId: "mysql_bid_1",
+            name: "Statement of Work.pdf",
+            url: "https://sam.gov/opp/12345/sow.pdf",
+            originalUrl: "https://sam.gov/opp/12345/sow.pdf",
+            storagePath: null,
+            contentType: "application/pdf",
+            mimeType: "application/pdf",
+            archiveStatus: "not_archived",
+            archiveError: null,
+          },
+        ],
+      ]),
+    };
+
+    await expect(getBidAttachmentDownloadFromMysql(mysql, "mysql_bid_1", "sow_pdf")).resolves.toEqual({
+      kind: "fallback",
+      filename: "Statement of Work.pdf",
+      mimeType: "text/plain; charset=utf-8",
+      originalUrl: "https://sam.gov/opp/12345/sow.pdf",
+      archiveStatus: "not_archived",
+      archiveError: null,
+      reason: "The attachment has not been archived locally yet.",
+    });
+    expect(mysql.query).toHaveBeenCalledWith(expect.stringContaining("FROM bid_attachments"), [
+      "mysql_bid_1",
+      "sow_pdf",
+    ]);
   });
 });

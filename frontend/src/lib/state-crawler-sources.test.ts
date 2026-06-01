@@ -24,6 +24,24 @@ describe("state crawler source mapping", () => {
     expect(STATE_CRAWLER_SOURCES.every((source) => source.adapterKind)).toBe(true);
     expect(STATE_CRAWLER_SOURCES.every((source) => source.maturity)).toBe(true);
     expect(STATE_CRAWLER_SOURCES.every((source) => source.capabilities.length > 0)).toBe(true);
+    expect(STATE_CRAWLER_SOURCES.every((source) => source.approvalStatus)).toBe(true);
+    expect(STATE_CRAWLER_SOURCES.every((source) => source.accessPattern)).toBe(true);
+    expect(STATE_CRAWLER_SOURCES.every((source) => source.legalReviewStatus)).toBe(true);
+    expect(STATE_CRAWLER_SOURCES.every((source) => source.sourceOwner)).toBe(true);
+  });
+
+  it("defaults verified sources to approved and beta sources to needs review", () => {
+    const verifiedSources = STATE_CRAWLER_SOURCES.filter((source) => source.maturity === "verified");
+    const betaSources = STATE_CRAWLER_SOURCES.filter((source) => source.maturity === "beta");
+
+    expect(verifiedSources).toHaveLength(5);
+    expect(verifiedSources.every((source) => source.approvedForIngestion)).toBe(true);
+    expect(verifiedSources.every((source) => source.approvalStatus === "approved")).toBe(true);
+    expect(verifiedSources.every((source) => source.legalReviewStatus === "approved_public")).toBe(true);
+    expect(betaSources).toHaveLength(45);
+    expect(betaSources.every((source) => !source.approvedForIngestion)).toBe(true);
+    expect(betaSources.every((source) => source.approvalStatus === "needs_review")).toBe(true);
+    expect(betaSources.every((source) => source.legalReviewStatus === "not_reviewed")).toBe(true);
   });
 
   it("does not map federal sources", () => {

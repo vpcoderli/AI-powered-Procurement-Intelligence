@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
-import { UsageLimitError, enforceUsageLimit } from "@/server/auth/usage-limits";
+import { UsageLimitError, enforceMysqlIntentUsageLimit, enforceUsageLimit } from "@/server/auth/usage-limits";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { createIntentForBid } from "@/server/intents/service";
 import { IntentBidNotFoundError } from "@/server/intents/types";
 
@@ -61,12 +62,20 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     const { id } = await context.params;
-    enforceUsageLimit(db, {
-      userId: principal.userId,
-      tier: principal.tier ?? "free",
-      feature: "intent_workspace",
-      resourceId: id,
-    });
+    if (isMysqlDatabaseUrlConfigured()) {
+      await enforceMysqlIntentUsageLimit(resolveMysqlPool(), {
+        userId: principal.userId,
+        tier: principal.tier ?? "free",
+        resourceId: id,
+      });
+    } else {
+      enforceUsageLimit(db, {
+        userId: principal.userId,
+        tier: principal.tier ?? "free",
+        feature: "intent_workspace",
+        resourceId: id,
+      });
+    }
 
     const intent = await createIntentForBid(db, principal.userId, id);
 

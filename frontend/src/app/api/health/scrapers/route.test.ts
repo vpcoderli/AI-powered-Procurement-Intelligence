@@ -48,4 +48,41 @@ describe("GET /api/health/scrapers", () => {
       ],
     });
   });
+
+  it("can return scraper source health through a MySQL pool dependency", async () => {
+    const mysql = {
+      async query() {
+        return [
+          [
+            {
+              source: "SAM.gov",
+              lastStatus: "success",
+              lastRunAt: "2026-05-19T00:02:00.000Z",
+              fetchedCount: 2,
+              insertedCount: 1,
+              updatedCount: 1,
+            },
+          ],
+        ];
+      },
+    };
+
+    const GET = createScraperHealthGet({ mysql });
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      sources: [
+        {
+          source: "SAM.gov",
+          lastStatus: "success",
+          lastRunAt: "2026-05-19T00:02:00.000Z",
+          fetchedCount: 2,
+          insertedCount: 1,
+          updatedCount: 1,
+        },
+      ],
+    });
+  });
 });

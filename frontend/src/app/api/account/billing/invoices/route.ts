@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { readSessionToken } from "@/server/auth/session";
 import { getSessionUser } from "@/server/auth/service";
+import { getMysqlSessionUser } from "@/server/auth/mysql-service";
 import {
   InvalidSubscriptionInputError,
   isBillingInvoiceStatus,
   listAccountInvoices,
 } from "@/server/billing/subscriptions";
+import { listMysqlAccountInvoices } from "@/server/billing/mysql-subscriptions";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -20,7 +23,10 @@ export async function GET(request: Request) {
   }
 
   try {
-    const sessionUser = await getSessionUser(db, sessionToken);
+    const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+    const sessionUser = mysql
+      ? await getMysqlSessionUser(mysql, sessionToken)
+      : await getSessionUser(db, sessionToken);
 
     if (!sessionUser) {
       return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
@@ -33,7 +39,9 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json(
-      listAccountInvoices(db, sessionUser.id, status && isBillingInvoiceStatus(status) ? { status } : {}),
+      mysql
+        ? await listMysqlAccountInvoices(mysql, sessionUser.id, status && isBillingInvoiceStatus(status) ? { status } : {})
+        : listAccountInvoices(db, sessionUser.id, status && isBillingInvoiceStatus(status) ? { status } : {}),
     );
   } catch (error) {
     if (error instanceof InvalidSubscriptionInputError) {
