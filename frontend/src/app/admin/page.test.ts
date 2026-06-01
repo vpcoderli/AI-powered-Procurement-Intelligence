@@ -10,6 +10,7 @@ describe("admin page", () => {
     expect(page).toContain("listAdminUserAuditLogs");
     expect(page).toContain("listAdminUserFeatureOverrides");
     expect(page).toContain("listAdminNotifications");
+    expect(page).toContain("getAdminRiskChecklist");
     expect(page).toContain("listAdminBidQaItems");
     expect(page).toContain("getAdminBidQaCorrections");
     expect(page).toContain("batchUpdateAdminBidQaItems");
@@ -30,6 +31,9 @@ describe("admin page", () => {
     expect(page).toContain('t("admin.users")');
     expect(page).toContain('t("admin.crawler")');
     expect(page).toContain('t("admin.bidQa")');
+    expect(page).toContain('t("admin.riskCheck")');
+    expect(page).toContain("riskReport");
+    expect(page).toContain("RiskCheck");
     expect(page).toContain('t("admin.qualityScore")');
     expect(page).toContain('t("admin.archiveIssues")');
     expect(page).toContain('t("admin.markReviewed")');
