@@ -39,7 +39,7 @@ export const FEATURE_API_COVERAGE: readonly FeatureApiCoverageEntry[] = [
   },
 ] as const;
 
-export const UNIMPLEMENTED_PAID_FEATURE_API_COVERAGE: readonly FeatureKey[] = [
+export const UNIMPLEMENTED_PAID_FEATURE_API_COVERAGE = [
   "quote_workflow",
   "compliance.manifest.generate",
   "readiness.review.run",
@@ -51,4 +51,4 @@ export const UNIMPLEMENTED_PAID_FEATURE_API_COVERAGE: readonly FeatureKey[] = [
   "award.tabulation.analyze",
   "price.to.win.run",
   "team.member.invite",
-] as const;
+] as const satisfies readonly FeatureKey[];

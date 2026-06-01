@@ -1,7 +1,6 @@
 import type { KnowledgeItem, KnowledgeListResponse } from "@/server/knowledge/types";
-import { ApiError } from "./bids";
 
-type KnowledgeApiErrorCode =
+export type KnowledgeApiErrorCode =
   | "FEATURE_NOT_AVAILABLE"
   | "INVALID_REQUEST"
   | "INTERNAL_ERROR"
@@ -16,6 +15,17 @@ interface KnowledgeApiErrorResponse {
 
 interface CreateKnowledgeItemResponse {
   item: KnowledgeItem;
+}
+
+export class KnowledgeApiError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: KnowledgeApiErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "KnowledgeApiError";
+  }
 }
 
 export interface FetchKnowledgeItemsParams {
@@ -65,15 +75,15 @@ async function parseResponse<T>(response: Response): Promise<T> {
   try {
     body = await response.json();
   } catch {
-    throw new ApiError(response.status, "INTERNAL_ERROR", "Request failed");
+    throw new KnowledgeApiError(response.status, "INTERNAL_ERROR", "Request failed");
   }
 
   if (!response.ok) {
     if (isKnowledgeApiErrorResponse(body)) {
-      throw new ApiError(response.status, body.error.code as "INTERNAL_ERROR", body.error.message);
+      throw new KnowledgeApiError(response.status, body.error.code, body.error.message);
     }
 
-    throw new ApiError(response.status, "INTERNAL_ERROR", "Request failed");
+    throw new KnowledgeApiError(response.status, "INTERNAL_ERROR", "Request failed");
   }
 
   return body as T;
