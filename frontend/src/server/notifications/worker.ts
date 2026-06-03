@@ -1,9 +1,11 @@
 import type { AppDatabase } from "@/server/db/client";
 import {
   scheduleDunningReminders,
+  scheduleDunningRemindersFromMysql,
   type ScheduleDunningRemindersOptions,
   type ScheduleDunningRemindersResult,
 } from "@/server/billing/dunning";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import {
   deliverPendingNotifications,
   type NotificationDeliveryOptions,
@@ -18,7 +20,7 @@ export interface NotificationWorkerOptions {
   scheduler?: (
     db: AppDatabase,
     options: ScheduleDunningRemindersOptions,
-  ) => ScheduleDunningRemindersResult;
+  ) => ScheduleDunningRemindersResult | Promise<ScheduleDunningRemindersResult>;
   deliverer?: typeof deliverPendingNotifications;
 }
 
@@ -32,7 +34,11 @@ export async function runNotificationWorkerOnce(
   options: NotificationWorkerOptions = {},
 ): Promise<NotificationWorkerResult> {
   const now = options.now ?? new Date().toISOString();
-  const scheduler = options.scheduler ?? scheduleDunningReminders;
+  const scheduler = options.scheduler ?? (
+    isMysqlDatabaseUrlConfigured()
+      ? ((_db, schedulerOptions) => scheduleDunningRemindersFromMysql(resolveMysqlPool(), schedulerOptions))
+      : scheduleDunningReminders
+  );
   const deliverer = options.deliverer ?? deliverPendingNotifications;
   const deliveryOptions: NotificationDeliveryOptions = {
     now,
@@ -40,7 +46,7 @@ export async function runNotificationWorkerOnce(
     maxAttempts: options.maxAttempts,
   };
 
-  const dunning = scheduler(db, {
+  const dunning = await scheduler(db, {
     now,
     limit: options.dunningLimit,
   });

@@ -18,8 +18,21 @@ const listUserIntents = vi.mocked(intentService.listUserIntents);
 
 describe("GET /api/intents", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     resolvePrincipal.mockResolvedValue({ kind: "authenticated", userId: "user_1" });
+  });
+
+  it("requires an authenticated principal", async () => {
+    resolvePrincipal.mockResolvedValueOnce({ kind: "anonymous", userId: "anon_existing" });
+
+    const response = await GET(new Request("http://localhost/api/intents"));
+    const body = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(body).toEqual({
+      error: { code: "AUTH_REQUIRED", message: "Authentication is required" },
+    });
+    expect(listUserIntents).not.toHaveBeenCalled();
   });
 
   it("lists intents for the current principal", async () => {

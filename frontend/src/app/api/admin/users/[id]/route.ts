@@ -3,10 +3,12 @@ import { AdminAuthError, requireAdmin } from "@/server/admin/auth";
 import {
   AdminUserNotFoundError,
   updateAdminUser,
+  updateAdminUserFromMysql,
   type UpdateAdminUserInput,
 } from "@/server/admin/users-repository";
 import { isAccountTier, isUserRole } from "@/server/auth/entitlements";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -65,10 +67,13 @@ export async function PATCH(request: Request, context: RouteContext) {
   try {
     const principal = await requireAdmin(db, request);
     const { id } = await context.params;
-    const user = updateAdminUser(db, id, input, {
+    const actor = {
       actorKind: principal.kind,
       actorUserId: principal.kind === "admin" ? principal.userId : null,
-    });
+    };
+    const user = isMysqlDatabaseUrlConfigured()
+      ? await updateAdminUserFromMysql(resolveMysqlPool(), id, input, actor)
+      : updateAdminUser(db, id, input, actor);
 
     return NextResponse.json({ user });
   } catch (error) {

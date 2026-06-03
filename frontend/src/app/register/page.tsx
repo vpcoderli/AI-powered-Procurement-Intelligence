@@ -3,9 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
-import { UserPlus } from "lucide-react";
+import { AuthPageShell } from "@/components/auth/AuthPageShell";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/context/AuthContext";
@@ -101,85 +100,70 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="flex min-h-full items-start justify-center px-2 py-8 md:py-14">
-      <Card className="w-full max-w-md rounded-xl border-slate-200 bg-white shadow-sm">
-        <CardHeader className="space-y-3 border-b border-slate-100 px-6 py-6">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-700">
-              <UserPlus className="h-5 w-5" />
-            </div>
-            <div>
-              <CardTitle className="text-xl font-semibold text-slate-950">{copy.title}</CardTitle>
-              <p className="mt-1 text-sm text-slate-500">{copy.subtitle}</p>
-            </div>
+    <AuthPageShell mode="register" title={copy.title} subtitle={copy.subtitle}>
+      <form className="space-y-5" onSubmit={handleSubmit}>
+        <div className="space-y-2">
+          <Label htmlFor="displayName" className="text-slate-700">
+            {copy.displayName}
+          </Label>
+          <Input
+            id="displayName"
+            type="text"
+            autoComplete="name"
+            placeholder={copy.displayNamePlaceholder}
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            className="h-11 rounded-lg border-slate-200 focus-visible:ring-blue-700"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="email" className="text-slate-700">
+            {copy.email}
+          </Label>
+          <Input
+            id="email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            className="h-11 rounded-lg border-slate-200 focus-visible:ring-blue-700"
+            required
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="password" className="text-slate-700">
+            {copy.password}
+          </Label>
+          <Input
+            id="password"
+            type="password"
+            autoComplete="new-password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            className="h-11 rounded-lg border-slate-200 focus-visible:ring-blue-700"
+            minLength={8}
+            required
+          />
+        </div>
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
           </div>
-        </CardHeader>
-        <CardContent className="px-6 py-6">
-          <form className="space-y-5" onSubmit={handleSubmit}>
-            <div className="space-y-2">
-              <Label htmlFor="displayName" className="text-slate-700">
-                {copy.displayName}
-              </Label>
-              <Input
-                id="displayName"
-                type="text"
-                autoComplete="name"
-                placeholder={copy.displayNamePlaceholder}
-                value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
-                className="h-11 rounded-lg border-slate-200 focus-visible:ring-slate-900"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="email" className="text-slate-700">
-                {copy.email}
-              </Label>
-              <Input
-                id="email"
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                className="h-11 rounded-lg border-slate-200 focus-visible:ring-slate-900"
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-slate-700">
-                {copy.password}
-              </Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="new-password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                className="h-11 rounded-lg border-slate-200 focus-visible:ring-slate-900"
-                minLength={8}
-                required
-              />
-            </div>
-            {error && (
-              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {error}
-              </div>
-            )}
-            <Button
-              type="submit"
-              disabled={!canSubmit}
-              className="h-11 w-full rounded-lg bg-slate-900 font-medium text-white hover:bg-slate-800"
-            >
-              {isSubmitting ? copy.submitting : copy.submit}
-            </Button>
-          </form>
-          <p className="mt-5 text-center text-sm text-slate-600">
-            {copy.hasAccount}{" "}
-            <Link className="font-medium text-slate-950 underline-offset-4 hover:underline" href="/login">
-              {copy.login}
-            </Link>
-          </p>
-        </CardContent>
-      </Card>
-    </div>
+        )}
+        <Button
+          type="submit"
+          disabled={!canSubmit}
+          className="winbids-primary-action h-11 w-full border-0 hover:bg-blue-800"
+        >
+          {isSubmitting ? copy.submitting : copy.submit}
+        </Button>
+      </form>
+      <p className="mt-5 text-center text-sm text-slate-600">
+        {copy.hasAccount}{" "}
+        <Link className="font-medium text-slate-950 underline-offset-4 hover:underline" href="/login">
+          {copy.login}
+        </Link>
+      </p>
+    </AuthPageShell>
   );
 }

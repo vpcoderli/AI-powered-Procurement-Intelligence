@@ -6,6 +6,7 @@ import {
   type RunCrawlerSourceOnceOptions,
   type RunCrawlerSourceOnceResult,
 } from "@/server/crawler/orchestrator";
+import type { MysqlCrawlerLockStore } from "@/server/crawler/lock-repository";
 import {
   STATE_CRAWLER_SOURCES,
   createStateCrawlerRunner,
@@ -13,8 +14,13 @@ import {
   type StateCrawlerSourceId,
 } from "@/server/crawler/state-runner";
 import { db, type AppDatabase } from "@/server/db/client";
-import { sendMatchedAlertNotifications } from "@/server/notifications/service";
-import { matchEnabledSearchAlerts, type SearchAlertMatchResult } from "@/server/search-alerts/matcher";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { sendMatchedAlertNotifications, sendMatchedAlertNotificationsFromMysql } from "@/server/notifications/service";
+import {
+  matchEnabledSearchAlerts,
+  matchEnabledSearchAlertsFromMysql,
+  type SearchAlertMatchResult,
+} from "@/server/search-alerts/matcher";
 
 type Matcher = () => Promise<SearchAlertMatchResult>;
 type Orchestrator = <TOptions>(
@@ -24,6 +30,7 @@ type Orchestrator = <TOptions>(
 
 interface StateCrawlerRunRouteDependencies {
   database: AppDatabase;
+  mysql?: MysqlCrawlerLockStore;
   owner: string;
   matcher: Matcher;
   notifier: CrawlerNotifier;
@@ -100,11 +107,16 @@ function batchStatus(results: RunCrawlerSourceOnceResult[]) {
 
 export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRouteDependencies> = {}) {
   const database = overrides.database ?? db;
+  const mysql = overrides.mysql ?? (!overrides.database && isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : undefined);
   const dependencies: StateCrawlerRunRouteDependencies = {
     database,
+    mysql,
     owner: defaultOwner(),
-    matcher: () => matchEnabledSearchAlerts(database),
-    notifier: ({ alertMatching }) => sendMatchedAlertNotifications(database, alertMatching),
+    matcher: () => mysql ? matchEnabledSearchAlertsFromMysql(mysql) : matchEnabledSearchAlerts(database),
+    notifier: ({ alertMatching }) =>
+      mysql
+        ? sendMatchedAlertNotificationsFromMysql(mysql, alertMatching)
+        : sendMatchedAlertNotifications(database, alertMatching),
     runCrawlerSourceOnce,
     ...overrides,
   };
@@ -127,6 +139,7 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
 
     for (const source of sources) {
       const result = await dependencies.runCrawlerSourceOnce(dependencies.database, {
+        mysql: dependencies.mysql,
         source,
         owner: dependencies.owner,
         runner: createStateCrawlerRunner(source),

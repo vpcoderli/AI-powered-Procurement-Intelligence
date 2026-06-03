@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
 import { db } from "@/server/db/client";
 import { listUserIntents } from "@/server/intents/service";
@@ -27,6 +28,10 @@ function internalError(principal: RequestPrincipal) {
 
 export async function GET(request: Request) {
   const principal = await resolvePrincipal(db, request);
+
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
 
   try {
     const intents = await listUserIntents(db, principal.userId);

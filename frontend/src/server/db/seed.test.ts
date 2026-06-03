@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { FEDERAL_SAM_OPPORTUNITIES_URL } from "@/lib/mock-data";
 import { bidAttachments, bids, dataSources } from "./schema";
 import { seedDatabase } from "./seed";
 import { createTestDatabase, type TestDatabase } from "./test-utils";
@@ -42,9 +43,9 @@ describe("database seed", () => {
     expect(bid.title).toBe("Enterprise Cloud Migration Services");
     expect(bid.amount).toBe("$5M - $10M");
     expect(bid.issuerName).toBe("Department of Defense");
-    expect(bid.sourceUrl).toBe("https://sam.gov/opp/12345");
+    expect(bid.sourceUrl).toBe(FEDERAL_SAM_OPPORTUNITIES_URL);
     expect(source.label).toBe("SAM.gov");
-    expect(source.baseUrl).toBe("https://sam.gov/opp/12345");
+    expect(source.baseUrl).toBe(FEDERAL_SAM_OPPORTUNITIES_URL);
   });
 
   it("seeds state data sources for all 50 crawler states", async () => {

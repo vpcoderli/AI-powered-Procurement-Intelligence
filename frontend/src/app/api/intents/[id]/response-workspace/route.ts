@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { FeatureAccessError, requireFeature } from "@/server/auth/feature-gate";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
 import { db } from "@/server/db/client";
@@ -70,11 +71,32 @@ function parseUpdate(body: unknown): UpdateResponseWorkspaceItemInput | null {
     input.dueAt = source.dueAt;
   }
 
+  if ("assignedUserId" in source) {
+    if (source.assignedUserId !== null && typeof source.assignedUserId !== "string") return null;
+    input.assignedUserId = source.assignedUserId;
+  }
+
+  if ("linkedArtifactIds" in source) {
+    if (!Array.isArray(source.linkedArtifactIds)) return null;
+    const linkedArtifactIds: string[] = [];
+
+    for (const artifactId of source.linkedArtifactIds) {
+      if (typeof artifactId !== "string") return null;
+      linkedArtifactIds.push(artifactId);
+    }
+
+    input.linkedArtifactIds = linkedArtifactIds;
+  }
+
   return input;
 }
 
 export async function GET(request: Request, context: RouteContext) {
   const principal = await resolvePrincipal(db, request);
+
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
 
   try {
     requireFeature(principal, "response.workspace.create");
@@ -95,10 +117,14 @@ export async function GET(request: Request, context: RouteContext) {
   }
 }
 
-export async function PATCH(request: Request, context: RouteContext) {
+async function updateWorkspaceItem(request: Request, context: RouteContext) {
   const body = await request.json().catch(() => null);
   const input = parseUpdate(body);
   const principal = await resolvePrincipal(db, request);
+
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
 
   if (!input) {
     return errorResponse("INVALID_REQUEST", "Supported response workspace fields are required.", 400, principal);
@@ -125,4 +151,12 @@ export async function PATCH(request: Request, context: RouteContext) {
 
     return errorResponse("INTERNAL_ERROR", "Internal server error", 500, principal);
   }
+}
+
+export async function PATCH(request: Request, context: RouteContext) {
+  return updateWorkspaceItem(request, context);
+}
+
+export async function POST(request: Request, context: RouteContext) {
+  return updateWorkspaceItem(request, context);
 }

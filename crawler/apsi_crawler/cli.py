@@ -1,4 +1,5 @@
 import argparse
+import json
 import os
 import sqlite3
 import traceback
@@ -78,6 +79,14 @@ def _default_archive_dir(database):
     return str(Path(database).resolve().parent / "attachments")
 
 
+def _archive_target_dir(database, archive_dir):
+    if archive_dir:
+        return archive_dir
+    if database:
+        return _default_archive_dir(database)
+    return str(Path.cwd() / "attachments")
+
+
 def _archive_summary(bids):
     summary = {"archived": 0, "failed": 0, "unavailable": 0}
     for bid in bids:
@@ -116,6 +125,48 @@ def _source_quality_metadata(source):
     }
 
 
+def _source_validity_metadata(source):
+    return {
+        "source_authority": getattr(source, "source_authority", "official"),
+        "trust_status": getattr(source, "trust_status", "needs_review"),
+        "evidence_mode": getattr(source, "evidence_mode", "direct_portal"),
+        "validity_notes": getattr(source, "validity_notes", ""),
+    }
+
+
+def _json_run_payload(
+    *,
+    source,
+    run_id,
+    status,
+    started_at,
+    finished_at,
+    duration_ms,
+    metadata=None,
+    bids=None,
+    error_code=None,
+    error_message=None,
+    error_stack=None,
+):
+    return {
+        "source": source,
+        "runId": run_id,
+        "status": status,
+        "startedAt": started_at,
+        "finishedAt": finished_at,
+        "durationMs": duration_ms,
+        "metadata": metadata or {},
+        "bids": bids or [],
+        "errorCode": error_code,
+        "errorMessage": error_message,
+        "errorStack": error_stack,
+    }
+
+
+def _print_json_payload(payload):
+    print(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+
+
 def import_fixture(
     database,
     fixture,
@@ -127,9 +178,11 @@ def import_fixture(
     started_at = now_iso()
     started = perf_counter()
     run_id = str(uuid4())
-    Path(database).parent.mkdir(parents=True, exist_ok=True)
+    connection = None
+    if database:
+        Path(database).parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(database)
 
-    connection = sqlite3.connect(database)
     try:
         loader = get_fixture_loader(source)
         bids = loader(fixture)
@@ -186,13 +239,15 @@ def fetch_sam_gov(
     archive_documents=False,
     archive_dir=None,
     archive_detail_pages=False,
+    output_json=False,
 ):
     started_at = now_iso()
     started = perf_counter()
     run_id = str(uuid4())
-    Path(database).parent.mkdir(parents=True, exist_ok=True)
-
-    connection = sqlite3.connect(database)
+    connection = None
+    if database:
+        Path(database).parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(database)
     try:
         bids = fetch_sam_gov_opportunities(
             api_key=api_key or os.environ.get("SAM_API_KEY", ""),
@@ -203,47 +258,89 @@ def fetch_sam_gov(
         )
         _require_non_empty_bids(bids, DEFAULT_SOURCE)
         if archive_documents:
-            bids = _archive_bids(bids, archive_dir or _default_archive_dir(database), archive_detail_pages)
-        inserted_count, updated_count = _upsert_bids(connection, bids)
+            bids = _archive_bids(bids, _archive_target_dir(database, archive_dir), archive_detail_pages)
+        inserted_count = 0
+        updated_count = 0
+        if connection:
+            inserted_count, updated_count = _upsert_bids(connection, bids)
         metadata = {"posted_from": posted_from, "posted_to": posted_to, "limit": limit}
         if archive_documents:
             metadata["archive"] = _archive_summary(bids)
+        finished_at = now_iso()
+        duration_ms = int((perf_counter() - started) * 1000)
 
-        write_crawler_log(
-            connection,
-            source=DEFAULT_SOURCE,
-            run_id=run_id,
-            status="success",
-            fetched_count=len(bids),
-            inserted_count=inserted_count,
-            updated_count=updated_count,
-            started_at=started_at,
-            finished_at=now_iso(),
-            duration_ms=int((perf_counter() - started) * 1000),
-            metadata=metadata,
-        )
+        if connection:
+            write_crawler_log(
+                connection,
+                source=DEFAULT_SOURCE,
+                run_id=run_id,
+                status="success",
+                fetched_count=len(bids),
+                inserted_count=inserted_count,
+                updated_count=updated_count,
+                started_at=started_at,
+                finished_at=finished_at,
+                duration_ms=duration_ms,
+                metadata=metadata,
+            )
+        if output_json:
+            _print_json_payload(
+                _json_run_payload(
+                    source=DEFAULT_SOURCE,
+                    run_id=run_id,
+                    status="success",
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    duration_ms=duration_ms,
+                    metadata=metadata,
+                    bids=bids,
+                )
+            )
         return 0
     except Exception as error:
-        write_crawler_log(
-            connection,
-            source=DEFAULT_SOURCE,
-            run_id=run_id,
-            status="failure",
-            fetched_count=0,
-            inserted_count=0,
-            updated_count=0,
-            failed_count=1,
-            started_at=started_at,
-            finished_at=now_iso(),
-            duration_ms=int((perf_counter() - started) * 1000),
-            error_code=type(error).__name__,
-            error_message=str(error),
-            error_stack=traceback.format_exc(),
-            metadata={"posted_from": posted_from, "posted_to": posted_to, "limit": limit},
-        )
+        finished_at = now_iso()
+        duration_ms = int((perf_counter() - started) * 1000)
+        error_code = type(error).__name__
+        error_message = str(error)
+        error_stack = traceback.format_exc()
+        metadata = {"posted_from": posted_from, "posted_to": posted_to, "limit": limit}
+        if connection:
+            write_crawler_log(
+                connection,
+                source=DEFAULT_SOURCE,
+                run_id=run_id,
+                status="failure",
+                fetched_count=0,
+                inserted_count=0,
+                updated_count=0,
+                failed_count=1,
+                started_at=started_at,
+                finished_at=finished_at,
+                duration_ms=duration_ms,
+                error_code=error_code,
+                error_message=error_message,
+                error_stack=error_stack,
+                metadata=metadata,
+            )
+        if output_json:
+            _print_json_payload(
+                _json_run_payload(
+                    source=DEFAULT_SOURCE,
+                    run_id=run_id,
+                    status="failure",
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    duration_ms=duration_ms,
+                    metadata=metadata,
+                    error_code=error_code,
+                    error_message=error_message,
+                    error_stack=error_stack,
+                )
+            )
         return 1
     finally:
-        connection.close()
+        if connection:
+            connection.close()
 
 
 def fetch_state(
@@ -257,21 +354,24 @@ def fetch_state(
     archive_documents=False,
     archive_dir=None,
     archive_detail_pages=False,
+    output_json=False,
 ):
     started_at = now_iso()
     started = perf_counter()
     run_id = str(uuid4())
-    Path(database).parent.mkdir(parents=True, exist_ok=True)
+    connection = None
+    if database:
+        Path(database).parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(database)
     metadata = {"mode": "live", "query": query, "limit": limit}
     if fixture_json:
         metadata["fixture_json"] = fixture_json
     if fixture_html:
         metadata["fixture_html"] = fixture_html
-
-    connection = sqlite3.connect(database)
     try:
         source_metadata = get_source(source)
         metadata["source_quality"] = _source_quality_metadata(source_metadata)
+        metadata["source_validity"] = _source_validity_metadata(source_metadata)
         fetcher = get_live_fetcher(source)
         fetch_kwargs = {"query": query, "limit": limit}
         if fixture_json:
@@ -308,45 +408,86 @@ def fetch_state(
 
         _require_non_empty_bids(bids, source_metadata.id)
         if archive_documents:
-            bids = _archive_bids(bids, archive_dir or _default_archive_dir(database), archive_detail_pages)
+            bids = _archive_bids(bids, _archive_target_dir(database, archive_dir), archive_detail_pages)
             metadata["archive"] = _archive_summary(bids)
-        inserted_count, updated_count = _upsert_bids(connection, bids)
+        inserted_count = 0
+        updated_count = 0
+        if connection:
+            inserted_count, updated_count = _upsert_bids(connection, bids)
+        finished_at = now_iso()
+        duration_ms = int((perf_counter() - started) * 1000)
 
-        write_crawler_log(
-            connection,
-            source=source_metadata.id,
-            run_id=run_id,
-            status="success",
-            fetched_count=len(bids),
-            inserted_count=inserted_count,
-            updated_count=updated_count,
-            started_at=started_at,
-            finished_at=now_iso(),
-            duration_ms=int((perf_counter() - started) * 1000),
-            metadata=metadata,
-        )
+        if connection:
+            write_crawler_log(
+                connection,
+                source=source_metadata.id,
+                run_id=run_id,
+                status="success",
+                fetched_count=len(bids),
+                inserted_count=inserted_count,
+                updated_count=updated_count,
+                started_at=started_at,
+                finished_at=finished_at,
+                duration_ms=duration_ms,
+                metadata=metadata,
+            )
+        if output_json:
+            _print_json_payload(
+                _json_run_payload(
+                    source=source_metadata.id,
+                    run_id=run_id,
+                    status="success",
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    duration_ms=duration_ms,
+                    metadata=metadata,
+                    bids=bids,
+                )
+            )
         return 0
     except Exception as error:
-        write_crawler_log(
-            connection,
-            source=source,
-            run_id=run_id,
-            status="failure",
-            fetched_count=0,
-            inserted_count=0,
-            updated_count=0,
-            failed_count=1,
-            started_at=started_at,
-            finished_at=now_iso(),
-            duration_ms=int((perf_counter() - started) * 1000),
-            error_code=type(error).__name__,
-            error_message=str(error),
-            error_stack=traceback.format_exc(),
-            metadata=metadata,
-        )
+        finished_at = now_iso()
+        duration_ms = int((perf_counter() - started) * 1000)
+        error_code = type(error).__name__
+        error_message = str(error)
+        error_stack = traceback.format_exc()
+        if connection:
+            write_crawler_log(
+                connection,
+                source=source,
+                run_id=run_id,
+                status="failure",
+                fetched_count=0,
+                inserted_count=0,
+                updated_count=0,
+                failed_count=1,
+                started_at=started_at,
+                finished_at=finished_at,
+                duration_ms=duration_ms,
+                error_code=error_code,
+                error_message=error_message,
+                error_stack=error_stack,
+                metadata=metadata,
+            )
+        if output_json:
+            _print_json_payload(
+                _json_run_payload(
+                    source=source,
+                    run_id=run_id,
+                    status="failure",
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    duration_ms=duration_ms,
+                    metadata=metadata,
+                    error_code=error_code,
+                    error_message=error_message,
+                    error_stack=error_stack,
+                )
+            )
         return 1
     finally:
-        connection.close()
+        if connection:
+            connection.close()
 
 
 def build_parser():
@@ -362,7 +503,7 @@ def build_parser():
     import_fixture_parser.add_argument("--archive-detail-pages", action="store_true")
 
     fetch_sam_gov_parser = subparsers.add_parser("fetch-sam-gov")
-    fetch_sam_gov_parser.add_argument("--database", required=True)
+    fetch_sam_gov_parser.add_argument("--database")
     fetch_sam_gov_parser.add_argument("--api-key")
     fetch_sam_gov_parser.add_argument("--posted-from", required=True)
     fetch_sam_gov_parser.add_argument("--posted-to", required=True)
@@ -371,9 +512,10 @@ def build_parser():
     fetch_sam_gov_parser.add_argument("--archive-documents", action="store_true")
     fetch_sam_gov_parser.add_argument("--archive-dir")
     fetch_sam_gov_parser.add_argument("--archive-detail-pages", action="store_true")
+    fetch_sam_gov_parser.add_argument("--output-json", action="store_true")
 
     fetch_state_parser = subparsers.add_parser("fetch-state")
-    fetch_state_parser.add_argument("--database", required=True)
+    fetch_state_parser.add_argument("--database")
     fetch_state_parser.add_argument("--source", required=True)
     fetch_state_parser.add_argument("--query")
     fetch_state_parser.add_argument("--limit", type=int, default=25)
@@ -383,6 +525,7 @@ def build_parser():
     fetch_state_parser.add_argument("--archive-documents", action="store_true")
     fetch_state_parser.add_argument("--archive-dir")
     fetch_state_parser.add_argument("--archive-detail-pages", action="store_true")
+    fetch_state_parser.add_argument("--output-json", action="store_true")
 
     validate_state_live_parser = subparsers.add_parser("validate-state-live")
     validate_state_live_parser.add_argument(
@@ -416,6 +559,9 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if args.command in {"fetch-sam-gov", "fetch-state"} and not args.database and not args.output_json:
+        parser.error("--database is required unless --output-json is used")
+
     if args.command == "import-fixture":
         return import_fixture(
             args.database,
@@ -437,6 +583,7 @@ def main(argv=None):
             archive_documents=args.archive_documents,
             archive_dir=args.archive_dir,
             archive_detail_pages=args.archive_detail_pages,
+            output_json=args.output_json,
         )
 
     if args.command == "fetch-state":
@@ -451,6 +598,7 @@ def main(argv=None):
             archive_documents=args.archive_documents,
             archive_dir=args.archive_dir,
             archive_detail_pages=args.archive_detail_pages,
+            output_json=args.output_json,
         )
 
     if args.command == "validate-state-live":

@@ -1,13 +1,17 @@
 import crypto from "node:crypto";
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { getUserIntent } from "@/server/intents/service";
 import type { IntentDetail } from "@/server/intents/types";
 import { IntentNotFoundError } from "@/server/intents/types";
 import { buildComplianceEvidenceRefs, generateComplianceManifestItems } from "./generator";
 import {
   createComplianceManifestItemRows,
+  createComplianceManifestItemRowsFromMysql,
   listComplianceManifestItemRows,
+  listComplianceManifestItemRowsFromMysql,
   updateComplianceManifestItemRow,
+  updateComplianceManifestItemRowFromMysql,
   type ComplianceManifestItemRow,
 } from "./repository";
 import type {
@@ -73,7 +77,10 @@ export async function getOrCreateComplianceManifest(
     throw new IntentNotFoundError();
   }
 
-  const existingRows = listComplianceManifestItemRows(database, intentId);
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const existingRows = mysql
+    ? await listComplianceManifestItemRowsFromMysql(mysql, intentId)
+    : listComplianceManifestItemRows(database, intentId);
 
   if (existingRows.length > 0) {
     return hydrateManifest(existingRows, intent);
@@ -85,13 +92,21 @@ export async function getOrCreateComplianceManifest(
     id: `compliance_item_${crypto.randomUUID()}`,
     sortOrder: index,
   }));
-  const rows = createComplianceManifestItemRows(database, {
-    intentId: intent.id,
-    bidId: intent.bid.id,
-    userId: intent.userId,
-    items: generatedItems,
-    timestamp,
-  });
+  const rows = mysql
+    ? await createComplianceManifestItemRowsFromMysql(mysql, {
+      intentId: intent.id,
+      bidId: intent.bid.id,
+      userId: intent.userId,
+      items: generatedItems,
+      timestamp,
+    })
+    : createComplianceManifestItemRows(database, {
+      intentId: intent.id,
+      bidId: intent.bid.id,
+      userId: intent.userId,
+      items: generatedItems,
+      timestamp,
+    });
 
   return hydrateManifest(rows, intent);
 }
@@ -109,10 +124,14 @@ export async function updateComplianceManifestItem(
     throw new IntentNotFoundError();
   }
 
-  const rows = updateComplianceManifestItemRow(database, intentId, {
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const normalizedInput = {
     ...input,
     notes: input.notes?.trim(),
-  }, nowIso());
+  };
+  const rows = mysql
+    ? await updateComplianceManifestItemRowFromMysql(mysql, intentId, normalizedInput, nowIso())
+    : updateComplianceManifestItemRow(database, intentId, normalizedInput, nowIso());
 
   return hydrateManifest(rows, intent);
 }

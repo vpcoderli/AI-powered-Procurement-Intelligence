@@ -136,4 +136,43 @@ describe("POST /api/crawler/state/run", () => {
     expect(body.results[0].status).toBe("failure");
     expect(body.results[1].status).toBe("success");
   });
+
+  it("surfaces blocked source governance results without running later side effects", async () => {
+    runCrawlerSourceOnce.mockResolvedValueOnce({
+      ok: false,
+      source: "il_bidbuy",
+      status: "blocked",
+      reason: "Source governance has not approved ingestion.",
+      approvalStatus: "blocked",
+      legalReviewStatus: "restricted",
+      approvedForIngestion: false,
+    });
+    const POST = createStateCrawlerRunPost({ runCrawlerSourceOnce });
+
+    const response = await POST(
+      new Request("http://localhost/api/crawler/state/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sources: ["il_bidbuy"] }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      ok: false,
+      status: "completed_with_failures",
+      results: [
+        {
+          ok: false,
+          source: "il_bidbuy",
+          status: "blocked",
+          reason: "Source governance has not approved ingestion.",
+          approvalStatus: "blocked",
+          legalReviewStatus: "restricted",
+          approvedForIngestion: false,
+        },
+      ],
+    });
+  });
 });

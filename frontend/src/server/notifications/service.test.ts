@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { updateAccountNotificationPreferences } from "@/server/account/notification-preferences";
 import { alerts, notificationOutbox, searchAlertDigestRuns, users } from "@/server/db/schema";
 import { createTestDatabase } from "@/server/db/test-utils";
-import { sendMatchedAlertNotifications } from "./service";
+import { sendMatchedAlertNotifications, sendMatchedAlertNotificationsFromMysql } from "./service";
 
 describe("notification service", () => {
   it("skips anonymous and no-email users", async () => {
@@ -439,4 +439,186 @@ describe("notification service", () => {
       await testDb.cleanup();
     }
   });
+
+  it("enqueues, sends, records digest history, and updates alert notification time through MySQL", async () => {
+    const mysql = createFakeMysqlNotificationStore();
+    const provider = { send: vi.fn().mockResolvedValue({ ok: true, providerMessageId: "mysql:1" }) };
+
+    const result = await sendMatchedAlertNotificationsFromMysql(
+      mysql,
+      {
+        evaluatedAlerts: 1,
+        matchedAlerts: 1,
+        updatedAlerts: 1,
+        matches: [
+          {
+            alertId: "alert_mysql",
+            userId: "user_mysql",
+            alertName: "MySQL Cloud alerts",
+            frequency: "daily",
+            notificationChannel: "email",
+            bidIds: ["mysql_bid_1"],
+            bids: [
+              {
+                id: "mysql_bid_1",
+                title: "Cloud modernization",
+                issuerName: "California Agency",
+                sourceUrl: "https://example.com/mysql-bid-1",
+                deadlineDate: "2026-06-30",
+              },
+            ],
+            query: { q: "cloud" },
+          },
+        ],
+      },
+      provider,
+      { now: "2026-06-01T12:00:00.000Z" },
+    );
+
+    expect(result).toEqual({ queued: 1, sent: 1, skipped: 0, failed: 0 });
+    expect(provider.send).toHaveBeenCalledTimes(1);
+    expect(mysql.outbox[0]).toMatchObject({
+      alertId: "alert_mysql",
+      userId: "user_mysql",
+      recipient: "buyer@example.com",
+      status: "sent",
+      attemptCount: 1,
+    });
+    expect(mysql.digestRuns).toEqual([
+      expect.objectContaining({
+        alertId: "alert_mysql",
+        userId: "user_mysql",
+        status: "sent",
+        matchCount: 1,
+        matchedBidIdsJson: JSON.stringify(["mysql_bid_1"]),
+      }),
+    ]);
+    expect(mysql.alerts.get("alert_mysql")?.lastNotifiedAt).toBe("2026-06-01T12:00:00.000Z");
+  });
 });
+
+function createFakeMysqlNotificationStore() {
+  const users = new Map([
+    ["user_mysql", { id: "user_mysql", email: "buyer@example.com" }],
+  ]);
+  const preferences = new Map([
+    [
+      "user_mysql",
+      {
+        userId: "user_mysql",
+        savedSearchAlertsEnabled: 1,
+        defaultAlertFrequency: "daily",
+        marketingUpdatesEnabled: 0,
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      },
+    ],
+  ]);
+  const alerts = new Map([
+    ["alert_mysql", { id: "alert_mysql", lastNotifiedAt: null as string | null, updatedAt: null as string | null }],
+  ]);
+  const outbox: Record<string, unknown>[] = [];
+  const digestRuns: Record<string, unknown>[] = [];
+
+  return {
+    users,
+    preferences,
+    alerts,
+    outbox,
+    digestRuns,
+    execute: vi.fn(async (sql: string, values: unknown[] = []) => {
+      if (sql.includes("INSERT INTO notification_outbox")) {
+        const existing = outbox.find((row) => row.dedupeKey === values[6]);
+        if (!existing) {
+          outbox.push({
+            id: values[0],
+            alertId: values[1],
+            userId: values[2],
+            channel: values[3],
+            recipient: values[4],
+            frequency: values[5],
+            dedupeKey: values[6],
+            subject: values[7],
+            bodyText: values[8],
+            matchedBidIds: values[9],
+            status: values[10],
+            attemptCount: values[11],
+            lastError: null,
+            createdAt: values[12],
+            sentAt: null,
+          });
+        }
+      }
+
+      if (sql.includes("SET status = 'sent'")) {
+        const row = outbox.find((item) => item.id === values[1]);
+        if (row) {
+          row.status = "sent";
+          row.sentAt = values[0];
+          row.lastError = null;
+          row.attemptCount = Number(row.attemptCount) + 1;
+        }
+      }
+
+      if (sql.includes("SET status = 'failed'")) {
+        const row = outbox.find((item) => item.id === values[1]);
+        if (row) {
+          row.status = "failed";
+          row.lastError = values[0];
+          row.attemptCount = Number(row.attemptCount) + 1;
+        }
+      }
+
+      if (sql.includes("INSERT INTO search_alert_digest_runs")) {
+        digestRuns.push({
+          id: values[0],
+          alertId: values[1],
+          userId: values[2],
+          frequency: values[3],
+          status: values[4],
+          matchCount: values[5],
+          notificationId: values[6],
+          skippedReason: values[7],
+          failureReason: values[8],
+          matchedBidIdsJson: values[9],
+          createdAt: values[10],
+        });
+      }
+
+      if (sql.includes("UPDATE alerts SET last_notified_at")) {
+        const alert = alerts.get(String(values[2]));
+        if (alert) {
+          alert.lastNotifiedAt = String(values[0]);
+          alert.updatedAt = String(values[1]);
+        }
+      }
+
+      return [{ affectedRows: 1 }, undefined];
+    }),
+    query: vi.fn(async (sql: string, values: unknown[] = []) => {
+      if (sql.includes("FROM users")) {
+        const user = users.get(String(values[0]));
+        return [user ? [{ email: user.email }] : [], undefined];
+      }
+
+      if (sql.includes("FROM user_notification_preferences")) {
+        const row = preferences.get(String(values[0]));
+        return [row ? [row] : [], undefined];
+      }
+
+      if (sql.includes("FROM notification_outbox") && sql.includes("WHERE dedupe_key = ?")) {
+        return [[outbox.find((row) => row.dedupeKey === values[0])].filter(Boolean), undefined];
+      }
+
+      if (sql.includes("FROM notification_outbox") && sql.includes("WHERE id = ?")) {
+        return [[outbox.find((row) => row.id === values[0])].filter(Boolean), undefined];
+      }
+
+      if (sql.includes("FROM search_alert_digest_runs") && sql.includes("WHERE id = ?")) {
+        return [[digestRuns.find((row) => row.id === values[0])].filter(Boolean), undefined];
+      }
+
+      return [[], undefined];
+    }),
+  };
+}

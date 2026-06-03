@@ -10,12 +10,18 @@ import {
   fetchQualificationCitations,
   fetchQualificationFreshness,
   fetchResponseWorkspace,
+  fetchResponseWorkspaceComments,
+  fetchResponsePackageWorkspace,
+  createResponsePackageExport,
   postQualificationQuestion,
   refreshQualificationEvidence,
+  createResponsePackageSnapshot,
   updateComplianceManifestItem,
+  createResponseWorkspaceComment,
   fetchSubmissionGuidance,
   updateIntentStatus,
   updatePursuitDecision,
+  updateResponseWorkspaceItemArtifactLinks,
   updateResponseWorkspaceItem,
   updateSubmissionGuidance,
 } from "./intents";
@@ -216,6 +222,7 @@ describe("intent API client", () => {
       itemId: "response_workspace_item_1",
       status: "done" as const,
       notes: "Ready for review.",
+      assignedUserId: "member_1",
     };
     const body = { workspace: { intentId: "intent/with space", items: [{ id: payload.itemId }] } };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));
@@ -228,6 +235,137 @@ describe("intent API client", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+  });
+
+  it("updates linked response workspace artifacts with an encoded intent id", async () => {
+    const body = {
+      workspace: {
+        intentId: "intent/with space",
+        items: [{
+          id: "response_workspace_item_1",
+          linkedArtifacts: [{ id: "artifact/with space" }],
+          activity: [],
+        }],
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await updateResponseWorkspaceItemArtifactLinks(
+      "intent/with space",
+      "response_workspace_item_1",
+      ["artifact/with space"],
+    );
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/response-workspace", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        itemId: "response_workspace_item_1",
+        linkedArtifactIds: ["artifact/with space"],
+      }),
+    });
+  });
+
+  it("fetches response workspace comments for an item", async () => {
+    const body = {
+      comments: [{
+        id: "response_workspace_comment_1",
+        itemId: "response_workspace_item_1",
+        body: "Please validate staffing.",
+      }],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await fetchResponseWorkspaceComments("intent/with space", "response_workspace_item_1");
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/intents/intent%2Fwith%20space/response-workspace/comments?itemId=response_workspace_item_1",
+    );
+  });
+
+  it("creates a response workspace comment", async () => {
+    const payload = {
+      itemId: "response_workspace_item_1",
+      body: "Please validate staffing.",
+    };
+    const body = { comment: { id: "response_workspace_comment_1", ...payload } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body, { status: 201 }));
+
+    const result = await createResponseWorkspaceComment("intent/with space", payload);
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/intents/intent%2Fwith%20space/response-workspace/comments",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+  });
+
+  it("fetches response package workspace with an encoded intent id", async () => {
+    const body = {
+      packageWorkspace: {
+        readiness: { ready: false, missingArtifactLinks: 1 },
+        outline: [],
+        snapshots: [],
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await fetchResponsePackageWorkspace("intent/with space");
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/intents/intent%2Fwith%20space/response-workspace/package",
+    );
+  });
+
+  it("creates a response package snapshot with an encoded intent id", async () => {
+    const body = {
+      snapshot: { id: "response_package_snapshot_1", title: "Draft package" },
+      packageWorkspace: { snapshots: [{ id: "response_package_snapshot_1" }] },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body, { status: 201 }));
+
+    const result = await createResponsePackageSnapshot("intent/with space", { title: "Draft package" });
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/intents/intent%2Fwith%20space/response-workspace/package",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: "Draft package" }),
+      },
+    );
+  });
+
+  it("creates a response package export with an encoded intent id", async () => {
+    const body = {
+      exportRecord: {
+        id: "response_package_export_1",
+        downloadUrl: "/api/intents/intent%2Fwith%20space/response-workspace/package/exports/response_package_export_1",
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body, { status: 201 }));
+
+    const result = await createResponsePackageExport("intent/with space", {
+      snapshotId: "response_package_snapshot_1",
+    });
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/intents/intent%2Fwith%20space/response-workspace/package/exports",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ snapshotId: "response_package_snapshot_1" }),
+      },
+    );
   });
 
   it("fetches pursuit decision board with an encoded intent id", async () => {

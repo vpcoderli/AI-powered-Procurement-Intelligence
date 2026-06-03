@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  extractStripeSandboxSessionCookie,
   formatStripeSandboxConfigSummary,
   isStripeSandboxCancelReady,
+  isStripeSandboxTierSyncReady,
   isStripeSandboxSubscriptionReady,
   parseStripeSandboxArgs,
   validateStripeSandboxConfig,
@@ -86,6 +88,30 @@ describe("Stripe sandbox verifier helpers", () => {
     expect(isStripeSandboxCancelReady({ status: "active", cancelAtPeriodEnd: true })).toBe(true);
     expect(isStripeSandboxCancelReady({ status: "canceled", cancelAtPeriodEnd: false })).toBe(true);
     expect(isStripeSandboxCancelReady({ status: "active", cancelAtPeriodEnd: false })).toBe(false);
+  });
+
+  it("recognizes user and organization tier sync from API session payloads", () => {
+    expect(isStripeSandboxTierSyncReady({
+      tier: "business",
+      workspace: { tier: "business" },
+    }, "business")).toBe(true);
+
+    expect(isStripeSandboxTierSyncReady({
+      tier: "business",
+      workspace: { tier: "pro" },
+    }, "business")).toBe(false);
+
+    expect(isStripeSandboxTierSyncReady(null, "pro")).toBe(false);
+  });
+
+  it("extracts the sandbox session cookie without leaking the whole Set-Cookie value", () => {
+    expect(extractStripeSandboxSessionCookie([
+      "apsi_session=token_123; Path=/; HttpOnly; SameSite=Lax",
+      "wb_anonymous=; Path=/; Max-Age=0",
+    ])).toBe("apsi_session=token_123");
+
+    expect(() => extractStripeSandboxSessionCookie(["wb_anonymous=anon; Path=/"]))
+      .toThrow(/register response did not include a session cookie/);
   });
 
   it("does not expose secret values in validation messages or summaries", () => {

@@ -78,7 +78,12 @@ function validateWorkerEnvironment(env: WorkerEnv = process.env) {
     );
   }
 
-  if (env.NODE_ENV === "production" && !env.DATABASE_PATH?.trim()) {
+  const mysqlConfigured = Boolean(
+    env.DATABASE_URL?.trim()?.match(/^mysql2?:\/\//) ||
+      env.MYSQL_DATABASE_URL?.trim()?.match(/^mysql2?:\/\//),
+  );
+
+  if (env.NODE_ENV === "production" && !mysqlConfigured && !env.DATABASE_PATH?.trim()) {
     warnings.push("DATABASE_PATH is not set; worker will use ./data/apsi.sqlite relative to the process working directory.");
   }
 
@@ -89,6 +94,7 @@ function validateWorkerEnvironment(env: WorkerEnv = process.env) {
   return {
     ok: true,
     provider,
+    database: mysqlConfigured ? "mysql" : "sqlite",
     databasePath: env.DATABASE_PATH?.trim() || "data/apsi.sqlite",
     runOnce: env.NOTIFICATION_WORKER_RUN_ONCE === "1" || env.NOTIFICATION_WORKER_RUN_ONCE === "true",
     intervalMs: env.NOTIFICATION_WORKER_INTERVAL_MS?.trim() || String(DEFAULT_INTERVAL_MS),
@@ -106,13 +112,24 @@ function sleep(ms: number) {
 async function runLoop() {
   validateWorkerEnvironment();
 
-  const [{ createDatabase }, { runMigrations }, { runNotificationWorkerOnce }] = await Promise.all([
+  const [
+    { createDatabase },
+    { isMysqlDatabaseUrlConfigured, resolveMysqlPool, closeResolvedMysqlPool, runMysqlMigrations },
+    { runMigrations },
+    { runNotificationWorkerOnce },
+  ] = await Promise.all([
     import("../src/server/db/client"),
+    import("../src/server/db/mysql"),
     import("../src/server/db/migrate"),
     import("../src/server/notifications/worker"),
   ]);
-  const db = createDatabase(databasePath());
-  runMigrations(db);
+  const mysqlEnabled = isMysqlDatabaseUrlConfigured();
+  const db = mysqlEnabled ? createDatabase(":memory:") : createDatabase(databasePath());
+  if (mysqlEnabled) {
+    await runMysqlMigrations(resolveMysqlPool());
+  } else {
+    runMigrations(db);
+  }
 
   let stopping = false;
   const stop = () => {
@@ -140,6 +157,7 @@ async function runLoop() {
       }
     } while (!stopping);
   } finally {
+    await closeResolvedMysqlPool();
     db.$client.close();
   }
 }

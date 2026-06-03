@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { createRequestContext } from "@/server/http/request-context";
-import { sanitizeEventMetadata, writeAuditEvent, writeEvent } from "./event-log";
+import {
+  deliverPendingEventOutboxRows,
+  deliverPendingEventOutboxRowsFromMysql,
+  sanitizeEventMetadata,
+  writeAuditEvent,
+  writeAuditEventFromMysql,
+  writeEvent,
+} from "./event-log";
 
 describe("event log", () => {
   let testDb: TestDatabase;
@@ -115,5 +122,188 @@ describe("event log", () => {
       .all(entry.id);
 
     expect(outbox).toEqual([{ event_log_id: entry.id, destination: "ops-alerts", status: "pending" }]);
+  });
+
+  it("delivers pending SQLite event outbox rows and records failures", async () => {
+    const delivered = writeEvent(testDb.db, {
+      eventName: "source.restored",
+      source: "crawler",
+      outcome: "success",
+      outboxDestinations: ["ops-alerts"],
+      occurredAt: "2026-06-01T00:00:00.000Z",
+    });
+    const failed = writeEvent(testDb.db, {
+      eventName: "source.unavailable",
+      source: "crawler",
+      outcome: "failure",
+      outboxDestinations: ["ops-alerts"],
+      occurredAt: "2026-06-01T00:01:00.000Z",
+    });
+
+    const result = await deliverPendingEventOutboxRows(
+      testDb.db,
+      async (row) => row.eventLogId === failed.id ? { ok: false, error: "send failed" } : { ok: true },
+      { now: "2026-06-01T00:02:00.000Z" },
+    );
+    const rows = testDb.db.$client
+      .prepare("SELECT event_log_id, status, attempt_count, last_error, delivered_at FROM event_outbox ORDER BY created_at ASC")
+      .all() as Record<string, unknown>[];
+
+    expect(result).toEqual({ attempted: 2, delivered: 1, failed: 1, skipped: 0 });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        event_log_id: delivered.id,
+        status: "delivered",
+        attempt_count: 0,
+        last_error: null,
+        delivered_at: "2026-06-01T00:02:00.000Z",
+      }),
+      expect.objectContaining({
+        event_log_id: failed.id,
+        status: "failed",
+        attempt_count: 1,
+        last_error: "send failed",
+        delivered_at: null,
+      }),
+    ]);
+  });
+
+  it("writes audit events through the MySQL runtime helper", async () => {
+    const rows = new Map<string, Record<string, unknown>>();
+    const outboxRows: Record<string, unknown>[] = [];
+    const mysql = {
+      execute: async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("INSERT INTO event_log")) {
+          rows.set(values[0] as string, {
+            id: values[0],
+            event_name: values[1],
+            occurred_at: values[2],
+            environment: values[3],
+            organization_id: values[4],
+            actor_type: values[5],
+            actor_id: values[6],
+            actor_role: values[7],
+            target_type: values[8],
+            target_id: values[9],
+            source: values[10],
+            outcome: values[11],
+            severity: values[12],
+            request_id: values[13],
+            correlation_id: values[14],
+            idempotency_key: values[15],
+            metadata_json: values[16],
+            before_after_json: values[17],
+            retention_class: values[18],
+            created_at: values[19],
+          });
+        }
+
+        if (sql.includes("INSERT INTO event_outbox")) {
+          outboxRows.push({
+            id: values[0],
+            event_log_id: values[1],
+            destination: values[2],
+            status: values[3],
+          });
+        }
+
+        return [{ affectedRows: 1 }, undefined];
+      },
+      query: async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("idempotency_key = ?")) {
+          return [[...rows.values()].filter((row) => row.idempotency_key === values[0]), undefined];
+        }
+
+        return [[...rows.values()].filter((row) => row.id === values[0]), undefined];
+      },
+    };
+
+    const entry = await writeAuditEventFromMysql(mysql, {
+      eventName: "admin.config.upserted",
+      environment: "test",
+      targetType: "config",
+      targetId: "cfg_1",
+      outcome: "success",
+      outboxDestinations: ["ops"],
+      metadata: { apiKey: "secret", module: "source" },
+      occurredAt: "2026-06-01T00:00:00.000Z",
+    });
+
+    expect(entry).toMatchObject({
+      eventName: "admin.config.upserted",
+      source: "audit",
+      retentionClass: "audit",
+      metadata: { apiKey: "[redacted]", module: "source" },
+    });
+    expect(outboxRows).toEqual([expect.objectContaining({ event_log_id: entry.id, destination: "ops" })]);
+  });
+
+  it("delivers pending MySQL event outbox rows", async () => {
+    const outboxRows = new Map<string, Record<string, unknown>>([
+      ["event_outbox_1", {
+        id: "event_outbox_1",
+        event_log_id: "event_1",
+        destination: "ops",
+        status: "pending",
+        attempt_count: 0,
+        last_error: null,
+        created_at: "2026-06-01T00:00:00.000Z",
+        delivered_at: null,
+      }],
+      ["event_outbox_2", {
+        id: "event_outbox_2",
+        event_log_id: "event_2",
+        destination: "ops",
+        status: "failed",
+        attempt_count: 3,
+        last_error: "old failure",
+        created_at: "2026-06-01T00:01:00.000Z",
+        delivered_at: null,
+      }],
+    ]);
+    const mysql = {
+      query: async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("COUNT(*)")) {
+          return [[{ candidateCount: outboxRows.size }], undefined];
+        }
+
+        if (sql.includes("FROM event_outbox")) {
+          const maxAttempts = Number(values[0]);
+          const limit = Number(values[1]);
+          return [[...outboxRows.values()]
+            .filter((row) => Number(row.attempt_count) < maxAttempts)
+            .slice(0, limit), undefined];
+        }
+
+        return [[], undefined];
+      },
+      execute: async (sql: string, values: unknown[] = []) => {
+        const id = String(values[1]);
+        const row = outboxRows.get(id);
+        if (row && sql.includes("status = 'delivered'")) {
+          row.status = "delivered";
+          row.delivered_at = values[0];
+          row.last_error = null;
+        }
+
+        return [{ affectedRows: row ? 1 : 0 }, undefined];
+      },
+    };
+
+    const result = await deliverPendingEventOutboxRowsFromMysql(
+      mysql,
+      async () => ({ ok: true }),
+      { now: "2026-06-01T00:02:00.000Z", maxAttempts: 3 },
+    );
+
+    expect(result).toEqual({ attempted: 1, delivered: 1, failed: 0, skipped: 1 });
+    expect(outboxRows.get("event_outbox_1")).toEqual(expect.objectContaining({
+      status: "delivered",
+      delivered_at: "2026-06-01T00:02:00.000Z",
+    }));
+    expect(outboxRows.get("event_outbox_2")).toEqual(expect.objectContaining({
+      status: "failed",
+      attempt_count: 3,
+    }));
   });
 });

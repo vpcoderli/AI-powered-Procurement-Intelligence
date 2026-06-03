@@ -11,6 +11,8 @@ import {
   configRegistry,
   crawlerLocks,
   dataSources,
+  sourceApprovalEvents,
+  deadlineReminders,
   eventLog,
   eventOutbox,
   intentToBid,
@@ -18,8 +20,18 @@ import {
   organizationMemberships,
   organizations,
   passwordResetTokens,
+  quoteRequestArtifacts,
+  quoteRequests,
+  riskCheckSnapshots,
+  responseWorkspaceActivity,
+  responseWorkspaceComments,
+  responseWorkspaceItemArtifacts,
   responseWorkspaceItems,
+  responsePackageExports,
+  responsePackageSnapshots,
   searchAlertDigestRuns,
+  sourcingPartners,
+  supplierArtifacts,
   userNotificationPreferences,
   users,
   workspaceInvitations,
@@ -325,6 +337,7 @@ describe("database schema", () => {
       expect(tables).toContain("event_log");
       expect(tables).toContain("event_outbox");
       expect(tables).toContain("user_notification_preferences");
+      expect(tables).toContain("risk_check_snapshots");
 
       const userColumns = testDb.db.$client
         .prepare("PRAGMA table_info(users)")
@@ -432,6 +445,16 @@ describe("database schema", () => {
           tokenHash: "hashed-token",
           expiresAt: "2026-05-19T01:00:00.000Z",
           usedAt: null,
+          createdAt: "2026-05-19T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
+
+      expect(() =>
+        testDb.db.insert(riskCheckSnapshots).values({
+          id: "risk_snapshot_1",
+          ok: 1,
+          checkedAt: "2026-05-19T00:00:00.000Z",
+          reportJson: JSON.stringify({ ok: true, checks: [] }),
           createdAt: "2026-05-19T00:00:00.000Z",
         }).run(),
       ).not.toThrow();
@@ -728,6 +751,23 @@ describe("database schema", () => {
       ).not.toThrow();
 
       expect(() =>
+        testDb.db.insert(sourceApprovalEvents).values({
+          id: "source_approval_event_1",
+          sourceId: "ca_caleprocure_quality",
+          actorUserId: "admin_1",
+          action: "approved",
+          previousApprovalStatus: "needs_review",
+          nextApprovalStatus: "approved",
+          previousLegalReviewStatus: "not_reviewed",
+          nextLegalReviewStatus: "approved_public",
+          previousApprovedForIngestion: 0,
+          nextApprovedForIngestion: 1,
+          reason: "Schema test approval history.",
+          createdAt: "2026-06-03T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
+
+      expect(() =>
         testDb.db.insert(bids).values({
           id: "archive_bid_1",
           source: "SAM.gov",
@@ -845,11 +885,13 @@ describe("database schema", () => {
         .map((row) => (row as { name: string }).name);
 
       expect(tables).toContain("response_workspace_items");
+      expect(tables).toContain("response_workspace_comments");
       expect(columns).toEqual(expect.arrayContaining([
         "id",
         "intent_id",
         "bid_id",
         "user_id",
+        "assigned_user_id",
         "kind",
         "title",
         "status",
@@ -862,7 +904,11 @@ describe("database schema", () => {
       expect(indexes).toEqual(expect.arrayContaining([
         "idx_response_workspace_items_intent_id",
         "idx_response_workspace_items_user_id",
+        "idx_response_workspace_items_assigned_user_id",
         "idx_response_workspace_items_status",
+        "idx_response_workspace_comments_intent_id",
+        "idx_response_workspace_comments_item_id",
+        "idx_response_workspace_comments_author_user_id",
       ]));
 
       testDb.db.insert(intentToBid).values({
@@ -889,6 +935,498 @@ describe("database schema", () => {
           updatedAt: "2026-06-01T00:00:00.000Z",
         }).run(),
       ).not.toThrow();
+
+      expect(() =>
+        testDb.db.insert(responseWorkspaceComments).values({
+          id: "response_workspace_comment_1",
+          intentId: "intent_seed",
+          itemId: "response_workspace_item_1",
+          authorUserId: "anon_seed",
+          body: "Please confirm staffing assumptions.",
+          createdAt: "2026-06-01T00:00:00.000Z",
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("creates quote workflow tables with organization and intent indexes", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      const tables = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const indexes = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const partnerColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(sourcing_partners)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const requestColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(quote_requests)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(tables).toEqual(expect.arrayContaining([
+        "sourcing_partners",
+        "quote_requests",
+        "quote_request_artifacts",
+      ]));
+      expect(partnerColumns).toEqual(expect.arrayContaining([
+        "id",
+        "organization_id",
+        "created_by_user_id",
+        "name",
+        "contact_email",
+        "regions_json",
+        "capability_tags_json",
+        "status",
+      ]));
+      expect(requestColumns).toEqual(expect.arrayContaining([
+        "id",
+        "organization_id",
+        "intent_id",
+        "bid_id",
+        "partner_id",
+        "status",
+        "requested_due_at",
+        "line_items_json",
+        "quoted_amount_cents",
+        "response_notes",
+      ]));
+      expect(indexes).toEqual(expect.arrayContaining([
+        "idx_sourcing_partners_organization_id",
+        "idx_quote_requests_intent_id",
+        "idx_quote_requests_partner_id",
+        "idx_quote_request_artifacts_artifact_id",
+      ]));
+
+      testDb.db.insert(users).values({
+        id: "quote_user_schema",
+        email: "quote-schema@example.com",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+      testDb.db.insert(organizations).values({
+        id: "quote_org_schema",
+        name: "Quote Org",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+      testDb.db.insert(organizationMemberships).values({
+        organizationId: "quote_org_schema",
+        userId: "quote_user_schema",
+        role: "owner",
+        status: "active",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+      testDb.db.insert(intentToBid).values({
+        id: "quote_intent_schema",
+        userId: "quote_user_schema",
+        bidId: "1",
+        status: "intent_added",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+      testDb.db.insert(supplierArtifacts).values({
+        id: "quote_artifact_schema",
+        intentId: "quote_intent_schema",
+        bidId: "1",
+        userId: "quote_user_schema",
+        title: "Quote support",
+        artifactType: "quote",
+        purpose: "quote_support",
+        fileName: "quote.txt",
+        contentType: "text/plain",
+        byteSize: 12,
+        storagePath: "data/artifact-vault/quote.txt",
+        checksumSha256: "hash",
+        reviewStatus: "pending_review",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+
+      expect(() => {
+        testDb.db.insert(sourcingPartners).values({
+          id: "partner_schema",
+          organizationId: "quote_org_schema",
+          createdByUserId: "quote_user_schema",
+          name: "Schema Partner",
+          createdAt: "2026-06-01T00:00:00.000Z",
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        }).run();
+        testDb.db.insert(quoteRequests).values({
+          id: "quote_request_schema",
+          organizationId: "quote_org_schema",
+          intentId: "quote_intent_schema",
+          bidId: "1",
+          partnerId: "partner_schema",
+          createdByUserId: "quote_user_schema",
+          title: "Schema RFQ",
+          createdAt: "2026-06-01T00:00:00.000Z",
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        }).run();
+        testDb.db.insert(quoteRequestArtifacts).values({
+          quoteRequestId: "quote_request_schema",
+          artifactId: "quote_artifact_schema",
+          createdAt: "2026-06-01T00:00:00.000Z",
+        }).run();
+      }).not.toThrow();
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("creates response workspace item artifact link table with indexes", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      const tables = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const indexes = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(tables).toContain("response_workspace_item_artifacts");
+      expect(indexes).toEqual(expect.arrayContaining([
+        "idx_response_workspace_item_artifacts_artifact_id",
+      ]));
+
+      testDb.db.insert(users).values({
+        id: "response_link_user_schema",
+        email: "response-link-schema@example.com",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+      testDb.db.insert(intentToBid).values({
+        id: "response_link_intent_schema",
+        userId: "response_link_user_schema",
+        bidId: "1",
+        status: "intent_added",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+      testDb.db.insert(responseWorkspaceItems).values({
+        id: "response_link_item_schema",
+        intentId: "response_link_intent_schema",
+        bidId: "1",
+        userId: "response_link_user_schema",
+        kind: "artifact",
+        title: "Attach capability statement",
+        status: "todo",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+      testDb.db.insert(supplierArtifacts).values({
+        id: "response_link_artifact_schema",
+        intentId: "response_link_intent_schema",
+        bidId: "1",
+        userId: "response_link_user_schema",
+        title: "Capability statement",
+        artifactType: "capability_statement",
+        purpose: "response_workspace",
+        fileName: "capability.pdf",
+        contentType: "application/pdf",
+        byteSize: 1024,
+        storagePath: "data/artifact-vault/capability.pdf",
+        checksumSha256: "hash_response_link_artifact_schema",
+        reviewStatus: "pending_review",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+
+      expect(() => testDb.db.insert(responseWorkspaceItemArtifacts).values({
+        itemId: "response_link_item_schema",
+        artifactId: "response_link_artifact_schema",
+        createdAt: "2026-06-01T00:00:00.000Z",
+      }).run()).not.toThrow();
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("creates response workspace activity table with intent and item indexes", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      const tables = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const indexes = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(tables).toContain("response_workspace_activity");
+      expect(indexes).toEqual(expect.arrayContaining([
+        "idx_response_workspace_activity_intent_id",
+        "idx_response_workspace_activity_item_id",
+        "idx_response_workspace_activity_actor_user_id",
+      ]));
+
+      testDb.db.insert(intentToBid).values({
+        id: "response_activity_intent_schema",
+        userId: "anon_seed",
+        bidId: "1",
+        status: "intent_added",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+      testDb.db.insert(responseWorkspaceItems).values({
+        id: "response_activity_item_schema",
+        intentId: "response_activity_intent_schema",
+        bidId: "1",
+        userId: "anon_seed",
+        kind: "task",
+        title: "Draft response",
+        status: "todo",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+      testDb.db.insert(responseWorkspaceActivity).values({
+        id: "response_activity_schema_1",
+        intentId: "response_activity_intent_schema",
+        itemId: "response_activity_item_schema",
+        actorUserId: "anon_seed",
+        eventType: "status_changed",
+        fromValue: "todo",
+        toValue: "done",
+        metadataJson: "{}",
+        createdAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+
+      expect(testDb.db.select().from(responseWorkspaceActivity).all()).toHaveLength(1);
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("creates response package snapshots with readiness indexes", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      const tables = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const indexes = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(tables).toContain("response_package_snapshots");
+      expect(indexes).toEqual(expect.arrayContaining([
+        "idx_response_package_snapshots_intent_id",
+        "idx_response_package_snapshots_user_id",
+        "idx_response_package_snapshots_created_by_user_id",
+      ]));
+
+      testDb.db.insert(intentToBid).values({
+        id: "response_package_intent_schema",
+        userId: "anon_seed",
+        bidId: "1",
+        status: "intent_added",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+
+      expect(() =>
+        testDb.db.insert(responsePackageSnapshots).values({
+          id: "response_package_snapshot_schema",
+          intentId: "response_package_intent_schema",
+          bidId: "1",
+          userId: "anon_seed",
+          createdByUserId: "anon_seed",
+          title: "Response package v1",
+          outlineJson: JSON.stringify([{ id: "outline_1", title: "Technical approach" }]),
+          readinessJson: JSON.stringify({ ready: false, missingArtifactLinks: 1 }),
+          createdAt: "2026-06-01T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("creates response package exports linked to snapshots", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      const tables = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const indexes = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(tables).toContain("response_package_exports");
+      expect(indexes).toEqual(expect.arrayContaining([
+        "idx_response_package_exports_intent_id",
+        "idx_response_package_exports_snapshot_id",
+        "idx_response_package_exports_user_id",
+      ]));
+
+      testDb.db.insert(intentToBid).values({
+        id: "response_export_intent_schema",
+        userId: "anon_seed",
+        bidId: "1",
+        status: "intent_added",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+      testDb.db.insert(responsePackageSnapshots).values({
+        id: "response_export_snapshot_schema",
+        intentId: "response_export_intent_schema",
+        bidId: "1",
+        userId: "anon_seed",
+        createdByUserId: "anon_seed",
+        title: "Response package v1",
+        outlineJson: "[]",
+        readinessJson: "{}",
+        createdAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+
+      expect(() =>
+        testDb.db.insert(responsePackageExports).values({
+          id: "response_package_export_schema",
+          snapshotId: "response_export_snapshot_schema",
+          intentId: "response_export_intent_schema",
+          bidId: "1",
+          userId: "anon_seed",
+          requestedByUserId: "anon_seed",
+          status: "ready",
+          fileName: "response-package.md",
+          contentType: "text/markdown; charset=utf-8",
+          byteSize: 128,
+          storagePath: "data/response-package-exports/response-package.md",
+          checksumSha256: "hash_response_package_export_schema",
+          readinessJson: "{}",
+          createdAt: "2026-06-01T00:00:00.000Z",
+          updatedAt: "2026-06-01T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("creates deadline reminder tables with intent indexes and dedupe protection", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      const tables = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const indexes = testDb.db.$client
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const columns = testDb.db.$client
+        .prepare("PRAGMA table_info(deadline_reminders)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(tables).toContain("deadline_reminders");
+      expect(columns).toEqual(expect.arrayContaining([
+        "id",
+        "organization_id",
+        "user_id",
+        "intent_id",
+        "bid_id",
+        "kind",
+        "linked_object_type",
+        "linked_object_id",
+        "dedupe_key",
+        "title",
+        "due_at",
+        "reminder_at",
+        "status",
+        "priority",
+        "source",
+        "metadata_json",
+        "acknowledged_at",
+        "snoozed_until",
+      ]));
+      expect(indexes).toEqual(expect.arrayContaining([
+        "idx_deadline_reminders_organization_id",
+        "idx_deadline_reminders_intent_id",
+        "idx_deadline_reminders_user_id",
+        "idx_deadline_reminders_status",
+        "idx_deadline_reminders_due_at",
+        "idx_deadline_reminders_dedupe_key",
+      ]));
+
+      testDb.db.insert(users).values({
+        id: "deadline_user_schema",
+        email: "deadline-schema@example.com",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+      testDb.db.insert(organizations).values({
+        id: "deadline_org_schema",
+        name: "Deadline Org",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+      testDb.db.insert(organizationMemberships).values({
+        organizationId: "deadline_org_schema",
+        userId: "deadline_user_schema",
+        role: "owner",
+        status: "active",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+      testDb.db.insert(intentToBid).values({
+        id: "deadline_intent_schema",
+        userId: "deadline_user_schema",
+        bidId: "1",
+        status: "intent_added",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      }).run();
+
+      const reminder = {
+        id: "deadline_reminder_schema",
+        organizationId: "deadline_org_schema",
+        userId: "deadline_user_schema",
+        intentId: "deadline_intent_schema",
+        bidId: "1",
+        kind: "bid_deadline",
+        linkedObjectType: "bid",
+        linkedObjectId: "1",
+        dedupeKey: "deadline_intent_schema:bid_deadline:1",
+        title: "Bid deadline",
+        dueAt: "2026-06-15T00:00:00.000Z",
+        reminderAt: "2026-06-13T00:00:00.000Z",
+        status: "active",
+        priority: "high",
+        source: "generated",
+        metadataJson: "{}",
+        createdAt: "2026-06-01T00:00:00.000Z",
+        updatedAt: "2026-06-01T00:00:00.000Z",
+      };
+
+      expect(() => testDb.db.insert(deadlineReminders).values(reminder).run()).not.toThrow();
+      expect(() =>
+        testDb.db.insert(deadlineReminders).values({
+          ...reminder,
+          id: "deadline_reminder_schema_duplicate",
+        }).run(),
+      ).toThrow();
     } finally {
       await testDb.cleanup();
     }

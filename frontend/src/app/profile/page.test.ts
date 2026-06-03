@@ -20,4 +20,12 @@ describe("profile page", () => {
     expect(page).toContain("winbids-hero-panel");
     expect(page).toContain("winbids-panel");
   });
+
+  it("shows an auth-required state before loading supplier profile data", () => {
+    const page = readFileSync(new URL("page.tsx", routeDirectory), "utf8");
+
+    expect(page).toContain("AuthRequiredState");
+    expect(page).toContain("useAuth");
+    expect(page).toContain("ProfileContent");
+  });
 });

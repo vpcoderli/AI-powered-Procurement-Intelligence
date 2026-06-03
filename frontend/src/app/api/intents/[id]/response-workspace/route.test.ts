@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as principal from "@/server/auth/principal";
+import type { RequestPrincipal } from "@/server/auth/principal";
 import * as responseWorkspaceService from "@/server/response-workspace/service";
 import { IntentNotFoundError } from "@/server/intents/types";
 import type { ResponseWorkspace } from "@/server/response-workspace/types";
-import { GET, PATCH } from "./route";
+import { GET, PATCH, POST } from "./route";
 
 vi.mock("@/server/db/client", () => ({ db: {} }));
 vi.mock("@/server/auth/principal", () => ({
@@ -23,20 +24,20 @@ const resolvePrincipal = vi.mocked(principal.resolvePrincipal);
 const getOrCreateResponseWorkspace = vi.mocked(responseWorkspaceService.getOrCreateResponseWorkspace);
 const updateResponseWorkspaceItem = vi.mocked(responseWorkspaceService.updateResponseWorkspaceItem);
 
-const businessPrincipal = {
+const businessPrincipal: RequestPrincipal = {
   kind: "authenticated" as const,
   userId: "user_1",
   role: "user" as const,
   tier: "business" as const,
-  features: ["bid_search", "response.workspace.create"] as const,
+  features: ["bid_search", "response.workspace.create"],
 };
 
-const proPrincipal = {
+const proPrincipal: RequestPrincipal = {
   kind: "authenticated" as const,
   userId: "user_pro",
   role: "user" as const,
   tier: "pro" as const,
-  features: ["bid_search", "submission_guidance"] as const,
+  features: ["bid_search", "submission_guidance"],
 };
 
 const workspace: ResponseWorkspace = {
@@ -63,9 +64,13 @@ const workspace: ResponseWorkspace = {
       status: "todo",
       notes: "",
       dueAt: null,
+      assignedUserId: null,
+      assignedUser: null,
       sortOrder: 0,
       createdAt: "2026-06-01T00:00:00.000Z",
       updatedAt: "2026-06-01T00:00:00.000Z",
+      linkedArtifacts: [],
+      activity: [],
     },
   ],
 };
@@ -148,6 +153,100 @@ describe("PATCH /api/intents/[id]/response-workspace", () => {
       itemId: "response_workspace_item_1",
       status: "done",
       notes: "Ready for review.",
+    });
+  });
+
+  it("assigns an editable response workspace item", async () => {
+    const updated: ResponseWorkspace = {
+      ...workspace,
+      items: [{
+        ...workspace.items[0],
+        assignedUserId: "member_1",
+        assignedUser: {
+          userId: "member_1",
+          email: "member@example.com",
+          displayName: "Member One",
+        },
+      }],
+    };
+    updateResponseWorkspaceItem.mockResolvedValueOnce(updated);
+
+    const response = await PATCH(
+      new Request("http://localhost/api/intents/intent_1/response-workspace", {
+        method: "PATCH",
+        body: JSON.stringify({
+          itemId: "response_workspace_item_1",
+          assignedUserId: "member_1",
+        }),
+      }),
+      { params: Promise.resolve({ id: "intent_1" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ workspace: updated });
+    expect(updateResponseWorkspaceItem).toHaveBeenCalledWith(expect.anything(), "user_1", "intent_1", {
+      itemId: "response_workspace_item_1",
+      assignedUserId: "member_1",
+    });
+  });
+
+  it("updates linked supplier artifacts for a response workspace item", async () => {
+    const updated: ResponseWorkspace = {
+      ...workspace,
+      items: [{
+        ...workspace.items[0],
+        linkedArtifacts: [{
+          id: "artifact_1",
+          title: "Capability statement",
+          fileName: "capability.pdf",
+          artifactType: "capability_statement",
+          purpose: "response_workspace",
+          downloadUrl: "/api/intents/intent_1/artifacts/artifact_1",
+        }],
+        activity: [],
+      }],
+    };
+    updateResponseWorkspaceItem.mockResolvedValueOnce(updated);
+
+    const response = await PATCH(
+      new Request("http://localhost/api/intents/intent_1/response-workspace", {
+        method: "PATCH",
+        body: JSON.stringify({
+          itemId: "response_workspace_item_1",
+          linkedArtifactIds: ["artifact_1"],
+        }),
+      }),
+      { params: Promise.resolve({ id: "intent_1" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ workspace: updated });
+    expect(updateResponseWorkspaceItem).toHaveBeenCalledWith(expect.anything(), "user_1", "intent_1", {
+      itemId: "response_workspace_item_1",
+      linkedArtifactIds: ["artifact_1"],
+    });
+  });
+
+  it("also accepts POST for linked supplier artifact updates", async () => {
+    updateResponseWorkspaceItem.mockResolvedValueOnce(workspace);
+
+    const response = await POST(
+      new Request("http://localhost/api/intents/intent_1/response-workspace", {
+        method: "POST",
+        body: JSON.stringify({
+          itemId: "response_workspace_item_1",
+          linkedArtifactIds: [],
+        }),
+      }),
+      { params: Promise.resolve({ id: "intent_1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect(updateResponseWorkspaceItem).toHaveBeenCalledWith(expect.anything(), "user_1", "intent_1", {
+      itemId: "response_workspace_item_1",
+      linkedArtifactIds: [],
     });
   });
 

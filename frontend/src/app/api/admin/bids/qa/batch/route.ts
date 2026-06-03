@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { AdminAuthError, requireAdminAccess } from "@/server/admin/auth";
 import {
   batchUpdateAdminBidQaItems,
+  batchUpdateAdminBidQaItemsFromMysql,
   isAdminBidQaDisplayStatus,
   isAdminBidQaReviewStatus,
   type BatchUpdateAdminBidQaInput,
 } from "@/server/admin/bid-qa-repository";
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -63,6 +65,8 @@ async function parseBatchBody(request: Request): Promise<ParsedBatchBody | null>
 }
 
 export function createAdminBidQaBatchPost(database?: AppDatabase) {
+  const shouldUseMysqlRuntime = () => !database && isMysqlDatabaseUrlConfigured();
+
   return async function POST(request: Request) {
     const input = await parseBatchBody(request);
     if (!input) {
@@ -73,10 +77,13 @@ export function createAdminBidQaBatchPost(database?: AppDatabase) {
       const resolvedDb = await resolveDatabase(database);
       const principal = await requireAdminAccess(resolvedDb, request, { roles: ["admin", "operator"] });
       const reviewerId = principal.kind === "admin" ? principal.userId : "local-bypass";
-      const result = await batchUpdateAdminBidQaItems(resolvedDb, {
+      const payload = {
         ...input,
         reviewerId,
-      });
+      };
+      const result = shouldUseMysqlRuntime()
+        ? await batchUpdateAdminBidQaItemsFromMysql(resolveMysqlPool(), payload)
+        : await batchUpdateAdminBidQaItems(resolvedDb, payload);
 
       return NextResponse.json(result);
     } catch (error) {

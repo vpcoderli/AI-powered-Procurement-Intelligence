@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AdminApiError,
+  batchUpdateAdminDataSources,
   batchUpdateAdminBidQaItems,
   createAdminUser,
   deliverAdminNotifications,
@@ -16,7 +17,9 @@ import {
   runSamGovCrawlerNow,
   runStateCrawlersNow,
   scheduleAdminBillingDunning,
+  checkAdminDataSourceHealth,
   reconcileAdminSubscriptions,
+  updateAdminConfigEntry,
   updateAdminUserFeatureOverride,
   updateAdminDataSource,
   updateAdminBidQaReview,
@@ -136,6 +139,35 @@ describe("admin API client", () => {
     expect(mockFetch).toHaveBeenCalledWith("/api/admin/users/user%201/feature-overrides");
   });
 
+  it("updates admin config registry entries", async () => {
+    const body = {
+      entry: {
+        id: "cfg 1",
+        module: "notification",
+        configKey: "deadline_reminders",
+        configValue: { enabled: false },
+        status: "inactive",
+        changeReason: "Disable reminder policy for sandbox.",
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(updateAdminConfigEntry("cfg 1", {
+      configValue: { enabled: false },
+      status: "inactive",
+      changeReason: "Disable reminder policy for sandbox.",
+    })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/config/cfg%201", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        configValue: { enabled: false },
+        status: "inactive",
+        changeReason: "Disable reminder policy for sandbox.",
+      }),
+    });
+  });
+
   it("updates admin user access", async () => {
     const body = {
       user: {
@@ -238,6 +270,66 @@ describe("admin API client", () => {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ isEnabled: false }),
+    });
+  });
+
+  it("updates data source approval governance", async () => {
+    const body = {
+      source: {
+        id: "ca source",
+        approvalStatus: "approved",
+        approvedForIngestion: true,
+        legalReviewStatus: "approved_public",
+        approvalNotes: "Approved after live source review.",
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(updateAdminDataSource("ca source", {
+      approvalStatus: "approved",
+      approvedForIngestion: true,
+      legalReviewStatus: "approved_public",
+      approvalNotes: "Approved after live source review.",
+    })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources/ca%20source", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        approvalStatus: "approved",
+        approvedForIngestion: true,
+        legalReviewStatus: "approved_public",
+        approvalNotes: "Approved after live source review.",
+      }),
+    });
+  });
+
+  it("runs an admin source health check", async () => {
+    const body = {
+      report: { ok: true, summary: { total: 1, healthy: 1, unhealthy: 0, skipped: 0 }, results: [] },
+      source: { id: "ca source", latestLiveHealth: { status: "healthy" } },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(checkAdminDataSourceHealth("ca source", { timeoutMs: 5000 })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources/ca%20source/health-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ timeoutMs: 5000 }),
+    });
+  });
+
+  it("batch updates admin data source approvals", async () => {
+    const body = { updatedCount: 2, sources: [{ id: "ca_caleprocure" }, { id: "tx_esbd" }] };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(batchUpdateAdminDataSources({
+      sourceIds: ["ca_caleprocure", "tx_esbd"],
+      action: "approve",
+    })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources/batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourceIds: ["ca_caleprocure", "tx_esbd"], action: "approve" }),
     });
   });
 

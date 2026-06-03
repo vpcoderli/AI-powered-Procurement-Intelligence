@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { readSessionToken } from "@/server/auth/session";
 import { getSessionUser } from "@/server/auth/service";
+import { getMysqlSessionUser } from "@/server/auth/mysql-service";
 import {
   WorkspaceInvitationNotFoundError,
   WorkspacePermissionError,
   revokeWorkspaceInvitation,
 } from "@/server/account/workspace";
+import { revokeMysqlWorkspaceInvitation } from "@/server/account/mysql-workspace";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 interface RouteContext {
   params: Promise<{ userId: string }>;
@@ -20,20 +23,29 @@ async function currentUser(request: Request) {
   const sessionToken = readSessionToken(request);
   if (!sessionToken) return null;
 
-  return getSessionUser(db, sessionToken);
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const user = mysql
+    ? await getMysqlSessionUser(mysql, sessionToken)
+    : await getSessionUser(db, sessionToken);
+
+  return user ? { mysql, user } : null;
 }
 
 export async function DELETE(request: Request, context: RouteContext) {
-  const user = await currentUser(request);
+  const current = await currentUser(request);
 
-  if (!user) {
+  if (!current) {
     return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
   }
 
   const { userId } = await context.params;
 
   try {
-    return NextResponse.json(revokeWorkspaceInvitation(db, user.id, userId));
+    return NextResponse.json(
+      current.mysql
+        ? await revokeMysqlWorkspaceInvitation(current.mysql, current.user.id, userId)
+        : revokeWorkspaceInvitation(db, current.user.id, userId),
+    );
   } catch (error) {
     if (error instanceof WorkspacePermissionError) {
       return errorResponse("FORBIDDEN", error.message, 403);

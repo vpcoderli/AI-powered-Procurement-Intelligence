@@ -1,6 +1,6 @@
 # WinBids Implementation Status
 
-Updated: 2026-06-01
+Updated: 2026-06-03
 
 This document is the working checklist for local development. Update it after each completed phase so the next task can start from this list instead of re-reading the whole codebase.
 
@@ -23,23 +23,29 @@ Drive Phase II added cross-cutting P0 requirements on 2026-05-29/2026-05-30. The
 
 | Requirement | Current state | Remaining work | Suggested next slice |
 |---|---|---|---|
-| P0 Standards Alignment Lite | Done locally as the first foundation slice: Phase II requirements are reflected in local roadmap docs; the P0 implementation plan exists at `docs/superpowers/plans/2026-06-01-p0-standards-alignment-lite.md`; config, event, UX-state, source-governance, and transferability foundations are implemented. | Deeper page-by-page UX state rollout, more product event coverage, richer admin config UI, production AWS execution, and source approval workflow depth remain. | Continue with Artifact Vault Lite, while carrying the P0 standards into every new module. |
+| P0 Standards Alignment Lite | Done locally as the first foundation slice: Phase II requirements are reflected in local roadmap docs; the P0 implementation plan exists at `docs/superpowers/plans/2026-06-01-p0-standards-alignment-lite.md`; config, event, UX-state, source-governance, and transferability foundations are implemented. | Deeper page-by-page UX state rollout, more product event coverage, config effective-date/rollback controls, production AWS execution, and source approval workflow depth remain. | Continue with source approval workflow depth, while carrying the P0 standards into every new module. |
 | Transferability Pack | Done locally: `docs/transferability/` now contains setup, env vars, deployment, data/migrations, runbook, known limitations, AWS service map, and secrets/access docs with local/production boundaries and no real secrets. | Production-specific values, final AWS account IDs, live deployment ownership, and real backup/restore execution still require production environment decisions. | Keep updated after each deployment or production operations phase. |
-| Config Registry Foundation | Done locally: `config_registry` table/migration, unique config-key guard, seed defaults, read/upsert helpers, admin GET/POST/PATCH APIs, validation tests, transactional audit event linkage, and denied access audit events exist. | Full admin UI, broader config domains, effective-date management UI, and migration from hard-coded feature maps remain future depth. | Use this foundation when implementing Artifact Vault/Quote/Notification/AI configuration. |
+| Config Registry Foundation | Done locally: `config_registry` table/migration, unique config-key guard, seed defaults, read/upsert helpers, admin GET/POST/PATCH APIs, validation tests, transactional audit event linkage, denied access audit events, and an editable Admin Config Registry / Config Matrix panel with JSON value editing, status editing, required change reason, API client helper, and audit-backed save flow. | Broader config domains, effective-date management UI, rollback/version comparison UI, and migration from hard-coded feature maps remain future depth. | Add effective-date + rollback controls when operators need safer production governance. |
 | Audit/Event Foundation | Done locally: `event_log`, `event_outbox`, request/correlation id helper, metadata redaction, idempotency with uniqueness-conflict fallback, outbox destinations, tests, and admin config audit writes exist. | Wire more product events: source changes, plan limit reached, upload failed, AI unavailable/low confidence, duplicate/merge, deadline override, quote/award events. | Add event writes as each future module ships. |
 | Universal UX States | Done locally: reusable `UniversalState` component and stable state code model cover Loading, Empty, Error, Permission Denied, AI Unavailable, Low Confidence, Upload Failed, Source Unavailable, Duplicate Opportunity, Expired Deadline, and Plan Limit; `/admin`, `/search`, `/bids/[id]`, `/intents/[id]`, and `/settings` now use it for primary auth/error/empty/loading/plan-limit states. | Continue rolling structured state codes into API responses and lower-level inline module errors as future modules are touched. | Apply to Artifact Vault upload failed, permission denied, plan limit, empty, and error states from day one. |
-| Source Legal-Use / Ingestion Governance | Done locally: 50-state registry has governance defaults, `data_sources` supports approval overrides, Admin source projection exposes approval state, Admin UI shows approval badges/notes, and risk-check includes local ingestion plus production approval readiness modes. | Editable approval workflow, APSI Registration Vault implementation, and Python crawler metadata parity remain future depth. | Carry into P1 source maturity and production crawler work. |
-| MySQL Cutover | Advanced locally: `mysql2`, migration/smoke scripts, MySQL URL validation, compatibility DDL, runbook/docs, MySQL 8 container smoke verification, and MySQL runtime paths for auth/session/password reset, account profile/password/delete, workspace read/update, admin auth gate, billing subscription/checkout/portal/cancel/webhook/invoices, supplier profile, bid search/detail/saved-bids/attachment metadata, search alerts CRUD/quota, intent create/list/detail/status, crawler health, and admin crawler logs. | Remaining SQLite-bound runtime areas: account export/preferences/usage, workspace invitations/member/ownership operations, search alert digest history, compliance/submission/response workspace/pursuit/qualification panels, admin users/config/bid QA writes, notification/event workers, crawler write/import paths, and SQLite-to-MySQL seed/data import. | Continue async repository cutover on remaining account/workspace and intent-dependent panels, then crawler write/import and admin/data QA. |
+| Source Legal-Use / Ingestion Governance | Done locally: 50-state registry has governance defaults, `data_sources` supports approval overrides, Admin source projection exposes approval state, Admin UI shows approval badges/notes, Admin Data Sources API projects latest persisted live source health fields and recent per-source trend summaries, Admin source rows now support approve/hold governance actions plus per-source live-health recheck, source approval changes keep visible approval history, blocked/held/unapproved source governance now prevents crawler execution before locks/runners, Admin UI/API support batch approve/hold for selected sources, and risk-check includes local ingestion plus production approval readiness modes. | APSI Registration Vault implementation and production source governance runbook depth remain future work. | Continue with Settings reminder center or response package format depth. |
+| MySQL Cutover | Advanced locally: `mysql2`, migration/smoke scripts, MySQL URL validation, compatibility DDL, runbook/docs, MySQL 8 container smoke verification, repeatable SQLite-to-MySQL data import, and MySQL runtime paths for auth/session/password reset, account profile/password/delete/export/preferences/usage, workspace read/update/invitations/member/ownership operations, admin auth gate, admin users/feature overrides/audit logs, admin config registry list/upsert/patch with audit events, event outbox delivery, admin data source list/update, admin bid QA list/review/display/correction/batch writes, billing subscription/checkout/portal/cancel/webhook/invoices/dunning, supplier profile, bid search/detail/saved-bids/attachment metadata, search alerts CRUD/quota/digest history, notification outbox/admin recent/delivery, intent create/list/detail/status, compliance manifest, submission guidance/confirmation, response workspace, pursuit decision, qualification citations/freshness/Q&A, crawler health/admin crawler logs, crawler locks/source enablement, direct JSON crawler import/upsert, crawler search-alert matching/digest notification, MySQL-ready Stripe sandbox verifier, aggregate worker preflight, and production billing credential preflight. | Remaining runtime signoff: run the operator-assisted Stripe sandbox flow with real test credentials against MySQL, plus final low-risk live checkout/webhook execution. | Run Stripe sandbox verifier against a MySQL dev/staging DB, then execute live billing webhook/checkout smoke from the runbook. |
 
 ### P0 / Completed Recently
 
 | Requirement | Current state | Remaining work | Suggested next slice |
 |---|---|---|---|
+| P1 Anonymous Boundary Cleanup | Done locally: public `/search`, bid detail, match, and safe attachment routes remain anonymously browsable; saved bids, intents, profile/settings, search alerts, and paid workspace APIs now require registered users; Search Alerts anonymous GET/POST/PATCH/DELETE return the shared `AUTH_REQUIRED` response and no longer issue anonymous cookies; browser smoke confirms `/saved`, `/intents`, `/profile`, and `/settings` show sign-in/create-account states. | Continue full-chain authenticated browser regression for ordinary/paid users as future UI smoke depth. | Start P2 50-State Source Validity Hardening next: strengthen source/content/detail/download checks and live source-health reporting. |
+| P1 Tier / Paid Feature Locking | Done locally: Free / Pursuit Starter / Response Builder / Enterprise entitlement matrix now covers legacy feature keys and PRD feature slugs; paid intent APIs are protected by authenticated + feature-gated route coverage; Knowledge Station requires registered workspace access before Enterprise gating; Settings feature access now shows upgrade/locked guidance for Pursue / No-Bid, Grounded Q&A, Response Workspace, Artifact Vault, Quote Workflow, Deadline Notifications, and Knowledge Station; Intent paid modules have static locked-state coverage. | Behavior-level browser smoke and future usage/credit consumption depth remain. | Start P1 Anonymous Boundary Cleanup next: keep public anonymous browsing, but require registered users for saved bids, intents, profile/settings, alerts, and paid workspace APIs. |
+| P0-P3 Parallel Batch 1 | Done locally: Intent detail workflow sections were split into dedicated panel components for Response Workspace, Artifact Vault, Quote Workspace, and Deadline Notifications; Admin has an editable Config Registry / Config Matrix section; Admin Data Sources API exposes latest persisted live source health details; P3 entitlement/Knowledge/Credit tests now cover Enterprise-only Knowledge defaults, org overrides, expired overrides, Growth as planned/disabled, and credit metadata. | Intent panel business logic is still mostly owned by the page; source-health approval actions are not complete; P3 remains a preparation layer without real credit consumption or production AI. | Next deepen Admin source approval workflow now that source health and config governance are visible. |
 | Product 2 Compliance Evidence Mapping v1 | Done locally: Compliance Manifest items now include derived `evidenceRefs` linked to supplier profile, match snapshot, deadline citation, bid detail/source URLs, generated checklist/risk output, and attachment download routes; Intent detail renders linked evidence chips under each compliance item while preserving status/evidenceStatus/notes editing. | User-editable evidence mappings, evidence history, and document-level extraction remain future depth. | Continue with Knowledge Station Lite or Admin risk-check visualization. |
 | Product 2 Richer Evidence / Artifact Links v1 | Done locally: pursue/no-bid reason details now include additive `evidenceRefs` linked to match snapshots, supplier profile, bid detail/source URLs, generated output, citation ids, and attachment download routes; Intent detail renders linked evidence chips while preserving the legacy evidence label fallback. | Deeper document parsing remains future AI work. | Continue with Knowledge Station Lite or Admin risk-check visualization. |
 | Risk Checklist Automation | Done locally: `npm run risk:check` verifies 50-state active data coverage, required non-empty bid content, bid detail route ID round-trips, safe attachment download routes, admin/user/paid entitlement separation, and production dependency audit at moderate-or-higher severity. | Keep this command in the phase handoff checklist and expand it as new high-risk workflows ship. | Run after each crawler/auth/billing/frontend phase before reporting completion. |
-| Admin risk-check visualization | Done locally: `/api/admin/risk-check` exposes the existing risk checklist report to admin/operator/support roles, and `/admin` shows pass/fail status for 50-state coverage, non-empty state content, bid detail routes, attachment downloads, and account-tier separation. | Optional future history table, trend chart, alerting, and per-check remediation actions. | Continue with Response Workspace Lite or Artifact Vault Lite. |
-| Response Workspace Lite | Done locally: `response_workspace_items` model/migration, Business-gated GET/PATCH API, client helpers, Intent detail panel, grouped tasks/checkpoints/artifacts/outline sections, editable status/notes, and English/Chinese copy are implemented. | Team assignment, file upload, reusable document generation, version history, reminders, and LLM drafting remain future depth. | Continue with Artifact Vault Lite or Quote / Supply Chain Lite. |
+| Admin risk-check visualization | Done locally: `/api/admin/risk-check` exposes the existing risk checklist report to admin/operator/support roles, persists recent snapshots, returns a trend summary, and `/admin` shows pass/fail status for global URL health, 50-state coverage, non-empty state content, bid detail routes, attachment downloads, account-tier separation, recent history, and trend deltas. | Optional future alerting, per-check remediation actions, and longer-horizon charts. | Continue with persisted live source-health snapshots or Artifact Vault Lite. |
+| Response Workspace Lite | Done locally: `response_workspace_items` model/migration, Business-gated APIs, client helpers, Intent detail panel, grouped tasks/checkpoints/artifacts/outline sections, editable status/notes, owner assignment, item comments, linked artifacts, activity history, response package readiness summary, package snapshots, local Markdown export/download, and English/Chinese copy are implemented. | PDF/DOCX/ZIP package formats, production object storage, richer team member directory, and LLM drafting remain future depth. | Continue with Admin source approval workflow or response package format depth. |
+| Artifact Vault Lite | Done locally: `supplier_artifacts` model/migration, local file storage, Business-gated list/upload/download APIs, client helpers, Intent detail upload/list panel, file type/purpose/expiry/review metadata, empty/upload-failed UniversalState handling, and English/Chinese copy are implemented. | Audit events, version history, delete/replace, compliance auto-linking, production object storage, malware scanning, and richer retention policy remain future depth. | Continue with Quote / Supply Chain Lite, then deadline notifications. |
+| Quote / Supply Chain Lite | Done locally: `sourcing_partners`, `quote_requests`, and `quote_request_artifacts` schema/migration, Business-gated GET/POST/PATCH APIs, client helpers, Intent detail Quote Workspace, partner creation, quote status/amount/notes editing, artifact linking, empty/error/locked states, and English/Chinese copy are implemented. | Email sending, supplier portal, quote response uploads, comparison scoring, partner profile depth, audit events, and richer artifact/compliance linkage remain future depth. | Continue with Response Workspace depth. |
+| Deadline Notifications Lite | Done locally: `deadline_reminders` schema/migration, Business-gated GET/PATCH APIs, idempotent generator for bid deadlines, response task due dates, quote request due dates, and artifact expiries, acknowledge/snooze actions, Intent detail reminder panel, locked/error/empty states, and English/Chinese copy are implemented. | Notification outbox scheduling, email/calendar delivery, digest preferences, submission checkpoint reminders, audit events, Settings reminder center, and MySQL runtime adapter remain future depth. | Continue with Response Workspace depth, then Award / Tabulation Tracking Lite. |
 | Product 2 No-Bid Taxonomy + Qualification Risk Explanations v1 | Done locally: `PursuitRecommendation` includes additive structured reason details with category, severity, summary, explanation, evidence label, suggested action, and evidence references; deterministic recommendation maps match score, geography, pricing, deadline, documentation, addenda, registration, risk flags, and profile gaps; Intent detail renders structured reason cards in English/Chinese while preserving saved decision history. | Deeper LLM-backed interpretation remains future AI work. | Continue with Knowledge Station Lite or Admin risk-check visualization. |
 | Product 2 Amendment/Addenda Awareness v1 | Done locally: amendment/addenda signal detection covers title, descriptions, archived detail text, and attachments; intent freshness API reports current/stale/not-refreshed state; refresh API regenerates match snapshot, deterministic brief/checklist/risk flags, and evidence citations while preserving user-edited submission/compliance/decision records; Intent detail shows freshness state and refresh control. | Richer legal interpretation and LLM document extraction remain out of scope. | Continue with Knowledge Station Lite or Admin risk-check visualization. |
 | Search Alerts Notification History + Digest Verification | Done locally: digest runs are persisted for sent/failed/skipped alert notifications, list responses hydrate recent history, and Settings shows latest delivery status plus recent history. | Real production email provider, bounce/complaint webhooks, and operator digest monitoring remain future production hardening. | Revisit production email provider when credentials are available. |
@@ -50,7 +56,7 @@ Drive Phase II added cross-cutting P0 requirements on 2026-05-29/2026-05-30. The
 | Requirement | Current state | Remaining work | Suggested next slice |
 |---|---|---|---|
 | 50-state crawler hardening | 50 州 registry 已覆盖；CA/TX/NY/FL/IL 为 verified dedicated，其他州为 beta dedicated；非空校验、fixture/live validation、空结果失败保护和 fallback 元数据已强化。 | 将 beta 州逐步提升为 verified；增加生产调度/监控；持续替换仍依赖 fallback 的州源。 | 每批 10-15 州做 live fixture 校验、source quality 报告和 adapter maturity 更新。 |
-| Product 2 Qualification Upgrade | Match score、AI-like brief、Submission Guidance、Compliance Manifest Lite、Pursue/No-Bid Lite 已有 deterministic 版本；Qualification Evidence Citations v1、Document-Grounded Q&A v1、Amendment/Addenda Awareness v1、No-Bid Taxonomy + Qualification Risk Explanations v1、Richer Evidence / Artifact Links v1、Compliance Evidence Mapping v1 已完成，Intent 级 citation snapshot、只读 citations API/client、freshness/refresh API/client、Pro-gated Q&A API/client、结构化 pursuit reason details、reason/compliance evidence refs、Intent detail 证据面板/证据 chip/新鲜度状态/刷新按钮/决策原因分类、合规证据映射和基于证据问答已接入。 | Deeper AI extraction/document parsing remains future depth. | 下一步做 Artifact Vault Lite 或 Quote / Supply Chain Lite。 |
+| Product 2 Qualification Upgrade | Match score、AI-like brief、Submission Guidance、Compliance Manifest Lite、Pursue/No-Bid Lite 已有 deterministic 版本；Qualification Evidence Citations v1、Document-Grounded Q&A v1、Amendment/Addenda Awareness v1、No-Bid Taxonomy + Qualification Risk Explanations v1、Richer Evidence / Artifact Links v1、Compliance Evidence Mapping v1 已完成，Intent 级 citation snapshot、只读 citations API/client、freshness/refresh API/client、Pro-gated Q&A API/client、结构化 pursuit reason details、reason/compliance evidence refs、Intent detail 证据面板/证据 chip/新鲜度状态/刷新按钮/决策原因分类、合规证据映射和基于证据问答已接入。 | Deeper AI extraction/document parsing remains future depth. | 下一步做 Response Workspace depth 或 Submission Guidance Completion。 |
 | Search Alerts Full UI | Settings 已新增 Search Alerts 管理界面，支持 per-alert 创建/编辑/暂停恢复/删除，并复用现有 quota gate、通知偏好和最近 digest 投递历史。 | 真实邮件 provider、bounce/complaint 回流、运营级 digest monitoring dashboard 仍需补齐。 | 接入真实邮件 provider 后补 bounce/complaint webhook 和运营监控。 |
 | Production Billing / Worker Deployment Runbook | Stripe sandbox E2E verifier、checkout/webhook/portal/cancel foundation 已完成；production billing/worker runbook 已新增；notification worker 支持部署前检查。 | 真实生产凭证填充、生产 webhook 端点创建/轮换演练、进程管理器/cron 部署执行。 | 上线前按 runbook 做一次 staging/prod dry run。 |
 | Notification production hardening | outbox、file/console/http provider、retry worker、Admin 手动 delivery、provider env validation、生产投递 runbook、Search Alert digest delivery history 已有。 | 生产邮件 provider 真实账号、退信/投诉回流、模板版本治理、投递监控 dashboard。 | 接入选定邮件 provider 后补 bounce/complaint webhook。 |
@@ -61,10 +67,10 @@ Drive Phase II added cross-cutting P0 requirements on 2026-05-29/2026-05-30. The
 | Requirement | Current state | Remaining work | Suggested next slice |
 |---|---|---|---|
 | Knowledge Station Lite | Done locally: Enterprise-gated Intent workflow coach, reusable organization-scoped knowledge items, protected list/create APIs, Intent panel, and minimal `/knowledge` library are implemented. | Full retrieval, embeddings, admin publishing workflow, artifact uploads, usage metrics, and credit metering remain future depth. | Continue with Response Workspace Lite or Artifact Vault Lite. |
-| Response Workspace Lite | Done locally: Business-gated task/checkpoint/artifact/outline workspace exists on Intent detail with durable DB rows, API/client, editable status, editable notes, and bilingual UI. | Team assignment, uploaded artifact links, response package generation, reminders, comments, and LLM drafting remain future depth. | Next deepen via Artifact Vault Lite before adding document drafting. |
-| Artifact Vault Lite | 附件归档存在，但供应商侧 artifact 管理未做。 | 用户上传文件、关联 intent/bid、文件分类、证据状态、基础权限。 | 先做 local storage artifact upload + intent association。 |
-| Quote / Supply Chain Lite | feature key 和套餐方向存在，未实现。 | Partner database、quote requests、quote comparison、供应商附件、业务状态流。 | 做最小 partner list + quote request draft，不先做复杂 marketplace。 |
-| Deadline Notifications | 通知 outbox foundation 已有，保存搜索偏好已有。 | Bid deadline reminder、intent task reminder、digest scheduling、用户级开关。 | 先做 deadline reminder generator + notification outbox entries。 |
+| Response Workspace Lite | Done locally: Business-gated task/checkpoint/artifact/outline workspace exists on Intent detail with durable DB rows, API/client, editable status, editable notes, owner assignment, item comments, linked artifacts, activity history, package readiness summary, package snapshots, local Markdown export/download, and bilingual UI; task due dates now feed Deadline Notifications Lite. | PDF/DOCX/ZIP package formats, production object storage, richer team member directory, and LLM drafting remain future depth. | Next continue with Editable Config Matrix governance. |
+| Artifact Vault Lite | Done locally: Business-gated supplier artifact upload/list/download exists on Intent detail with durable `supplier_artifacts` rows, local file storage, intent/bid association, type/purpose/expiry/review metadata, and bilingual UI. | Audit events, version history, delete/replace, compliance auto-linking, production object storage, malware scanning, and retention policy remain future depth. | Later connect uploaded artifacts back into Compliance Manifest evidence history. |
+| Quote / Supply Chain Lite | Done locally: Business-gated supplier/partner records, quote request drafts, status flow, quote amount/response notes, linked supplier artifacts, API/client helpers, bilingual Intent UI, and quote due-date reminders through Deadline Notifications Lite exist. | Email sending, supplier portal, quote response uploads, comparison scoring, partner profile depth, audit events, and richer compliance linkage remain future depth. | Deepen after Response Workspace assignment/comments/version history. |
+| Deadline Notifications Lite | Done locally: Business-gated deadline registry and Intent reminder panel derive reminders from bid deadlines, response task due dates, quote due dates, and artifact expiries; users can acknowledge and 24-hour snooze reminders. | Notification outbox scheduling, email/calendar delivery, digest preferences, submission checkpoint reminders, audit events, Settings reminder center, and MySQL runtime adapter remain future depth. | Next deepen Response Workspace so assignments/comments/versioning can feed richer deadline activity. |
 | Submission Guidance Completion | Guidance 生成、编辑、确认已存在。 | 更完整的 submission path 状态机、确认凭证、错误恢复、历史版本。 | 补 submission version/history 和 readiness completion。 |
 | Award / Tabulation Tracking | 未实现。 | Award notices、bid status monitoring、tabulation records、竞争分析输入。 | 先做 award notice 数据表 + 手动录入 UI。 |
 | Win/Loss Learning | 未实现。 | Outcome capture、reason taxonomy、future recommendation feedback loop。 | 在 Intent close-out 增加 win/loss outcome form。 |
@@ -114,7 +120,10 @@ Drive Phase II added cross-cutting P0 requirements on 2026-05-29/2026-05-30. The
 | Submission Guidance | `submission_paths`, `submission_confirmations`, generator, service, current Pursuit Starter-gated API routes, API client, Intent workspace UI for generated guidance, editable submission fields, readiness/risk lists, and manual submission confirmation. |
 | Compliance Manifest Lite | `compliance_manifest_items`, generator, service, current Response Builder-gated API route, API client, and Intent workspace UI for requirement status, evidence status, and notes. |
 | Pursue / No-Bid Decision Lite | `pursuit_decisions`, recommendation generator with structured reason taxonomy/risk explanations, current Pursuit Starter-gated API route, API client, and Intent workspace UI for decision capture, structured recommendation reasons, notes, and history. |
-| Response Workspace Lite | `response_workspace_items`, deterministic workspace generator, current Response Builder-gated API route, API client, and Intent workspace UI for response tasks, internal checkpoints, artifact placeholders, package outline sections, status, and notes. |
+| Response Workspace Lite | `response_workspace_items`, `response_workspace_comments`, deterministic workspace generator, current Response Builder-gated API routes, API client, and Intent workspace UI for response tasks, internal checkpoints, artifact placeholders, package outline sections, status, notes, owner assignment, and comments. The Intent detail page now renders Response Workspace through a dedicated component boundary so artifact-task linking and version/activity history can be implemented with fewer page-level conflicts. |
+| Deadline Notifications Lite | `deadline_reminders`, deterministic reminder generator, current Response Builder-gated API route, API client, and Intent reminder UI for bid deadlines, response task due dates, quote due dates, artifact expiries, acknowledge, and snooze. |
+| Admin Config Matrix | Editable Admin Config Registry / Config Matrix panel lists config entries from `/api/admin/config`, supports JSON value/status edits, requires change reasons, saves through PATCH `/api/admin/config/[id]`, refreshes local state, and reuses audit-linked backend config writes. |
+| Admin Source Health / Approval Workflow | Admin Data Sources API returns latest persisted live source health details; `/admin` shows checked time/status/status code/error/latency and supports per-source Recheck, Approve, and Hold actions. |
 | Static product demo | `/winbids-demo` isolated prototype page from Drive frontend references. |
 
 ## Latest Requirements Alignment
@@ -127,7 +136,7 @@ The refreshed Drive material now has two layers:
 | Requirement Track | Current Local State | Alignment Needed |
 |---|---|---|
 | Phase II P0 Foundation Refined | Local app has strong dev foundations, risk checks, runbooks, and feature gates. | Add AWS-first service map, environment separation docs, source/security controls, QA/release gates, observability expectations, and transferability ownership docs. |
-| Configurable Before Custom | Feature map and organization feature overrides exist. | Add general configuration registry, seeded defaults, admin configuration matrix, change reason, effective dates, audit linkage, and documented deferred configuration. |
+| Configurable Before Custom | Feature map, organization feature overrides, general configuration registry, seed defaults, admin config APIs, Admin editable config matrix, change reasons, effective dates, and audit linkage exist. | Add broader config domains, effective-date/rollback UI, and documented production governance operations. |
 | Audit Event Logging Matrix | Several module-specific logs/tables exist. | Add unified event schema, shared writer, request/correlation ids, event outbox, activity/integration/usage/AI-output event coverage, and safe metadata rules. |
 | Transferability Requirements | Setup and operations docs exist in pieces. | Build a complete Transferability Pack so a future developer/operator can set up, configure, deploy, troubleshoot, and continue development without hidden context. |
 | Universal UX States | Some screens have loading/error/empty/locked states. | Add reusable state components, structured API state codes, coverage matrix, QA cases, and frontend/backend handling for all required universal states. |
@@ -154,10 +163,10 @@ The refreshed Drive material now has two layers:
 | Admin 用户管理 | Done | Full admin can list/search/filter users, create invited accounts with temporary passwords, update role/tier/enabled state, manage organization feature overrides, and filter access/deletion/override audit logs by actor/action/target/feature. |
 | 细粒度后台角色 | Done | `operator` can access operational admin tools and run crawler/notification/dunning actions without user-management permission; `support` can access read-only operational admin views without mutation/run controls. |
 | 用户等级模型 | Done | `account_tier` supports `free`, `pro`, `business`, `enterprise`; product-facing names are Free, Pursuit Starter, Response Builder, Growth, and Enterprise. |
-| 功能与等级关联 | Done / Ongoing expansion | Central entitlement map controls legacy feature keys and PRD feature slugs; paywalls now use updated plan names and credit language. |
+| 功能与等级关联 | Done / Ongoing expansion | Central entitlement map controls legacy feature keys and PRD feature slugs; Free / Pursuit Starter / Response Builder / Enterprise matrix now has explicit regression coverage; paywalls use updated plan names and credit language. |
 | 组织级功能覆盖 | Done | Full admin can force-enable, force-disable, or clear selected organization feature overrides beyond tier defaults; overrides support reason and expiry metadata; expired overrides are ignored by session entitlements and server feature gates. |
-| 服务端功能拦截 | Done | `requireFeature()` exists and is already used by Submission Guidance, Compliance Manifest, and Pursue / No-Bid APIs; manifest-backed coverage tests protect every registered gated API and explicitly track not-yet-implemented paid feature APIs. |
-| 前端锁定态 | Partial | `useFeature()` and locked messages exist on key workspace modules and Settings feature overview. |
+| 服务端功能拦截 | Done | `requireFeature()` exists and is already used by paid workspace APIs; manifest-backed coverage tests protect every registered gated API, require authenticated principal checks on intent paid routes, and explicitly track not-yet-implemented paid feature APIs; Knowledge Station now returns the shared `AUTH_REQUIRED` response for anonymous access before Enterprise gating. |
+| 前端锁定态 | Done / Ongoing expansion | `useFeature()` and locked messages exist on key workspace modules and Settings feature overview; Settings now includes Pursue / No-Bid, Grounded Q&A, Response Workspace, Artifact Vault, Quote Workflow, Deadline Notifications, and Knowledge Station access states. Future work should add behavior-level browser regression around actual Free/paid sessions. |
 | 使用额度限制 | Partial | Saved bids, intent workspace, search alerts, and team member usage are counted by organization tier/workspace; saved bids, intents, search alert creation, team invites, and invitation acceptance enforce quota; `/api/account/usage` and Settings Usage Dashboard show current usage, remaining quota, limited-resource summary, credit summary, and upgrade prompt. |
 | 通知偏好与投递状态 | Partial | Users can persist saved-search alert and marketing preferences; disabled saved-search alerts are recorded as skipped by the notification service; search alert cards show recent digest delivery history; invited members show latest delivery status; Admin can view notification outbox rows and manually trigger delivery. |
 | 订阅数据基础 | Partial | `account_subscriptions`, `subscription_events`, plan catalog, and Settings Billing tab exist. |
@@ -196,7 +205,7 @@ The refreshed Drive material now has two layers:
 | Admin vs user separation | Admin APIs enforce full-admin role for account management and feature overrides; disabled admins are rejected; admin/operator/support can access `/admin`; operator/support receive lower-permission controls; sidebar hides Admin for ordinary users; `/admin` shows login-required or forbidden states before loading admin APIs | Optional per-route permission audit UI and custom enterprise back-office roles |
 | User role model | `user`/`admin`/`operator`/`support` role enum, role update API, audit trail, role-aware frontend session payload | Optional company-level owner/member unification with global role model |
 | Subscription / tier model | `account_tier` on users, organization-level `account_tier` for workspace/team entitlement, admin tier assignment, central entitlement map, updated product-facing plan catalog, planned Growth catalog entry, subscription status table, event history, Settings Billing tab, checkout sessions, hosted checkout/portal templates, Stripe SDK/API checkout and portal sessions, Stripe webhook mapping/signature verification, cancellation scheduling, subscription lifecycle reconciliation, filtered invoice history with summary totals/PDF links, payment retry links, payment-failed notification outbox entries, staged dunning reminders with resolved-payment suppression, optional generic webhook signature verification, and Stripe sandbox verifier/runbook | Production scheduled worker deployment and live credential/webhook operations runbook |
-| Feature access control | Central feature map, server guard, client helper, visible locked states, PRD feature slugs, saved bid/intent/search alert/team invite quota enforcement, team member usage counting, Settings usage dashboard, credit summary, organization-level feature overrides with reason/expiry metadata, audit filtering by actor/action/target/feature, and manifest-backed static coverage tests; session entitlements and workspace quotas now use organization tier; Submission Guidance and Pursue / No-Bid are currently Pursuit Starter-gated, Compliance Manifest and Response Workspace are currently Response Builder-gated, Knowledge Station is currently Enterprise-gated, and Quote Workflow remains explicitly marked as a not-yet-implemented API surface | Real credit consumption/refund flows, optional richer beta program workflow, and custom enterprise permission rules |
+| Feature access control | Central feature map, server guard, client helper, visible locked states, PRD feature slugs, saved bid/intent/search alert/team invite quota enforcement, team member usage counting, Settings usage dashboard, credit summary, organization-level feature overrides with reason/expiry metadata, audit filtering by actor/action/target/feature, and manifest-backed static coverage tests; session entitlements and workspace quotas now use organization tier; Submission Guidance and Pursue / No-Bid are currently Pursuit Starter-gated, Compliance Manifest, Response Workspace, Artifact Vault, Quote Workflow, and Deadline Notifications are currently Response Builder-gated, and Knowledge Station is currently Enterprise-gated | Real credit consumption/refund flows, optional richer beta program workflow, and custom enterprise permission rules |
 | Search alerts | API/service foundation exists; global saved-search notification preference can suppress outbound alert emails; skipped/sent/failed/duplicate digest outcomes are recorded; creation is quota-gated by tier; Settings now includes alert CRUD, pause/resume, editable filters/digest fields, and recent delivery history | Real email delivery provider, bounce/complaint handling, operator digest monitoring dashboard |
 | Notifications | Notification outbox, file/console/http providers, retry worker, failed retry limits, user preferences, billing dunning reminders, deployable notification/dunning worker command, invite delivery status, admin notification history, admin delivery trigger, provider env validation, and production delivery runbook exist | Real production email provider credentials/webhooks, bounce/complaint handling, template governance |
 | Admin data QA | Source status/logs exist; bid detail surfaces attachment archival status and failure notes; Admin now has a QA queue with score, archive issue counts, review status, reviewer timestamp/by metadata, correction audit persistence, inline title/deadline correction, public suppression filtering, publish/suppress actions, rich filters, batch operations, and correction history. | Broader editable-field UI and raw/staged/normalized comparison detail |
@@ -207,22 +216,65 @@ The refreshed Drive material now has two layers:
 |---|---|
 | Production billing polish | Production worker deployment, production credential rotation, webhook endpoint operations, and richer provider dashboard setup notes. |
 | Organization team lifecycle | Invite acceptance analytics and richer team audit history. |
-| Sourcing / quote workflow | Partner database, quote requests, quote comparison, attachment storage. |
+| Sourcing / quote workflow depth | Supplier portal, outbound email, response uploads, comparison scoring, audit events, and deeper partner profiles. |
 | Award / tabulation tracking | Award notices, bid status monitoring, tabulation records. |
 | Win/loss learning | Outcome capture, reason taxonomy, future recommendation improvements. |
 | Knowledge Station depth | Retrieval, embeddings, admin publishing workflow, artifact uploads, usage metrics, and credit metering. |
 | Production AI layer | LLM-backed extraction with citations, confidence, prompt rules, uncertainty handling. |
 
+## Last Completed Phase
+
+### P0 Admin/User Auth Regression
+
+Completed locally:
+
+- Added `role-route-coverage.test.ts` to lock every `/api/admin/**` route to one of three explicit role groups: full admin, admin/operator mutation, or admin/operator/support read-only console.
+- Made admin read routes pass explicit `roles: ["admin", "operator", "support"]` instead of relying on implicit defaults.
+- Added a source-governance regression so `operator` can update source enablement but cannot approve/hold/change legal-review fields; those fields now require full admin.
+- Made `/admin` Config Registry load/render admin-only because the backing config APIs are admin-only.
+- Hid the dashboard source-health `/admin` link from ordinary users while preserving login/register entries for anonymous users.
+- Added `/intents/[id]` auth gating so anonymous visitors see the registered-user state before any personal intent API loads.
+
+Verified:
+
+- `npm test`
+- `npm run lint`
+- `npm run build`
+- `git diff --check`
+- Browser smoke for anonymous `/settings`, `/admin`, and `/intents/[id]` login-required states.
+
 ## Recommended Next Phase
 
-Prioritize **Artifact Vault Lite** next, with the new P0 standards applied from the start.
+Prioritize the **P1-P3 Remaining Execution Schedule** before returning to deeper workflow modules.
+
+Implementation plans:
+
+- Primary remaining schedule: `docs/superpowers/plans/2026-06-02-p1-p3-remaining-execution-schedule.md`
+- Broader alignment plan: `docs/superpowers/plans/2026-06-02-auth-tier-source-anonymous-alignment.md`
 
 Reason:
 
-- The first P0 foundation slice is now in place: transferability skeleton, config registry, event log/outbox, request context, universal UX state component, source governance metadata, and risk-check coverage.
-- Artifact Vault Lite is the next workflow dependency because Response Workspace already has artifact placeholders but no supplier-managed uploads, upload failed state, artifact permissions, or evidence records.
-- Every new Artifact Vault endpoint/UI must now use the P0 standards: config-aware limits, audit events, `UniversalState` upload failed/plan limit/permission denied states, source/evidence-safe storage docs, and risk-check updates.
-- After Artifact Vault Lite, resume workflow depth in this order: Quote / Supply Chain Lite, Deadline Notifications, Response Workspace depth, Award / Tabulation Tracking, Win/Loss Learning.
+- P1 Tier / Paid Feature Locking is complete locally and should now be treated as the permission baseline.
+- Personal workspace routes still need a final cleanup pass so public anonymous browsing and registered-user workspaces cannot conflict.
+- 50-state crawler coverage exists, but product readiness requires continued proof that data is non-empty, source-attributed, detail pages are safe, and downloads do not expose demo/404 URLs.
+- Docs/runbooks must be updated after each wave so the next session can continue from the checklist without re-reading the codebase.
+
+Execution order:
+
+1. **P0 Admin/User Auth Regression**：Done locally; keep this regression suite in every future phase.
+2. **Wave 1 / P1 Tier / Paid Feature Locking**：并行启动 backend entitlement/API gate worker 与 frontend locked/upgrade state worker；先统一 Free / Pro / Business / Enterprise 矩阵。
+3. **Wave 2 / P1 Anonymous Boundary Cleanup**：Next. 保留公开浏览能力，移除个人工作区匿名持久化路径。
+4. **Wave 3 / P2 50-State Source Validity Hardening**：Wave 2 API 测试通过后启动；强化 50 州数据非空、真实来源、详情可打开、附件可下载/可安全代理。
+5. **Wave 4 / P3 Docs / Operations Handoff**：每个 wave 完成后更新本清单、runbook、risk-check/source-health 说明。
+
+Parallel agent plan:
+
+- Agent C：backend entitlement matrix, feature-gated API routes, `FeatureAccessError` / authenticated principal coverage.
+- Agent D：frontend locked/upgrade states, Settings plan/usage display, Intent module plan-limit UX.
+- Agent F：anonymous boundary cleanup and docs integration.
+- Agent E：50-state source validity, non-empty crawler output, safe detail/download validation.
+
+After this alignment phase, resume workflow depth in this order: Submission Guidance Completion, Response Package format depth, Config Matrix depth, Award / Tabulation Tracking, Win/Loss Learning.
 
 ## Account / Role / Tier Direction
 
@@ -1726,6 +1778,443 @@ Current local limits use internal tier values. Product-facing labels should be s
 
 建议下一步：
 - 继续数据质量主线时，优先做 Attachment Download Archival Downloader；如果希望 Admin 先可运营，做 Bid Admin/Data QA Console Expansion；如果转用户工作流，做 Full Search Alerts UI。
+
+## Completed Phase: MySQL Crawler Import, Control, And Alert Matching Bridge
+
+本阶段完成：
+- 新增 crawler MySQL import bridge：MySQL 模式且未显式传入 SQLite 路径时，SAM.gov/state runner 会创建临时 SQLite、执行现有 Python crawler、再把非空结果导入 MySQL。
+- 新增 `importCrawlerSqliteRunIntoMysql`，按 `dedupe_key` upsert bids，替换对应 attachment metadata，并把 crawler logs 导入 MySQL。
+- 保留“成功 run 不能为空”的 guardrail：成功日志但没有 bid rows 会拒绝导入，防止空抓取被标记为成功。
+- 新增 MySQL crawler lock acquire/release，orchestrator 在 MySQL 模式下会使用 MySQL `data_sources` 的启停状态和 MySQL `crawler_locks`，避免跨实例运行控制仍落在 SQLite。
+- Admin Data Sources list/update 已支持 MySQL，前端后台禁用 source 后会影响 MySQL crawler 控制面。
+- Crawler API route 和 crawler worker/run-once scripts 已把 MySQL control store 传给 orchestrator；MySQL 模式下成功抓取后会运行 MySQL search-alert matching，并通过 MySQL notification outbox/digest history 发送或记录提醒。
+- `db:mysql:smoke` 已扩展 crawler import/upsert、crawler control、crawler alert matching fixture，验证 bid、attachment fallback、scraper health log、source enablement、lock lifecycle、alert lastMatchedAt/lastNotifiedAt、digest history 都能从 MySQL 读回。
+- Bid 搜索过滤 now normalizes uppercase/lowercase state ids，避免 alert 中保存 `CA/TX` 大写州码时无法匹配 MySQL bid。
+
+验证：
+- `npm test -- src/server/crawler/lock-repository.test.ts src/server/crawler/orchestrator.test.ts src/server/crawler/configured-runner.test.ts src/server/admin/data-sources-repository.test.ts src/server/db/mysql-smoke.test.ts src/app/api/admin/data-sources/route.test.ts 'src/app/api/admin/data-sources/[id]/route.test.ts' src/app/api/crawler/sam-gov/run/route.test.ts src/app/api/crawler/state/run/route.test.ts`
+- `npm test -- src/server/bids/service.test.ts src/server/search-alerts/matcher.test.ts src/server/notifications/service.test.ts`
+- `DATABASE_URL=mysql://... npm run db:mysql:smoke`
+
+历史当时还剩（最新以 Open Requirements Backlog 为准）：
+1. Operator-assisted Stripe sandbox run：脚本已支持 MySQL runtime，但需要真实 Stripe test keys 和 `whsec_...` 在 MySQL dev/staging DB 上跑一次完整 checkout/webhook/portal/cancel。
+2. Production credential/webhook execution：真实生产凭证、webhook endpoint、secret rotation 和回滚流程仍需上线前执行。
+
+建议下一步：
+- 继续 MySQL cutover 时，优先准备真实 Stripe test env 并执行 MySQL sandbox verifier；然后做 production credential/webhook execution runbook。
+
+## Completed Phase: Native Direct JSON/MySQL Crawler Ingestion
+
+本阶段完成：
+- Python crawler `fetch-sam-gov` / `fetch-state` 新增 `--output-json`，成功和失败都会输出结构化 run payload；`--output-json` 模式不再强制要求 `--database`。
+- 前端 SAM.gov/state runner 在 MySQL URL 已配置且未显式传入 SQLite 路径时，改为运行 Python JSON 模式，不再创建临时 SQLite 中转库。
+- 新增 `importCrawlerJsonRunIntoMysql`，直接按 `dedupe_key` upsert bids、替换 attachment metadata、写入 crawler log，并继续拒绝“success 但 bids 为空”的结果。
+- 保留本地/测试显式 `databasePath` 的 SQLite 写入路径，避免破坏现有离线开发和 crawler fixture 测试。
+
+验证：
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_cli.py -q`
+- `npm test -- src/server/crawler/mysql-json-importer.test.ts src/server/crawler/sam-gov-runner.test.ts src/server/crawler/state-runner.test.ts`
+
+最新还剩（下一阶段优先级）：
+1. 用真实 Stripe test credentials 在 MySQL dev/staging DB 上运行 operator-assisted sandbox verifier。
+2. Final live billing execution：生产密钥 preflight 已脚本化，仍需上线环境执行低风险 live checkout/webhook/portal 验证。
+
+## Completed Phase: Stripe Sandbox Verifier MySQL Compatibility
+
+本阶段完成：
+- Stripe sandbox verifier 改为通过本地 HTTP API 创建测试账号，而不是直接写 SQLite。
+- subscription/tier 轮询改为同时读取 `/api/account/subscription` 和 `/api/auth/session`，验证用户 tier 与 workspace organization tier 都同步到目标套餐。
+- verifier 可在 SQLite 默认模式或 MySQL `DATABASE_URL` 模式下使用同一条产品 API 路径。
+- helper 增加 session cookie 提取和 user/workspace tier sync 判定，继续避免输出 secret values。
+- Stripe sandbox runbook 新增 MySQL 模式启动、迁移和 verifier 执行说明。
+
+验证：
+- `npm test -- src/server/billing/stripe-sandbox-verifier.test.ts`
+
+最新还剩（下一阶段优先级）：
+1. 用真实 Stripe test credentials 跑一次 MySQL sandbox checkout/webhook/portal/cancel，全流程需要人工完成 Stripe Checkout。
+2. Final live billing execution：生产密钥 preflight 已脚本化，仍需上线环境执行低风险 live checkout/webhook/portal 验证。
+
+## Completed Phase: Production Worker Deployment Preflight
+
+本阶段完成：
+- `worker:crawler` 新增 `--check` 模式，校验 `CRAWLER_WORKER_INTERVAL_MS`、`STATE_CRAWLER_LIMIT`、`CRAWLER_OWNER`、生产环境数据库配置提示。
+- `package.json` 新增 `worker:crawler:check` 和聚合 `workers:check`，一次性跑 crawler / event outbox / notification+dunning worker preflight。
+- production billing/worker runbook 改为推荐部署前运行 `npm run workers:check`，crawler worker 启动前也单独执行 `worker:crawler:check`。
+
+验证：
+- `npm test -- scripts/notification-worker.test.ts`
+- `npm run workers:check`
+
+最新还剩（下一阶段优先级）：
+1. 用真实 Stripe test credentials 跑一次 MySQL sandbox checkout/webhook/portal/cancel，全流程需要人工完成 Stripe Checkout。
+2. Final live billing execution：生产密钥 preflight 已脚本化，仍需上线环境执行低风险 live checkout/webhook/portal 验证。
+
+## Completed Phase: Production Billing Credential Preflight
+
+本阶段完成：
+- 新增 `billing:production:check`，在生产环境上线或 webhook rotation 前校验 `BILLING_PROVIDER=stripe`、`sk_live_...`、`whsec_...`、Pro/Business price ids 和 MySQL runtime URL。
+- preflight 会拒绝 test-mode key、占位符、缺失 MySQL URL，不会打印 secret values。
+- production billing/worker runbook 增加上线前 `NODE_ENV=production npm run billing:production:check` 步骤。
+
+验证：
+- `npm test -- src/server/billing/production-preflight.test.ts`
+
+最新还剩（下一阶段优先级）：
+1. 用真实 Stripe test credentials 跑一次 MySQL sandbox checkout/webhook/portal/cancel，全流程需要人工完成 Stripe Checkout。
+2. Final live billing execution：在真实生产环境执行 `billing:production:check`、创建/轮换 webhook endpoint，并做低风险 live checkout/webhook/portal 验证。
+
+## Completed Phase: 50-State Source Validity Hardening
+
+本阶段完成：
+- 50 州 frontend source registry 新增 source-validity metadata：`sourceAuthority`、`trustStatus`、`evidenceMode`、`validityNotes`。
+- CA/TX/NY/FL/IL 等 verified source 继续标记为官方高可信来源；当前使用公共聚合 fallback 的州被明确标记为 `public_aggregator` + `fallback`，避免把 fallback 数据伪装成官方源。
+- 新增 deterministic URL validator，拒绝空 URL、非法 URL、localhost/example/placeholder、以及 `sam.gov/opp/12345` 这类 demo/已知坏 URL。
+- `risk:check` 新增 `source-validity-metadata` 与 `state-url-validity` 两项检查，能在本地阻断 placeholder source URL 和 unsafe external state attachment URL。
+- Admin Data Sources repository 暴露 source-validity fields，SQLite 和 MySQL projection 都可读取。
+
+验证：
+- `npm test -- src/lib/state-crawler-sources.test.ts`
+- `npm test -- src/server/source-validity/url-validity.test.ts`
+- `npm test -- src/server/risk/checklist.test.ts`
+- `npm test -- src/server/admin/data-sources-repository.test.ts`
+
+最新还剩（下一阶段优先级）：
+1. Operator-run live portal URL health reporting：对 50 州 source base URL 和样本 source/attachment URL 做可选 live 检测，但不要让默认 CI 依赖外部政府网站。
+2. Python crawler source metadata parity：把 source-validity metadata 同步到 Python registry 或生成共享 registry，减少双端手动维护。
+3. 继续做 Artifact Vault Lite，让附件/证据从“可下载/可标记”推进到供应商可管理的 evidence workflow。
+
+## Completed Phase: 50-State Live Source Health Probe
+
+本阶段完成：
+- 新增 operator-run `source:health:check`，对 50 州 registry base URL 执行 live HTTP health probe。
+- 支持 `--source CA`、`--source ca_caleprocure`、重复 `--source`、`--timeout-ms`、`--json`、`--report-only`。
+- HEAD 被 403/405/501 拒绝时自动回退 GET；fetch 异常会记录为 structured unhealthy result，不会让报告生成中断。
+- 命令保持在默认 `risk:check` 之外，避免外部政府网站 403/timeout 影响 deterministic CI。
+
+验证：
+- `npm test -- src/server/source-validity/live-source-health.test.ts`
+- `npm run source:health:check -- --source CA --timeout-ms 5000 --report-only`
+
+最新还剩（下一阶段优先级）：
+1. Python crawler source metadata parity：把 source-validity metadata 同步到 Python registry 或生成共享 registry。
+2. Admin UI source health surface：把最近一次 live health report 或 crawler source-health signal 展示到 Admin Data Sources，而不是只靠 CLI 输出。
+3. Artifact Vault Lite：供应商证据/附件工作流仍是 Product 2/3 的最高价值业务功能。
+
+## Completed Phase: Python Crawler Source Metadata Parity
+
+本阶段完成：
+- Python `Source` dataclass 新增 `source_authority`、`trust_status`、`evidence_mode`、`validity_notes`。
+- 50 州 Python crawler registry 与前端 source-validity contract 对齐：verified 官方源、beta 官方源、public aggregator fallback 源都带同一套语义。
+- `fetch-state --output-json` 的 run metadata 新增 `source_validity`，方便 MySQL direct JSON importer/crawler logs 保留源可信度。
+- 既有静态/测试 Source 继续通过默认值兼容。
+
+验证：
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_sources.py crawler/tests/test_cli.py::test_fetch_state_output_json_writes_success_payload -q`
+
+最新还剩（下一阶段优先级）：
+1. Admin UI source health surface：把 source validity 与最近一次 live health/crawler health 信号展示到 Admin Data Sources 页面。
+2. Persisted live health snapshots：把 `source:health:check` 输出保存到 DB 或 JSON artifact，便于运营对比趋势。
+3. Artifact Vault Lite：供应商证据/附件工作流仍是最高价值业务功能。
+
+## Completed Phase: Admin Source Validity Surface
+
+本阶段完成：
+- Admin Data Sources 表格新增 source validity 展示：source authority、trust status、evidence mode、validity notes。
+- verified 官方源、beta 官方源、public aggregator fallback 源在后台页面可通过 badge 直接区分。
+- 新增中英文文案，保持美国用户英文界面和中文运营界面都可读。
+- 该阶段复用现有 Admin Data Sources API 字段，不新增 DB schema。
+
+验证：
+- `npm test -- src/app/admin/page.test.ts src/server/admin/data-sources-repository.test.ts src/app/api/admin/data-sources/route.test.ts`
+- `npm run lint`
+- `npm run build`
+- `npm run risk:check`
+
+最新还剩（下一阶段优先级）：
+1. Artifact Vault Lite：供应商证据/附件工作流仍是最高价值业务功能。
+2. Stripe sandbox/live billing signoff：需要真实 Stripe credentials 和人工 checkout 操作。
+3. Longer-horizon source health charting：当前已展示最近一次 live probe，后续可做多次趋势图。
+
+## Completed Phase: Persisted Live Source Health Snapshots
+
+本阶段完成：
+- 新增 `source_health_snapshots` 表，用于保存 operator-run live source health probe 的最近结果。
+- `npm run source:health:check` 新增 `--persist` 参数；默认仍只输出报告，不让默认 CI 依赖外部政府站点。
+- Admin Data Sources API 将最近一次 live probe 映射到对应 source，并暴露 `latestLiveHealth`。
+- `/admin` Data Sources 表格展示最近 live source health、HTTP 状态、检查时间和错误摘要。
+- README 补充 `--persist` 使用方式。
+
+验证：
+- `npm test -- scripts/source-health-check.test.ts src/server/source-validity/health-snapshots.test.ts src/server/admin/data-sources-repository.test.ts src/app/admin/page.test.ts`
+- `npm run db:migrate`
+- `npm run source:health:check -- --source CA --timeout-ms 5000 --report-only --persist`
+
+最新还剩（下一阶段优先级）：
+1. Artifact Vault Lite：供应商证据/附件工作流仍是最高价值业务功能。
+2. Stripe sandbox/live billing signoff：需要真实 Stripe credentials 和人工 checkout 操作。
+3. Longer-horizon source health charting：当前已展示最近一次 live probe，后续可做多次趋势图。
+
+## Completed Phase: Admin Risk Snapshot Trend Summary
+
+本阶段完成：
+- `/api/admin/risk-check` 在生成风险巡检报告后写入最近快照，并返回 `history` 与 `trend`。
+- 新增 `summarizeRiskChecklistTrend`，对最近快照汇总 global URL 是否持续通过、50 州覆盖是否下降、附件可下载数量是否变化。
+- Admin 风险面板新增趋势摘要卡片、最近风险快照、手动刷新与 JSON 导出，并把风险详情链接回对应 `/bids/[id]`。
+- 中英文文案已补齐，英文界面可给美国用户直接使用，中文界面方便运营检查。
+
+验证：
+- `npm test -- src/server/risk/snapshots.test.ts src/app/api/admin/risk-check/route.test.ts src/app/admin/page.test.ts`
+- `npm test`
+- `npm run lint`
+- `npm run build`
+- `npm run risk:check`
+- `git diff --check`
+
+最新还剩（下一阶段优先级）：
+1. Persisted live health snapshots：把 `source:health:check` 输出保存到 DB 或 JSON artifact，并在 Admin UI 展示最近一次 live probe。
+2. Artifact Vault Lite：供应商证据/附件工作流仍是最高价值业务功能。
+3. Stripe sandbox/live billing signoff：需要真实 Stripe credentials 和人工 checkout 操作。
+
+## Completed Phase: Response Workspace Evidence Linking + Admin Live Health UI
+
+本阶段完成：
+- Response Workspace item 现在可以关联 Artifact Vault 中的 supplier artifacts，并在 GET response workspace 时返回每个 item 的 `linkedArtifacts`。
+- 新增 `response_workspace_item_artifacts` 关联表；SQLite migration、Drizzle schema、MySQL DDL 转换、repository/service/API/client/UI 测试均覆盖。
+- 更新 item 时支持 `linkedArtifactIds`，传空数组会清空旧关联；服务层校验 artifact 必须属于当前 user + intent，避免跨标/跨用户误挂证据。
+- Intent detail 的 Response Workspace panel 增加 linked artifacts 展示、可选 artifact 清单和保存动作；下载 URL 使用本地 artifact API，避免外链 404。
+- MySQL smoke verifier 现在会创建真实 Artifact Vault 文件，并验证 Response Workspace artifact-task link 可写入、可读取、可生成下载 URL。
+- Admin Data Sources 页面现在直接展示 persisted live source health：状态 badge、checkedAt、HTTP/status code、latency、错误摘要和 no-check 空态。
+
+验证：
+- `npm test -- src/server/db/mysql-smoke.test.ts src/server/db/schema.test.ts src/server/response-workspace/repository.test.ts src/server/response-workspace/service.test.ts 'src/app/api/intents/[id]/response-workspace/route.test.ts' src/lib/api/intents.test.ts 'src/app/intents/[id]/page.test.ts' 'src/app/intents/[id]/page.test.tsx' src/app/admin/page.test.ts src/app/api/admin/data-sources/route.test.ts src/server/admin/data-sources-repository.test.ts`
+
+最新还剩（下一阶段优先级）：
+1. Response Workspace activity/version history：记录 item notes、status、assignee、linked artifacts 的变化历史，并在 Intent UI 中可读。
+2. Editable Config Matrix governance：Admin 配置矩阵从只读升级为有审批/审计的编辑流。
+3. Admin source approval workflow：把 source validity、live health、crawler logs 组合成可运营的 approve/hold/recheck 流程。
+4. Settings reminder center + delivery preferences：把 Deadline Notifications 从 Intent 页面扩展到用户设置中心和真实通知渠道。
+5. Production signoff：Stripe live/sandbox 人工验证、MySQL 真库 smoke、生产 worker runbook。
+
+## Completed Phase: Response Package Export / Download Lite
+
+本阶段完成：
+- 新增 `response_package_snapshots` 表，用于冻结当前响应包目录和就绪度摘要。
+- 新增 Response Package readiness summary：统计目录完成数、缺失材料、阻塞项、未完成项，并计算基础 ready 状态。
+- 新增 SQLite/MySQL repository helper、service helper、Business-gated `/api/intents/[id]/response-workspace/package` GET/POST API 和前端 client helper。
+- Intent Response Workspace panel 新增中英文响应包快照区，可创建快照、查看最近快照、查看目录/材料/阻塞/未完成摘要。
+- 保存 Response Workspace item 或关联材料后会刷新 package readiness，避免页面展示旧状态。
+- Feature gate coverage 已登记新 package route，防止后续新增 gated route 漏登记。
+- 新增 `response_package_exports` 表，用于记录 snapshot 导出文件、checksum、大小、下载 URL 和 requested-by 用户。
+- 新增 deterministic Markdown export 生成器，基于已保存 snapshot 输出 readiness 摘要、目录章节、备注和关联材料清单。
+- 新增 Business-gated `/api/intents/[id]/response-workspace/package/exports` POST 和 `/exports/[exportId]` GET 下载路由。
+- Intent UI 现在可从每个 snapshot 导出响应包，并显示最近导出的下载链接。
+
+验证：
+- `npm test`：194 files / 874 tests passed。
+- `npm run lint`
+- `npm run build`：通过；仍有 Turbopack NFT warning，本轮 trace 指向 `src/server/response-workspace/service.ts` 的本地文件写入路径。
+- `npm run db:migrate`
+- `npm run risk:check`：50/50 states、117 state bids、9 attachments、account-tier separation、source governance、URL validity 均 PASS；moderate audit 0 vulnerabilities。
+- `npm audit --omit=dev --audit-level=high`：0 vulnerabilities。
+- `git diff --check`
+
+历史当时还剩（已被后续阶段部分完成，最新以当前文档末尾为准）：
+1. Editable Config Matrix governance：已完成可编辑 JSON/status/reason/audit 保存闭环；effective-date、版本对比、回滚仍属未来深化。
+2. Admin source approval workflow：把 source validity、live health、crawler logs 组合成 approve/hold/recheck 流程。
+3. Settings reminder center + delivery preferences：把 Deadline Notifications 扩展到用户设置中心和真实通知渠道。
+4. Response Package format depth：PDF/DOCX/ZIP、生产对象存储、导出审计事件和更严格 readiness blocking。
+5. Production signoff：Stripe sandbox/live、MySQL 真库 smoke、生产 worker runbook 执行。
+
+## Completed Phase: Editable Config Matrix Governance
+
+本阶段完成：
+- Admin Config Matrix 从只读升级为可编辑：支持直接编辑每条 config 的 JSON value、状态，并要求填写 change reason 后才能保存。
+- 新增前端 API client helper `updateAdminConfigEntry`，复用现有 PATCH `/api/admin/config/[id]` wire shape，不新增产品 API 形状。
+- Admin 保存时会校验 JSON 可解析、reason 非空，成功后更新本地配置行并清空该条草稿；失败时在 Admin 页面展示错误提示。
+- 后端 PATCH 现有 SQLite/MySQL 双路径、config validation、audit event linkage 继续复用；新增测试明确空 reason 会被拒绝。
+- 静态 Admin 页面测试锁定了 `configEditDrafts`、`handleConfigRegistrySave`、`Config JSON`、`Change reason` 和 `Save config` 入口，防止 UI 回退成只读。
+
+验证：
+- `npm test -- src/lib/api/admin.test.ts 'src/app/api/admin/config/[id]/route.test.ts' src/app/admin/page.test.tsx`
+
+历史当时还剩（已被后续阶段部分完成，最新以当前文档末尾为准）：
+1. Admin source approval workflow：Lite 已完成 approve/hold/recheck/re-run；审批历史、blocked action、批量队列仍属未来深化。
+2. Settings reminder center + delivery preferences：把 Deadline Notifications 扩展到用户设置中心和真实通知渠道。
+3. Response Package format depth：PDF/DOCX/ZIP、生产对象存储、导出审计事件和更严格 readiness blocking。
+4. Config Matrix 深化：effective-date UI、版本对比、回滚按钮、生产变更审批规则。
+5. Production signoff：Stripe sandbox/live、MySQL 真库 smoke、生产 worker runbook 执行。
+
+## Completed Phase: Admin Source Approval Workflow Lite
+
+本阶段完成：
+- Admin Data Sources 行级治理操作已接入：管理员可对来源执行 Approve / Hold，写入 `approvedForIngestion`、`approvalStatus`、`legalReviewStatus`、`approvalNotes` 和 `lastApprovalReviewedAt`。
+- `/api/admin/data-sources/[id]` PATCH 从仅支持启停扩展为支持来源审批治理字段，保留 SQLite/MySQL 双路径。
+- 新增 `POST /api/admin/data-sources/[id]/health-check`，可针对单个来源执行 live health check 并持久化最新 snapshot；Admin UI 通过 Recheck 刷新该来源健康状态。
+- 新增前端 API helper `checkAdminDataSourceHealth`，并扩展 `updateAdminDataSource` input 类型以支持治理字段。
+- Admin 页面将 source validity、approval status、live health、crawler run/re-run 放在同一行上下文中，形成 approve/hold/recheck/re-run 的轻量运营闭环。
+
+验证：
+- `npm test -- src/lib/api/admin.test.ts 'src/app/api/admin/data-sources/[id]/route.test.ts' 'src/app/api/admin/data-sources/[id]/health-check/route.test.ts' src/app/admin/page.test.ts`
+
+最新还剩（下一阶段优先级）：
+1. Settings reminder center + delivery preferences：把 Deadline Notifications 扩展到用户设置中心和真实通知渠道。
+2. Response Package format depth：PDF/DOCX/ZIP、生产对象存储、导出审计事件和更严格 readiness blocking。
+3. Admin source governance 深化：审批历史、blocked action、批量 approval queue、source health 长期趋势。
+4. Config Matrix 深化：effective-date UI、版本对比、回滚按钮、生产变更审批规则。
+5. Production signoff：Stripe sandbox/live、MySQL 真库 smoke、生产 worker runbook 执行。
+
+## Completed Phase: P2 50-State Source Validity Hardening
+
+本阶段完成：
+- `source:health:check` 支持 `--all`，可以显式执行 50 州全量 live source health 巡检。
+- 前端 50 州 source registry 增加真实 URL / 非占位 URL / source authority / trust status / evidence mode / validity notes 防回归测试。
+- Python crawler source registry 增加真实 HTTP(S) base URL、禁止 placeholder / localhost / `sam.gov/opp/12345`、以及 validity metadata 防回归测试。
+- 修复当前 registry 中的两个硬 404 base URL：OH 切到当前 BidNet Ohio fallback 抓取入口，WY 切到 Wyoming A&I 当前 Bid Opportunities 页面。
+- legacy Ohio parser 测试改为显式历史 fixture source，避免旧 `procure.ohio.gov` parser fixture 影响当前 50 州 registry。
+
+验证：
+- `npm test -- scripts/source-health-check.test.ts src/lib/state-crawler-sources.test.ts`
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests/test_state_dedicated_spiders_batch2_west.py crawler/tests/test_state_sources.py`
+- `PYTHONPATH=crawler python3 -m pytest crawler/tests`：209 passed。
+- `npm run source:health:check -- --all --timeout-ms 5000 --report-only`：28/50 healthy，22 unhealthy，0 skipped；OH/WY 已 PASS，剩余为外部门户 403、超时或 fetch failed。
+- `npm run risk:check`：50/50 states、117 state bids、9 attachments、state-content、detail routes、source governance、URL validity 均 PASS；audit 0 vulnerabilities。
+
+最新还剩（下一阶段优先级）：
+1. P3 Docs / Operations Handoff：补 source-health runbook，明确 live 403/timeout 的运营处理、复查节奏和审批策略。
+2. Admin source governance 深化：审批历史、blocked action 执行保护、批量 approval queue、source health 长期趋势。
+3. Settings reminder center + delivery preferences：把 Deadline Notifications 扩展到用户设置中心和真实通知渠道。
+4. Response Package format depth：PDF/DOCX/ZIP、生产对象存储、导出审计事件和更严格 readiness blocking。
+5. Production signoff：Stripe sandbox/live、MySQL 真库 smoke、生产 worker runbook 执行。
+
+## Completed Phase: Source Health Operations Lite
+
+本阶段完成：
+- `LiveSourceHealthResult` 新增 `operationalSeverity` 与 `recommendedAction`，把 live health 失败从原始错误升级为可运营处理项。
+- 分类规则覆盖：404/410 更新 registry URL、401/403/429 浏览器或访问权限复查、timeout/aborted 重试或延长超时、fetch_error 网络/TLS 复查、缺失 base URL 补充元数据。
+- CLI 文本报告现在输出 `action=... severity=...`，便于保存日志或交给运营排查。
+- Admin Data Sources API 和页面展示最新 live health 的建议动作与严重级别，管理员不需要打开 JSON 也能判断下一步。
+- 中英文文案已补齐，运营中文界面和美国用户/团队英文界面都可读。
+- `docs/operations/source-health-check.md` 补充 action/severity 解释。
+
+验证：
+- `npm test -- src/server/source-validity/live-source-health.test.ts`
+- `npm test -- src/server/admin/data-sources-repository.test.ts src/server/source-validity/health-snapshots.test.ts`
+- `npm test -- src/app/admin/page.test.ts src/server/source-validity/live-source-health.test.ts src/server/source-validity/health-snapshots.test.ts src/server/admin/data-sources-repository.test.ts`
+- `npm run source:health:check -- --all --timeout-ms 5000 --report-only`：20/50 healthy，30 unhealthy，0 skipped；失败项均带 `action=... severity=...`。
+
+最新还剩（下一阶段优先级）：
+1. Admin source governance 深化：审批历史、blocked action 执行保护、批量 approval queue、source health 长期趋势。
+2. Settings reminder center + delivery preferences：把 Deadline Notifications 扩展到用户设置中心和真实通知渠道。
+3. Response Package format depth：PDF/DOCX/ZIP、生产对象存储、导出审计事件和更严格 readiness blocking。
+4. Config Matrix 深化：effective-date UI、版本对比、回滚按钮、生产变更审批规则。
+5. Production signoff：Stripe sandbox/live、MySQL 真库 smoke、生产 worker runbook 执行。
+
+## Completed Phase: Admin Source Approval History Lite
+
+本阶段完成：
+- 新增 `source_approval_events` 表，记录来源审批治理变更历史。
+- `updateAdminDataSource` / MySQL runtime update path 在审批字段变化时写入历史事件，包含 actor、action、previous/next approval status、previous/next legal review status、previous/next ingestion approval、reason、createdAt。
+- `PATCH /api/admin/data-sources/[id]` 会把当前 admin user id 传入 repository，确保审批历史能追踪操作者。
+- Admin Data Sources API 每个 source 返回最近审批历史；Admin 页面在来源行内展示最近两条审批历史。
+- 中英文文案补齐：Approval history、Actor、Approved、Blocked、Held for review、Updated。
+- SQLite migration 和 MySQL DDL 转换均覆盖新表。
+
+验证：
+- `npm test -- src/app/admin/page.test.ts 'src/app/api/admin/data-sources/[id]/route.test.ts' src/server/admin/data-sources-repository.test.ts src/server/db/schema.test.ts`
+- `npm test -- src/server/db/mysql.test.ts src/server/db/schema.test.ts`
+- `npm run db:migrate`
+
+最新还剩（下一阶段优先级）：
+1. Admin source governance 深化：source health 长期趋势。
+2. Settings reminder center + delivery preferences：把 Deadline Notifications 扩展到用户设置中心和真实通知渠道。
+3. Response Package format depth：PDF/DOCX/ZIP、生产对象存储、导出审计事件和更严格 readiness blocking。
+4. Config Matrix 深化：effective-date UI、版本对比、回滚按钮、生产变更审批规则。
+5. Production signoff：Stripe sandbox/live、MySQL 真库 smoke、生产 worker runbook 执行。
+
+## Completed Phase: Admin Source Blocked Action Enforcement Lite
+
+本阶段完成：
+- `runCrawlerSourceOnce` 新增来源治理执行保护：当 `data_sources` 显式设置为 `approved_for_ingestion=0`、`approval_status != approved`、或 `legal_review_status` 未通过时，直接返回 `blocked`，不会抢 crawler lock，也不会调用 runner/matcher/notifier。
+- SQLite 和 MySQL runtime 都使用同一套 source run control 判断。
+- 兼容旧数据：没有 `data_sources` 行或治理字段为空的旧来源不会被突然停止；只有显式 Admin/DB 治理状态会拦截。
+- `/api/crawler/state/run` 会透传 blocked 结果，批量状态返回 `completed_with_failures`，前端/运营可以看到被治理挡住的 source、审批状态、法务状态和抓取批准状态。
+
+验证：
+- `npm test -- src/server/crawler/orchestrator.test.ts`
+- `npm test -- src/app/api/crawler/state/run/route.test.ts`
+
+最新还剩（下一阶段优先级）：
+1. Admin source governance 深化：source health 长期趋势。
+2. Settings reminder center + delivery preferences：把 Deadline Notifications 扩展到用户设置中心和真实通知渠道。
+3. Response Package format depth：PDF/DOCX/ZIP、生产对象存储、导出审计事件和更严格 readiness blocking。
+4. Config Matrix 深化：effective-date UI、版本对比、回滚按钮、生产变更审批规则。
+5. Production signoff：Stripe sandbox/live、MySQL 真库 smoke、生产 worker runbook 执行。
+
+## Completed Phase: Admin Source Batch Approval Queue Lite
+
+本阶段完成：
+- 新增 `POST /api/admin/data-sources/batch`，支持 admin-only 批量 `approve` / `hold` 来源审批动作。
+- 批量 API 复用现有 `updateAdminDataSource` / MySQL runtime update path，因此每个来源都会写入 `source_approval_events` 审批历史。
+- Admin API role coverage 将批量来源审批路由纳入 full-admin-only 清单。
+- Admin 页面 Data Sources 区域新增来源选择、全选、批量批准、批量暂缓按钮，更新成功后替换本地 source rows 并清空已处理选择。
+- 中英文文案补齐：selected sources、select source、batch approve、batch hold、批量成功/失败提示。
+
+验证：
+- `npm test -- src/app/api/admin/data-sources/batch/route.test.ts`
+- `npm test -- src/lib/api/admin.test.ts`
+- `npm test -- src/app/admin/page.test.ts src/lib/api/admin.test.ts src/app/api/admin/data-sources/batch/route.test.ts`
+- `npm test -- src/server/auth/role-route-coverage.test.ts src/app/api/admin/data-sources/batch/route.test.ts`
+- `npm run build`
+
+最新还剩（下一阶段优先级）：
+1. Settings reminder center + delivery preferences：把 Deadline Notifications 扩展到用户设置中心和真实通知渠道。
+2. Response Package format depth：PDF/DOCX/ZIP、生产对象存储、导出审计事件和更严格 readiness blocking。
+3. Config Matrix 深化：effective-date UI、版本对比、回滚按钮、生产变更审批规则。
+4. Production signoff：Stripe sandbox/live、MySQL 真库 smoke、生产 worker runbook 执行。
+5. Source governance production depth：APSI Registration Vault、生产来源治理 runbook 深化。
+
+## Completed Phase: Admin Source Health Trend Lite
+
+本阶段完成：
+- 复用现有 `source_health_snapshots`，新增 per-source 趋势聚合，不新增数据库表。
+- `sourceHealthTrendBySource` 会按最近快照统计 sample size、healthy/unhealthy/skipped 次数、健康率、当前连续状态、当前连续次数、最近异常时间。
+- Admin Data Sources API 每个 source 返回 `sourceHealthTrend`，SQLite 和 MySQL runtime 都使用最近 10 个 source health snapshots。
+- Admin 页面在 live source health 卡片中展示近期趋势、健康率、当前连续状态和最近异常时间。
+- 中英文文案补齐：Recent trend / 近期趋势、健康率摘要、当前连续状态、最近异常。
+
+验证：
+- `npm test -- src/server/source-validity/health-snapshots.test.ts`
+- `npm test -- src/server/admin/data-sources-repository.test.ts src/server/source-validity/health-snapshots.test.ts`
+- `npm test -- src/app/admin/page.test.ts src/server/admin/data-sources-repository.test.ts src/server/source-validity/health-snapshots.test.ts`
+- `npm run lint`
+- `npm run build`
+
+最新还剩（下一阶段优先级）：
+1. Settings reminder center + delivery preferences：把 Deadline Notifications 扩展到用户设置中心和真实通知渠道。
+2. Response Package format depth：PDF/DOCX/ZIP、生产对象存储、导出审计事件和更严格 readiness blocking。
+3. Config Matrix 深化：effective-date UI、版本对比、回滚按钮、生产变更审批规则。
+4. Production signoff：Stripe sandbox/live、MySQL 真库 smoke、生产 worker runbook 执行。
+5. Source governance production depth：APSI Registration Vault、生产来源治理 runbook 深化。
+
+## Completed Phase: Settings Reminder Center Lite
+
+本阶段完成：
+- 新增账号级 Deadline Reminder Center API：`GET/PATCH /api/account/deadline-reminders`，复用现有 `deadline_reminders` 数据、workspace 边界和 `deadline_notifications` 付费功能 gate。
+- Deadline service 新增 organization-level reminder center 聚合，支持跨 intent 汇总 active/due soon/overdue/snoozed，并支持 acknowledge / snooze。
+- Settings 通知页新增“截止提醒中心”，Business/Enterprise 用户可查看账号级提醒、状态、优先级、到期时间，并可确认或延后 24 小时。
+- Free/Pro 用户在 Settings 中看到明确的 plan-limit / upgrade 状态，不暴露个人工作区数据。
+- 中英文文案、API client、feature-gate route coverage、Settings static coverage 已补齐。
+
+验证：
+- `npm test -- src/app/settings/page.test.ts src/server/auth/feature-gate-coverage.test.ts src/lib/api/auth.test.ts src/app/api/account/deadline-reminders/route.test.ts src/server/deadlines/service.test.ts`
+
+最新还剩（下一阶段优先级）：
+1. Submission Guidance Completion：补提交步骤深度、日历/邮件集成边界、任务归属和确认链路。
+2. Response Package format depth：PDF/DOCX/ZIP、生产对象存储、导出审计事件和更严格 readiness blocking。
+3. Config Matrix 深化：effective-date UI、版本对比、回滚按钮、生产变更审批规则。
+4. Production signoff：Stripe sandbox/live、MySQL 真库 smoke、生产 worker runbook 执行。
+5. Deadline Notification production depth：真实 email/calendar 投递、outbox scheduling、提醒审计事件、退信/失败监控。
 
 ## Status Update Template
 

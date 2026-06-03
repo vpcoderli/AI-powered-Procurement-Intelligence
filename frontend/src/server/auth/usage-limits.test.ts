@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CREDIT_ACTIONS, creditAllowanceForTier, creditCostForFeature } from "@/server/billing/credits";
 import { alerts, bids, intentToBid, organizationMemberships, organizations, savedBids, users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
@@ -53,6 +54,32 @@ describe("usage limits", () => {
     expect(usageLimitForTier("free", "team_members")).toBe(1);
     expect(usageLimitForTier("business", "team_members")).toBe(10);
     expect(usageLimitForTier("enterprise", "saved_bids")).toBeNull();
+  });
+
+  it("covers included credit allowances without enforcing live consumption", () => {
+    expect(creditAllowanceForTier("free")).toBe(0);
+    expect(creditAllowanceForTier("pro")).toBe(25);
+    expect(creditAllowanceForTier("business")).toBe(150);
+    expect(creditAllowanceForTier("enterprise")).toBeNull();
+  });
+
+  it("covers static premium action credit cost metadata", () => {
+    expect(CREDIT_ACTIONS["bid.brief.full.generate"]).toMatchObject({
+      feature: "bid.brief.full.generate",
+      creditCost: 1,
+      refundOnSystemFailure: true,
+    });
+    expect(CREDIT_ACTIONS["response.section.draft"]).toMatchObject({
+      feature: "response.section.draft",
+      creditCost: 3,
+      refundOnSystemFailure: true,
+    });
+    expect(CREDIT_ACTIONS["package.review.run"]).toMatchObject({
+      feature: "package.review.run",
+      creditCost: 4,
+      refundOnSystemFailure: true,
+    });
+    expect(creditCostForFeature("bid_search")).toBe(0);
   });
 
   it("allows free users under the saved bid limit and rejects new saves at the limit", () => {

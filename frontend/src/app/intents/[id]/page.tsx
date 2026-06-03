@@ -9,25 +9,46 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ArtifactVaultPanel } from "@/components/intents/ArtifactVaultPanel";
+import type { ArtifactDraft } from "@/components/intents/ArtifactVaultPanel";
+import { DeadlineNotificationsPanel } from "@/components/intents/DeadlineNotificationsPanel";
+import { QuoteWorkspacePanel } from "@/components/intents/QuoteWorkspacePanel";
+import type { QuoteDraft } from "@/components/intents/QuoteWorkspacePanel";
+import { ResponseWorkspacePanel } from "@/components/intents/ResponseWorkspacePanel";
+import { AuthRequiredState } from "@/components/auth/AuthRequiredState";
 import { UniversalState } from "@/components/universal-state";
 import {
   confirmSubmission,
+  createResponsePackageExport,
+  createResponsePackageSnapshot,
+  createResponseWorkspaceComment,
+  fetchArtifactVault,
   fetchComplianceManifest,
+  fetchDeadlineWorkspace,
   fetchIntent,
   fetchPursuitDecisionBoard,
+  fetchQuoteWorkspace,
   fetchQualificationCitations,
   fetchQualificationFreshness,
+  fetchResponsePackageWorkspace,
+  fetchResponseWorkspaceComments,
   fetchResponseWorkspace,
   fetchSubmissionGuidance,
+  createQuoteRequestDraft,
   postQualificationQuestion,
   refreshQualificationEvidence,
   updateComplianceManifestItem,
   updateIntentStatus,
+  updateDeadlineReminder,
   updatePursuitDecision,
+  updateQuoteRequestDraft,
+  updateResponseWorkspaceItemArtifactLinks,
   updateResponseWorkspaceItem,
   updateSubmissionGuidance,
+  uploadSupplierArtifact,
 } from "@/lib/api/intents";
 import { createKnowledgeItem, fetchKnowledgeItems } from "@/lib/api/knowledge";
+import { useAuth } from "@/context/AuthContext";
 import { lockedFeatureMessage, useFeature } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { generateWorkflowCoachCards } from "@/lib/knowledge/coach";
@@ -58,11 +79,20 @@ import type {
 import { PURSUIT_DECISIONS } from "@/server/pursuit/types";
 import type {
   ResponseWorkspace,
+  ResponseWorkspaceComment,
   ResponseWorkspaceItem,
-  ResponseWorkspaceItemKind,
-  ResponseWorkspaceItemStatus,
+  ResponsePackageWorkspace,
 } from "@/server/response-workspace/types";
-import { RESPONSE_WORKSPACE_ITEM_STATUSES } from "@/server/response-workspace/types";
+import type { ArtifactVault } from "@/server/artifacts/types";
+import type {
+  QuoteRequest,
+  QuoteRequestStatus,
+  QuoteWorkspace,
+} from "@/server/quotes/types";
+import type {
+  DeadlineReminder,
+  DeadlineWorkspace,
+} from "@/server/deadlines/types";
 import type {
   SubmissionConfirmation,
   SubmissionGuidance,
@@ -152,13 +182,6 @@ const submissionMethods: SubmissionMethod[] = [
 const complianceStatuses: ComplianceItemStatus[] = [...COMPLIANCE_ITEM_STATUSES];
 const complianceEvidenceStatuses: ComplianceEvidenceStatus[] = [...COMPLIANCE_EVIDENCE_STATUSES];
 const pursuitDecisionOptions: PursuitDecisionValue[] = [...PURSUIT_DECISIONS];
-const responseWorkspaceStatusOptions: ResponseWorkspaceItemStatus[] = [...RESPONSE_WORKSPACE_ITEM_STATUSES];
-const responseWorkspaceKinds: ResponseWorkspaceItemKind[] = [
-  "task",
-  "checkpoint",
-  "artifact",
-  "outline_section",
-];
 const knowledgeTypeOptions: KnowledgeItem["type"][] = [
   "workflow_note",
   "template_snippet",
@@ -218,6 +241,26 @@ const defaultKnowledgeDraft: KnowledgeDraft = {
   body: "",
 };
 
+const defaultArtifactDraft: ArtifactDraft = {
+  title: "",
+  artifactType: "w9",
+  purpose: "compliance_evidence",
+  expiresAt: "",
+  notes: "",
+  file: null,
+};
+
+const defaultQuoteDraft: QuoteDraft = {
+  partnerName: "",
+  contactName: "",
+  contactEmail: "",
+  title: "",
+  description: "",
+  requestedDueAt: "",
+  lineItems: "",
+  artifactIds: [],
+};
+
 function currentDatetimeLocal() {
   const now = new Date();
   const offsetMs = now.getTimezoneOffset() * 60_000;
@@ -242,6 +285,13 @@ function toIsoFromDatetimeLocal(value: string) {
   return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
 }
 
+function defaultSnoozeUntil() {
+  const date = new Date();
+  date.setHours(date.getHours() + 24);
+
+  return date.toISOString();
+}
+
 function parseKnowledgeTags(value: string) {
   return value
     .split(",")
@@ -259,6 +309,7 @@ const pursuitLanes = [
 export default function IntentWorkspacePage() {
   const params = useParams();
   const router = useRouter();
+  const { user, isLoading: isAuthLoading } = useAuth();
   const { t } = useLanguage();
   const mountedRef = useRef(true);
   const saveRequestRef = useRef(0);
@@ -298,6 +349,30 @@ export default function IntentWorkspacePage() {
   const [responseWorkspaceSavingItemId, setResponseWorkspaceSavingItemId] = useState<string | null>(null);
   const [responseWorkspaceError, setResponseWorkspaceError] = useState<Error | null>(null);
   const [responseWorkspaceNotice, setResponseWorkspaceNotice] = useState("");
+  const [responseWorkspaceCommentsByItemId, setResponseWorkspaceCommentsByItemId] = useState<Record<string, ResponseWorkspaceComment[]>>({});
+  const [responseWorkspaceCommentDrafts, setResponseWorkspaceCommentDrafts] = useState<Record<string, string>>({});
+  const [responseWorkspaceSavingCommentItemId, setResponseWorkspaceSavingCommentItemId] = useState<string | null>(null);
+  const [responsePackageWorkspace, setResponsePackageWorkspace] = useState<ResponsePackageWorkspace | null>(null);
+  const [isResponsePackageSaving, setIsResponsePackageSaving] = useState(false);
+  const [responsePackageExportingSnapshotId, setResponsePackageExportingSnapshotId] = useState<string | null>(null);
+  const [artifactVault, setArtifactVault] = useState<ArtifactVault | null>(null);
+  const [artifactDraft, setArtifactDraft] = useState<ArtifactDraft>(defaultArtifactDraft);
+  const [isArtifactVaultLoading, setIsArtifactVaultLoading] = useState(false);
+  const [isArtifactUploading, setIsArtifactUploading] = useState(false);
+  const [artifactVaultError, setArtifactVaultError] = useState<Error | null>(null);
+  const [artifactVaultNotice, setArtifactVaultNotice] = useState("");
+  const [quoteWorkspace, setQuoteWorkspace] = useState<QuoteWorkspace | null>(null);
+  const [quoteDraft, setQuoteDraft] = useState<QuoteDraft>(defaultQuoteDraft);
+  const [isQuoteWorkspaceLoading, setIsQuoteWorkspaceLoading] = useState(false);
+  const [isQuoteSaving, setIsQuoteSaving] = useState(false);
+  const [quoteSavingRequestId, setQuoteSavingRequestId] = useState<string | null>(null);
+  const [quoteError, setQuoteError] = useState<Error | null>(null);
+  const [quoteNotice, setQuoteNotice] = useState("");
+  const [deadlineWorkspace, setDeadlineWorkspace] = useState<DeadlineWorkspace | null>(null);
+  const [isDeadlineWorkspaceLoading, setIsDeadlineWorkspaceLoading] = useState(false);
+  const [deadlineSavingReminderId, setDeadlineSavingReminderId] = useState<string | null>(null);
+  const [deadlineError, setDeadlineError] = useState<Error | null>(null);
+  const [deadlineNotice, setDeadlineNotice] = useState("");
   const [qualificationCitations, setQualificationCitations] = useState<QualificationCitation[]>([]);
   const [qualificationFreshness, setQualificationFreshness] = useState<QualificationFreshnessResponse | null>(null);
   const [isCitationsLoading, setIsCitationsLoading] = useState(false);
@@ -319,10 +394,31 @@ export default function IntentWorkspacePage() {
   const complianceManifestFeature = useFeature("compliance_manifest");
   const pursuitDecisionFeature = useFeature("pursue_no_bid");
   const responseWorkspaceFeature = useFeature("response.workspace.create");
+  const artifactVaultFeature = useFeature("artifact.vault.upload");
+  const quoteWorkflowFeature = useFeature("quote_workflow");
+  const deadlineNotificationsFeature = useFeature("deadline_notifications");
   const qualificationQaFeature = useFeature("bid.brief.full.generate");
   const knowledgeStationFeature = useFeature("knowledge_station");
 
-  const intentId = typeof params?.id === "string" ? params.id : Array.isArray(params?.id) ? params.id[0] : "";
+  const intentId = user ? typeof params?.id === "string" ? params.id : Array.isArray(params?.id) ? params.id[0] : "" : "";
+  const responseWorkspaceAssigneeOptions = useMemo(() => {
+    const options = new Map<string, string>();
+
+    if (user) {
+      options.set(user.id, user.displayName || user.email || user.id);
+    }
+
+    for (const item of responseWorkspace?.items ?? []) {
+      if (item.assignedUserId && item.assignedUser) {
+        options.set(
+          item.assignedUserId,
+          item.assignedUser.displayName || item.assignedUser.email || item.assignedUser.userId,
+        );
+      }
+    }
+
+    return [...options.entries()].map(([userId, label]) => ({ userId, label }));
+  }, [responseWorkspace?.items, user]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -543,8 +639,11 @@ export default function IntentWorkspacePage() {
       if (cancelled || !mountedRef.current) return;
 
       setResponseWorkspace(null);
+      setResponsePackageWorkspace(null);
       setResponseWorkspaceNotice("");
       setResponseWorkspaceError(null);
+      setResponseWorkspaceCommentsByItemId({});
+      setResponseWorkspaceCommentDrafts({});
 
       if (!intentId || !responseWorkspaceFeature.enabled) {
         setIsResponseWorkspaceLoading(false);
@@ -554,9 +653,19 @@ export default function IntentWorkspacePage() {
       setIsResponseWorkspaceLoading(true);
 
       fetchResponseWorkspace(intentId)
-        .then((response) => {
+        .then(async (response) => {
           if (cancelled || !mountedRef.current) return;
           setResponseWorkspace(response.workspace);
+          const [commentPairs, packageResponse] = await Promise.all([
+            Promise.all(response.workspace.items.map(async (item) => {
+              const result = await fetchResponseWorkspaceComments(intentId, item.id);
+              return [item.id, result.comments] as const;
+            })),
+            fetchResponsePackageWorkspace(intentId),
+          ]);
+          if (cancelled || !mountedRef.current) return;
+          setResponseWorkspaceCommentsByItemId(Object.fromEntries(commentPairs));
+          setResponsePackageWorkspace(packageResponse.packageWorkspace);
         })
         .catch((err) => {
           if (cancelled || !mountedRef.current) return;
@@ -572,6 +681,119 @@ export default function IntentWorkspacePage() {
       cancelled = true;
     };
   }, [intentId, responseWorkspaceFeature.enabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled || !mountedRef.current) return;
+
+      setArtifactVault(null);
+      setArtifactVaultNotice("");
+      setArtifactVaultError(null);
+      setArtifactDraft(defaultArtifactDraft);
+
+      if (!intentId || !artifactVaultFeature.enabled) {
+        setIsArtifactVaultLoading(false);
+        return;
+      }
+
+      setIsArtifactVaultLoading(true);
+
+      fetchArtifactVault(intentId)
+        .then((response) => {
+          if (cancelled || !mountedRef.current) return;
+          setArtifactVault(response.vault);
+        })
+        .catch((err) => {
+          if (cancelled || !mountedRef.current) return;
+          setArtifactVaultError(err instanceof Error ? err : new Error("Failed to load artifact vault"));
+        })
+        .finally(() => {
+          if (cancelled || !mountedRef.current) return;
+          setIsArtifactVaultLoading(false);
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [intentId, artifactVaultFeature.enabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled || !mountedRef.current) return;
+
+      setQuoteWorkspace(null);
+      setQuoteDraft(defaultQuoteDraft);
+      setQuoteNotice("");
+      setQuoteError(null);
+
+      if (!intentId || !quoteWorkflowFeature.enabled) {
+        setIsQuoteWorkspaceLoading(false);
+        return;
+      }
+
+      setIsQuoteWorkspaceLoading(true);
+
+      fetchQuoteWorkspace(intentId)
+        .then((response) => {
+          if (cancelled || !mountedRef.current) return;
+          setQuoteWorkspace(response.workspace);
+        })
+        .catch((err) => {
+          if (cancelled || !mountedRef.current) return;
+          setQuoteError(err instanceof Error ? err : new Error("Failed to load quote workspace"));
+        })
+        .finally(() => {
+          if (cancelled || !mountedRef.current) return;
+          setIsQuoteWorkspaceLoading(false);
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [intentId, quoteWorkflowFeature.enabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled || !mountedRef.current) return;
+
+      setDeadlineWorkspace(null);
+      setDeadlineNotice("");
+      setDeadlineError(null);
+
+      if (!intentId || !deadlineNotificationsFeature.enabled) {
+        setIsDeadlineWorkspaceLoading(false);
+        return;
+      }
+
+      setIsDeadlineWorkspaceLoading(true);
+
+      fetchDeadlineWorkspace(intentId)
+        .then((response) => {
+          if (cancelled || !mountedRef.current) return;
+          setDeadlineWorkspace(response.workspace);
+        })
+        .catch((err) => {
+          if (cancelled || !mountedRef.current) return;
+          setDeadlineError(err instanceof Error ? err : new Error("Failed to load deadline reminders"));
+        })
+        .finally(() => {
+          if (cancelled || !mountedRef.current) return;
+          setIsDeadlineWorkspaceLoading(false);
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [intentId, deadlineNotificationsFeature.enabled]);
 
   useEffect(() => {
     let cancelled = false;
@@ -838,7 +1060,7 @@ export default function IntentWorkspacePage() {
 
   function updateLocalResponseWorkspaceItem(
     itemId: string,
-    patch: Partial<Pick<ResponseWorkspaceItem, "status" | "notes" | "title" | "dueAt">>,
+    patch: Partial<Pick<ResponseWorkspaceItem, "status" | "notes" | "title" | "dueAt" | "assignedUserId" | "assignedUser">>,
   ) {
     setResponseWorkspace((current) => current
       ? {
@@ -848,9 +1070,15 @@ export default function IntentWorkspacePage() {
       : current);
   }
 
+  async function refreshResponsePackageWorkspace(intentId: string) {
+    const packageResponse = await fetchResponsePackageWorkspace(intentId);
+    if (!mountedRef.current) return;
+    setResponsePackageWorkspace(packageResponse.packageWorkspace);
+  }
+
   const handleResponseWorkspaceItemUpdate = async (
     item: ResponseWorkspaceItem,
-    patch: Partial<Pick<ResponseWorkspaceItem, "status" | "notes" | "title" | "dueAt">>,
+    patch: Partial<Pick<ResponseWorkspaceItem, "status" | "notes" | "title" | "dueAt" | "assignedUserId">>,
   ) => {
     if (!intent || !responseWorkspaceFeature.enabled || responseWorkspaceSavingItemId) return;
 
@@ -866,6 +1094,7 @@ export default function IntentWorkspacePage() {
       if (!mountedRef.current) return;
 
       setResponseWorkspace(response.workspace);
+      await refreshResponsePackageWorkspace(intent.id);
       setResponseWorkspaceNotice(t("intentsPage.responseWorkspaceSaved"));
     } catch (err) {
       if (!mountedRef.current) return;
@@ -874,6 +1103,242 @@ export default function IntentWorkspacePage() {
       if (mountedRef.current) {
         setResponseWorkspaceSavingItemId(null);
       }
+    }
+  };
+
+  const handleSaveResponseWorkspaceLinkedArtifacts = async (
+    item: ResponseWorkspaceItem,
+    linkedArtifactIds: string[],
+  ) => {
+    if (!intent || !responseWorkspaceFeature.enabled || responseWorkspaceSavingItemId) return;
+
+    setResponseWorkspaceSavingItemId(item.id);
+    setResponseWorkspaceNotice("");
+    setResponseWorkspaceError(null);
+
+    try {
+      const response = await updateResponseWorkspaceItemArtifactLinks(intent.id, item.id, linkedArtifactIds);
+      if (!mountedRef.current) return;
+
+      setResponseWorkspace(response.workspace);
+      await refreshResponsePackageWorkspace(intent.id);
+      setResponseWorkspaceNotice(t("intentsPage.responseWorkspaceSaved"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setResponseWorkspaceError(err instanceof Error ? err : new Error("Failed to save response workspace"));
+    } finally {
+      if (mountedRef.current) {
+        setResponseWorkspaceSavingItemId(null);
+      }
+    }
+  };
+
+  const handleCreateResponseWorkspaceComment = async (item: ResponseWorkspaceItem) => {
+    if (!intent || !responseWorkspaceFeature.enabled || responseWorkspaceSavingCommentItemId) return;
+    const body = (responseWorkspaceCommentDrafts[item.id] ?? "").trim();
+    if (!body) return;
+
+    setResponseWorkspaceSavingCommentItemId(item.id);
+    setResponseWorkspaceNotice("");
+    setResponseWorkspaceError(null);
+
+    try {
+      const response = await createResponseWorkspaceComment(intent.id, {
+        itemId: item.id,
+        body,
+      });
+      if (!mountedRef.current) return;
+
+      setResponseWorkspaceCommentsByItemId((current) => ({
+        ...current,
+        [item.id]: [...(current[item.id] ?? []), response.comment],
+      }));
+      setResponseWorkspaceCommentDrafts((current) => ({ ...current, [item.id]: "" }));
+      setResponseWorkspaceNotice(t("intentsPage.responseWorkspaceCommentSaved"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setResponseWorkspaceError(err instanceof Error ? err : new Error("Failed to save response workspace comment"));
+    } finally {
+      if (mountedRef.current) {
+        setResponseWorkspaceSavingCommentItemId(null);
+      }
+    }
+  };
+
+  const handleCreateResponsePackageSnapshot = async () => {
+    if (!intent || !responseWorkspaceFeature.enabled || isResponsePackageSaving) return;
+
+    setIsResponsePackageSaving(true);
+    setResponseWorkspaceNotice("");
+    setResponseWorkspaceError(null);
+
+    try {
+      const response = await createResponsePackageSnapshot(intent.id, {});
+      if (!mountedRef.current) return;
+
+      setResponsePackageWorkspace(response.packageWorkspace);
+      setResponseWorkspaceNotice(t("intentsPage.responsePackageSnapshotCreated"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setResponseWorkspaceError(err instanceof Error ? err : new Error("Failed to create response package snapshot"));
+    } finally {
+      if (mountedRef.current) {
+        setIsResponsePackageSaving(false);
+      }
+    }
+  };
+
+  const handleCreateResponsePackageExport = async (snapshotId: string) => {
+    if (!intent || !responseWorkspaceFeature.enabled || responsePackageExportingSnapshotId) return;
+
+    setResponsePackageExportingSnapshotId(snapshotId);
+    setResponseWorkspaceNotice("");
+    setResponseWorkspaceError(null);
+
+    try {
+      const response = await createResponsePackageExport(intent.id, { snapshotId });
+      if (!mountedRef.current) return;
+
+      await refreshResponsePackageWorkspace(intent.id);
+      setResponseWorkspaceNotice(t("intentsPage.responsePackageExportCreated"));
+      window.open(response.exportRecord.downloadUrl, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setResponseWorkspaceError(err instanceof Error ? err : new Error("Failed to export response package"));
+    } finally {
+      if (mountedRef.current) {
+        setResponsePackageExportingSnapshotId(null);
+      }
+    }
+  };
+
+  const handleUploadArtifact = async () => {
+    if (!intent || !artifactVaultFeature.enabled || isArtifactUploading) return;
+
+    if (!artifactDraft.file) {
+      setArtifactVaultError(new Error("Artifact file is required"));
+      return;
+    }
+
+    setIsArtifactUploading(true);
+    setArtifactVaultNotice("");
+    setArtifactVaultError(null);
+
+    try {
+      const response = await uploadSupplierArtifact(intent.id, {
+        title: artifactDraft.title,
+        artifactType: artifactDraft.artifactType,
+        purpose: artifactDraft.purpose,
+        expiresAt: artifactDraft.expiresAt || null,
+        notes: artifactDraft.notes,
+        file: artifactDraft.file,
+      });
+      if (!mountedRef.current) return;
+
+      setArtifactVault(response.vault);
+      setArtifactDraft(defaultArtifactDraft);
+      setArtifactVaultNotice(t("intentsPage.artifactUploadSaved"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setArtifactVaultError(err instanceof Error ? err : new Error("Failed to upload artifact"));
+    } finally {
+      if (mountedRef.current) {
+        setIsArtifactUploading(false);
+      }
+    }
+  };
+
+  const handleCreateQuoteRequest = async () => {
+    if (!intent || !quoteWorkflowFeature.enabled || isQuoteSaving) return;
+
+    setIsQuoteSaving(true);
+    setQuoteNotice("");
+    setQuoteError(null);
+
+    try {
+      const response = await createQuoteRequestDraft(intent.id, {
+        partnerName: quoteDraft.partnerName,
+        contactName: quoteDraft.contactName,
+        contactEmail: quoteDraft.contactEmail,
+        title: quoteDraft.title,
+        description: quoteDraft.description,
+        requestedDueAt: quoteDraft.requestedDueAt || null,
+        lineItems: quoteDraft.lineItems,
+        artifactIds: quoteDraft.artifactIds,
+      });
+      if (!mountedRef.current) return;
+
+      setQuoteWorkspace(response.workspace);
+      setQuoteDraft(defaultQuoteDraft);
+      setQuoteNotice(t("intentsPage.quoteRequestSaved"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setQuoteError(err instanceof Error ? err : new Error("Failed to save quote request"));
+    } finally {
+      if (mountedRef.current) setIsQuoteSaving(false);
+    }
+  };
+
+  const handleQuoteRequestUpdate = async (
+    request: QuoteRequest,
+    patch: {
+      status?: QuoteRequestStatus;
+      quotedAmountCents?: number | null;
+      responseNotes?: string;
+    },
+  ) => {
+    if (!intent || !quoteWorkflowFeature.enabled || quoteSavingRequestId) return;
+
+    setQuoteSavingRequestId(request.id);
+    setQuoteNotice("");
+    setQuoteError(null);
+
+    try {
+      const response = await updateQuoteRequestDraft(intent.id, {
+        requestId: request.id,
+        ...patch,
+      });
+      if (!mountedRef.current) return;
+
+      setQuoteWorkspace(response.workspace);
+      setQuoteNotice(t("intentsPage.quoteRequestUpdated"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setQuoteError(err instanceof Error ? err : new Error("Failed to update quote request"));
+    } finally {
+      if (mountedRef.current) setQuoteSavingRequestId(null);
+    }
+  };
+
+  const handleDeadlineReminderUpdate = async (
+    reminder: DeadlineReminder,
+    action: "acknowledge" | "snooze",
+  ) => {
+    if (!intent || !deadlineNotificationsFeature.enabled || deadlineSavingReminderId) return;
+
+    setDeadlineSavingReminderId(reminder.id);
+    setDeadlineNotice("");
+    setDeadlineError(null);
+
+    try {
+      const response = await updateDeadlineReminder(intent.id, {
+        reminderId: reminder.id,
+        action,
+        snoozedUntil: action === "snooze" ? defaultSnoozeUntil() : undefined,
+      });
+      if (!mountedRef.current) return;
+
+      setDeadlineWorkspace(response.workspace);
+      setDeadlineNotice(
+        action === "snooze"
+          ? t("intentsPage.deadlineReminderSnoozed")
+          : t("intentsPage.deadlineReminderAcknowledged"),
+      );
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setDeadlineError(err instanceof Error ? err : new Error("Failed to update deadline reminder"));
+    } finally {
+      if (mountedRef.current) setDeadlineSavingReminderId(null);
     }
   };
 
@@ -955,6 +1420,23 @@ export default function IntentWorkspacePage() {
       }
     }
   };
+
+  if (isAuthLoading) {
+    return (
+      <div className="max-w-5xl mx-auto flex flex-col gap-6 pb-16 pt-4">
+        <Skeleton className="h-9 w-32" />
+        <div className="space-y-3">
+          <Skeleton className="h-5 w-40" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-5 w-2/3" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthRequiredState />;
+  }
 
   if (isLoading) {
     return (
@@ -1661,147 +2143,76 @@ export default function IntentWorkspacePage() {
         )}
       </section>
 
-      <section
-        className={`winbids-panel responseWorkspace rounded-lg border p-5 shadow-sm ${
-          responseWorkspaceFeature.enabled ? "border-slate-200 bg-white" : "border-amber-200 bg-amber-50/60"
-        }`}
-      >
-        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div>
-            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-700">
-              {responseWorkspaceFeature.enabled
-                ? t("intentsPage.responseWorkspace")
-                : t("intentsPage.nextPhasePreview")}
-            </p>
-            <h2 className="mt-1 flex items-center gap-2 text-2xl font-black text-slate-950">
-              <PackageCheck size={21} className="text-blue-700" aria-hidden="true" />
-              {t("intentsPage.responseWorkspace")}
-            </h2>
-            <p className="mt-2 max-w-3xl text-sm font-semibold leading-6 text-slate-500">
-              {t("intentsPage.responseWorkspaceDescription")}
-            </p>
-          </div>
-          <span className="w-fit rounded-full border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-700">
-            {responseWorkspaceFeature.enabled
-              ? responseWorkspace
-                ? `${responseWorkspace.summary.done}/${responseWorkspace.summary.total} ${t("intentsPage.responseWorkspaceDone")}`
-                : t("intentsPage.responseWorkspaceLoading")
-              : lockedFeatureMessage("response.workspace.create")}
-          </span>
-        </div>
+      <ResponseWorkspacePanel
+        assigneeOptions={responseWorkspaceAssigneeOptions}
+        availableArtifacts={artifactVault?.artifacts ?? []}
+        commentDrafts={responseWorkspaceCommentDrafts}
+        commentsByItemId={responseWorkspaceCommentsByItemId}
+        error={responseWorkspaceError}
+        featureEnabled={responseWorkspaceFeature.enabled}
+        isLoading={isResponseWorkspaceLoading}
+        isPackageSaving={isResponsePackageSaving}
+        exportingSnapshotId={responsePackageExportingSnapshotId}
+        lockedMessage={lockedFeatureMessage("response.workspace.create")}
+        notice={responseWorkspaceNotice}
+        onCommentDraftsChange={setResponseWorkspaceCommentDrafts}
+        onCreateComment={(item) => void handleCreateResponseWorkspaceComment(item)}
+        onCreatePackageExport={(snapshotId) => void handleCreateResponsePackageExport(snapshotId)}
+        onCreatePackageSnapshot={() => void handleCreateResponsePackageSnapshot()}
+        onLocalItemUpdate={updateLocalResponseWorkspaceItem}
+        onSaveLinkedArtifacts={(item, linkedArtifactIds) =>
+          void handleSaveResponseWorkspaceLinkedArtifacts(item, linkedArtifactIds)
+        }
+        onSaveItem={(item, patch) => void handleResponseWorkspaceItemUpdate(item, patch)}
+        savingCommentItemId={responseWorkspaceSavingCommentItemId}
+        savingItemId={responseWorkspaceSavingItemId}
+        t={t}
+        packageWorkspace={responsePackageWorkspace}
+        workspace={responseWorkspace}
+      />
 
-        {!responseWorkspaceFeature.enabled ? (
-          <LockedFeatureState
-            message={lockedFeatureMessage("response.workspace.create")}
-            title={t("intentsPage.responseWorkspace")}
-          />
-        ) : (
-          <div className="mt-5 space-y-4">
-            <div className="grid gap-3 sm:grid-cols-4">
-              {[
-                ["total", responseWorkspace?.summary.total ?? 0],
-                ["done", responseWorkspace?.summary.done ?? 0],
-                ["blocked", responseWorkspace?.summary.blocked ?? 0],
-                ["outlineSections", responseWorkspace?.summary.outlineSections ?? 0],
-              ].map(([key, value]) => (
-                <div key={key as string} className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-                  <p className="text-xs font-black uppercase text-slate-400">
-                    {t(`intentsPage.responseWorkspaceSummary.${key as string}`)}
-                  </p>
-                  <p className="mt-1 text-2xl font-black text-slate-950">{value}</p>
-                </div>
-              ))}
-            </div>
+      <ArtifactVaultPanel
+        draft={artifactDraft}
+        error={artifactVaultError}
+        featureEnabled={artifactVaultFeature.enabled}
+        isLoading={isArtifactVaultLoading}
+        isUploading={isArtifactUploading}
+        lockedMessage={lockedFeatureMessage("artifact.vault.upload")}
+        notice={artifactVaultNotice}
+        onDraftChange={setArtifactDraft}
+        onUpload={() => void handleUploadArtifact()}
+        t={t}
+        vault={artifactVault}
+      />
 
-            {isResponseWorkspaceLoading ? (
-              <p className="text-sm font-semibold text-slate-500">{t("intentsPage.responseWorkspaceLoading")}</p>
-            ) : (
-              <div className="grid gap-4 lg:grid-cols-2">
-                {responseWorkspaceKinds.map((kind) => {
-                  const items = responseWorkspace?.items.filter((item) => item.kind === kind) ?? [];
+      <QuoteWorkspacePanel
+        artifactVault={artifactVault}
+        draft={quoteDraft}
+        error={quoteError}
+        featureEnabled={quoteWorkflowFeature.enabled}
+        isLoading={isQuoteWorkspaceLoading}
+        isSaving={isQuoteSaving}
+        lockedMessage={lockedFeatureMessage("quote_workflow")}
+        notice={quoteNotice}
+        onCreateRequest={() => void handleCreateQuoteRequest()}
+        onDraftChange={setQuoteDraft}
+        onUpdateRequest={(request, patch) => void handleQuoteRequestUpdate(request, patch)}
+        savingRequestId={quoteSavingRequestId}
+        t={t}
+        workspace={quoteWorkspace}
+      />
 
-                  return (
-                    <article key={kind} className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-sm font-black text-slate-950">
-                          {t(`intentsPage.responseWorkspaceKinds.${kind}`)}
-                        </h3>
-                        <Badge variant="outline" className="border-slate-200 bg-white text-slate-700">
-                          {items.length} {t("intentsPage.items")}
-                        </Badge>
-                      </div>
-                      <div className="mt-3 grid gap-3">
-                        {items.map((item) => (
-                          <div key={item.id} className="rounded-lg border border-slate-200 bg-white p-3">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                              <div className="min-w-0">
-                                <p className="break-words text-sm font-black leading-6 text-slate-950">
-                                  {item.title}
-                                </p>
-                                {item.dueAt ? (
-                                  <p className="mt-1 text-xs font-bold text-slate-400">
-                                    {t("intentsPage.responseWorkspaceDue")}: {item.dueAt.slice(0, 10)}
-                                  </p>
-                                ) : null}
-                              </div>
-                              <Select
-                                value={item.status}
-                                onValueChange={(value) =>
-                                  void handleResponseWorkspaceItemUpdate(item, {
-                                    status: value as ResponseWorkspaceItemStatus,
-                                  })
-                                }
-                                disabled={Boolean(responseWorkspaceSavingItemId)}
-                              >
-                                <SelectTrigger className="h-9 min-w-40 rounded-lg border-slate-200 bg-white shadow-sm focus:ring-slate-900">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent className="rounded-lg border-slate-200 shadow-lg">
-                                  {responseWorkspaceStatusOptions.map((status) => (
-                                    <SelectItem key={status} value={status}>
-                                      {t(`intentsPage.responseWorkspaceStatuses.${status}`)}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <textarea
-                              value={item.notes}
-                              onChange={(event) => updateLocalResponseWorkspaceItem(item.id, { notes: event.target.value })}
-                              onBlur={(event) =>
-                                void handleResponseWorkspaceItemUpdate(item, { notes: event.currentTarget.value })
-                              }
-                              disabled={Boolean(responseWorkspaceSavingItemId)}
-                              placeholder={t("intentsPage.responseWorkspaceNotesPlaceholder")}
-                              className="mt-3 min-h-16 w-full resize-y rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2 text-sm outline-none focus:border-slate-900 focus:ring-2 focus:ring-slate-900/10"
-                            />
-                            {responseWorkspaceSavingItemId === item.id ? (
-                              <p className="mt-2 text-xs font-bold text-slate-400">
-                                {t("intentsPage.submissionSaving")}
-                              </p>
-                            ) : null}
-                          </div>
-                        ))}
-                        {items.length === 0 ? (
-                          <p className="text-sm font-semibold text-slate-500">
-                            {t("intentsPage.responseWorkspaceEmpty")}
-                          </p>
-                        ) : null}
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-
-            <p className="min-h-5 text-sm font-semibold text-slate-500">
-              {responseWorkspaceError
-                ? t("intentsPage.responseWorkspaceSaveError")
-                : responseWorkspaceNotice}
-            </p>
-          </div>
-        )}
-      </section>
+      <DeadlineNotificationsPanel
+        error={deadlineError}
+        featureEnabled={deadlineNotificationsFeature.enabled}
+        isLoading={isDeadlineWorkspaceLoading}
+        lockedMessage={lockedFeatureMessage("deadline_notifications")}
+        notice={deadlineNotice}
+        onUpdateReminder={(reminder, action) => void handleDeadlineReminderUpdate(reminder, action)}
+        savingReminderId={deadlineSavingReminderId}
+        t={t}
+        workspace={deadlineWorkspace}
+      />
 
       <section
         aria-label={`${knowledgeStationPanel} workflow coach`}

@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import type { AppDatabase } from "@/server/db/client";
+import { mysqlExecute, mysqlSelectMany, mysqlSelectOne } from "@/server/db/mysql-runtime";
 import { configRegistry } from "@/server/db/schema";
 
 export type ConfigScopeType = "global" | "organization";
@@ -72,6 +74,11 @@ export class ConfigRegistryValidationError extends Error {
     super(message);
     this.name = "ConfigRegistryValidationError";
   }
+}
+
+interface MysqlConfigRegistryStore {
+  query: (sql: string, values?: unknown[]) => Promise<[unknown[], unknown?]>;
+  execute: (sql: string, values?: never[]) => Promise<[unknown, unknown?]>;
 }
 
 const allowedKeysByModule: Record<ConfigModule, ReadonlySet<string>> = {
@@ -177,6 +184,14 @@ export function getConfigEntryById(db: AppDatabase, id: string): ConfigRegistryE
   return row ? parseEntry(row as Record<string, unknown>) : null;
 }
 
+export async function getConfigEntryByIdFromMysql(
+  mysql: MysqlConfigRegistryStore,
+  id: string,
+): Promise<ConfigRegistryEntry | null> {
+  const row = await mysqlSelectOne<Record<string, unknown>>(mysql, "SELECT * FROM config_registry WHERE id = ?", [id]);
+  return row ? parseEntry(row) : null;
+}
+
 export function listConfigEntries(db: AppDatabase, options: ListConfigEntriesOptions = {}): ConfigRegistryEntry[] {
   const clauses: string[] = [];
   const params: unknown[] = [];
@@ -217,6 +232,52 @@ export function listConfigEntries(db: AppDatabase, options: ListConfigEntriesOpt
     .map((row) => parseEntry(row as Record<string, unknown>));
 }
 
+export async function listConfigEntriesFromMysql(
+  mysql: MysqlConfigRegistryStore,
+  options: ListConfigEntriesOptions = {},
+): Promise<ConfigRegistryEntry[]> {
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+
+  if (options.scopeType) {
+    clauses.push("scope_type = ?");
+    params.push(options.scopeType);
+  }
+
+  if (options.scopeId !== undefined) {
+    if (options.scopeId === null) {
+      clauses.push("scope_id IS NULL");
+    } else {
+      clauses.push("scope_id = ?");
+      params.push(options.scopeId);
+    }
+  }
+
+  if (options.module) {
+    clauses.push("module = ?");
+    params.push(options.module);
+  }
+
+  if (options.configKey) {
+    clauses.push("config_key = ?");
+    params.push(options.configKey);
+  }
+
+  if (options.status) {
+    clauses.push("status = ?");
+    params.push(options.status);
+  }
+
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  const rows = await mysqlSelectMany<Record<string, unknown>>(
+    mysql,
+    `SELECT * FROM config_registry ${where} ORDER BY module, config_key, scope_type, scope_id, updated_at DESC`,
+    params,
+  );
+
+  return rows.map((row) => parseEntry(row));
+}
+
 export function getEffectiveConfigValue(
   db: AppDatabase,
   input: {
@@ -253,6 +314,44 @@ export function getEffectiveConfigValue(
   return row ? parseEntry(row as Record<string, unknown>) : null;
 }
 
+export async function getEffectiveConfigValueFromMysql(
+  mysql: MysqlConfigRegistryStore,
+  input: {
+    module: ConfigModule;
+    configKey: string;
+    organizationId?: string | null;
+    now?: string;
+  },
+): Promise<ConfigRegistryEntry | null> {
+  assertValidModuleKey(input.module, input.configKey);
+  const now = input.now ?? new Date().toISOString();
+  const scopeClauses = input.organizationId
+    ? "(scope_type = 'organization' AND scope_id = ?) OR (scope_type = 'global' AND scope_id IS NULL)"
+    : "scope_type = 'global' AND scope_id IS NULL";
+  const scopeParams = input.organizationId ? [input.organizationId] : [];
+
+  const row = await mysqlSelectOne<Record<string, unknown>>(
+    mysql,
+    `
+      SELECT *
+      FROM config_registry
+      WHERE module = ?
+        AND config_key = ?
+        AND status = 'active'
+        AND (${scopeClauses})
+        AND (effective_from IS NULL OR effective_from <= ?)
+        AND (effective_to IS NULL OR effective_to > ?)
+      ORDER BY
+        CASE scope_type WHEN 'organization' THEN 0 ELSE 1 END,
+        updated_at DESC
+      LIMIT 1
+    `,
+    [input.module, input.configKey, ...scopeParams, now, now],
+  );
+
+  return row ? parseEntry(row) : null;
+}
+
 export function upsertConfigEntry(db: AppDatabase, input: UpsertConfigEntryInput): ConfigRegistryEntry {
   const scopeType = input.scopeType ?? "global";
   const scopeId = input.scopeId ?? null;
@@ -281,7 +380,7 @@ export function upsertConfigEntry(db: AppDatabase, input: UpsertConfigEntryInput
     `)
     .get(scopeType, scopeId, input.module, input.configKey) as Record<string, unknown> | undefined;
 
-  const id = existing ? String(existing.id) : `cfg_${crypto.randomUUID()}`;
+  const id = existing ? String(existing.id) : `cfg_${randomUUID()}`;
   const createdAt = existing ? String(existing.created_at) : now;
   const createdBy = existing ? ((existing.created_by as string | null) ?? null) : (input.actorUserId ?? null);
 
@@ -325,6 +424,133 @@ export function upsertConfigEntry(db: AppDatabase, input: UpsertConfigEntryInput
     .run();
 
   return listConfigEntries(db, { scopeType, scopeId, module: input.module, configKey: input.configKey })[0];
+}
+
+export async function upsertConfigEntryFromMysql(
+  mysql: MysqlConfigRegistryStore,
+  input: UpsertConfigEntryInput,
+): Promise<ConfigRegistryEntry> {
+  const scopeType = input.scopeType ?? "global";
+  const scopeId = input.scopeId ?? null;
+  const status = input.status ?? "active";
+  const now = input.now ?? new Date().toISOString();
+  const changeReason = input.changeReason.trim();
+
+  assertValidScope(scopeType, scopeId);
+  assertValidModuleKey(input.module, input.configKey);
+  assertValidStatus(status);
+
+  if (!changeReason) {
+    throw new ConfigRegistryValidationError("Config changes require a change reason.");
+  }
+
+  const existing = await mysqlSelectOne<Record<string, unknown>>(
+    mysql,
+    `
+      SELECT *
+      FROM config_registry
+      WHERE scope_type = ?
+        AND COALESCE(scope_id, '') = COALESCE(?, '')
+        AND module = ?
+        AND config_key = ?
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `,
+    [scopeType, scopeId, input.module, input.configKey],
+  );
+
+  const id = existing ? String(existing.id) : `cfg_${randomUUID()}`;
+  const createdAt = existing ? String(existing.created_at) : now;
+  const createdBy = existing ? ((existing.created_by as string | null) ?? null) : (input.actorUserId ?? null);
+  const values = [
+    scopeType,
+    scopeId,
+    input.module,
+    input.configKey,
+    JSON.stringify(input.configValue),
+    input.schemaVersion ?? 1,
+    status,
+    input.effectiveFrom ?? null,
+    input.effectiveTo ?? null,
+    input.actorUserId ?? null,
+    changeReason,
+    input.auditEventId ?? null,
+    now,
+  ];
+
+  if (existing) {
+    await mysqlExecute(
+      mysql,
+      `
+        UPDATE config_registry
+        SET scope_type = ?,
+            scope_id = ?,
+            module = ?,
+            config_key = ?,
+            config_value_json = ?,
+            schema_version = ?,
+            status = ?,
+            effective_from = ?,
+            effective_to = ?,
+            updated_by = ?,
+            change_reason = ?,
+            audit_event_id = ?,
+            updated_at = ?
+        WHERE id = ?
+      `,
+      [...values, id],
+    );
+  } else {
+    await mysqlExecute(
+      mysql,
+      `
+        INSERT INTO config_registry (
+          id,
+          scope_type,
+          scope_id,
+          module,
+          config_key,
+          config_value_json,
+          schema_version,
+          status,
+          effective_from,
+          effective_to,
+          created_by,
+          updated_by,
+          change_reason,
+          audit_event_id,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        id,
+        scopeType,
+        scopeId,
+        input.module,
+        input.configKey,
+        JSON.stringify(input.configValue),
+        input.schemaVersion ?? 1,
+        status,
+        input.effectiveFrom ?? null,
+        input.effectiveTo ?? null,
+        createdBy,
+        input.actorUserId ?? null,
+        changeReason,
+        input.auditEventId ?? null,
+        createdAt,
+        now,
+      ],
+    );
+  }
+
+  const entry = await getConfigEntryByIdFromMysql(mysql, id);
+  if (!entry) {
+    throw new ConfigRegistryNotFoundError();
+  }
+
+  return entry;
 }
 
 export function seedDefaultConfigEntries(db: AppDatabase, now = new Date().toISOString()) {

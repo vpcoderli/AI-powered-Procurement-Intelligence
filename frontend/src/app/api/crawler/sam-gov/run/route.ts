@@ -6,14 +6,20 @@ import {
   type RunCrawlerSourceOnceOptions,
   type RunCrawlerSourceOnceResult,
 } from "@/server/crawler/orchestrator";
+import type { MysqlCrawlerLockStore } from "@/server/crawler/lock-repository";
 import {
   runSamGovCrawler,
   type SamGovCrawlerRunOptions,
 } from "@/server/crawler/sam-gov-runner";
 import { AdminAuthError, requireAdminAccess } from "@/server/admin/auth";
 import { db, type AppDatabase } from "@/server/db/client";
-import { sendMatchedAlertNotifications } from "@/server/notifications/service";
-import { matchEnabledSearchAlerts, type SearchAlertMatchResult } from "@/server/search-alerts/matcher";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { sendMatchedAlertNotifications, sendMatchedAlertNotificationsFromMysql } from "@/server/notifications/service";
+import {
+  matchEnabledSearchAlerts,
+  matchEnabledSearchAlertsFromMysql,
+  type SearchAlertMatchResult,
+} from "@/server/search-alerts/matcher";
 
 type Matcher = () => Promise<SearchAlertMatchResult>;
 type Orchestrator = <TOptions>(
@@ -23,6 +29,7 @@ type Orchestrator = <TOptions>(
 
 interface SamGovRunRouteDependencies {
   database: AppDatabase;
+  mysql?: MysqlCrawlerLockStore;
   owner: string;
   runner: CrawlerRunner<SamGovCrawlerRunOptions>;
   matcher: Matcher;
@@ -74,12 +81,17 @@ function defaultOwner() {
 
 export function createSamGovRunPost(overrides: Partial<SamGovRunRouteDependencies> = {}) {
   const database = overrides.database ?? db;
+  const mysql = overrides.mysql ?? (!overrides.database && isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : undefined);
   const dependencies: SamGovRunRouteDependencies = {
     database,
+    mysql,
     owner: defaultOwner(),
     runner: runSamGovCrawler,
-    matcher: () => matchEnabledSearchAlerts(database),
-    notifier: ({ alertMatching }) => sendMatchedAlertNotifications(database, alertMatching),
+    matcher: () => mysql ? matchEnabledSearchAlertsFromMysql(mysql) : matchEnabledSearchAlerts(database),
+    notifier: ({ alertMatching }) =>
+      mysql
+        ? sendMatchedAlertNotificationsFromMysql(mysql, alertMatching)
+        : sendMatchedAlertNotifications(database, alertMatching),
     runCrawlerSourceOnce,
     ...overrides,
   };
@@ -98,6 +110,7 @@ export function createSamGovRunPost(overrides: Partial<SamGovRunRouteDependencie
     }
 
     const result = await dependencies.runCrawlerSourceOnce(dependencies.database, {
+      mysql: dependencies.mysql,
       source: "SAM.gov",
       owner: dependencies.owner,
       runner: dependencies.runner,

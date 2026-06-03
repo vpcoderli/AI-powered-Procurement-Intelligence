@@ -7,6 +7,7 @@ import { seedDatabase } from "./seed";
 
 export interface TestDatabase {
   db: AppDatabase;
+  directory: string;
   databasePath: string;
   cleanup: () => Promise<void>;
 }
@@ -23,6 +24,7 @@ export async function createTestDatabase(options: { seed?: boolean } = {}): Prom
 
   return {
     db,
+    directory,
     databasePath,
     cleanup: async () => {
       db.$client.close();

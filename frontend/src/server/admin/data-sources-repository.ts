@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import {
   getStateCrawlerSourceMetadata,
@@ -5,12 +6,24 @@ import {
   type CrawlerAdapterKind,
   type CrawlerCapability,
   type CrawlerMaturity,
+  type SourceAuthority,
+  type SourceEvidenceMode,
   type SourceAccessPattern,
   type SourceApprovalStatus,
   type SourceLegalReviewStatus,
+  type SourceTrustStatus,
 } from "@/lib/state-crawler-sources";
 import type { AppDatabase } from "@/server/db/client";
-import { crawlerLogs, dataSources } from "@/server/db/schema";
+import { mysqlExecute, mysqlSelectMany, mysqlSelectOne } from "@/server/db/mysql-runtime";
+import { crawlerLogs, dataSources, sourceApprovalEvents } from "@/server/db/schema";
+import {
+  latestLiveSourceHealthBySource,
+  listLiveSourceHealthSnapshots,
+  listLiveSourceHealthSnapshotsFromMysql,
+  type LatestLiveSourceHealth,
+  sourceHealthTrendBySource,
+  type SourceHealthTrend,
+} from "@/server/source-validity/health-snapshots";
 
 export interface AdminCrawlerLog {
   id: string;
@@ -49,6 +62,10 @@ export interface AdminDataSource {
   crawlerMaturity: CrawlerMaturity;
   crawlerCapabilities: CrawlerCapability[];
   crawlerBaseUrl: string | null;
+  sourceAuthority: SourceAuthority | null;
+  trustStatus: SourceTrustStatus | null;
+  evidenceMode: SourceEvidenceMode | null;
+  validityNotes: string | null;
   providerFamily: string;
   accessMode: string;
   sourceType: string;
@@ -72,6 +89,24 @@ export interface AdminDataSource {
   createdAt: string;
   updatedAt: string;
   latestLog: AdminCrawlerLog | null;
+  latestLiveHealth: AdminLiveSourceHealth | null;
+  sourceHealthTrend: AdminSourceHealthTrend | null;
+  approvalHistory: AdminSourceApprovalEvent[];
+}
+
+export interface AdminSourceApprovalEvent {
+  id: string;
+  sourceId: string;
+  actorUserId: string | null;
+  action: string;
+  previousApprovalStatus: SourceApprovalStatus | null;
+  nextApprovalStatus: SourceApprovalStatus | null;
+  previousLegalReviewStatus: SourceLegalReviewStatus | null;
+  nextLegalReviewStatus: SourceLegalReviewStatus | null;
+  previousApprovedForIngestion: boolean | null;
+  nextApprovedForIngestion: boolean | null;
+  reason: string | null;
+  createdAt: string;
 }
 
 export interface AdminDataSourceSummary {
@@ -85,6 +120,24 @@ export interface AdminDataSourcesResponse {
   summary: AdminDataSourceSummary;
   sources: AdminDataSource[];
 }
+
+export interface AdminLiveSourceHealth {
+  checkedAt: string;
+  status: string;
+  method: string | null;
+  httpStatus: number | null;
+  statusCode: number | null;
+  statusText: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  error: string | null;
+  latencyMs: number | null;
+  url: string | null;
+  operationalSeverity: string | null;
+  recommendedAction: string | null;
+}
+
+export type AdminSourceHealthTrend = SourceHealthTrend;
 
 interface MysqlAdminCrawlerLogRow {
   id: string;
@@ -105,8 +158,14 @@ interface MysqlAdminCrawlerLogRow {
 }
 
 export interface MysqlAdminCrawlerLogsReader {
-  query: (sql: string, values?: unknown[]) => Promise<[MysqlAdminCrawlerLogRow[]] | [MysqlAdminCrawlerLogRow[], unknown]>;
+  query: (sql: string, values?: unknown[]) => Promise<[unknown[], unknown?]>;
 }
+
+export interface MysqlDataSourcesStore extends MysqlAdminCrawlerLogsReader {
+  execute: (sql: string, values?: never[]) => Promise<[unknown, unknown?]>;
+}
+
+type DataSourceRow = typeof dataSources.$inferSelect;
 
 export class AdminDataSourceNotFoundError extends Error {
   constructor(id: string) {
@@ -115,7 +174,21 @@ export class AdminDataSourceNotFoundError extends Error {
   }
 }
 
+export interface UpdateAdminDataSourceInput {
+  isEnabled?: boolean;
+  approvedForIngestion?: boolean;
+  approvalStatus?: SourceApprovalStatus;
+  legalReviewStatus?: SourceLegalReviewStatus;
+  approvalNotes?: string | null;
+}
+
+export interface UpdateAdminDataSourceOptions {
+  actorUserId?: string | null;
+}
+
 const CRAWLER_LOG_SOURCE_BY_STATE = STATE_CRAWLER_SOURCE_IDS_BY_STATE;
+
+type SourceApprovalEventRow = typeof sourceApprovalEvents.$inferSelect;
 
 function crawlerLogKeysForSource(source: typeof dataSources.$inferSelect) {
   return [CRAWLER_LOG_SOURCE_BY_STATE[source.stateCode], source.label, source.id].filter(
@@ -133,6 +206,120 @@ function latestLogForSource(
   }
 
   return null;
+}
+
+function toAdminSourceApprovalEvent(row: SourceApprovalEventRow): AdminSourceApprovalEvent {
+  return {
+    id: row.id,
+    sourceId: row.sourceId,
+    actorUserId: row.actorUserId,
+    action: row.action,
+    previousApprovalStatus: row.previousApprovalStatus as SourceApprovalStatus | null,
+    nextApprovalStatus: row.nextApprovalStatus as SourceApprovalStatus | null,
+    previousLegalReviewStatus: row.previousLegalReviewStatus as SourceLegalReviewStatus | null,
+    nextLegalReviewStatus: row.nextLegalReviewStatus as SourceLegalReviewStatus | null,
+    previousApprovedForIngestion:
+      row.previousApprovedForIngestion === null ? null : row.previousApprovedForIngestion === 1,
+    nextApprovedForIngestion: row.nextApprovedForIngestion === null ? null : row.nextApprovedForIngestion === 1,
+    reason: row.reason,
+    createdAt: row.createdAt,
+  };
+}
+
+function approvalHistoryBySource(rows: SourceApprovalEventRow[]) {
+  const grouped = new Map<string, AdminSourceApprovalEvent[]>();
+
+  for (const row of rows) {
+    const history = grouped.get(row.sourceId) ?? [];
+    if (history.length < 5) {
+      history.push(toAdminSourceApprovalEvent(row));
+      grouped.set(row.sourceId, history);
+    }
+  }
+
+  return grouped;
+}
+
+function latestLiveHealthForSource(
+  source: typeof dataSources.$inferSelect,
+  crawlerSourceId: string | null,
+  latestLiveHealthBySource: Map<string, LatestLiveSourceHealth>,
+) {
+  const candidates = [
+    crawlerSourceId,
+    source.id,
+    source.stateCode.toLowerCase(),
+    source.stateCode,
+  ].filter((value): value is string => Boolean(value));
+
+  for (const candidate of candidates) {
+    const health = latestLiveHealthBySource.get(candidate);
+    if (health) {
+      const statusCode = latestHealthStatusCode(health.result);
+      const error = latestHealthError(health.result);
+
+      return {
+        checkedAt: health.checkedAt,
+        status: health.result.status,
+        method: health.result.method,
+        httpStatus: statusCode,
+        statusCode,
+        statusText: health.result.statusText,
+        errorCode: health.result.errorCode,
+        errorMessage: error,
+        error,
+        latencyMs: latestHealthLatencyMs(health.result),
+        url: health.result.url,
+        operationalSeverity: latestHealthStringField(health.result, "operationalSeverity"),
+        recommendedAction: latestHealthStringField(health.result, "recommendedAction"),
+      } satisfies AdminLiveSourceHealth;
+    }
+  }
+
+  return null;
+}
+
+function sourceHealthTrendForSource(
+  source: typeof dataSources.$inferSelect,
+  crawlerSourceId: string | null,
+  trendBySource: Map<string, SourceHealthTrend>,
+) {
+  const candidates = [
+    crawlerSourceId,
+    source.id,
+    source.stateCode.toLowerCase(),
+    source.stateCode,
+  ].filter((value): value is string => Boolean(value));
+
+  for (const candidate of candidates) {
+    const trend = trendBySource.get(candidate);
+    if (trend) return trend;
+  }
+
+  return null;
+}
+
+
+function latestHealthNumberField(result: LatestLiveSourceHealth["result"], key: string) {
+  const value = (result as unknown as Record<string, unknown>)[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function latestHealthStringField(result: LatestLiveSourceHealth["result"], key: string) {
+  const value = (result as unknown as Record<string, unknown>)[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function latestHealthStatusCode(result: LatestLiveSourceHealth["result"]) {
+  return result.httpStatus ?? latestHealthNumberField(result, "statusCode");
+}
+
+function latestHealthError(result: LatestLiveSourceHealth["result"]) {
+  return result.errorMessage ?? latestHealthStringField(result, "error");
+}
+
+function latestHealthLatencyMs(result: LatestLiveSourceHealth["result"]) {
+  return result.latencyMs ?? latestHealthNumberField(result, "latency");
 }
 
 function metadataStringValue(metadata: unknown, key: string) {
@@ -255,12 +442,16 @@ function booleanOverride(value: number | null, fallback: boolean) {
 }
 
 function toAdminSource(
-  row: typeof dataSources.$inferSelect,
+  row: DataSourceRow,
   latestLog: AdminCrawlerLog | null,
+  latestLiveHealthBySource = new Map<string, LatestLiveSourceHealth>(),
+  sourceHealthTrendBySourceMap = new Map<string, SourceHealthTrend>(),
+  approvalHistory: AdminSourceApprovalEvent[] = [],
 ): AdminDataSource {
   const crawlerMetadata = row.issuerType === "state" ? getStateCrawlerSourceMetadata(row.stateCode) : null;
   const crawlerCapabilities = [...(crawlerMetadata?.capabilities ?? [])];
   const crawlerMaturity = crawlerMetadata?.maturity ?? "none";
+  const crawlerSourceId = crawlerMetadata?.id ?? null;
   const defaultGovernance = crawlerMetadata ?? {
     approvedForIngestion: row.issuerType !== "state",
     approvalStatus: "approved" as SourceApprovalStatus,
@@ -282,11 +473,15 @@ function toAdminSource(
     lastSuccessAt: row.lastSuccessAt,
     lastFailureAt: row.lastFailureAt,
     consecutiveFailures: row.consecutiveFailures,
-    crawlerSourceId: crawlerMetadata?.id ?? null,
+    crawlerSourceId,
     crawlerAdapterKind: crawlerMetadata?.adapterKind ?? "none",
     crawlerMaturity,
     crawlerCapabilities,
     crawlerBaseUrl: crawlerMetadata?.baseUrl ?? null,
+    sourceAuthority: crawlerMetadata?.sourceAuthority ?? null,
+    trustStatus: crawlerMetadata?.trustStatus ?? null,
+    evidenceMode: crawlerMetadata?.evidenceMode ?? null,
+    validityNotes: crawlerMetadata?.validityNotes ?? null,
     providerFamily: row.providerFamily ?? defaultProviderFamily(row),
     accessMode: row.accessMode ?? "http",
     sourceType: row.sourceType ?? "primary",
@@ -317,6 +512,58 @@ function toAdminSource(
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     latestLog,
+    latestLiveHealth: latestLiveHealthForSource(row, crawlerSourceId, latestLiveHealthBySource),
+    sourceHealthTrend: sourceHealthTrendForSource(row, crawlerSourceId, sourceHealthTrendBySourceMap),
+    approvalHistory,
+  };
+}
+
+function dataSourceSelectSql(where = "") {
+  return `
+    SELECT
+      id,
+      label,
+      issuer_type AS issuerType,
+      state_code AS stateCode,
+      base_url AS baseUrl,
+      is_enabled AS isEnabled,
+      cadence,
+      provider_family AS providerFamily,
+      access_mode AS accessMode,
+      source_type AS sourceType,
+      source_confidence AS sourceConfidence,
+      activation_status AS activationStatus,
+      requires_browser AS requiresBrowser,
+      requires_manual AS requiresManual,
+      requires_login AS requiresLogin,
+      supports_query AS supportsQuery,
+      supports_pagination AS supportsPagination,
+      supports_attachment_metadata AS supportsAttachmentMetadata,
+      supports_detail_page_fetch AS supportsDetailPageFetch,
+      fallback_notes AS fallbackNotes,
+      approved_for_ingestion AS approvedForIngestion,
+      approval_status AS approvalStatus,
+      access_pattern AS accessPattern,
+      legal_review_status AS legalReviewStatus,
+      source_owner AS sourceOwner,
+      approval_notes AS approvalNotes,
+      last_approval_reviewed_at AS lastApprovalReviewedAt,
+      last_success_at AS lastSuccessAt,
+      last_failure_at AS lastFailureAt,
+      consecutive_failures AS consecutiveFailures,
+      created_at AS createdAt,
+      updated_at AS updatedAt
+    FROM data_sources
+    ${where}
+  `;
+}
+
+function dataSourcesSummary(sources: AdminDataSource[]): AdminDataSourceSummary {
+  return {
+    totalSources: sources.length,
+    enabledSources: sources.filter((source) => source.isEnabled).length,
+    healthySources: sources.filter(isHealthy).length,
+    failingSources: sources.filter(isFailing).length,
   };
 }
 
@@ -339,6 +586,12 @@ function isFailing(source: AdminDataSource) {
 export async function listAdminDataSources(db: AppDatabase): Promise<AdminDataSourcesResponse> {
   const sourceRows = db.select().from(dataSources).orderBy(dataSources.label).all();
   const logRows = db.select().from(crawlerLogs).orderBy(desc(crawlerLogs.startedAt)).all();
+  const approvalHistory = approvalHistoryBySource(
+    db.select().from(sourceApprovalEvents).orderBy(desc(sourceApprovalEvents.createdAt)).all(),
+  );
+  const healthSnapshots = listLiveSourceHealthSnapshots(db, 10);
+  const latestLiveHealth = latestLiveSourceHealthBySource(healthSnapshots.slice(0, 1));
+  const sourceHealthTrend = sourceHealthTrendBySource(healthSnapshots);
   const latestLogsBySource = new Map<string, AdminCrawlerLog>();
 
   for (const row of logRows) {
@@ -347,15 +600,52 @@ export async function listAdminDataSources(db: AppDatabase): Promise<AdminDataSo
     }
   }
 
-  const sources = sourceRows.map((source) => toAdminSource(source, latestLogForSource(source, latestLogsBySource)));
+  const sources = sourceRows.map((source) =>
+    toAdminSource(
+      source,
+      latestLogForSource(source, latestLogsBySource),
+      latestLiveHealth,
+      sourceHealthTrend,
+      approvalHistory.get(source.id),
+    ),
+  );
 
   return {
-    summary: {
-      totalSources: sources.length,
-      enabledSources: sources.filter((source) => source.isEnabled).length,
-      healthySources: sources.filter(isHealthy).length,
-      failingSources: sources.filter(isFailing).length,
-    },
+    summary: dataSourcesSummary(sources),
+    sources,
+  };
+}
+
+export async function listAdminDataSourcesFromMysql(mysql: MysqlDataSourcesStore): Promise<AdminDataSourcesResponse> {
+  const sourceRows = await mysqlSelectMany<DataSourceRow>(
+    mysql,
+    `${dataSourceSelectSql()} ORDER BY label ASC`,
+  );
+  const logRows = await listAdminCrawlerLogsFromMysql(mysql, { limit: 100 });
+  const approvalHistory = approvalHistoryBySource(await listSourceApprovalEventsFromMysql(mysql));
+  const healthSnapshots = await listLiveSourceHealthSnapshotsFromMysql(mysql, 10);
+  const latestLiveHealth = latestLiveSourceHealthBySource(healthSnapshots.slice(0, 1));
+  const sourceHealthTrend = sourceHealthTrendBySource(healthSnapshots);
+  const latestLogsBySource = new Map<string, AdminCrawlerLog>();
+
+  for (const row of logRows) {
+    if (!latestLogsBySource.has(row.source)) {
+      latestLogsBySource.set(row.source, row);
+    }
+  }
+
+  const sources = sourceRows.map((source) =>
+    toAdminSource(
+      source,
+      latestLogForSource(source, latestLogsBySource),
+      latestLiveHealth,
+      sourceHealthTrend,
+      approvalHistory.get(source.id),
+    ),
+  );
+
+  return {
+    summary: dataSourcesSummary(sources),
     sources,
   };
 }
@@ -363,7 +653,8 @@ export async function listAdminDataSources(db: AppDatabase): Promise<AdminDataSo
 export async function updateAdminDataSource(
   db: AppDatabase,
   id: string,
-  input: { isEnabled: boolean },
+  input: UpdateAdminDataSourceInput,
+  options: UpdateAdminDataSourceOptions = {},
 ): Promise<AdminDataSource> {
   const existing = db.select().from(dataSources).where(eq(dataSources.id, id)).limit(1).get();
   if (!existing) {
@@ -371,8 +662,20 @@ export async function updateAdminDataSource(
   }
 
   const updatedAt = new Date().toISOString();
+  const previousSource = toAdminSource(existing, null);
+  const lastApprovalReviewedAt = hasGovernanceUpdate(input) ? updatedAt : existing.lastApprovalReviewedAt;
   db.update(dataSources)
-    .set({ isEnabled: input.isEnabled ? 1 : 0, updatedAt })
+    .set({
+      ...(input.isEnabled !== undefined ? { isEnabled: input.isEnabled ? 1 : 0 } : {}),
+      ...(input.approvedForIngestion !== undefined
+        ? { approvedForIngestion: input.approvedForIngestion ? 1 : 0 }
+        : {}),
+      ...(input.approvalStatus !== undefined ? { approvalStatus: input.approvalStatus } : {}),
+      ...(input.legalReviewStatus !== undefined ? { legalReviewStatus: input.legalReviewStatus } : {}),
+      ...(input.approvalNotes !== undefined ? { approvalNotes: input.approvalNotes } : {}),
+      lastApprovalReviewedAt,
+      updatedAt,
+    })
     .where(eq(dataSources.id, id))
     .run();
 
@@ -381,7 +684,180 @@ export async function updateAdminDataSource(
     throw new AdminDataSourceNotFoundError(id);
   }
 
-  return toAdminSource(updated, null);
+  if (hasGovernanceUpdate(input)) {
+    const nextSource = toAdminSource(updated, null);
+    db.insert(sourceApprovalEvents)
+      .values({
+        id: `source_approval_${randomUUID()}`,
+        sourceId: id,
+        actorUserId: options.actorUserId ?? null,
+        action: actionForApprovalChange(input),
+        previousApprovalStatus: previousSource.approvalStatus,
+        nextApprovalStatus: nextSource.approvalStatus,
+        previousLegalReviewStatus: previousSource.legalReviewStatus,
+        nextLegalReviewStatus: nextSource.legalReviewStatus,
+        previousApprovedForIngestion: previousSource.approvedForIngestion ? 1 : 0,
+        nextApprovedForIngestion: nextSource.approvedForIngestion ? 1 : 0,
+        reason: input.approvalNotes ?? null,
+        createdAt: updatedAt,
+      })
+      .run();
+  }
+
+  const approvalHistory = approvalHistoryBySource(
+    db.select().from(sourceApprovalEvents).where(eq(sourceApprovalEvents.sourceId, id)).orderBy(desc(sourceApprovalEvents.createdAt)).all(),
+  );
+
+  return toAdminSource(updated, null, undefined, undefined, approvalHistory.get(id));
+}
+
+export async function updateAdminDataSourceFromMysql(
+  mysql: MysqlDataSourcesStore,
+  id: string,
+  input: UpdateAdminDataSourceInput,
+  options: UpdateAdminDataSourceOptions = {},
+): Promise<AdminDataSource> {
+  const existing = await mysqlSelectOne<DataSourceRow>(
+    mysql,
+    `${dataSourceSelectSql("WHERE id = ?")} LIMIT 1`,
+    [id],
+  );
+  if (!existing) {
+    throw new AdminDataSourceNotFoundError(id);
+  }
+
+  const updatedAt = new Date().toISOString();
+  const previousSource = toAdminSource(existing, null);
+  const fields: string[] = [];
+  const values: unknown[] = [];
+
+  if (input.isEnabled !== undefined) {
+    fields.push("is_enabled = ?");
+    values.push(input.isEnabled ? 1 : 0);
+  }
+  if (input.approvedForIngestion !== undefined) {
+    fields.push("approved_for_ingestion = ?");
+    values.push(input.approvedForIngestion ? 1 : 0);
+  }
+  if (input.approvalStatus !== undefined) {
+    fields.push("approval_status = ?");
+    values.push(input.approvalStatus);
+  }
+  if (input.legalReviewStatus !== undefined) {
+    fields.push("legal_review_status = ?");
+    values.push(input.legalReviewStatus);
+  }
+  if (input.approvalNotes !== undefined) {
+    fields.push("approval_notes = ?");
+    values.push(input.approvalNotes);
+  }
+  if (hasGovernanceUpdate(input)) {
+    fields.push("last_approval_reviewed_at = ?");
+    values.push(updatedAt);
+  }
+
+  fields.push("updated_at = ?");
+  values.push(updatedAt, id);
+
+  await mysqlExecute(
+    mysql,
+    `UPDATE data_sources SET ${fields.join(", ")} WHERE id = ?`,
+    values,
+  );
+
+  const updated = await mysqlSelectOne<DataSourceRow>(
+    mysql,
+    `${dataSourceSelectSql("WHERE id = ?")} LIMIT 1`,
+    [id],
+  );
+  if (!updated) {
+    throw new AdminDataSourceNotFoundError(id);
+  }
+
+  if (hasGovernanceUpdate(input)) {
+    const nextSource = toAdminSource(updated, null);
+    await mysqlExecute(
+      mysql,
+      `
+        INSERT INTO source_approval_events (
+          id,
+          source_id,
+          actor_user_id,
+          action,
+          previous_approval_status,
+          next_approval_status,
+          previous_legal_review_status,
+          next_legal_review_status,
+          previous_approved_for_ingestion,
+          next_approved_for_ingestion,
+          reason,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        `source_approval_${randomUUID()}`,
+        id,
+        options.actorUserId ?? null,
+        actionForApprovalChange(input),
+        previousSource.approvalStatus,
+        nextSource.approvalStatus,
+        previousSource.legalReviewStatus,
+        nextSource.legalReviewStatus,
+        previousSource.approvedForIngestion ? 1 : 0,
+        nextSource.approvedForIngestion ? 1 : 0,
+        input.approvalNotes ?? null,
+        updatedAt,
+      ],
+    );
+  }
+
+  const approvalHistory = approvalHistoryBySource(await listSourceApprovalEventsFromMysql(mysql, id));
+
+  return toAdminSource(updated, null, undefined, undefined, approvalHistory.get(id));
+}
+
+async function listSourceApprovalEventsFromMysql(mysql: MysqlDataSourcesStore, sourceId?: string) {
+  const where = sourceId ? "WHERE source_id = ?" : "";
+  return mysqlSelectMany<SourceApprovalEventRow>(
+    mysql,
+    `
+      SELECT
+        id,
+        source_id AS sourceId,
+        actor_user_id AS actorUserId,
+        action,
+        previous_approval_status AS previousApprovalStatus,
+        next_approval_status AS nextApprovalStatus,
+        previous_legal_review_status AS previousLegalReviewStatus,
+        next_legal_review_status AS nextLegalReviewStatus,
+        previous_approved_for_ingestion AS previousApprovedForIngestion,
+        next_approved_for_ingestion AS nextApprovedForIngestion,
+        reason,
+        created_at AS createdAt
+      FROM source_approval_events
+      ${where}
+      ORDER BY created_at DESC
+      LIMIT 500
+    `,
+    sourceId ? [sourceId] : [],
+  );
+}
+
+function actionForApprovalChange(input: UpdateAdminDataSourceInput) {
+  if (input.approvalStatus === "approved") return "approved";
+  if (input.approvalStatus === "blocked") return "blocked";
+  if (input.approvalStatus === "needs_review") return "held";
+  return "updated";
+}
+
+function hasGovernanceUpdate(input: UpdateAdminDataSourceInput) {
+  return (
+    input.approvedForIngestion !== undefined ||
+    input.approvalStatus !== undefined ||
+    input.legalReviewStatus !== undefined ||
+    input.approvalNotes !== undefined
+  );
 }
 
 export async function listAdminCrawlerLogs(
@@ -404,7 +880,8 @@ export async function listAdminCrawlerLogsFromMysql(
   options: { limit?: number } = {},
 ): Promise<AdminCrawlerLog[]> {
   const limit = Math.min(Math.max(options.limit ?? 25, 1), 100);
-  const [rows] = await mysql.query(
+  const rows = await mysqlSelectMany<MysqlAdminCrawlerLogRow>(
+    mysql,
     `
       SELECT
         id,

@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { requireAdminAccess, AdminAuthError } from "@/server/admin/auth";
-import { listAdminDataSources } from "@/server/admin/data-sources-repository";
+import {
+  listAdminDataSources,
+  listAdminDataSourcesFromMysql,
+  type MysqlDataSourcesStore,
+} from "@/server/admin/data-sources-repository";
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -22,12 +27,18 @@ async function resolveDatabase(database?: AppDatabase) {
   return client.db;
 }
 
-export function createAdminDataSourcesGet(database?: AppDatabase) {
+export function createAdminDataSourcesGet(database?: AppDatabase, mysql?: MysqlDataSourcesStore) {
+  const shouldUseMysqlRuntime = () => Boolean(mysql) || (!database && isMysqlDatabaseUrlConfigured());
+
   return async function GET(request: Request) {
     try {
       const resolvedDb = await resolveDatabase(database);
-      await requireAdminAccess(resolvedDb, request);
-      return NextResponse.json(await listAdminDataSources(resolvedDb));
+      await requireAdminAccess(resolvedDb, request, { roles: ["admin", "operator", "support"] });
+      return NextResponse.json(
+        shouldUseMysqlRuntime()
+          ? await listAdminDataSourcesFromMysql(mysql ?? resolveMysqlPool())
+          : await listAdminDataSources(resolvedDb),
+      );
     } catch (error) {
       return routeError(error);
     }

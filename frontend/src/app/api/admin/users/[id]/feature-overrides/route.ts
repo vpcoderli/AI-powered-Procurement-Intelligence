@@ -4,11 +4,14 @@ import {
   AdminUserFeatureOverrideError,
   AdminUserNotFoundError,
   listAdminUserFeatureOverrides,
+  listAdminUserFeatureOverridesFromMysql,
   updateAdminUserFeatureOverride,
+  updateAdminUserFeatureOverrideFromMysql,
   type UpdateAdminUserFeatureOverrideInput,
 } from "@/server/admin/users-repository";
 import { isFeatureKey } from "@/server/auth/entitlements";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -73,8 +76,11 @@ export async function GET(request: Request, context: RouteContext) {
   try {
     await requireAdmin(db, request);
     const { id } = await context.params;
+    const response = isMysqlDatabaseUrlConfigured()
+      ? await listAdminUserFeatureOverridesFromMysql(resolveMysqlPool(), id)
+      : listAdminUserFeatureOverrides(db, id);
 
-    return NextResponse.json(listAdminUserFeatureOverrides(db, id));
+    return NextResponse.json(response);
   } catch (error) {
     return routeError(error);
   }
@@ -91,11 +97,15 @@ export async function PATCH(request: Request, context: RouteContext) {
   try {
     const principal = await requireAdmin(db, request);
     const { id } = await context.params;
-
-    return NextResponse.json(updateAdminUserFeatureOverride(db, id, input, {
+    const actor = {
       actorKind: principal.kind,
       actorUserId: principal.kind === "admin" ? principal.userId : null,
-    }));
+    };
+    const response = isMysqlDatabaseUrlConfigured()
+      ? await updateAdminUserFeatureOverrideFromMysql(resolveMysqlPool(), id, input, actor)
+      : updateAdminUserFeatureOverride(db, id, input, actor);
+
+    return NextResponse.json(response);
   } catch (error) {
     return routeError(error);
   }

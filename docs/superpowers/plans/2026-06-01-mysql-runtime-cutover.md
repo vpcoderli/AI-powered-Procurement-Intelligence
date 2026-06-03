@@ -13,13 +13,10 @@
 ## Current Inventory
 
 - Production files still touching SQLite-style database APIs: 122.
-- Already MySQL-aware: migration runner, smoke verifier, auth/session/logout/register/login/password reset, admin auth gate, account profile/password/delete, workspace read/update, billing subscription/checkout/portal/cancel/webhook/invoices, supplier profile, bid search/detail/saved-bids/attachment metadata, search alerts CRUD/quota, intent create/list/detail/status, `/api/health/scrapers`, and `/api/admin/crawler-logs`.
-- Remaining high-risk sync domains:
-  - Account export/usage/preferences and workspace invites/member management/ownership.
-  - Compliance, submission, response workspace, pursuit, qualification.
-  - Admin users, admin bid QA, config registry, events/outbox.
-  - Search alert digest history, notifications, and workers.
-  - Crawler locks/log writes/orchestration.
+- Already MySQL-aware: migration runner, smoke verifier, repeatable SQLite-to-MySQL data import, auth/session/logout/register/login/password reset, admin auth gate, admin users/feature overrides/audit logs, admin config registry/audit writes/event outbox delivery, admin data source list/update, admin bid QA list/review/display/correction/batch writes, account profile/password/delete/export/usage/notification preferences, workspace read/update/invitations/member management/ownership transfer, billing subscription/checkout/portal/cancel/webhook/invoices/dunning scheduling, supplier profile, bid search/detail/saved-bids/attachment metadata, search alerts CRUD/quota/digest history, notification outbox/admin recent/delivery, intent create/list/detail/status, compliance manifest, submission guidance/confirmation, response workspace, pursuit decision, qualification citations/freshness/Q&A, `/api/health/scrapers`, `/api/admin/crawler-logs`, crawler locks/source enablement orchestration, direct JSON crawler result import/upsert, crawler search-alert matching/digest notification, worker preflight, and production billing credential preflight.
+- Remaining high-risk signoff domains:
+  - Operator-assisted Stripe sandbox verifier run with real Stripe test credentials against MySQL.
+  - Final low-risk live checkout/webhook execution after MySQL sandbox and production billing preflight.
 
 ## Execution Rules
 
@@ -71,11 +68,11 @@
 - Modify: account and billing route tests.
 
 - [x] Implement MySQL account profile, password change, delete.
-- [ ] Implement MySQL account export, notification preferences, and usage.
-- [ ] Implement MySQL workspace membership/invites/ownership.
+- [x] Implement MySQL account export, notification preferences, and usage.
+- [x] Implement MySQL workspace membership/invites/ownership.
 - [x] Implement MySQL workspace read/update.
 - [x] Implement MySQL subscription, tier, invoice, checkout, portal, cancel, webhook updates.
-- [ ] Extend Stripe sandbox verifier to work with MySQL runtime.
+- [x] Extend Stripe sandbox verifier to work with MySQL runtime.
 
 ## Task 4: Bid Detail, Saved Bids, Attachments
 
@@ -103,12 +100,13 @@
 - Modify: `frontend/src/server/qualification/*.ts`
 
 - [x] Implement MySQL intent create/list/detail/status.
-- [ ] Implement MySQL compliance manifest CRUD.
-- [ ] Implement MySQL submission guidance/confirmation.
-- [ ] Implement MySQL response workspace CRUD.
-- [ ] Implement MySQL pursuit decision and qualification freshness/citations.
+- [x] Implement MySQL compliance manifest CRUD.
+- [x] Implement MySQL submission guidance/confirmation.
+- [x] Implement MySQL response workspace CRUD.
+- [x] Implement MySQL pursuit decision and qualification freshness/citations/Q&A.
 - [x] Extend smoke to create/list/update an intent from a bid.
-- [ ] Extend smoke to read all dependent intent panels.
+- [x] Extend smoke to read/update compliance, submission, and response workspace intent panels.
+- [x] Extend smoke to read all remaining pursuit/qualification dependent intent panels.
 
 ## Task 6: Admin, Config, Event, Notification Runtime
 
@@ -119,13 +117,15 @@
 - Modify: `frontend/src/server/notifications/*.ts`
 - Modify: `frontend/src/server/search-alerts/*.ts`
 
-- [ ] Implement MySQL admin users, audit logs, feature overrides.
-- [ ] Implement MySQL admin bid QA read/write/batch/corrections.
-- [ ] Implement MySQL config registry list/upsert/patch with audit events.
-- [ ] Implement MySQL event log/outbox.
+- [x] Implement MySQL admin users, audit logs, feature overrides.
+- [x] Implement MySQL admin bid QA read/write/batch/corrections.
+- [x] Implement MySQL config registry list/upsert/patch with audit events.
+- [x] Implement MySQL event log writes and audit outbox enqueue helper.
 - [x] Implement MySQL search alert CRUD and quota enforcement.
-- [ ] Implement MySQL notification outbox and search alert digest history.
-- [ ] Extend smoke to validate event write and notification outbox lifecycle.
+- [x] Implement MySQL notification outbox and search alert digest history.
+- [x] Implement MySQL event worker and billing dunning scheduling.
+- [x] Implement MySQL crawler search-alert matching after crawler imports.
+- [x] Extend smoke to validate event write and notification outbox lifecycle.
 
 ## Task 7: Crawler Runtime Writes
 
@@ -133,10 +133,12 @@
 - Modify: `frontend/src/server/crawler/*.ts`
 - Modify: crawler routes and worker scripts.
 
-- [ ] Implement MySQL crawler locks.
-- [ ] Implement MySQL crawler log writes.
-- [ ] Implement MySQL bid upsert/import path from crawler results.
-- [ ] Extend smoke to run one configured crawler source into MySQL with non-empty bid content.
+- [x] Implement MySQL crawler locks.
+- [x] Implement MySQL source enablement orchestration for crawler routes/scripts.
+- [x] Implement native MySQL crawler log writes or direct JSON/MySQL ingestion.
+- [x] Implement MySQL bid upsert/import path from crawler results.
+- [x] Wire crawler routes/workers to run MySQL alert matching and digest notification after successful imports.
+- [x] Extend smoke to verify non-empty crawler import, crawler control lifecycle, and crawler alert matching into MySQL.
 
 ## Task 8: Seed, Scripts, Risk Check, Docs
 
@@ -148,14 +150,15 @@
 - Modify: `docs/operations/mysql-cutover.md`
 - Modify: `docs/product-requirements/*.md`
 
-- [ ] Add MySQL seed command or make existing seed provider-aware.
-- [ ] Make worker/sandbox scripts provider-aware.
+- [x] Add repeatable SQLite-to-MySQL data import command.
+- [x] Make notification/event/crawler worker scripts provider-aware for the migrated MySQL runtime.
 - [ ] Run risk checklist against MySQL runtime.
-- [ ] Update docs with final runtime instructions and remaining production credential notes.
+- [x] Update docs with final runtime instructions and remaining production credential notes.
 
 ## Current Status
 
 - [x] MySQL migration script.
+- [x] SQLite-to-MySQL data import script.
 - [x] MySQL smoke verifier.
 - [x] MySQL schema smoke on Docker MySQL 8.
 - [x] `/api/health/scrapers` MySQL read path.
@@ -163,8 +166,9 @@
 - [x] `/api/bids` search MySQL read path.
 - [x] Auth/session/account profile/password/delete MySQL runtime.
 - [x] Password reset MySQL runtime.
-- [x] Workspace read/update and admin auth gate MySQL runtime.
+- [x] Account export/usage/notification preferences MySQL runtime.
+- [x] Workspace read/update/invitations/member management/ownership transfer and admin auth gate MySQL runtime.
 - [x] Billing subscription/checkout/portal/cancel/webhook/invoice MySQL runtime.
-- [x] Supplier profile, bid detail, attachment metadata, saved bids, search alerts, and intent create/list/detail/status MySQL runtime.
-- [x] Docker MySQL smoke covers schema, crawler health/admin logs, bid search/detail, attachment metadata, saved bids, supplier profile, search alerts, intent, billing, workspace, password reset, and auth session.
+- [x] Supplier profile, bid detail, attachment metadata, saved bids, search alerts/digest history, notification outbox/delivery, event outbox delivery, billing dunning scheduling, intent create/list/detail/status, compliance manifest, submission guidance/confirmation, response workspace, pursuit decision, qualification citations/freshness/Q&A, crawler locks/source enablement, direct JSON crawler result import/upsert, and crawler search-alert matching MySQL runtime.
+- [x] Docker MySQL smoke covers schema, crawler health/admin logs, crawler import/upsert, crawler control, crawler alert matching/digest notification, bid search/detail, attachment metadata, saved bids, supplier profile, search alerts/digest history, notification outbox delivery, event outbox delivery, intent, compliance, submission, response workspace, pursuit decision, qualification, admin users/feature overrides/audit logs, admin config registry/audit writes, admin bid QA, billing, billing dunning, workspace/member lifecycle, account usage/export/preferences, password reset, and auth session.
 - [ ] Full MySQL runtime cutover.

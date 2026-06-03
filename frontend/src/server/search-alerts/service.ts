@@ -11,7 +11,7 @@ import type {
   UpdateSearchAlertInput,
 } from "./types";
 import { SearchAlertNotFoundError } from "./types";
-import { listSearchAlertDigestRunsForUser } from "./digest-history";
+import { listSearchAlertDigestRunsForUser, listSearchAlertDigestRunsForUserFromMysql } from "./digest-history";
 
 function nowIso() {
   return new Date().toISOString();
@@ -356,11 +356,31 @@ export async function listSearchAlertsFromMysql(mysql: MysqlSearchAlertsReader, 
     [userId],
   );
 
-  return rows.map((row) => ({ ...toSearchAlertFromMysql(row), digestHistory: [] }));
+  const userAlerts = rows.map(toSearchAlertFromMysql);
+  const historyByAlertId = await listSearchAlertDigestRunsForUserFromMysql(
+    mysql,
+    userId,
+    userAlerts.map((alert) => alert.id),
+    3,
+  );
+
+  return userAlerts.map((alert) => ({
+    ...alert,
+    digestHistory: historyByAlertId[alert.id] ?? [],
+  }));
 }
 
 function withDigestHistory(db: AppDatabase, userId: string, alert: SearchAlert) {
   const historyByAlertId = listSearchAlertDigestRunsForUser(db, userId, [alert.id], 3);
+
+  return {
+    ...alert,
+    digestHistory: historyByAlertId[alert.id] ?? [],
+  };
+}
+
+async function withDigestHistoryFromMysql(mysql: MysqlSearchAlertsReader, userId: string, alert: SearchAlert) {
+  const historyByAlertId = await listSearchAlertDigestRunsForUserFromMysql(mysql, userId, [alert.id], 3);
 
   return {
     ...alert,
@@ -461,7 +481,7 @@ export async function updateSearchAlertFromMysql(
     throw new SearchAlertNotFoundError();
   }
 
-  return { ...toSearchAlertFromMysql(updated), digestHistory: [] };
+  return withDigestHistoryFromMysql(mysql, userId, toSearchAlertFromMysql(updated));
 }
 
 export async function deleteSearchAlert(db: AppDatabase, userId: string, id: string) {

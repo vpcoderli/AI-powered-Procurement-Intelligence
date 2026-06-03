@@ -85,6 +85,9 @@ describe("risk checklist", () => {
       "attachment-downloads",
       "account-tier-separation",
       "source-ingestion-governance",
+      "source-validity-metadata",
+      "state-url-validity",
+      "global-url-validity",
     ]);
     expect(formatRiskChecklistReport(report)).toContain("Risk checklist PASS");
   });
@@ -113,6 +116,38 @@ describe("risk checklist", () => {
 
     expect(report.ok).toBe(false);
     expect(formatRiskChecklistReport(report)).toContain("has empty required content");
+  });
+
+  it("fails when a state bid source URL is a placeholder", async () => {
+    const db = await seededDatabase();
+    db.update(bids)
+      .set({ sourceUrl: "https://sam.gov/opp/12345/sow.pdf" })
+      .where(eq(bids.id, "ca_caleprocure:risk-check-seed"))
+      .run();
+
+    const report = await createRiskChecklistReport(db);
+
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((check) => check.id === "state-url-validity")).toMatchObject({
+      ok: false,
+    });
+    expect(formatRiskChecklistReport(report)).toContain("placeholder_url");
+  });
+
+  it("fails when any active bid source URL is a placeholder", async () => {
+    const db = await seededDatabase();
+    db.update(bids)
+      .set({ sourceUrl: "https://sam.gov/opp/12345" })
+      .where(eq(bids.id, "1"))
+      .run();
+
+    const report = await createRiskChecklistReport(db);
+
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((check) => check.id === "global-url-validity")).toMatchObject({
+      ok: false,
+    });
+    expect(formatRiskChecklistReport(report)).toContain("1: sourceUrl placeholder_url");
   });
 
   it("fails when an enabled source is blocked by ingestion governance", async () => {

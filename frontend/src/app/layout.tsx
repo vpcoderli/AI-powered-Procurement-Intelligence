@@ -6,6 +6,7 @@ import { AuthProvider } from "@/context/AuthContext";
 import { SavedBidsProvider } from "@/context/SavedBidsContext";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 import { LanguageSwitcher } from "@/components/i18n/LanguageSwitcher";
+import { TopbarAuthActions } from "@/components/layout/topbar-auth-actions";
 
 export const metadata: Metadata = {
   title: "APSi - AI-powered Procurement Intelligence",
@@ -30,9 +31,7 @@ export default function RootLayout({
                     <SidebarTrigger className="mr-4 text-slate-500 hover:text-slate-900 transition-colors" />
                     <div className="flex items-center gap-4 ml-auto">
                       <LanguageSwitcher />
-                      <div className="h-8 w-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 font-medium text-sm">
-                        JD
-                      </div>
+                      <TopbarAuthActions />
                     </div>
                   </header>
                   <div className="flex-1 overflow-auto p-5 md:p-7">

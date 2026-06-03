@@ -28,6 +28,40 @@ describe("state crawler source mapping", () => {
     expect(STATE_CRAWLER_SOURCES.every((source) => source.accessPattern)).toBe(true);
     expect(STATE_CRAWLER_SOURCES.every((source) => source.legalReviewStatus)).toBe(true);
     expect(STATE_CRAWLER_SOURCES.every((source) => source.sourceOwner)).toBe(true);
+    expect(STATE_CRAWLER_SOURCES.every((source) => source.sourceAuthority)).toBe(true);
+    expect(STATE_CRAWLER_SOURCES.every((source) => source.trustStatus)).toBe(true);
+    expect(STATE_CRAWLER_SOURCES.every((source) => source.evidenceMode)).toBe(true);
+    expect(STATE_CRAWLER_SOURCES.every((source) => source.validityNotes.trim().length > 0)).toBe(true);
+  });
+
+  it("uses real source URLs and explicit validity metadata for every state source", () => {
+    const disallowedUrlFragments = [
+      "example.com",
+      "localhost",
+      "127.0.0.1",
+      "sam.gov/opp/12345",
+      "{",
+      "}",
+      "<",
+      ">",
+      "placeholder",
+      "todo",
+    ];
+    const sourceAuthorities = new Set(["official", "official_aggregator", "public_aggregator"]);
+    const trustStatuses = new Set(["verified", "beta", "fallback", "needs_review", "blocked"]);
+    const evidenceModes = new Set(["direct_portal", "api", "aggregator_page", "fixture_fallback"]);
+
+    for (const source of STATE_CRAWLER_SOURCES) {
+      expect(source.baseUrl, `${source.id} baseUrl must be absolute HTTP(S)`).toMatch(/^https?:\/\//);
+      expect(
+        disallowedUrlFragments.some((fragment) => source.baseUrl.toLowerCase().includes(fragment)),
+        `${source.id} baseUrl must not contain placeholder fragments`,
+      ).toBe(false);
+      expect(sourceAuthorities.has(source.sourceAuthority), `${source.id} sourceAuthority`).toBe(true);
+      expect(trustStatuses.has(source.trustStatus), `${source.id} trustStatus`).toBe(true);
+      expect(evidenceModes.has(source.evidenceMode), `${source.id} evidenceMode`).toBe(true);
+      expect(source.validityNotes.trim().length, `${source.id} validityNotes`).toBeGreaterThan(0);
+    }
   });
 
   it("defaults verified sources to approved and beta sources to needs review", () => {
@@ -54,6 +88,9 @@ describe("state crawler source mapping", () => {
       adapterKind: "dedicated",
       maturity: "verified",
       capabilities: expect.arrayContaining(["query", "pagination"]),
+      sourceAuthority: "official",
+      trustStatus: "verified",
+      evidenceMode: "direct_portal",
     });
     expect(getStateCrawlerSourceMetadata("IL")).toMatchObject({
       id: "il_bidbuy",
@@ -245,5 +282,36 @@ describe("state crawler source mapping", () => {
       });
     }
     expect(getStateCrawlerSourceMetadata("US")).toBeNull();
+  });
+
+  it("labels public aggregator fallback sources explicitly", () => {
+    for (const stateCode of [
+      "AL",
+      "AK",
+      "AZ",
+      "CO",
+      "ID",
+      "KY",
+      "LA",
+      "MD",
+      "MI",
+      "MN",
+      "NC",
+      "ND",
+      "NE",
+      "NH",
+      "OH",
+      "SC",
+      "VT",
+      "WI",
+      "WV",
+    ]) {
+      expect(getStateCrawlerSourceMetadata(stateCode)).toMatchObject({
+        sourceAuthority: "public_aggregator",
+        trustStatus: "fallback",
+        evidenceMode: "aggregator_page",
+        validityNotes: expect.stringContaining("public"),
+      });
+    }
   });
 });

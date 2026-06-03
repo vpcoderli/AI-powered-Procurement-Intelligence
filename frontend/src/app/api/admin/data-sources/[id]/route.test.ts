@@ -1,7 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dataSources } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
+import * as adminAuth from "@/server/admin/auth";
 import { createAdminDataSourcePatch } from "./route";
+
+vi.mock("@/server/admin/auth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/server/admin/auth")>();
+  return { ...actual, requireAdminAccess: vi.fn() };
+});
 
 const NOW = "2026-05-19T00:00:00.000Z";
 
@@ -11,7 +17,11 @@ describe("PATCH /api/admin/data-sources/[id]", () => {
 
   beforeEach(async () => {
     testDb = await createTestDatabase();
-    process.env.ADMIN_UI_LOCAL_BYPASS = "true";
+    vi.mocked(adminAuth.requireAdminAccess).mockResolvedValue({
+      kind: "admin",
+      role: "admin",
+      userId: "admin_1",
+    });
     testDb.db
       .insert(dataSources)
       .values({
@@ -29,6 +39,7 @@ describe("PATCH /api/admin/data-sources/[id]", () => {
 
   afterEach(async () => {
     await testDb.cleanup();
+    vi.clearAllMocks();
     if (originalBypass === undefined) {
       delete process.env.ADMIN_UI_LOCAL_BYPASS;
     } else {
@@ -37,6 +48,11 @@ describe("PATCH /api/admin/data-sources/[id]", () => {
   });
 
   it("updates data source enablement", async () => {
+    vi.mocked(adminAuth.requireAdminAccess).mockResolvedValueOnce({
+      kind: "admin",
+      role: "operator",
+      userId: "operator_1",
+    });
     const PATCH = createAdminDataSourcePatch(testDb.db);
     const response = await PATCH(
       new Request("http://localhost/api/admin/data-sources/sam_gov", {
@@ -48,7 +64,49 @@ describe("PATCH /api/admin/data-sources/[id]", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
+    expect(adminAuth.requireAdminAccess).toHaveBeenCalledWith(testDb.db, expect.anything(), {
+      roles: ["admin", "operator"],
+    });
     expect(body).toEqual({ source: expect.objectContaining({ id: "sam_gov", isEnabled: false }) });
+  });
+
+  it("updates data source approval governance", async () => {
+    const PATCH = createAdminDataSourcePatch(testDb.db);
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/data-sources/sam_gov", {
+        method: "PATCH",
+        body: JSON.stringify({
+          approvedForIngestion: true,
+          approvalStatus: "approved",
+          legalReviewStatus: "approved_public",
+          approvalNotes: "Approved after live health and source review.",
+        }),
+      }),
+      { params: Promise.resolve({ id: "sam_gov" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(adminAuth.requireAdminAccess).toHaveBeenCalledWith(testDb.db, expect.anything(), { roles: ["admin"] });
+    expect(body).toEqual({
+      source: expect.objectContaining({
+        id: "sam_gov",
+        approvedForIngestion: true,
+        approvalStatus: "approved",
+        legalReviewStatus: "approved_public",
+        approvalNotes: "Approved after live health and source review.",
+        lastApprovalReviewedAt: expect.any(String),
+        approvalHistory: [
+          expect.objectContaining({
+            actorUserId: "admin_1",
+            action: "approved",
+            previousApprovalStatus: "approved",
+            nextApprovalStatus: "approved",
+            reason: "Approved after live health and source review.",
+          }),
+        ],
+      }),
+    });
   });
 
   it("rejects malformed patch bodies", async () => {
@@ -62,5 +120,33 @@ describe("PATCH /api/admin/data-sources/[id]", () => {
     );
 
     expect(response.status).toBe(400);
+  });
+
+  it("rejects operator attempts to update source approval governance fields", async () => {
+    vi.mocked(adminAuth.requireAdminAccess)
+      .mockResolvedValueOnce({
+        kind: "admin",
+        role: "operator",
+        userId: "operator_1",
+      })
+      .mockRejectedValueOnce(new adminAuth.AdminAuthError("Admin access is required."));
+    const PATCH = createAdminDataSourcePatch(testDb.db);
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/data-sources/sam_gov", {
+        method: "PATCH",
+        body: JSON.stringify({ approvalStatus: "approved" }),
+      }),
+      { params: Promise.resolve({ id: "sam_gov" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toEqual({ error: { code: "FORBIDDEN", message: "Admin access is required." } });
+    expect(adminAuth.requireAdminAccess).toHaveBeenNthCalledWith(1, testDb.db, expect.anything(), {
+      roles: ["admin", "operator"],
+    });
+    expect(adminAuth.requireAdminAccess).toHaveBeenNthCalledWith(2, testDb.db, expect.anything(), {
+      roles: ["admin"],
+    });
   });
 });

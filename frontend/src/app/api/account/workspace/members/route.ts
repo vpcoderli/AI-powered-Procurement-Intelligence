@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { readSessionToken } from "@/server/auth/session";
 import { getSessionUser } from "@/server/auth/service";
+import { getMysqlSessionUser } from "@/server/auth/mysql-service";
 import { UsageLimitError } from "@/server/auth/usage-limits";
 import {
   InvalidWorkspaceInputError,
@@ -8,7 +9,9 @@ import {
   WorkspacePermissionError,
   inviteWorkspaceMember,
 } from "@/server/account/workspace";
+import { inviteMysqlWorkspaceMember } from "@/server/account/mysql-workspace";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -42,7 +45,10 @@ export async function POST(request: Request) {
     return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
   }
 
-  const user = await getSessionUser(db, sessionToken);
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const user = mysql
+    ? await getMysqlSessionUser(mysql, sessionToken)
+    : await getSessionUser(db, sessionToken);
 
   if (!user) {
     return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
@@ -61,7 +67,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await inviteWorkspaceMember(db, user.id, {
+    const result = mysql ? await inviteMysqlWorkspaceMember(mysql, user.id, {
+      email: body.email,
+      displayName: body.displayName,
+      role: body.role,
+    }) : await inviteWorkspaceMember(db, user.id, {
       email: body.email,
       displayName: body.displayName,
       role: body.role,

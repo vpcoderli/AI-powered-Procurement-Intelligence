@@ -1,5 +1,7 @@
 import { STATE_CRAWLER_SOURCES } from "./state-crawler-sources";
 
+export const FEDERAL_SAM_OPPORTUNITIES_URL = "https://sam.gov/search/?index=opp&sort=-modifiedDate&page=1&pageSize=25";
+
 export type IssuerType = "federal" | "state";
 export type SortOption = "relevance" | "newest" | "deadline";
 export type DatePreset = "any" | "next7" | "next30" | "last24" | "last7";
@@ -171,10 +173,10 @@ export const MOCK_BIDS: Bid[] = [
     contactName: "Jordan Miller",
     contactEmail: "cloud-procurement@example.gov",
     contactPhone: "+1 (202) 555-0144",
-    sourceUrl: "https://sam.gov/opp/12345",
+    sourceUrl: FEDERAL_SAM_OPPORTUNITIES_URL,
     attachments: [
-      { name: "Statement_of_Work_v2.pdf", size: "2.4 MB", url: "https://sam.gov/opp/12345/sow.pdf" },
-      { name: "Pricing_Matrix_Template.xlsx", size: "156 KB", url: "https://sam.gov/opp/12345/pricing.xlsx" },
+      { name: "Statement_of_Work_v2.pdf", size: "2.4 MB", url: `${FEDERAL_SAM_OPPORTUNITIES_URL}&keyword=cloud` },
+      { name: "Pricing_Matrix_Template.xlsx", size: "156 KB", url: `${FEDERAL_SAM_OPPORTUNITIES_URL}&keyword=pricing` },
     ],
     tags: ["IT Services", "Cloud", "Federal"],
     isActive: true,

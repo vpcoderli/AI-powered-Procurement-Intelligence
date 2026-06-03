@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { readSessionToken } from "@/server/auth/session";
 import { getSessionUser } from "@/server/auth/service";
+import { getMysqlSessionUser } from "@/server/auth/mysql-service";
 import {
   InvalidWorkspaceInputError,
   WorkspaceLastOwnerError,
@@ -11,7 +12,14 @@ import {
   restoreWorkspaceMember,
   updateWorkspaceMemberRole,
 } from "@/server/account/workspace";
+import {
+  disableMysqlWorkspaceMember,
+  removeMysqlWorkspaceMember,
+  restoreMysqlWorkspaceMember,
+  updateMysqlWorkspaceMemberRole,
+} from "@/server/account/mysql-workspace";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 interface RouteContext {
   params: Promise<{ userId: string }>;
@@ -25,7 +33,12 @@ async function currentUser(request: Request) {
   const sessionToken = readSessionToken(request);
   if (!sessionToken) return null;
 
-  return getSessionUser(db, sessionToken);
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const user = mysql
+    ? await getMysqlSessionUser(mysql, sessionToken)
+    : await getSessionUser(db, sessionToken);
+
+  return user ? { mysql, user } : null;
 }
 
 async function readBody(request: Request) {
@@ -57,9 +70,9 @@ function workspaceErrorResponse(error: unknown) {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
-  const user = await currentUser(request);
+  const current = await currentUser(request);
 
-  if (!user) {
+  if (!current) {
     return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
   }
 
@@ -73,16 +86,28 @@ export async function PATCH(request: Request, context: RouteContext) {
   try {
     if ("status" in body) {
       if (body.status === "disabled") {
-        return NextResponse.json(disableWorkspaceMember(db, user.id, userId));
+        return NextResponse.json(
+          current.mysql
+            ? await disableMysqlWorkspaceMember(current.mysql, current.user.id, userId)
+            : disableWorkspaceMember(db, current.user.id, userId),
+        );
       }
 
       if (body.status === "active") {
-        return NextResponse.json(restoreWorkspaceMember(db, user.id, userId));
+        return NextResponse.json(
+          current.mysql
+            ? await restoreMysqlWorkspaceMember(current.mysql, current.user.id, userId)
+            : restoreWorkspaceMember(db, current.user.id, userId),
+        );
       }
     }
 
     if (body.role === "owner" || body.role === "member") {
-      return NextResponse.json(updateWorkspaceMemberRole(db, user.id, userId, { role: body.role }));
+      return NextResponse.json(
+        current.mysql
+          ? await updateMysqlWorkspaceMemberRole(current.mysql, current.user.id, userId, { role: body.role })
+          : updateWorkspaceMemberRole(db, current.user.id, userId, { role: body.role }),
+      );
     }
 
     return errorResponse("INVALID_REQUEST", "Request body must include role or status", 400);
@@ -92,16 +117,20 @@ export async function PATCH(request: Request, context: RouteContext) {
 }
 
 export async function DELETE(request: Request, context: RouteContext) {
-  const user = await currentUser(request);
+  const current = await currentUser(request);
 
-  if (!user) {
+  if (!current) {
     return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
   }
 
   const { userId } = await context.params;
 
   try {
-    return NextResponse.json(removeWorkspaceMember(db, user.id, userId));
+    return NextResponse.json(
+      current.mysql
+        ? await removeMysqlWorkspaceMember(current.mysql, current.user.id, userId)
+        : removeWorkspaceMember(db, current.user.id, userId),
+    );
   } catch (error) {
     return workspaceErrorResponse(error);
   }

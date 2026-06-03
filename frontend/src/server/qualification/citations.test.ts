@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { intentToBid } from "@/server/db/schema";
+import { bids, intentToBid } from "@/server/db/schema";
 import { createTestDatabase } from "@/server/db/test-utils";
 import { createIntentForBid } from "@/server/intents/service";
 import { IntentNotFoundError } from "@/server/intents/types";
@@ -34,6 +34,15 @@ describe("qualification evidence citations", () => {
           }),
         ]),
       );
+      expect(response.citations.every((citation) => !citation.url.includes("sam.gov/opp/12345"))).toBe(true);
+      expect(response.citations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sourceType: "attachment",
+            url: expect.stringMatching(/^\/api\/bids\/1\/attachments\//),
+          }),
+        ]),
+      );
       expect(JSON.parse(row?.evidenceCitationsJson ?? "[]")).toHaveLength(response.citations.length);
     } finally {
       await testDb.cleanup();
@@ -63,6 +72,33 @@ describe("qualification evidence citations", () => {
       const response = await getOrCreateQualificationCitations(testDb.db, "anon_seed", intent.id);
 
       expect(response.citations).toEqual(persisted);
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("routes unsafe bid source evidence to the local bid detail page", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      testDb.db.update(bids)
+        .set({ sourceUrl: "https://sam.gov/opp/12345" })
+        .where(eq(bids.id, "1"))
+        .run();
+      const intent = await createIntentForBid(testDb.db, "anon_seed", "1");
+
+      const response = await getOrCreateQualificationCitations(testDb.db, "anon_seed", intent.id);
+
+      expect(response.citations.filter((citation) => citation.sourceType === "bid_field")).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ url: "/bids/1" }),
+        ]),
+      );
+      expect(response.citations.filter((citation) => citation.sourceType === "bid_field")).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ url: expect.stringContaining("sam.gov/opp/12345") }),
+        ]),
+      );
     } finally {
       await testDb.cleanup();
     }

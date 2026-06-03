@@ -702,6 +702,8 @@ export const responseWorkspaceItems = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    assignedUserId: text("assigned_user_id")
+      .references(() => users.id, { onDelete: "set null" }),
     kind: text("kind").notNull(),
     title: text("title").notNull(),
     status: text("status").notNull().default("todo"),
@@ -714,7 +716,303 @@ export const responseWorkspaceItems = sqliteTable(
   (table) => ({
     intentIdx: index("idx_response_workspace_items_intent_id").on(table.intentId),
     userIdx: index("idx_response_workspace_items_user_id").on(table.userId),
+    assignedUserIdx: index("idx_response_workspace_items_assigned_user_id").on(table.assignedUserId),
     statusIdx: index("idx_response_workspace_items_status").on(table.status),
+  }),
+);
+
+export const responseWorkspaceComments = sqliteTable(
+  "response_workspace_comments",
+  {
+    id: text("id").primaryKey(),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intentToBid.id, { onDelete: "cascade" }),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => responseWorkspaceItems.id, { onDelete: "cascade" }),
+    authorUserId: text("author_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    body: text("body").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    intentIdx: index("idx_response_workspace_comments_intent_id").on(table.intentId),
+    itemIdx: index("idx_response_workspace_comments_item_id").on(table.itemId),
+    authorIdx: index("idx_response_workspace_comments_author_user_id").on(table.authorUserId),
+  }),
+);
+
+export const responseWorkspaceActivity = sqliteTable(
+  "response_workspace_activity",
+  {
+    id: text("id").primaryKey(),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intentToBid.id, { onDelete: "cascade" }),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => responseWorkspaceItems.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    fromValue: text("from_value"),
+    toValue: text("to_value"),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    intentIdx: index("idx_response_workspace_activity_intent_id").on(table.intentId),
+    itemIdx: index("idx_response_workspace_activity_item_id").on(table.itemId),
+    actorIdx: index("idx_response_workspace_activity_actor_user_id").on(table.actorUserId),
+  }),
+);
+
+export const responsePackageSnapshots = sqliteTable(
+  "response_package_snapshots",
+  {
+    id: text("id").primaryKey(),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intentToBid.id, { onDelete: "cascade" }),
+    bidId: text("bid_id")
+      .notNull()
+      .references(() => bids.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    outlineJson: text("outline_json").notNull().default("[]"),
+    readinessJson: text("readiness_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    intentIdx: index("idx_response_package_snapshots_intent_id").on(table.intentId),
+    userIdx: index("idx_response_package_snapshots_user_id").on(table.userId),
+    createdByUserIdx: index("idx_response_package_snapshots_created_by_user_id").on(table.createdByUserId),
+  }),
+);
+
+export const responsePackageExports = sqliteTable(
+  "response_package_exports",
+  {
+    id: text("id").primaryKey(),
+    snapshotId: text("snapshot_id")
+      .notNull()
+      .references(() => responsePackageSnapshots.id, { onDelete: "cascade" }),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intentToBid.id, { onDelete: "cascade" }),
+    bidId: text("bid_id")
+      .notNull()
+      .references(() => bids.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    requestedByUserId: text("requested_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("ready"),
+    fileName: text("file_name").notNull(),
+    contentType: text("content_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    storagePath: text("storage_path").notNull(),
+    checksumSha256: text("checksum_sha256").notNull(),
+    readinessJson: text("readiness_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+    downloadedAt: text("downloaded_at"),
+  },
+  (table) => ({
+    intentIdx: index("idx_response_package_exports_intent_id").on(table.intentId),
+    snapshotIdx: index("idx_response_package_exports_snapshot_id").on(table.snapshotId),
+    userIdx: index("idx_response_package_exports_user_id").on(table.userId),
+  }),
+);
+
+export const supplierArtifacts = sqliteTable(
+  "supplier_artifacts",
+  {
+    id: text("id").primaryKey(),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intentToBid.id, { onDelete: "cascade" }),
+    bidId: text("bid_id")
+      .notNull()
+      .references(() => bids.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    artifactType: text("artifact_type").notNull(),
+    purpose: text("purpose").notNull(),
+    fileName: text("file_name").notNull(),
+    contentType: text("content_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    storagePath: text("storage_path").notNull(),
+    checksumSha256: text("checksum_sha256").notNull(),
+    expiresAt: text("expires_at"),
+    reviewStatus: text("review_status").notNull().default("pending_review"),
+    notes: text("notes").notNull().default(""),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    intentIdx: index("idx_supplier_artifacts_intent_id").on(table.intentId),
+    userIdx: index("idx_supplier_artifacts_user_id").on(table.userId),
+    bidIdx: index("idx_supplier_artifacts_bid_id").on(table.bidId),
+    reviewIdx: index("idx_supplier_artifacts_review_status").on(table.reviewStatus),
+  }),
+);
+
+export const responseWorkspaceItemArtifacts = sqliteTable(
+  "response_workspace_item_artifacts",
+  {
+    itemId: text("item_id")
+      .notNull()
+      .references(() => responseWorkspaceItems.id, { onDelete: "cascade" }),
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => supplierArtifacts.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.itemId, table.artifactId] }),
+    artifactIdx: index("idx_response_workspace_item_artifacts_artifact_id").on(table.artifactId),
+  }),
+);
+
+export const sourcingPartners = sqliteTable(
+  "sourcing_partners",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    contactName: text("contact_name").notNull().default(""),
+    contactEmail: text("contact_email").notNull().default(""),
+    phone: text("phone").notNull().default(""),
+    category: text("category").notNull().default(""),
+    regionsJson: text("regions_json").notNull().default("[]"),
+    capabilityTagsJson: text("capability_tags_json").notNull().default("[]"),
+    status: text("status").notNull().default("active"),
+    notes: text("notes").notNull().default(""),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    organizationIdx: index("idx_sourcing_partners_organization_id").on(table.organizationId),
+    creatorIdx: index("idx_sourcing_partners_created_by_user_id").on(table.createdByUserId),
+    statusIdx: index("idx_sourcing_partners_status").on(table.status),
+  }),
+);
+
+export const quoteRequests = sqliteTable(
+  "quote_requests",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intentToBid.id, { onDelete: "cascade" }),
+    bidId: text("bid_id")
+      .notNull()
+      .references(() => bids.id, { onDelete: "cascade" }),
+    partnerId: text("partner_id")
+      .notNull()
+      .references(() => sourcingPartners.id, { onDelete: "cascade" }),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    status: text("status").notNull().default("draft"),
+    requestedDueAt: text("requested_due_at"),
+    lineItemsJson: text("line_items_json").notNull().default("[]"),
+    quotedAmountCents: integer("quoted_amount_cents"),
+    currency: text("currency").notNull().default("USD"),
+    responseNotes: text("response_notes").notNull().default(""),
+    respondedAt: text("responded_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    organizationIdx: index("idx_quote_requests_organization_id").on(table.organizationId),
+    intentIdx: index("idx_quote_requests_intent_id").on(table.intentId),
+    bidIdx: index("idx_quote_requests_bid_id").on(table.bidId),
+    partnerIdx: index("idx_quote_requests_partner_id").on(table.partnerId),
+    statusIdx: index("idx_quote_requests_status").on(table.status),
+  }),
+);
+
+export const quoteRequestArtifacts = sqliteTable(
+  "quote_request_artifacts",
+  {
+    quoteRequestId: text("quote_request_id")
+      .notNull()
+      .references(() => quoteRequests.id, { onDelete: "cascade" }),
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => supplierArtifacts.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.quoteRequestId, table.artifactId] }),
+    artifactIdx: index("idx_quote_request_artifacts_artifact_id").on(table.artifactId),
+  }),
+);
+
+export const deadlineReminders = sqliteTable(
+  "deadline_reminders",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intentToBid.id, { onDelete: "cascade" }),
+    bidId: text("bid_id")
+      .notNull()
+      .references(() => bids.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    linkedObjectType: text("linked_object_type").notNull(),
+    linkedObjectId: text("linked_object_id").notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    title: text("title").notNull(),
+    dueAt: text("due_at").notNull(),
+    reminderAt: text("reminder_at").notNull(),
+    status: text("status").notNull().default("active"),
+    priority: text("priority").notNull().default("medium"),
+    source: text("source").notNull().default("generated"),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    acknowledgedAt: text("acknowledged_at"),
+    snoozedUntil: text("snoozed_until"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    organizationIdx: index("idx_deadline_reminders_organization_id").on(table.organizationId),
+    intentIdx: index("idx_deadline_reminders_intent_id").on(table.intentId),
+    userIdx: index("idx_deadline_reminders_user_id").on(table.userId),
+    statusIdx: index("idx_deadline_reminders_status").on(table.status),
+    dueIdx: index("idx_deadline_reminders_due_at").on(table.dueAt),
+    dedupeIdx: uniqueIndex("idx_deadline_reminders_dedupe_key").on(table.dedupeKey),
   }),
 );
 
@@ -825,6 +1123,37 @@ export const searchAlertDigestRuns = sqliteTable(
   }),
 );
 
+export const riskCheckSnapshots = sqliteTable(
+  "risk_check_snapshots",
+  {
+    id: text("id").primaryKey(),
+    ok: integer("ok").notNull(),
+    checkedAt: text("checked_at").notNull(),
+    reportJson: text("report_json").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    checkedAtIdx: index("idx_risk_check_snapshots_checked_at").on(table.checkedAt),
+    createdAtIdx: index("idx_risk_check_snapshots_created_at").on(table.createdAt),
+  }),
+);
+
+export const sourceHealthSnapshots = sqliteTable(
+  "source_health_snapshots",
+  {
+    id: text("id").primaryKey(),
+    ok: integer("ok").notNull(),
+    checkedAt: text("checked_at").notNull(),
+    summaryJson: text("summary_json").notNull(),
+    resultsJson: text("results_json").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    checkedAtIdx: index("idx_source_health_snapshots_checked_at").on(table.checkedAt),
+    createdAtIdx: index("idx_source_health_snapshots_created_at").on(table.createdAt),
+  }),
+);
+
 export const dataSources = sqliteTable("data_sources", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),
@@ -859,3 +1188,25 @@ export const dataSources = sqliteTable("data_sources", {
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
+
+export const sourceApprovalEvents = sqliteTable(
+  "source_approval_events",
+  {
+    id: text("id").primaryKey(),
+    sourceId: text("source_id").notNull(),
+    actorUserId: text("actor_user_id"),
+    action: text("action").notNull(),
+    previousApprovalStatus: text("previous_approval_status"),
+    nextApprovalStatus: text("next_approval_status"),
+    previousLegalReviewStatus: text("previous_legal_review_status"),
+    nextLegalReviewStatus: text("next_legal_review_status"),
+    previousApprovedForIngestion: integer("previous_approved_for_ingestion"),
+    nextApprovedForIngestion: integer("next_approved_for_ingestion"),
+    reason: text("reason"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    sourceCreatedIdx: index("idx_source_approval_events_source_created").on(table.sourceId, table.createdAt),
+    actorCreatedIdx: index("idx_source_approval_events_actor_created").on(table.actorUserId, table.createdAt),
+  }),
+);

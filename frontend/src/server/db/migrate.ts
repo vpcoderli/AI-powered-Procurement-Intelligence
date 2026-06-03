@@ -428,12 +428,160 @@ export function runMigrations(db: AppDatabase) {
       intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
       bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      assigned_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
       kind TEXT NOT NULL,
       title TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'todo',
       notes TEXT NOT NULL DEFAULT '',
       due_at TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS response_workspace_comments (
+      id TEXT PRIMARY KEY,
+      intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
+      item_id TEXT NOT NULL REFERENCES response_workspace_items(id) ON DELETE CASCADE,
+      author_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      body TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS response_workspace_activity (
+      id TEXT PRIMARY KEY,
+      intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
+      item_id TEXT NOT NULL REFERENCES response_workspace_items(id) ON DELETE CASCADE,
+      actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      from_value TEXT,
+      to_value TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS response_package_snapshots (
+      id TEXT PRIMARY KEY,
+      intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
+      bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      outline_json TEXT NOT NULL DEFAULT '[]',
+      readiness_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS response_package_exports (
+      id TEXT PRIMARY KEY,
+      snapshot_id TEXT NOT NULL REFERENCES response_package_snapshots(id) ON DELETE CASCADE,
+      intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
+      bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      requested_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'ready',
+      file_name TEXT NOT NULL,
+      content_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      storage_path TEXT NOT NULL,
+      checksum_sha256 TEXT NOT NULL,
+      readiness_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      downloaded_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS supplier_artifacts (
+      id TEXT PRIMARY KEY,
+      intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
+      bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      artifact_type TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      content_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      storage_path TEXT NOT NULL,
+      checksum_sha256 TEXT NOT NULL,
+      expires_at TEXT,
+      review_status TEXT NOT NULL DEFAULT 'pending_review',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS response_workspace_item_artifacts (
+      item_id TEXT NOT NULL REFERENCES response_workspace_items(id) ON DELETE CASCADE,
+      artifact_id TEXT NOT NULL REFERENCES supplier_artifacts(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (item_id, artifact_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS sourcing_partners (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      contact_name TEXT NOT NULL DEFAULT '',
+      contact_email TEXT NOT NULL DEFAULT '',
+      phone TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT '',
+      regions_json TEXT NOT NULL DEFAULT '[]',
+      capability_tags_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'active',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS quote_requests (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
+      bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
+      partner_id TEXT NOT NULL REFERENCES sourcing_partners(id) ON DELETE CASCADE,
+      created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'draft',
+      requested_due_at TEXT,
+      line_items_json TEXT NOT NULL DEFAULT '[]',
+      quoted_amount_cents INTEGER,
+      currency TEXT NOT NULL DEFAULT 'USD',
+      response_notes TEXT NOT NULL DEFAULT '',
+      responded_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS quote_request_artifacts (
+      quote_request_id TEXT NOT NULL REFERENCES quote_requests(id) ON DELETE CASCADE,
+      artifact_id TEXT NOT NULL REFERENCES supplier_artifacts(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (quote_request_id, artifact_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS deadline_reminders (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
+      bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL,
+      linked_object_type TEXT NOT NULL,
+      linked_object_id TEXT NOT NULL,
+      dedupe_key TEXT NOT NULL,
+      title TEXT NOT NULL,
+      due_at TEXT NOT NULL,
+      reminder_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      priority TEXT NOT NULL DEFAULT 'medium',
+      source TEXT NOT NULL DEFAULT 'generated',
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      acknowledged_at TEXT,
+      snoozed_until TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -514,6 +662,23 @@ export function runMigrations(db: AppDatabase) {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS risk_check_snapshots (
+      id TEXT PRIMARY KEY,
+      ok INTEGER NOT NULL,
+      checked_at TEXT NOT NULL,
+      report_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS source_health_snapshots (
+      id TEXT PRIMARY KEY,
+      ok INTEGER NOT NULL,
+      checked_at TEXT NOT NULL,
+      summary_json TEXT NOT NULL,
+      results_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS data_sources (
       id TEXT PRIMARY KEY,
       label TEXT NOT NULL,
@@ -547,6 +712,21 @@ export function runMigrations(db: AppDatabase) {
       consecutive_failures INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS source_approval_events (
+      id TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL,
+      actor_user_id TEXT,
+      action TEXT NOT NULL,
+      previous_approval_status TEXT,
+      next_approval_status TEXT,
+      previous_legal_review_status TEXT,
+      next_legal_review_status TEXT,
+      previous_approved_for_ingestion INTEGER,
+      next_approved_for_ingestion INTEGER,
+      reason TEXT,
+      created_at TEXT NOT NULL
     );
 
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
@@ -622,6 +802,38 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_response_workspace_items_intent_id ON response_workspace_items(intent_id);
     CREATE INDEX IF NOT EXISTS idx_response_workspace_items_user_id ON response_workspace_items(user_id);
     CREATE INDEX IF NOT EXISTS idx_response_workspace_items_status ON response_workspace_items(status);
+    CREATE INDEX IF NOT EXISTS idx_response_workspace_comments_intent_id ON response_workspace_comments(intent_id);
+    CREATE INDEX IF NOT EXISTS idx_response_workspace_comments_item_id ON response_workspace_comments(item_id);
+    CREATE INDEX IF NOT EXISTS idx_response_workspace_comments_author_user_id ON response_workspace_comments(author_user_id);
+    CREATE INDEX IF NOT EXISTS idx_response_workspace_activity_intent_id ON response_workspace_activity(intent_id);
+    CREATE INDEX IF NOT EXISTS idx_response_workspace_activity_item_id ON response_workspace_activity(item_id);
+    CREATE INDEX IF NOT EXISTS idx_response_workspace_activity_actor_user_id ON response_workspace_activity(actor_user_id);
+    CREATE INDEX IF NOT EXISTS idx_response_package_snapshots_intent_id ON response_package_snapshots(intent_id);
+    CREATE INDEX IF NOT EXISTS idx_response_package_snapshots_user_id ON response_package_snapshots(user_id);
+    CREATE INDEX IF NOT EXISTS idx_response_package_snapshots_created_by_user_id ON response_package_snapshots(created_by_user_id);
+    CREATE INDEX IF NOT EXISTS idx_response_package_exports_intent_id ON response_package_exports(intent_id);
+    CREATE INDEX IF NOT EXISTS idx_response_package_exports_snapshot_id ON response_package_exports(snapshot_id);
+    CREATE INDEX IF NOT EXISTS idx_response_package_exports_user_id ON response_package_exports(user_id);
+    CREATE INDEX IF NOT EXISTS idx_supplier_artifacts_intent_id ON supplier_artifacts(intent_id);
+    CREATE INDEX IF NOT EXISTS idx_supplier_artifacts_user_id ON supplier_artifacts(user_id);
+    CREATE INDEX IF NOT EXISTS idx_supplier_artifacts_bid_id ON supplier_artifacts(bid_id);
+    CREATE INDEX IF NOT EXISTS idx_supplier_artifacts_review_status ON supplier_artifacts(review_status);
+    CREATE INDEX IF NOT EXISTS idx_response_workspace_item_artifacts_artifact_id ON response_workspace_item_artifacts(artifact_id);
+    CREATE INDEX IF NOT EXISTS idx_sourcing_partners_organization_id ON sourcing_partners(organization_id);
+    CREATE INDEX IF NOT EXISTS idx_sourcing_partners_created_by_user_id ON sourcing_partners(created_by_user_id);
+    CREATE INDEX IF NOT EXISTS idx_sourcing_partners_status ON sourcing_partners(status);
+    CREATE INDEX IF NOT EXISTS idx_quote_requests_organization_id ON quote_requests(organization_id);
+    CREATE INDEX IF NOT EXISTS idx_quote_requests_intent_id ON quote_requests(intent_id);
+    CREATE INDEX IF NOT EXISTS idx_quote_requests_bid_id ON quote_requests(bid_id);
+    CREATE INDEX IF NOT EXISTS idx_quote_requests_partner_id ON quote_requests(partner_id);
+    CREATE INDEX IF NOT EXISTS idx_quote_requests_status ON quote_requests(status);
+    CREATE INDEX IF NOT EXISTS idx_quote_request_artifacts_artifact_id ON quote_request_artifacts(artifact_id);
+    CREATE INDEX IF NOT EXISTS idx_deadline_reminders_organization_id ON deadline_reminders(organization_id);
+    CREATE INDEX IF NOT EXISTS idx_deadline_reminders_intent_id ON deadline_reminders(intent_id);
+    CREATE INDEX IF NOT EXISTS idx_deadline_reminders_user_id ON deadline_reminders(user_id);
+    CREATE INDEX IF NOT EXISTS idx_deadline_reminders_status ON deadline_reminders(status);
+    CREATE INDEX IF NOT EXISTS idx_deadline_reminders_due_at ON deadline_reminders(due_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_deadline_reminders_dedupe_key ON deadline_reminders(dedupe_key);
     CREATE INDEX IF NOT EXISTS idx_alerts_user_id ON alerts(user_id);
     CREATE INDEX IF NOT EXISTS idx_crawler_logs_source_started ON crawler_logs(source, started_at);
     CREATE INDEX IF NOT EXISTS idx_crawler_logs_run_id ON crawler_logs(run_id);
@@ -631,6 +843,12 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_notification_outbox_user_id ON notification_outbox(user_id);
     CREATE INDEX IF NOT EXISTS idx_search_alert_digest_runs_alert_created ON search_alert_digest_runs(alert_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_search_alert_digest_runs_user_created ON search_alert_digest_runs(user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_risk_check_snapshots_checked_at ON risk_check_snapshots(checked_at);
+    CREATE INDEX IF NOT EXISTS idx_risk_check_snapshots_created_at ON risk_check_snapshots(created_at);
+    CREATE INDEX IF NOT EXISTS idx_source_health_snapshots_checked_at ON source_health_snapshots(checked_at);
+    CREATE INDEX IF NOT EXISTS idx_source_health_snapshots_created_at ON source_health_snapshots(created_at);
+    CREATE INDEX IF NOT EXISTS idx_source_approval_events_source_created ON source_approval_events(source_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_source_approval_events_actor_created ON source_approval_events(actor_user_id, created_at);
   `);
 
   const userColumns = new Set(
@@ -779,6 +997,18 @@ export function runMigrations(db: AppDatabase) {
   if (!intentColumns.has("evidence_citations_json")) {
     sqlite.exec("ALTER TABLE intent_to_bid ADD COLUMN evidence_citations_json TEXT NOT NULL DEFAULT '[]'");
   }
+
+  const responseWorkspaceItemColumns = new Set(
+    sqlite
+      .prepare("PRAGMA table_info(response_workspace_items)")
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+
+  if (!responseWorkspaceItemColumns.has("assigned_user_id")) {
+    sqlite.exec("ALTER TABLE response_workspace_items ADD COLUMN assigned_user_id TEXT REFERENCES users(id) ON DELETE SET NULL");
+  }
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_response_workspace_items_assigned_user_id ON response_workspace_items(assigned_user_id)");
 
   const dataSourceColumns = new Set(
     sqlite

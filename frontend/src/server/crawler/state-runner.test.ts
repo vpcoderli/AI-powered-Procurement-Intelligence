@@ -1,17 +1,55 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { importCrawlerJsonRunIntoMysql } from "./mysql-json-importer";
 import { STATE_CRAWLER_SOURCES, createStateCrawlerRunner, runStateCrawler } from "./state-runner";
 
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
 }));
+vi.mock("./mysql-json-importer", () => ({
+  importCrawlerJsonRunIntoMysql: vi.fn(async () => ({
+    fetchedCount: 1,
+    insertedCount: 1,
+    updatedCount: 0,
+    logCount: 1,
+  })),
+}));
 
 const mockedExecFile = vi.mocked(execFile);
+const mockedImportCrawlerJsonRunIntoMysql = vi.mocked(importCrawlerJsonRunIntoMysql);
+
+const mysqlJsonPayload = JSON.stringify({
+  source: "il_bidbuy",
+  runId: "run_1",
+  status: "success",
+  startedAt: "2026-06-01T00:00:00.000Z",
+  finishedAt: "2026-06-01T00:00:01.000Z",
+  durationMs: 1000,
+  metadata: {},
+  bids: [
+    {
+      id: "il_bid_1",
+      source: "il_bidbuy",
+      source_bid_id: "IL-1",
+      dedupe_key: "il_bidbuy:IL-1",
+      title: "Illinois bid",
+      description: "Illinois bid description",
+      issuer_name: "Illinois Agency",
+      issuer_type: "state",
+      state_code: "IL",
+      source_url: "https://example.com/il-1",
+    },
+  ],
+});
 
 describe("state crawler runner", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("lists the supported state crawler sources in run order", () => {
@@ -221,5 +259,26 @@ describe("state crawler runner", () => {
 
     expect(result.source).toBe("fl_mfmp");
     expect(mockedExecFile.mock.calls[0][1]).toContain("fl_mfmp");
+  });
+
+  it("runs the Python crawler in JSON mode and imports directly into MySQL when MySQL is configured", async () => {
+    vi.stubEnv("MYSQL_DATABASE_URL", "mysql://user:pass@127.0.0.1:3306/winbids");
+    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+      callback(null, mysqlJsonPayload, "");
+      return {} as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+
+    await expect(runStateCrawler({
+      source: "il_bidbuy",
+      limit: 5,
+    })).resolves.toMatchObject({
+      ok: true,
+      status: "success",
+    });
+
+    const args = mockedExecFile.mock.calls[0][1] as string[];
+    expect(args).toContain("--output-json");
+    expect(args).not.toContain("--database");
+    expect(mockedImportCrawlerJsonRunIntoMysql).toHaveBeenCalledWith(expect.anything(), JSON.parse(mysqlJsonPayload));
   });
 });

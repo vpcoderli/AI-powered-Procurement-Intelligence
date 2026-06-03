@@ -7,6 +7,7 @@ import type { Bid } from "@/server/bids/domain";
 import type { AppDatabase } from "@/server/db/client";
 import { dataSources } from "@/server/db/schema";
 import { featuresForUser, hasFeature } from "@/server/auth/entitlements";
+import { validateBidSourceUrl, validateStateAttachmentUrl } from "@/server/source-validity/url-validity";
 
 export interface RiskChecklistCheck {
   id: string;
@@ -183,11 +184,39 @@ function sourceGovernanceFailures(db: AppDatabase, options: { requireSourceAppro
   return failures;
 }
 
+function sourceValidityMetadataFailures() {
+  return STATE_CRAWLER_SOURCES.flatMap((source) => {
+    const missing = [
+      source.sourceAuthority ? null : "sourceAuthority",
+      source.trustStatus ? null : "trustStatus",
+      source.evidenceMode ? null : "evidenceMode",
+      source.validityNotes.trim() ? null : "validityNotes",
+    ].filter((value): value is string => Boolean(value));
+
+    return missing.length === 0 ? [] : [`${source.stateCode} ${source.id} missing ${missing.join(", ")}`];
+  });
+}
+
+function bidUrlValidityFailures(bids: Bid[]) {
+  return bids.flatMap((bid) => [
+    ...validateBidSourceUrl(bid.sourceUrl).map(
+      (finding) => `${bid.id}: sourceUrl ${finding.code} - ${finding.message}`,
+    ),
+    ...bid.attachments.flatMap((attachment) =>
+      validateStateAttachmentUrl(attachment.url).map(
+        (finding) => `${bid.id}: attachment ${attachment.name} ${finding.code} - ${finding.message}`,
+      ),
+    ),
+  ]);
+}
+
 export async function createRiskChecklistReport(
   db: AppDatabase,
   now = new Date(),
   options: RiskChecklistOptions = {},
 ): Promise<RiskChecklistReport> {
+  const allResponse = await queryBidsFromDatabase(db, {});
+  const allBids = allResponse.bids;
   const stateResponse = await queryBidsFromDatabase(db, { issuerType: "state" });
   const stateBids = stateResponse.bids;
   const requiredStates = requiredStateCodes();
@@ -200,6 +229,9 @@ export async function createRiskChecklistReport(
   const accountFeatureFailures = accountFeatureMatrixCheck();
   const requireSourceApproval = shouldRequireSourceApproval(options);
   const governanceFailures = sourceGovernanceFailures(db, { requireSourceApproval });
+  const validityMetadataFailures = sourceValidityMetadataFailures();
+  const stateUrlFailures = bidUrlValidityFailures(stateBids);
+  const globalUrlFailures = bidUrlValidityFailures(allBids);
 
   const checks = [
     check(
@@ -248,6 +280,27 @@ export async function createRiskChecklistReport(
         requireSourceApproval ? "production approval readiness" : "local ingestion readiness"
       }`,
       governanceFailures,
+    ),
+    check(
+      "source-validity-metadata",
+      "50 state source validity metadata",
+      validityMetadataFailures.length === 0,
+      `${requiredStates.length} state crawler sources checked for authority, trust, evidence mode, and notes`,
+      validityMetadataFailures,
+    ),
+    check(
+      "state-url-validity",
+      "State source and attachment URLs are production-like",
+      stateUrlFailures.length === 0,
+      `${stateBids.length} state bids checked for placeholder source URLs and unsafe attachment URLs`,
+      stateUrlFailures,
+    ),
+    check(
+      "global-url-validity",
+      "All active bid source and attachment URLs are production-like",
+      globalUrlFailures.length === 0,
+      `${allBids.length} active bids checked for placeholder source URLs and unsafe attachment URLs`,
+      globalUrlFailures,
     ),
   ];
 

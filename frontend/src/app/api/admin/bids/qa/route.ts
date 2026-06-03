@@ -4,9 +4,11 @@ import {
   isAdminBidQaDisplayStatus,
   isAdminBidQaReviewStatus,
   listAdminBidQaItems,
+  listAdminBidQaItemsFromMysql,
   type AdminBidQaArchiveStatus,
 } from "@/server/admin/bid-qa-repository";
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -40,15 +42,17 @@ async function resolveDatabase(database?: AppDatabase) {
 }
 
 export function createAdminBidQaGet(database?: AppDatabase) {
+  const shouldUseMysqlRuntime = () => !database && isMysqlDatabaseUrlConfigured();
+
   return async function GET(request: Request) {
     try {
       const resolvedDb = await resolveDatabase(database);
-      await requireAdminAccess(resolvedDb, request);
+      await requireAdminAccess(resolvedDb, request, { roles: ["admin", "operator", "support"] });
 
       const params = new URL(request.url).searchParams;
       const reviewStatus = stringParam(params, "reviewStatus");
       const displayStatus = stringParam(params, "displayStatus");
-      const response = await listAdminBidQaItems(resolvedDb, {
+      const filters = {
         limit: numberParam(params, "limit"),
         q: stringParam(params, "q"),
         stateCode: stringParam(params, "stateCode"),
@@ -61,7 +65,10 @@ export function createAdminBidQaGet(database?: AppDatabase) {
         reviewerId: stringParam(params, "reviewerId"),
         reviewedFrom: stringParam(params, "reviewedFrom"),
         reviewedTo: stringParam(params, "reviewedTo"),
-      });
+      };
+      const response = shouldUseMysqlRuntime()
+        ? await listAdminBidQaItemsFromMysql(resolveMysqlPool(), filters)
+        : await listAdminBidQaItems(resolvedDb, filters);
 
       return NextResponse.json(response);
     } catch (error) {

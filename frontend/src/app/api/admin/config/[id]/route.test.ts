@@ -72,6 +72,31 @@ describe("PATCH /api/admin/config/[id]", () => {
     expect(body.error.code).toBe("CONFIG_NOT_FOUND");
   });
 
+  it("rejects config patches without a change reason", async () => {
+    const existing = upsertConfigEntry(testDb.db, {
+      module: "notification",
+      configKey: "deadline_reminders",
+      configValue: { enabled: true },
+      changeReason: "Seed config for validation.",
+    });
+    const PATCH = createAdminConfigPatch(testDb.db);
+
+    const response = await PATCH(
+      new Request(`http://localhost/api/admin/config/${existing.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          configValue: { enabled: false },
+          changeReason: "  ",
+        }),
+      }),
+      { params: Promise.resolve({ id: existing.id }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("INVALID_CONFIG");
+  });
+
   it("records denied audit events for unauthenticated config patches", async () => {
     delete process.env.ADMIN_UI_LOCAL_BYPASS;
     const PATCH = createAdminConfigPatch(testDb.db);

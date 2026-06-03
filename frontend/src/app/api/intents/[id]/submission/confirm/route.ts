@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { FeatureAccessError, requireFeature } from "@/server/auth/feature-gate";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
 import { db } from "@/server/db/client";
@@ -70,6 +71,10 @@ export async function POST(request: Request, context: RouteContext) {
   const body = await request.json().catch(() => null);
   const input = parseConfirmation(body);
   const principal = await resolvePrincipal(db, request);
+
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
 
   if (!input) {
     return errorResponse("INVALID_REQUEST", "Submission confirmation details are required.", 400, principal);
