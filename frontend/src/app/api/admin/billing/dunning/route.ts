@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { AdminAuthError, requireAdminAccess } from "@/server/admin/auth";
-import { scheduleDunningReminders } from "@/server/billing/dunning";
+import { scheduleDunningReminders, scheduleDunningRemindersFromMysql } from "@/server/billing/dunning";
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -41,9 +42,13 @@ export function createAdminBillingDunningPost(database?: AppDatabase) {
       await requireAdminAccess(resolvedDb, request, { roles: ["admin", "operator"] });
       const body = await readBody(request);
 
-      return NextResponse.json(scheduleDunningReminders(resolvedDb, {
-        limit: positiveInteger((body as { limit?: unknown }).limit),
-      }));
+      const options = { limit: positiveInteger((body as { limit?: unknown }).limit) };
+
+      return NextResponse.json(
+        isMysqlDatabaseUrlConfigured()
+          ? await scheduleDunningRemindersFromMysql(resolveMysqlPool(), options)
+          : scheduleDunningReminders(resolvedDb, options),
+      );
     } catch (error) {
       return routeError(error);
     }

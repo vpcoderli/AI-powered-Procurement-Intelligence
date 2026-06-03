@@ -4,7 +4,6 @@ import * as usageLimits from "@/server/auth/usage-limits";
 import { UsageLimitError } from "@/server/auth/usage-limits";
 import * as searchAlertService from "@/server/search-alerts/service";
 import type { SearchAlert, SearchAlertDigestRun } from "@/server/search-alerts/types";
-import { ANONYMOUS_USER_COOKIE_NAME } from "@/server/bids/user";
 import { GET, POST } from "./route";
 
 vi.mock("@/server/db/client", () => ({ db: {} }));
@@ -30,7 +29,7 @@ const createSearchAlert = vi.mocked(searchAlertService.createSearchAlert);
 
 const alert: SearchAlert & { digestHistory: SearchAlertDigestRun[] } = {
   id: "alert_1",
-  userId: "anon_new",
+  userId: "user_1",
   name: "Cloud bids",
   query: {
     q: "cloud",
@@ -75,14 +74,25 @@ describe("GET /api/search-alerts", () => {
     });
   });
 
-  it("returns alerts and sets an anonymous cookie for a new anonymous user", async () => {
+  it("requires an authenticated principal", async () => {
+    const response = await GET(new Request("http://localhost/api/search-alerts"));
+    const body = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(body).toEqual({
+      error: { code: "AUTH_REQUIRED", message: "Authentication is required" },
+    });
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(listSearchAlerts).not.toHaveBeenCalled();
+  });
+
+  it("returns alerts for authenticated users without setting an anonymous cookie", async () => {
     resolvePrincipal.mockResolvedValueOnce({
-      kind: "anonymous",
-      userId: "anon_new",
+      kind: "authenticated",
+      userId: "user_1",
       role: "user",
       tier: "free",
       features: [],
-      anonymousCookie: `${ANONYMOUS_USER_COOKIE_NAME}=anon_new; Path=/`,
     });
     listSearchAlerts.mockResolvedValueOnce([alert]);
 
@@ -91,30 +101,14 @@ describe("GET /api/search-alerts", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({ alerts: [alert] });
-    expect(response.headers.get("set-cookie")).toContain(`${ANONYMOUS_USER_COOKIE_NAME}=anon_new`);
-    expect(listSearchAlerts).toHaveBeenCalledWith(expect.anything(), "anon_new");
-  });
-
-  it("does not set a cookie for authenticated users", async () => {
-    resolvePrincipal.mockResolvedValueOnce({
-      kind: "authenticated",
-      userId: "user_1",
-      role: "user",
-      tier: "free",
-      features: [],
-    });
-    listSearchAlerts.mockResolvedValueOnce([]);
-
-    const response = await GET(new Request("http://localhost/api/search-alerts"));
-
     expect(response.headers.get("set-cookie")).toBeNull();
     expect(listSearchAlerts).toHaveBeenCalledWith(expect.anything(), "user_1");
   });
 
   it("returns a generic internal error without leaking details", async () => {
     resolvePrincipal.mockResolvedValueOnce({
-      kind: "anonymous",
-      userId: "anon_existing",
+      kind: "authenticated",
+      userId: "user_1",
       role: "user",
       tier: "free",
       features: [],
@@ -147,7 +141,38 @@ describe("POST /api/search-alerts", () => {
     });
   });
 
-  it("creates an alert for the current principal", async () => {
+  it("requires an authenticated principal before creating alerts", async () => {
+    const input = {
+      name: "Cloud bids",
+      query: alert.query,
+      frequency: "daily",
+      isEnabled: true,
+    };
+    const response = await POST(
+      new Request("http://localhost/api/search-alerts", {
+        method: "POST",
+        body: JSON.stringify(input),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(body).toEqual({
+      error: { code: "AUTH_REQUIRED", message: "Authentication is required" },
+    });
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(enforceUsageLimit).not.toHaveBeenCalled();
+    expect(createSearchAlert).not.toHaveBeenCalled();
+  });
+
+  it("creates an alert for the current authenticated principal", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "authenticated",
+      userId: "user_1",
+      role: "user",
+      tier: "free",
+      features: [],
+    });
     createSearchAlert.mockResolvedValueOnce(alert);
 
     const input = {
@@ -167,14 +192,21 @@ describe("POST /api/search-alerts", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({ alert });
     expect(enforceUsageLimit).toHaveBeenCalledWith(expect.anything(), {
-      userId: "anon_existing",
+      userId: "user_1",
       tier: "free",
       feature: "search_alerts",
     });
-    expect(createSearchAlert).toHaveBeenCalledWith(expect.anything(), "anon_existing", input);
+    expect(createSearchAlert).toHaveBeenCalledWith(expect.anything(), "user_1", input);
   });
 
   it("returns USAGE_LIMIT_REACHED when the principal exceeds the alert quota", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "authenticated",
+      userId: "user_1",
+      role: "user",
+      tier: "free",
+      features: [],
+    });
     enforceUsageLimit.mockImplementationOnce(() => {
       throw new UsageLimitError({
         feature: "search_alerts",
@@ -211,6 +243,13 @@ describe("POST /api/search-alerts", () => {
   });
 
   it("returns INVALID_REQUEST for malformed JSON", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "authenticated",
+      userId: "user_1",
+      role: "user",
+      tier: "free",
+      features: [],
+    });
     const response = await POST(
       new Request("http://localhost/api/search-alerts", {
         method: "POST",
@@ -225,6 +264,13 @@ describe("POST /api/search-alerts", () => {
   });
 
   it("returns INVALID_REQUEST when required fields are missing", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "authenticated",
+      userId: "user_1",
+      role: "user",
+      tier: "free",
+      features: [],
+    });
     const response = await POST(
       new Request("http://localhost/api/search-alerts", {
         method: "POST",

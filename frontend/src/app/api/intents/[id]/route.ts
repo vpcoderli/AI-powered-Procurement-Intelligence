@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
 import { db } from "@/server/db/client";
 import { getUserIntent, updateIntentStatus } from "@/server/intents/service";
@@ -48,6 +49,10 @@ function parseStatusUpdate(body: unknown): IntentStatus | null {
 export async function GET(request: Request, context: RouteContext) {
   const principal = await resolvePrincipal(db, request);
 
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
+
   try {
     const { id } = await context.params;
     const intent = await getUserIntent(db, principal.userId, id);
@@ -67,6 +72,10 @@ export async function PATCH(request: Request, context: RouteContext) {
   const status = parseStatusUpdate(body);
 
   const principal = await resolvePrincipal(db, request);
+
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
 
   if (!status) {
     return errorResponse("INVALID_REQUEST", "A supported intent status is required.", 400, principal);

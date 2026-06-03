@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
 import { db } from "@/server/db/client";
 import { IntentNotFoundError } from "@/server/intents/types";
@@ -37,6 +38,10 @@ function errorResponse(
 export async function GET(request: Request, context: RouteContext) {
   const principal = await resolvePrincipal(db, request);
 
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
+
   try {
     const { id } = await context.params;
     const freshness = await getQualificationFreshness(db, principal.userId, id);
@@ -53,6 +58,10 @@ export async function GET(request: Request, context: RouteContext) {
 
 export async function POST(request: Request, context: RouteContext) {
   const principal = await resolvePrincipal(db, request);
+
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
 
   try {
     const { id } = await context.params;

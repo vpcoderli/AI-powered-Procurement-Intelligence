@@ -14,6 +14,7 @@ import {
   removeSavedBid,
   saveBid as saveBidRequest,
 } from "@/lib/api/bids";
+import { useAuth } from "@/context/AuthContext";
 import type { Bid } from "@/lib/mock-data";
 
 interface SavedBidsContextType {
@@ -28,6 +29,7 @@ interface SavedBidsContextType {
 const SavedBidsContext = createContext<SavedBidsContextType | undefined>(undefined);
 
 export function SavedBidsProvider({ children }: { children: ReactNode }) {
+  const { user, isLoading: isAuthLoading } = useAuth();
   const [savedBidIds, setSavedBidIds] = useState<string[]>([]);
   const [savedBids, setSavedBids] = useState<Bid[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -59,7 +61,24 @@ export function SavedBidsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     isMountedRef.current = true;
 
+    if (isAuthLoading) {
+      return () => {
+        isMountedRef.current = false;
+      };
+    }
+
+    if (!user) {
+      savedBidIdsRef.current = [];
+      return () => {
+        isMountedRef.current = false;
+      };
+    }
+
     enqueueOperation(async () => {
+      if (isMountedRef.current) {
+        setIsLoading(true);
+      }
+
       try {
         const response = await fetchSavedBids();
         applySavedBidsResponse(response);
@@ -77,10 +96,15 @@ export function SavedBidsProvider({ children }: { children: ReactNode }) {
     return () => {
       isMountedRef.current = false;
     };
-  }, [applySavedBidsResponse, enqueueOperation]);
+  }, [applySavedBidsResponse, enqueueOperation, isAuthLoading, user]);
 
   const toggleSaveBid = useCallback(
     async (id: string) => {
+      if (!user) {
+        setError("Sign in to save bids");
+        return;
+      }
+
       if (pendingBidIdsRef.current.has(id)) {
         return;
       }
@@ -103,14 +127,29 @@ export function SavedBidsProvider({ children }: { children: ReactNode }) {
         }
       }).catch(() => undefined);
     },
-    [applySavedBidsResponse, enqueueOperation],
+    [applySavedBidsResponse, enqueueOperation, user],
   );
 
   const isSaved = useCallback((id: string) => savedBidIds.includes(id), [savedBidIds]);
+  const exposedSavedBidIds = user ? savedBidIds : [];
+  const exposedSavedBids = user ? savedBids : [];
+  const exposedIsLoading = isAuthLoading || (user ? isLoading : false);
+  const exposedError = user ? error : null;
+  const exposedIsSaved = useCallback(
+    (id: string) => (user ? isSaved(id) : false),
+    [isSaved, user],
+  );
 
   return (
     <SavedBidsContext.Provider
-      value={{ savedBidIds, savedBids, isLoading, error, toggleSaveBid, isSaved }}
+      value={{
+        savedBidIds: exposedSavedBidIds,
+        savedBids: exposedSavedBids,
+        isLoading: exposedIsLoading,
+        error: exposedError,
+        toggleSaveBid,
+        isSaved: exposedIsSaved,
+      }}
     >
       {children}
     </SavedBidsContext.Provider>

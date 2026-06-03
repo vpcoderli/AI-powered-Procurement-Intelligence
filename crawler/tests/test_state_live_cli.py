@@ -32,6 +32,15 @@ def source_quality(adapter_kind, maturity, capabilities):
     }
 
 
+def verified_source_validity():
+    return {
+        "source_authority": "official",
+        "trust_status": "verified",
+        "evidence_mode": "direct_portal",
+        "validity_notes": "Verified public state procurement portal with deterministic parser coverage.",
+    }
+
+
 def test_fetch_state_writes_bids_and_success_log(tmp_path, monkeypatch):
     database = tmp_path / "apsi.sqlite"
     create_crawler_database(database)
@@ -70,6 +79,7 @@ def test_fetch_state_writes_bids_and_success_log(tmp_path, monkeypatch):
         "query": "cloud",
         "limit": 5,
         "source_quality": source_quality("dedicated", "verified", ["query", "pagination"]),
+        "source_validity": verified_source_validity(),
     }
 
 
@@ -118,6 +128,7 @@ def test_fetch_state_replays_ca_caleprocure_fixture_json(tmp_path):
         "limit": 5,
         "fixture_json": str(fixture),
         "source_quality": source_quality("dedicated", "verified", ["query", "pagination"]),
+        "source_validity": verified_source_validity(),
     }
 
 
@@ -168,6 +179,7 @@ def test_fetch_state_replays_tx_esbd_fixture_json(tmp_path):
             "verified",
             ["query", "detail_pages", "pagination"],
         ),
+        "source_validity": verified_source_validity(),
     }
 
 
@@ -218,6 +230,7 @@ def test_fetch_state_replays_ny_contract_reporter_fixture_json(tmp_path):
             "verified",
             ["query", "detail_pages", "pagination"],
         ),
+        "source_validity": verified_source_validity(),
     }
 
 
@@ -268,6 +281,7 @@ def test_fetch_state_replays_fl_mfmp_fixture_json(tmp_path):
             "verified",
             ["query", "detail_pages", "pagination"],
         ),
+        "source_validity": verified_source_validity(),
     }
 
 
@@ -319,6 +333,7 @@ def test_fetch_state_replays_il_bidbuy_fixture_html(tmp_path):
             "verified",
             ["query", "attachments", "detail_pages", "pagination"],
         ),
+        "source_validity": verified_source_validity(),
     }
 
 

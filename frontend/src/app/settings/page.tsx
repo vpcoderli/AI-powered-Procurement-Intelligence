@@ -20,6 +20,7 @@ import {
   Users,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { AuthRequiredState } from "@/components/auth/AuthRequiredState";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -48,6 +49,7 @@ import {
   exportAccountData,
   fetchAccountSubscription,
   fetchAccountUsage,
+  fetchAccountDeadlineReminders,
   fetchAccountNotificationPreferences,
   fetchBillingInvoices,
   fetchAccountWorkspace,
@@ -58,9 +60,11 @@ import {
   setWorkspaceMemberStatus,
   transferWorkspaceOwnership,
   updateAccountWorkspace,
+  updateAccountDeadlineReminder,
   updateAccountNotificationPreferences,
   updateAccountProfile,
   updateWorkspaceMemberRole,
+  type AccountDeadlineRemindersResponse,
   type AccountNotificationPreferencesResponse,
   type AccountWorkspaceMember,
   type AccountSubscriptionResponse,
@@ -72,6 +76,7 @@ import {
 import { canUseFeature, lockedFeatureMessage } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { ACCOUNT_TIER_LABELS, type AccountTier, type FeatureKey, type ProductPlanKey } from "@/server/auth/entitlements";
+import type { DeadlineReminder } from "@/server/deadlines/types";
 import type { AlertFrequency, SearchAlert, SearchAlertDigestRun } from "@/server/search-alerts/types";
 
 const FEATURE_ACCESS_ITEMS: Array<{ key: FeatureKey; label: string }> = [
@@ -79,8 +84,13 @@ const FEATURE_ACCESS_ITEMS: Array<{ key: FeatureKey; label: string }> = [
   { key: "saved_bids", label: "Saved bids" },
   { key: "intent_workspace", label: "Intent workspace" },
   { key: "submission_guidance", label: "Submission guidance" },
+  { key: "pursue_no_bid", label: "Pursue / No-Bid" },
+  { key: "bid.brief.full.generate", label: "Grounded Q&A" },
   { key: "compliance_manifest", label: "Compliance manifest" },
+  { key: "response.workspace.create", label: "Response workspace" },
+  { key: "artifact.vault.upload", label: "Artifact Vault" },
   { key: "quote_workflow", label: "Quote workflow" },
+  { key: "deadline_notifications", label: "Deadline notifications" },
   { key: "knowledge_station", label: "Knowledge Station" },
 ];
 const BILLING_INVOICE_STATUS_FILTERS: Array<"all" | BillingInvoiceStatus> = [
@@ -122,6 +132,10 @@ const EMPTY_SEARCH_ALERT_DRAFT: SearchAlertDraft = {
   frequency: "daily",
   isEnabled: true,
 };
+
+function deadlineReminderSnoozeUntilIso() {
+  return new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+}
 
 function SettingsInlineState({
   code,
@@ -167,6 +181,11 @@ export default function SettingsPage() {
   const [notificationPreferencesMessage, setNotificationPreferencesMessage] = useState("");
   const [notificationPreferencesError, setNotificationPreferencesError] = useState("");
   const [isSavingNotificationPreferences, setIsSavingNotificationPreferences] = useState(false);
+  const [deadlineReminderCenter, setDeadlineReminderCenter] =
+    useState<AccountDeadlineRemindersResponse["center"] | null>(null);
+  const [deadlineReminderMessage, setDeadlineReminderMessage] = useState("");
+  const [deadlineReminderError, setDeadlineReminderError] = useState("");
+  const [deadlineReminderActionId, setDeadlineReminderActionId] = useState<string | null>(null);
   const [searchAlertsData, setSearchAlertsData] = useState<SearchAlert[] | null>(null);
   const [searchAlertDraft, setSearchAlertDraft] =
     useState<SearchAlertDraft>(EMPTY_SEARCH_ALERT_DRAFT);
@@ -205,6 +224,7 @@ export default function SettingsPage() {
   );
   const usageLimitedItems = usageData?.items.filter((item) => item.isLimited) ?? [];
   const canManageWorkspace = workspaceData?.currentUserRole === "owner";
+  const canUseDeadlineReminderCenter = user ? canUseFeature(user, "deadline_notifications") : false;
 
   useEffect(() => {
     if (!user) return;
@@ -243,6 +263,21 @@ export default function SettingsPage() {
         if (isCancelled) return;
         setNotificationPreferencesError(
           error instanceof Error ? error.message : t("settings.notificationPreferencesLoadError"),
+        );
+      });
+
+    fetchAccountDeadlineReminders()
+      .then((data) => {
+        if (isCancelled) return;
+        setDeadlineReminderCenter(data.center);
+        setDeadlineReminderError("");
+      })
+      .catch((error) => {
+        if (isCancelled) return;
+        setDeadlineReminderError(
+          error instanceof AuthApiError && error.code === "FEATURE_NOT_AVAILABLE"
+            ? t("settings.reminderCenterLockedMessage")
+            : error instanceof Error ? error.message : t("settings.reminderCenterLoadError"),
         );
       });
 
@@ -347,6 +382,37 @@ export default function SettingsPage() {
     return value ?? t("settings.notScheduled");
   }
 
+  function deadlineReminderDateLabel(value: string | null) {
+    return value ?? t("settings.notScheduled");
+  }
+
+  function deadlineReminderKindLabel(kind: DeadlineReminder["kind"]) {
+    return t(`settings.reminderKind_${kind}`);
+  }
+
+  function deadlineReminderStatusLabel(status: DeadlineReminder["status"]) {
+    return t(`settings.reminderStatus_${status}`);
+  }
+
+  function deadlineReminderStatusClassName(status: DeadlineReminder["status"]) {
+    if (status === "acknowledged") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+    if (status === "snoozed") return "border-amber-200 bg-amber-50 text-amber-800";
+    if (status === "suppressed") return "border-slate-200 bg-slate-50 text-slate-600";
+
+    return "border-sky-200 bg-sky-50 text-sky-700";
+  }
+
+  function deadlineReminderPriorityLabel(priority: DeadlineReminder["priority"]) {
+    return t(`settings.reminderPriority_${priority}`);
+  }
+
+  function deadlineReminderPriorityClassName(priority: DeadlineReminder["priority"]) {
+    if (priority === "high") return "border-red-200 bg-red-50 text-red-700";
+    if (priority === "medium") return "border-amber-200 bg-amber-50 text-amber-800";
+
+    return "border-slate-200 bg-white text-slate-600";
+  }
+
   function searchAlertQuerySummary(alert: SearchAlert) {
     const keywords = alert.query.q?.trim() || t("settings.searchAlertAnyKeywords");
     const states = alert.query.states?.length
@@ -439,6 +505,39 @@ export default function SettingsPage() {
     const data = await listSearchAlerts();
     setSearchAlertsData(data.alerts);
     return data.alerts;
+  }
+
+  function reminderCenterErrorMessage(error: unknown) {
+    if (error instanceof AuthApiError && error.code === "FEATURE_NOT_AVAILABLE") {
+      return t("settings.reminderCenterLockedMessage");
+    }
+
+    return error instanceof Error ? error.message : t("settings.reminderCenterSaveError");
+  }
+
+  async function handleDeadlineReminderAction(
+    reminder: DeadlineReminder,
+    action: "acknowledge" | "snooze",
+  ) {
+    setDeadlineReminderMessage("");
+    setDeadlineReminderError("");
+    setDeadlineReminderActionId(reminder.id);
+
+    try {
+      const data = action === "acknowledge"
+        ? await updateAccountDeadlineReminder({ reminderId: reminder.id, action })
+        : await updateAccountDeadlineReminder({
+            reminderId: reminder.id,
+            action,
+            snoozedUntil: deadlineReminderSnoozeUntilIso(),
+          });
+      setDeadlineReminderCenter(data.center);
+      setDeadlineReminderMessage(t("settings.reminderCenterSaved"));
+    } catch (error) {
+      setDeadlineReminderError(reminderCenterErrorMessage(error));
+    } finally {
+      setDeadlineReminderActionId(null);
+    }
   }
 
   function searchAlertErrorMessage(error: unknown) {
@@ -857,6 +956,23 @@ export default function SettingsPage() {
     } finally {
       setAccountAction(null);
     }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="winbids-workspace">
+        <section className="winbids-hero-panel min-h-[280px] animate-pulse" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <AuthRequiredState
+        description={t("settings.accountRequiresLogin")}
+        title={t("settings.accountRequiresLoginTitle")}
+      />
+    );
   }
 
   return (
@@ -1379,6 +1495,155 @@ export default function SettingsPage() {
                     className="data-[state=checked]:bg-slate-900 shrink-0"
                   />
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border-slate-200 shadow-sm rounded-xl overflow-hidden bg-white">
+              <CardHeader className="bg-slate-50 border-b border-slate-100 pb-4 pt-5 px-6">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <CardTitle className="text-lg font-semibold text-slate-900">{t("settings.reminderCenter")}</CardTitle>
+                    <CardDescription className="text-slate-500 font-medium">{t("settings.reminderCenterDesc")}</CardDescription>
+                  </div>
+                  <Badge variant="outline" className="w-fit border-slate-200 bg-white text-slate-700">
+                    {t("settings.reminderCenterCount").replace(
+                      "{count}",
+                      String(deadlineReminderCenter?.reminders.length ?? 0),
+                    )}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4 p-6">
+                {!canUseDeadlineReminderCenter && (
+                  <SettingsInlineState
+                    code="plan_limit"
+                    message={t("settings.reminderCenterLockedMessage")}
+                    title={t("settings.reminderCenterLockedTitle")}
+                  />
+                )}
+                {canUseDeadlineReminderCenter && deadlineReminderError && (
+                  <SettingsInlineState
+                    code="error"
+                    message={deadlineReminderError}
+                    title={t("settings.reminderCenter")}
+                  />
+                )}
+                {canUseDeadlineReminderCenter && !deadlineReminderCenter && !deadlineReminderError && (
+                  <SettingsInlineState
+                    code="loading"
+                    message={t("settings.loadingDeadlineReminders")}
+                    title={t("settings.reminderCenter")}
+                  />
+                )}
+                {deadlineReminderMessage && (
+                  <p className="text-sm font-medium text-emerald-700">{deadlineReminderMessage}</p>
+                )}
+                {canUseDeadlineReminderCenter && deadlineReminderCenter && (
+                  <>
+                    <div className="grid gap-3 sm:grid-cols-4">
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-xs font-semibold uppercase text-slate-500">
+                          {t("settings.reminderSummaryActive")}
+                        </p>
+                        <p className="mt-1 text-lg font-bold text-slate-900">{deadlineReminderCenter.summary.active}</p>
+                      </div>
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                        <p className="text-xs font-semibold uppercase text-amber-800">
+                          {t("settings.reminderSummaryDueSoon")}
+                        </p>
+                        <p className="mt-1 text-lg font-bold text-amber-900">{deadlineReminderCenter.summary.dueSoon}</p>
+                      </div>
+                      <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                        <p className="text-xs font-semibold uppercase text-red-700">
+                          {t("settings.reminderSummaryOverdue")}
+                        </p>
+                        <p className="mt-1 text-lg font-bold text-red-800">{deadlineReminderCenter.summary.overdue}</p>
+                      </div>
+                      <div className="rounded-lg border border-sky-200 bg-sky-50 p-3">
+                        <p className="text-xs font-semibold uppercase text-sky-700">
+                          {t("settings.reminderSummarySnoozed")}
+                        </p>
+                        <p className="mt-1 text-lg font-bold text-sky-800">{deadlineReminderCenter.summary.snoozed}</p>
+                      </div>
+                    </div>
+
+                    {deadlineReminderCenter.reminders.length === 0 && (
+                      <SettingsInlineState
+                        code="empty"
+                        message={t("settings.reminderCenterEmptyMessage")}
+                        title={t("settings.reminderCenterEmptyTitle")}
+                      />
+                    )}
+                    <div className="space-y-3">
+                      {deadlineReminderCenter.reminders.map((reminder) => {
+                        const isWorking = deadlineReminderActionId === reminder.id;
+                        const isClosed = reminder.status === "acknowledged" || reminder.status === "suppressed";
+
+                        return (
+                          <div
+                            key={reminder.id}
+                            className="rounded-lg border border-slate-200 bg-slate-50 p-4"
+                          >
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge
+                                    variant="outline"
+                                    className={deadlineReminderStatusClassName(reminder.status)}
+                                  >
+                                    {deadlineReminderStatusLabel(reminder.status)}
+                                  </Badge>
+                                  <Badge
+                                    variant="outline"
+                                    className={deadlineReminderPriorityClassName(reminder.priority)}
+                                  >
+                                    {deadlineReminderPriorityLabel(reminder.priority)}
+                                  </Badge>
+                                  <span className="text-xs font-semibold text-slate-500">
+                                    {deadlineReminderKindLabel(reminder.kind)}
+                                  </span>
+                                </div>
+                                <h3 className="mt-2 text-sm font-semibold text-slate-900">{reminder.title}</h3>
+                                <p className="mt-1 text-xs font-medium text-slate-500">
+                                  {t("settings.reminderDueAt").replace(
+                                    "{date}",
+                                    deadlineReminderDateLabel(reminder.dueAt),
+                                  )}
+                                  {reminder.snoozedUntil
+                                    ? ` · ${t("settings.reminderSnoozedUntil").replace(
+                                        "{date}",
+                                        deadlineReminderDateLabel(reminder.snoozedUntil),
+                                      )}`
+                                    : ""}
+                                </p>
+                              </div>
+                              <div className="flex flex-col gap-2 sm:flex-row">
+                                <Button
+                                  variant="outline"
+                                  disabled={isWorking || isClosed}
+                                  onClick={() => void handleDeadlineReminderAction(reminder, "acknowledge")}
+                                  className="h-8 rounded-lg border-slate-200 px-3 text-sm font-medium text-slate-700"
+                                >
+                                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                                  {t("settings.acknowledgeReminder")}
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  disabled={isWorking || isClosed}
+                                  onClick={() => void handleDeadlineReminderAction(reminder, "snooze")}
+                                  className="h-8 rounded-lg border-slate-200 px-3 text-sm font-medium text-slate-700"
+                                >
+                                  <Pause className="mr-2 h-4 w-4" />
+                                  {t("settings.snoozeReminder")}
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
 

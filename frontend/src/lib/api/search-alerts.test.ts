@@ -136,6 +136,22 @@ describe("search alerts API client", () => {
     await expect(promise).rejects.toBeInstanceOf(ApiError);
   });
 
+  it("preserves AUTH_REQUIRED errors for anonymous personal alert requests", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse(
+        { error: { code: "AUTH_REQUIRED", message: "Authentication is required" } },
+        { status: 401 },
+      ),
+    );
+
+    await expect(listSearchAlerts()).rejects.toMatchObject({
+      name: "ApiError",
+      status: 401,
+      code: "AUTH_REQUIRED",
+      message: "Authentication is required",
+    });
+  });
+
   it("throws fallback ApiError for malformed error JSON", async () => {
     mockFetch.mockResolvedValueOnce(new Response("{", { status: 500 }));
 

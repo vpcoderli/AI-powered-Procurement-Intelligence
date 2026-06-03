@@ -3,13 +3,16 @@ import { AdminAuthError, requireAdmin } from "@/server/admin/auth";
 import {
   AdminUserEmailExistsError,
   createAdminUserInvite,
+  createAdminUserInviteFromMysql,
   listAdminUsers,
+  listAdminUsersFromMysql,
   type AdminUserFilterStatus,
   type CreateAdminUserInviteInput,
   type ListAdminUsersFilters,
 } from "@/server/admin/users-repository";
 import { isAccountTier, isUserRole } from "@/server/auth/entitlements";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -93,7 +96,11 @@ export async function GET(request: Request) {
 
   try {
     await requireAdmin(db, request);
-    return NextResponse.json(listAdminUsers(db, filters));
+    const users = isMysqlDatabaseUrlConfigured()
+      ? await listAdminUsersFromMysql(resolveMysqlPool(), filters)
+      : listAdminUsers(db, filters);
+
+    return NextResponse.json(users);
   } catch (error) {
     return routeError(error);
   }
@@ -109,10 +116,13 @@ export async function POST(request: Request) {
 
   try {
     const principal = await requireAdmin(db, request);
-    const result = await createAdminUserInvite(db, input, {
+    const actor = {
       actorKind: principal.kind,
       actorUserId: principal.kind === "admin" ? principal.userId : null,
-    });
+    };
+    const result = isMysqlDatabaseUrlConfigured()
+      ? await createAdminUserInviteFromMysql(resolveMysqlPool(), input, actor)
+      : await createAdminUserInvite(db, input, actor);
 
     return NextResponse.json(result, { status: 201 });
   } catch (error) {

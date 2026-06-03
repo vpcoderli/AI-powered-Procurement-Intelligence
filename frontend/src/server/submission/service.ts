@@ -1,14 +1,19 @@
 import crypto from "node:crypto";
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { getUserIntent } from "@/server/intents/service";
 import { IntentNotFoundError } from "@/server/intents/types";
 import { generateSubmissionGuidance } from "./generator";
 import {
   createSubmissionConfirmationRow,
+  createSubmissionConfirmationRowFromMysql,
   createSubmissionPathRow,
+  createSubmissionPathRowFromMysql,
   findSubmissionPathByIntent,
+  findSubmissionPathByIntentFromMysql,
   normalizeSubmissionMethod,
   updateSubmissionPathRow,
+  updateSubmissionPathRowFromMysql,
   type SubmissionConfirmationRow,
   type SubmissionPathRow,
 } from "./repository";
@@ -71,7 +76,10 @@ export async function getOrCreateSubmissionGuidance(
   userId: string,
   intentId: string,
 ): Promise<SubmissionGuidance> {
-  const existing = findSubmissionPathByIntent(database, userId, intentId);
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const existing = mysql
+    ? await findSubmissionPathByIntentFromMysql(mysql, userId, intentId)
+    : findSubmissionPathByIntent(database, userId, intentId);
 
   if (existing) {
     return hydrateSubmissionPath(existing);
@@ -85,14 +93,23 @@ export async function getOrCreateSubmissionGuidance(
 
   const timestamp = nowIso();
   const generated = generateSubmissionGuidance(intent.bid);
-  const row = createSubmissionPathRow(database, {
-    id: `submission_path_${crypto.randomUUID()}`,
-    intentId: intent.id,
-    bidId: intent.bid.id,
-    userId,
-    guidance: generated,
-    timestamp,
-  });
+  const row = mysql
+    ? await createSubmissionPathRowFromMysql(mysql, {
+      id: `submission_path_${crypto.randomUUID()}`,
+      intentId: intent.id,
+      bidId: intent.bid.id,
+      userId,
+      guidance: generated,
+      timestamp,
+    })
+    : createSubmissionPathRow(database, {
+      id: `submission_path_${crypto.randomUUID()}`,
+      intentId: intent.id,
+      bidId: intent.bid.id,
+      userId,
+      guidance: generated,
+      timestamp,
+    });
 
   if (!row) {
     throw new Error("Failed to create submission guidance");
@@ -109,7 +126,10 @@ export async function updateSubmissionGuidance(
 ): Promise<SubmissionGuidance> {
   await getOrCreateSubmissionGuidance(database, userId, intentId);
 
-  const row = updateSubmissionPathRow(database, userId, intentId, input, nowIso());
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const row = mysql
+    ? await updateSubmissionPathRowFromMysql(mysql, userId, intentId, input, nowIso())
+    : updateSubmissionPathRow(database, userId, intentId, input, nowIso());
 
   if (!row) {
     throw new IntentNotFoundError();
@@ -127,16 +147,28 @@ export async function createSubmissionConfirmation(
   await getOrCreateSubmissionGuidance(database, userId, intentId);
 
   const timestamp = nowIso();
-  const row = createSubmissionConfirmationRow(database, {
-    id: `submission_confirmation_${crypto.randomUUID()}`,
-    intentId,
-    userId,
-    submittedAt: input.submittedAt,
-    method: input.method,
-    confirmationReference: input.confirmationReference,
-    confirmationNotes: input.confirmationNotes,
-    timestamp,
-  });
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const row = mysql
+    ? await createSubmissionConfirmationRowFromMysql(mysql, {
+      id: `submission_confirmation_${crypto.randomUUID()}`,
+      intentId,
+      userId,
+      submittedAt: input.submittedAt,
+      method: input.method,
+      confirmationReference: input.confirmationReference,
+      confirmationNotes: input.confirmationNotes,
+      timestamp,
+    })
+    : createSubmissionConfirmationRow(database, {
+      id: `submission_confirmation_${crypto.randomUUID()}`,
+      intentId,
+      userId,
+      submittedAt: input.submittedAt,
+      method: input.method,
+      confirmationReference: input.confirmationReference,
+      confirmationNotes: input.confirmationNotes,
+      timestamp,
+    });
 
   if (!row) {
     throw new Error("Failed to create submission confirmation");

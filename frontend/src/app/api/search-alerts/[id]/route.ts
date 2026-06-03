@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
+import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { db } from "@/server/db/client";
 import * as searchAlertService from "@/server/search-alerts/service";
 import { SearchAlertNotFoundError, type UpdateSearchAlertInput } from "@/server/search-alerts/types";
@@ -121,6 +122,12 @@ function parseUpdateInput(body: unknown): UpdateSearchAlertInput | null {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
+  const principal = await resolvePrincipal(db, request);
+
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
+
   let body: unknown;
 
   try {
@@ -131,8 +138,6 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   const input = parseUpdateInput(body);
   if (!input) return invalidRequest();
-
-  const principal = await resolvePrincipal(db, request);
 
   try {
     const { id } = await context.params;
@@ -150,6 +155,10 @@ export async function PATCH(request: Request, context: RouteContext) {
 
 export async function DELETE(request: Request, context: RouteContext) {
   const principal = await resolvePrincipal(db, request);
+
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
 
   try {
     const { id } = await context.params;

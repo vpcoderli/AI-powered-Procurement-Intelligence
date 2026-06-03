@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
+import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { UsageLimitError, enforceMysqlSavedBidUsageLimit, enforceUsageLimit } from "@/server/auth/usage-limits";
 import * as bidService from "@/server/bids/service";
 import { BidNotFoundError } from "@/server/bids/types";
@@ -60,6 +61,10 @@ function usageLimitError(error: UsageLimitError, principal: RequestPrincipal) {
 export async function GET(request: Request) {
   const principal = await resolvePrincipal(db, request);
 
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
+
   try {
     return jsonWithPrincipalCookie(await bidService.getSavedBids(principal.userId), principal);
   } catch {
@@ -87,6 +92,10 @@ export async function POST(request: Request) {
   }
 
   const principal = await resolvePrincipal(db, request);
+
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
 
   try {
     if (isMysqlDatabaseUrlConfigured()) {

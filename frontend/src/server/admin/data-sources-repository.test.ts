@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { crawlerLogs, dataSources } from "@/server/db/schema";
+import { crawlerLogs, dataSources, sourceApprovalEvents } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
+import { recordLiveSourceHealthSnapshot } from "@/server/source-validity/health-snapshots";
 import {
   listAdminCrawlerLogs,
   listAdminCrawlerLogsFromMysql,
   listAdminDataSources,
+  listAdminDataSourcesFromMysql,
   updateAdminDataSource,
+  updateAdminDataSourceFromMysql,
 } from "./data-sources-repository";
 
 const NOW = "2026-05-19T00:00:00.000Z";
@@ -113,6 +116,64 @@ describe("admin data sources repository", () => {
         },
       ])
       .run();
+    recordLiveSourceHealthSnapshot(testDb.db, {
+      ok: true,
+      checkedAt: "2026-06-01T02:00:00.000Z",
+      summary: {
+        total: 1,
+        healthy: 1,
+        unhealthy: 0,
+        skipped: 0,
+      },
+      results: [
+        {
+          stateCode: "CA",
+          sourceId: "ca_caleprocure",
+          label: "California Cal eProcure",
+          url: "https://caleprocure.ca.gov",
+          sourceAuthority: "official",
+          trustStatus: "verified",
+          status: "healthy",
+          method: "HEAD",
+          httpStatus: 200,
+          statusText: "OK",
+          errorCode: null,
+          errorMessage: null,
+          latencyMs: 311,
+          operationalSeverity: "none",
+          recommendedAction: "none",
+        },
+      ],
+    }, "2026-06-01T02:00:01.000Z");
+    recordLiveSourceHealthSnapshot(testDb.db, {
+      ok: false,
+      checkedAt: "2026-06-01T03:00:00.000Z",
+      summary: {
+        total: 1,
+        healthy: 0,
+        unhealthy: 1,
+        skipped: 0,
+      },
+      results: [
+        {
+          stateCode: "CA",
+          sourceId: "ca_caleprocure",
+          label: "California Cal eProcure",
+          url: "https://caleprocure.ca.gov",
+          sourceAuthority: "official",
+          trustStatus: "verified",
+          status: "unhealthy",
+          method: "GET",
+          httpStatus: 503,
+          statusText: "Service Unavailable",
+          errorCode: "http_error",
+          errorMessage: "HTTP 503 Service Unavailable",
+          latencyMs: 842,
+          operationalSeverity: "warning",
+          recommendedAction: "browser_or_access_review",
+        },
+      ],
+    }, "2026-06-01T03:00:01.000Z");
 
     await expect(listAdminDataSources(testDb.db)).resolves.toEqual({
       summary: {
@@ -126,6 +187,27 @@ describe("admin data sources repository", () => {
           id: "ca_caleprocure",
           isEnabled: false,
           latestLog: null,
+          latestLiveHealth: expect.objectContaining({
+            checkedAt: "2026-06-01T03:00:00.000Z",
+            status: "unhealthy",
+            httpStatus: 503,
+            statusCode: 503,
+            error: "HTTP 503 Service Unavailable",
+            errorMessage: "HTTP 503 Service Unavailable",
+            latencyMs: 842,
+            operationalSeverity: "warning",
+            recommendedAction: "browser_or_access_review",
+          }),
+          sourceHealthTrend: {
+            sampleSize: 2,
+            healthyChecks: 1,
+            unhealthyChecks: 1,
+            skippedChecks: 0,
+            healthyPercent: 50,
+            currentStatus: "unhealthy",
+            currentStreak: 1,
+            lastUnhealthyAt: "2026-06-01T03:00:00.000Z",
+          },
         }),
         expect.objectContaining({
           id: "sam_gov",
@@ -265,6 +347,10 @@ describe("admin data sources repository", () => {
       accessPattern: "public_http",
       legalReviewStatus: "approved_public",
       sourceOwner: "APSI Data Ops",
+      sourceAuthority: "official",
+      trustStatus: "verified",
+      evidenceMode: "direct_portal",
+      validityNotes: expect.stringContaining("Verified"),
     });
   });
 
@@ -302,6 +388,71 @@ describe("admin data sources repository", () => {
       approvalNotes: "Approved after manual legal review.",
       lastApprovalReviewedAt: "2026-06-01T00:00:00.000Z",
     });
+  });
+
+  it("records approval governance history when source approval changes", async () => {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id: "oregon_buys",
+        label: "OregonBuys",
+        issuerType: "state",
+        stateCode: "OR",
+        isEnabled: 1,
+        cadence: "daily",
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+      .run();
+
+    await expect(
+      updateAdminDataSource(
+        testDb.db,
+        "oregon_buys",
+        {
+          approvedForIngestion: true,
+          approvalStatus: "approved",
+          legalReviewStatus: "approved_public",
+          approvalNotes: "Approved after source health review.",
+        },
+        { actorUserId: "admin_1" },
+      ),
+    ).resolves.toMatchObject({
+      approvalStatus: "approved",
+      approvalHistory: [
+        expect.objectContaining({
+          sourceId: "oregon_buys",
+          actorUserId: "admin_1",
+          action: "approved",
+          previousApprovalStatus: "needs_review",
+          nextApprovalStatus: "approved",
+          previousLegalReviewStatus: "not_reviewed",
+          nextLegalReviewStatus: "approved_public",
+          previousApprovedForIngestion: false,
+          nextApprovedForIngestion: true,
+          reason: "Approved after source health review.",
+        }),
+      ],
+    });
+
+    const events = testDb.db.select().from(sourceApprovalEvents).all();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      sourceId: "oregon_buys",
+      actorUserId: "admin_1",
+      action: "approved",
+      previousApprovalStatus: "needs_review",
+      nextApprovalStatus: "approved",
+      reason: "Approved after source health review.",
+    });
+
+    const listed = await listAdminDataSources(testDb.db);
+    expect(listed.sources.find((source) => source.id === "oregon_buys")?.approvalHistory).toEqual([
+      expect.objectContaining({
+        action: "approved",
+        actorUserId: "admin_1",
+      }),
+    ]);
   });
 
   it("keeps direct SAM.gov log matching", async () => {
@@ -473,4 +624,164 @@ describe("admin data sources repository", () => {
     expect(queryCalls[0]).toContain("LIMIT ?");
     expect(queryCalls[0]).toContain("[100]");
   });
+
+  it("lists and updates MySQL data sources with latest log health", async () => {
+    const mysql = createFakeMysqlDataSourcesStore();
+
+    await expect(listAdminDataSourcesFromMysql(mysql)).resolves.toMatchObject({
+      summary: {
+        totalSources: 2,
+        enabledSources: 1,
+        healthySources: 1,
+        failingSources: 1,
+      },
+      sources: [
+        expect.objectContaining({
+          id: "california_caleprocure",
+          isEnabled: false,
+          latestLog: null,
+          crawlerSourceId: "ca_caleprocure",
+          sourceAuthority: "official",
+          trustStatus: "verified",
+          evidenceMode: "direct_portal",
+        }),
+        expect.objectContaining({
+          id: "sam_gov",
+          isEnabled: true,
+          latestLog: expect.objectContaining({
+            id: "mysql_log_latest",
+            status: "success",
+          }),
+        }),
+      ],
+    });
+
+    await expect(updateAdminDataSourceFromMysql(mysql, "sam_gov", { isEnabled: false })).resolves.toMatchObject({
+      id: "sam_gov",
+      isEnabled: false,
+    });
+    expect(mysql.sources.find((source) => source.id === "sam_gov")?.isEnabled).toBe(0);
+  });
 });
+
+function createFakeMysqlDataSourcesStore() {
+  const sources = [
+    {
+      id: "california_caleprocure",
+      label: "California Cal eProcure",
+      issuerType: "state",
+      stateCode: "CA",
+      baseUrl: null,
+      isEnabled: 0,
+      cadence: "weekly",
+      providerFamily: null,
+      accessMode: null,
+      sourceType: null,
+      sourceConfidence: null,
+      activationStatus: null,
+      requiresBrowser: null,
+      requiresManual: null,
+      requiresLogin: null,
+      supportsQuery: null,
+      supportsPagination: null,
+      supportsAttachmentMetadata: null,
+      supportsDetailPageFetch: null,
+      fallbackNotes: null,
+      approvedForIngestion: null,
+      approvalStatus: null,
+      accessPattern: null,
+      legalReviewStatus: null,
+      sourceOwner: null,
+      approvalNotes: null,
+      lastApprovalReviewedAt: null,
+      lastSuccessAt: null,
+      lastFailureAt: "2026-05-19T00:00:00.000Z",
+      consecutiveFailures: 2,
+      createdAt: NOW,
+      updatedAt: NOW,
+    },
+    {
+      id: "sam_gov",
+      label: "SAM.gov",
+      issuerType: "federal",
+      stateCode: "US",
+      baseUrl: "https://sam.gov",
+      isEnabled: 1,
+      cadence: "daily",
+      providerFamily: null,
+      accessMode: null,
+      sourceType: null,
+      sourceConfidence: null,
+      activationStatus: null,
+      requiresBrowser: null,
+      requiresManual: null,
+      requiresLogin: null,
+      supportsQuery: null,
+      supportsPagination: null,
+      supportsAttachmentMetadata: null,
+      supportsDetailPageFetch: null,
+      fallbackNotes: null,
+      approvedForIngestion: null,
+      approvalStatus: null,
+      accessPattern: null,
+      legalReviewStatus: null,
+      sourceOwner: null,
+      approvalNotes: null,
+      lastApprovalReviewedAt: null,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      consecutiveFailures: 0,
+      createdAt: NOW,
+      updatedAt: NOW,
+    },
+  ];
+  const logs = [
+    {
+      id: "mysql_log_latest",
+      source: "SAM.gov",
+      runId: "mysql_run_latest",
+      status: "success",
+      startedAt: "2026-05-19T00:00:00.000Z",
+      finishedAt: "2026-05-19T00:01:00.000Z",
+      durationMs: 60000,
+      fetchedCount: 1,
+      insertedCount: 1,
+      updatedCount: 0,
+      skippedCount: 0,
+      failedCount: 0,
+      errorCode: null,
+      errorMessage: null,
+      metadata: null,
+    },
+  ];
+
+  return {
+    sources,
+    async query(sql: string, values: unknown[] = []) {
+      if (sql.includes("FROM data_sources") && sql.includes("ORDER BY label ASC")) {
+        return [[...sources].sort((a, b) => a.label.localeCompare(b.label))];
+      }
+
+      if (sql.includes("FROM data_sources") && sql.includes("WHERE id = ?")) {
+        return [sources.filter((source) => source.id === values[0])];
+      }
+
+      if (sql.includes("FROM crawler_logs")) {
+        return [logs];
+      }
+
+      return [[]];
+    },
+    async execute(sql: string, values: unknown[] = []) {
+      if (sql.includes("UPDATE data_sources")) {
+        const source = sources.find((item) => item.id === values[2]);
+        if (!source) return [{ affectedRows: 0 }];
+        source.isEnabled = values[0] === 1 ? 1 : 0;
+        source.updatedAt = String(values[1]);
+        return [{ affectedRows: 1 }];
+      }
+
+      return [{ affectedRows: 0 }];
+    },
+  };
+}

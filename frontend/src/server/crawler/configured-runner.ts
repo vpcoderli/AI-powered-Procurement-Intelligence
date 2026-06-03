@@ -1,6 +1,7 @@
 import type { AppDatabase } from "@/server/db/client";
-import { sendMatchedAlertNotifications } from "@/server/notifications/service";
-import { matchEnabledSearchAlerts } from "@/server/search-alerts/matcher";
+import type { MysqlCrawlerLockStore } from "./lock-repository";
+import { sendMatchedAlertNotifications, sendMatchedAlertNotificationsFromMysql } from "@/server/notifications/service";
+import { matchEnabledSearchAlerts, matchEnabledSearchAlertsFromMysql } from "@/server/search-alerts/matcher";
 import {
   runCrawlerSourceOnce as defaultRunCrawlerSourceOnce,
   type CrawlerMatcher,
@@ -28,6 +29,7 @@ type ConfiguredRunner = <TOptions>(
 
 export interface RunConfiguredCrawlerSourcesOnceOptions {
   database: AppDatabase;
+  mysql?: MysqlCrawlerLockStore;
   owner: string;
   matcher?: CrawlerMatcher;
   notifier?: CrawlerNotifier;
@@ -41,9 +43,17 @@ export function parseStateCrawlerLimit() {
 }
 
 export async function runConfiguredCrawlerSourcesOnce(options: RunConfiguredCrawlerSourcesOnceOptions) {
-  const matcher = options.matcher ?? (() => matchEnabledSearchAlerts(options.database));
+  const matcher = options.matcher ?? (
+    options.mysql
+      ? (() => matchEnabledSearchAlertsFromMysql(options.mysql!))
+      : (() => matchEnabledSearchAlerts(options.database))
+  );
   const notifier =
-    options.notifier ?? (({ alertMatching }) => sendMatchedAlertNotifications(options.database, alertMatching));
+    options.notifier ?? (
+      options.mysql
+        ? (({ alertMatching }) => sendMatchedAlertNotificationsFromMysql(options.mysql!, alertMatching))
+        : (({ alertMatching }) => sendMatchedAlertNotifications(options.database, alertMatching))
+    );
   const runCrawlerSourceOnce = options.runCrawlerSourceOnce ?? defaultRunCrawlerSourceOnce;
   const results: RunCrawlerSourceOnceResult[] = [];
 
@@ -51,6 +61,7 @@ export async function runConfiguredCrawlerSourcesOnce(options: RunConfiguredCraw
     if (configuredSource.kind === "sam") {
       results.push(
         await runCrawlerSourceOnce(options.database, {
+          mysql: options.mysql,
           source: configuredSource.source,
           owner: options.owner,
           runner: runSamGovCrawler,
@@ -63,6 +74,7 @@ export async function runConfiguredCrawlerSourcesOnce(options: RunConfiguredCraw
 
     results.push(
       await runCrawlerSourceOnce(options.database, {
+        mysql: options.mysql,
         source: configuredSource.source,
         owner: options.owner,
         runner: createStateCrawlerRunner(configuredSource.source as StateCrawlerSourceId),

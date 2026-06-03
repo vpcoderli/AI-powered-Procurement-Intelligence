@@ -14,3 +14,7 @@ class Source:
     adapter_kind: str = "none"
     maturity: str = "none"
     capabilities: tuple = ()
+    source_authority: str = "official"
+    trust_status: str = "needs_review"
+    evidence_mode: str = "direct_portal"
+    validity_notes: str = ""

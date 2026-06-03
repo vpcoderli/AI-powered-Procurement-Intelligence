@@ -60,8 +60,20 @@ describe("GET /api/admin/risk-check", () => {
       const body = await response.json();
 
       expect(response.status).toBe(200);
-      expect(body).toEqual({ report });
-      expect(adminAuth.requireAdminAccess).toHaveBeenCalledWith(testDb.db, expect.any(Request));
+      expect(body.report).toEqual(report);
+      expect(body.history).toEqual([
+        expect.objectContaining({
+          ok: true,
+          checkedAt: report.checkedAt,
+          report,
+        }),
+      ]);
+      expect(body.trend).toEqual(expect.objectContaining({
+        snapshotCount: 1,
+      }));
+      expect(adminAuth.requireAdminAccess).toHaveBeenCalledWith(testDb.db, expect.anything(), {
+        roles: ["admin", "operator", "support"],
+      });
       expect(createReport).toHaveBeenCalledWith(testDb.db);
     } finally {
       await testDb.cleanup();

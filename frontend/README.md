@@ -16,6 +16,16 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Local Admin Login
+
+Reset or create the local development admin account with:
+
+```bash
+npm run auth:reset-admin
+```
+
+The default local-only credential is `admin@winbids.local` / `AdminLocal-2026!`. You can override it for a single run with `LOCAL_ADMIN_EMAIL` and `LOCAL_ADMIN_PASSWORD`. Do not reuse this password in production; production admin access must use the deployment password reset flow.
+
 ## Billing Provider
 
 Local development works without external billing credentials. In that mode, checkout and billing portal sessions fall back to local/template URLs.
@@ -52,18 +62,47 @@ npm run risk:check
 
 This verifies that all 50 states have active non-empty state bid data, bid detail route IDs round-trip safely, state attachments use the internal download route instead of broken public URLs, ordinary/admin/paid feature entitlements remain separated, and production dependencies have no moderate-or-higher audit findings.
 
-## MySQL Migration Preparation
+## Artifact Vault
 
-SQLite is still the active local runtime, but MySQL migration tooling is available for cutover preparation:
+Business-tier users can upload supplier-managed artifacts from an Intent detail page. Local development stores uploaded files under:
+
+```bash
+frontend/data/artifact-vault/
+```
+
+The database keeps the intent/bid association, artifact type, purpose, expiry date, review status, file metadata, checksum, and internal download route. Do not commit uploaded files or copy local storage paths into production configuration. Production hardening still needs object storage, malware scanning, retention rules, audit events, and delete/version workflows.
+
+## Quote Workspace
+
+Business-tier users can manage a lightweight quote workflow from an Intent detail page. The local v1 stores organization-scoped sourcing partners, intent-level quote requests, requested due dates, status, quoted amount, response notes, and links to uploaded supplier artifacts.
+
+The Quote Workspace is manual-first: it does not send supplier emails, expose a supplier portal, or parse quote attachments automatically. Future depth should add richer notification/audit integration, response uploads, comparison scoring, and richer supplier profiles.
+
+## Deadline Notifications
+
+Business-tier users can view deadline reminders from an Intent detail page. Local v1 stores reminders in `deadline_reminders` and derives them idempotently from bid deadlines, response workspace task due dates, quote request due dates, and supplier artifact expiry dates.
+
+Users can acknowledge reminders or snooze them for 24 hours from the Intent panel. This is a local workflow surface only: production email/calendar delivery, notification outbox scheduling, digest preferences, submission checkpoint reminders, audit events, Settings reminder center, and the MySQL deadline adapter remain future depth.
+
+## Response Workspace Collaboration
+
+Business-tier users can coordinate response workspace items from an Intent detail page. Local v1 stores task/checkpoint/artifact/outline items in `response_workspace_items`, supports owner assignment through `assigned_user_id`, and stores item-level notes in `response_workspace_comments`.
+
+The current collaboration slice is manual-first: users can update item status/notes, assign owners from visible workspace members, and add comments. Future depth should add activity/version history, artifact-task links, reusable package outlines, richer team directory selection, audit events, and eventual drafting automation.
+
+## MySQL Runtime And Migration
+
+SQLite remains the default local runtime when no MySQL URL is configured. When `DATABASE_URL` or `MYSQL_DATABASE_URL` points to MySQL, the main product/runtime paths use the MySQL adapters and the migration tooling below:
 
 ```bash
 DATABASE_URL=mysql://USER:PASSWORD@HOST:3306/winbids npm run db:mysql:migrate
+DATABASE_URL=mysql://USER:PASSWORD@HOST:3306/winbids npm run db:mysql:import-sqlite
 DATABASE_URL=mysql://USER:PASSWORD@HOST:3306/winbids npm run db:mysql:smoke
 ```
 
-This migration path has been smoke-tested against MySQL 8 with a fresh schema, an idempotent re-run, a long bid-description insert, crawler-log reads, and bid-search reads. The `db:mysql:smoke` command redacts credentials in logs. Indexed text columns are converted to `VARCHAR(191)`, while long content columns are preserved as `LONGTEXT`.
+This migration path has been smoke-tested against MySQL 8 with a fresh schema, an idempotent re-run, a long bid-description insert, repeatable SQLite-to-MySQL data import, crawler/admin reads, direct JSON crawler import/upsert, crawler control locks/source enablement, crawler alert matching/digest notification, event outbox delivery, bid search/detail, saved bids, attachment metadata, auth/account/workspace/admin-users/admin-config/admin-bid-QA/billing/dunning, search alerts/notifications, and the core intent panels for compliance, submission, response workspace, pursuit decision, and qualification evidence. The `db:mysql:smoke` command redacts credentials in logs. Indexed text columns are converted to `VARCHAR(191)`, while long content columns are preserved as `LONGTEXT`.
 
-The runtime cutover still requires converting synchronous SQLite repository calls to async MySQL operations. The tracking runbook is in [`../docs/operations/mysql-cutover.md`](../docs/operations/mysql-cutover.md).
+The remaining production signoff items are Stripe sandbox verification in MySQL mode, production worker deployment dry runs, and final credential/runbook execution. The tracking runbook is in [`../docs/operations/mysql-cutover.md`](../docs/operations/mysql-cutover.md).
 
 ## State Crawler Validation
 
@@ -127,6 +166,26 @@ PYTHONPATH=crawler python3 -m apsi_crawler.cli validate-state-live \
 ```
 
 The command fails if a crawler returns zero opportunities or records missing required content. Current local live validation has all 50 state crawler sources reachable through verified or beta dedicated adapters. MI/SC/OH currently use public BidNet fallback pages because the official/default routes are 404, timeout, or browser-check blocked from the local environment.
+
+To run an operator-only live source health probe against registry base URLs, use:
+
+```bash
+npm run source:health:check -- --report-only
+```
+
+Check a subset with either state codes or source ids:
+
+```bash
+npm run source:health:check -- --source CA --source tx_esbd --timeout-ms 5000 --report-only
+```
+
+Persist the latest probe for the Admin Data Sources table:
+
+```bash
+npm run source:health:check -- --source CA --timeout-ms 5000 --report-only --persist
+```
+
+This command performs live HTTP checks and may report blocked/403/timeout statuses for otherwise valid public portals. It is intentionally separate from `risk:check` so normal local/CI verification stays deterministic. Use the output as an operations signal alongside crawler non-empty results, source-validity metadata, bid detail routes, and local attachment download checks.
 
 ## Notification Worker
 

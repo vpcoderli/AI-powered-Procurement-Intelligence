@@ -15,9 +15,30 @@ import type {
   UpdateComplianceManifestItemInput,
 } from "@/server/compliance/types";
 import type {
+  CreateResponseWorkspaceCommentInput,
+  CreateResponsePackageSnapshotInput,
+  CreateResponsePackageExportInput,
+  ResponsePackageExportResponse,
+  ResponsePackageSnapshotResponse,
+  ResponsePackageWorkspaceResponse,
+  ResponseWorkspaceCommentResponse,
+  ResponseWorkspaceCommentsResponse,
   ResponseWorkspaceResponse,
   UpdateResponseWorkspaceItemInput,
 } from "@/server/response-workspace/types";
+import type {
+  ArtifactPurpose,
+  ArtifactType,
+  ArtifactVaultResponse,
+} from "@/server/artifacts/types";
+import type {
+  CreateQuoteRequestInput,
+  QuoteWorkspaceResponse,
+  UpdateQuoteRequestInput,
+} from "@/server/quotes/types";
+import type {
+  DeadlineWorkspaceResponse,
+} from "@/server/deadlines/types";
 import type {
   CreatePursuitDecisionInput,
   PursuitDecisionBoardResponse,
@@ -173,6 +194,155 @@ export async function updateResponseWorkspaceItem(
   });
 
   return parseResponse<ResponseWorkspaceResponse>(response);
+}
+
+export async function updateResponseWorkspaceItemArtifactLinks(
+  id: string,
+  itemId: string,
+  linkedArtifactIds: string[],
+) {
+  return updateResponseWorkspaceItem(id, { itemId, linkedArtifactIds });
+}
+
+export async function fetchResponseWorkspaceComments(id: string, itemId: string) {
+  const response = await fetch(
+    `/api/intents/${encodeURIComponent(id)}/response-workspace/comments?itemId=${encodeURIComponent(itemId)}`,
+  );
+
+  return parseResponse<ResponseWorkspaceCommentsResponse>(response);
+}
+
+export async function createResponseWorkspaceComment(
+  id: string,
+  input: CreateResponseWorkspaceCommentInput,
+) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/response-workspace/comments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<ResponseWorkspaceCommentResponse>(response);
+}
+
+export async function fetchResponsePackageWorkspace(id: string) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/response-workspace/package`);
+
+  return parseResponse<ResponsePackageWorkspaceResponse>(response);
+}
+
+export async function createResponsePackageSnapshot(
+  id: string,
+  input: CreateResponsePackageSnapshotInput,
+) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/response-workspace/package`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<ResponsePackageSnapshotResponse>(response);
+}
+
+export async function createResponsePackageExport(
+  id: string,
+  input: CreateResponsePackageExportInput,
+) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/response-workspace/package/exports`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<ResponsePackageExportResponse>(response);
+}
+
+export async function fetchArtifactVault(id: string) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/artifacts`);
+
+  return parseResponse<ArtifactVaultResponse>(response);
+}
+
+export async function uploadSupplierArtifact(
+  id: string,
+  input: {
+    title: string;
+    artifactType: ArtifactType;
+    purpose: ArtifactPurpose;
+    file: File;
+    expiresAt?: string | null;
+    notes?: string;
+  },
+) {
+  const form = new FormData();
+  form.set("title", input.title);
+  form.set("artifactType", input.artifactType);
+  form.set("purpose", input.purpose);
+  form.set("file", input.file);
+  if (input.expiresAt) form.set("expiresAt", input.expiresAt);
+  if (input.notes) form.set("notes", input.notes);
+
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/artifacts`, {
+    method: "POST",
+    body: form,
+  });
+
+  return parseResponse<ArtifactVaultResponse>(response);
+}
+
+export async function fetchQuoteWorkspace(id: string) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/quotes`);
+
+  return parseResponse<QuoteWorkspaceResponse>(response);
+}
+
+export async function createQuoteRequestDraft(
+  id: string,
+  input: CreateQuoteRequestInput,
+) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/quotes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<QuoteWorkspaceResponse>(response);
+}
+
+export async function updateQuoteRequestDraft(
+  id: string,
+  input: UpdateQuoteRequestInput,
+) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/quotes`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<QuoteWorkspaceResponse>(response);
+}
+
+export async function fetchDeadlineWorkspace(id: string) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/deadlines`);
+
+  return parseResponse<DeadlineWorkspaceResponse>(response);
+}
+
+export async function updateDeadlineReminder(
+  id: string,
+  input: {
+    reminderId: string;
+    action: "acknowledge" | "snooze";
+    snoozedUntil?: string;
+  },
+) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/deadlines`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<DeadlineWorkspaceResponse>(response);
 }
 
 export async function fetchPursuitDecisionBoard(id: string) {

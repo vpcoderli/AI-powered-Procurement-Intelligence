@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
+import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { UsageLimitError, enforceMysqlSearchAlertUsageLimit, enforceUsageLimit } from "@/server/auth/usage-limits";
 import { db } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
@@ -122,6 +123,10 @@ function parseCreateInput(body: unknown): CreateSearchAlertInput | null {
 export async function GET(request: Request) {
   const principal = await resolvePrincipal(db, request);
 
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
+
   try {
     const alerts = await searchAlertService.listSearchAlerts(db, principal.userId);
 
@@ -132,6 +137,12 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const principal = await resolvePrincipal(db, request);
+
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
+
   let body: unknown;
 
   try {
@@ -142,8 +153,6 @@ export async function POST(request: Request) {
 
   const input = parseCreateInput(body);
   if (!input) return invalidRequest();
-
-  const principal = await resolvePrincipal(db, request);
 
   try {
     if (isMysqlDatabaseUrlConfigured()) {

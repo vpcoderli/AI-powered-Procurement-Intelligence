@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 from apsi_crawler.sources.registry import get_source
@@ -6,6 +7,10 @@ from apsi_crawler.spiders.wa_des import fetch_wa_des_opportunities
 
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+def legacy_oh_procure_source():
+    return replace(get_source("oh_state_procurement"), base_url="https://procure.ohio.gov")
 
 
 def test_wa_des_html_fixture_extracts_common_fields_and_attachment_links():
@@ -92,7 +97,7 @@ def test_wa_des_bid_calendar_extracts_current_live_shape(tmp_path):
 
 def test_oh_procure_html_fixture_extracts_common_fields_and_attachment_links():
     bids = fetch_oh_procure_opportunities(
-        get_source("oh_state_procurement"),
+        legacy_oh_procure_source(),
         query="network",
         limit=5,
         fixture_html=str(FIXTURES_DIR / "oh_procure_opportunities.html"),
@@ -114,7 +119,7 @@ def test_oh_procure_html_fixture_extracts_common_fields_and_attachment_links():
 
 def test_oh_procure_json_fixture_extracts_attachment_links():
     bids = fetch_oh_procure_opportunities(
-        get_source("oh_state_procurement"),
+        legacy_oh_procure_source(),
         query="endpoint",
         limit=5,
         fixture_json=str(FIXTURES_DIR / "oh_procure_live_response.json"),

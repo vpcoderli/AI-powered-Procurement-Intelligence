@@ -2,6 +2,8 @@ import type {
   AdminCrawlerLog,
   AdminDataSource,
   AdminDataSourcesResponse,
+  AdminLiveSourceHealth,
+  UpdateAdminDataSourceInput,
 } from "@/server/admin/data-sources-repository";
 import type {
   AdminBidQaArchiveStatus,
@@ -32,6 +34,13 @@ import type { NotificationOutboxRow, NotificationStatus } from "@/server/notific
 import type { SubscriptionLifecycleReconcileResult } from "@/server/billing/subscriptions";
 import type { ScheduleDunningRemindersResult } from "@/server/billing/dunning";
 import type { RiskChecklistReport } from "@/server/risk/checklist";
+import type { RiskChecklistSnapshot, RiskChecklistTrend } from "@/server/risk/snapshots";
+import type {
+  ConfigModule,
+  ConfigRegistryEntry,
+  ConfigScopeType,
+  ConfigStatus,
+} from "@/server/config/registry";
 
 export type {
   AdminBidQaArchiveStatus,
@@ -44,6 +53,8 @@ export type {
   AdminCrawlerLog,
   AdminDataSource,
   AdminDataSourcesResponse,
+  AdminLiveSourceHealth,
+  UpdateAdminDataSourceInput,
   AdminUserAuditLog,
   AdminUserAuditAction,
   AdminUserAuditActorKind,
@@ -60,10 +71,38 @@ export type {
   UpdateAdminUserFeatureOverrideInput,
 };
 
+export type AdminConfigRegistryEntry = ConfigRegistryEntry;
+
+export interface AdminConfigEntriesResponse {
+  entries: AdminConfigRegistryEntry[];
+}
+
+export interface UpdateAdminConfigEntryInput {
+  configValue?: unknown;
+  status?: ConfigStatus;
+  effectiveFrom?: string;
+  effectiveTo?: string;
+  changeReason: string;
+}
+
+export interface UpdateAdminConfigEntryResponse {
+  entry: AdminConfigRegistryEntry;
+}
+
+export interface ListAdminConfigEntriesFilters {
+  scopeType?: ConfigScopeType;
+  scopeId?: string;
+  module?: ConfigModule;
+  configKey?: string;
+  status?: ConfigStatus;
+}
+
 type AdminApiErrorCode =
   | "FORBIDDEN"
   | "EMAIL_EXISTS"
   | "INVALID_REQUEST"
+  | "INVALID_CONFIG"
+  | "CONFIG_NOT_FOUND"
   | "DATA_SOURCE_NOT_FOUND"
   | "BID_NOT_FOUND"
   | "USER_NOT_FOUND"
@@ -75,6 +114,8 @@ export interface AdminCrawlerLogsResponse {
 
 export interface AdminRiskChecklistResponse {
   report: RiskChecklistReport;
+  history: RiskChecklistSnapshot[];
+  trend: RiskChecklistTrend;
 }
 
 export interface UpdateAdminBidQaReviewResponse {
@@ -91,6 +132,26 @@ export interface BatchUpdateAdminBidQaResponse {
 }
 
 export interface UpdateAdminDataSourceResponse {
+  source: AdminDataSource;
+}
+
+export interface BatchUpdateAdminDataSourcesResponse {
+  updatedCount: number;
+  sources: AdminDataSource[];
+}
+
+export interface AdminDataSourceHealthCheckResponse {
+  report: {
+    ok: boolean;
+    checkedAt: string;
+    summary: {
+      total: number;
+      healthy: number;
+      unhealthy: number;
+      skipped: number;
+    };
+    results: unknown[];
+  };
   source: AdminDataSource;
 }
 
@@ -140,6 +201,8 @@ function isAdminErrorResponse(body: unknown): body is { error: { code: AdminApiE
     (code === "FORBIDDEN" ||
       code === "EMAIL_EXISTS" ||
       code === "INVALID_REQUEST" ||
+      code === "INVALID_CONFIG" ||
+      code === "CONFIG_NOT_FOUND" ||
       code === "DATA_SOURCE_NOT_FOUND" ||
       code === "BID_NOT_FOUND" ||
       code === "USER_NOT_FOUND" ||
@@ -172,6 +235,30 @@ export async function listAdminDataSources() {
   const response = await fetch("/api/admin/data-sources");
 
   return parseResponse<AdminDataSourcesResponse>(response);
+}
+
+export async function listAdminConfigEntries(filters: ListAdminConfigEntriesFilters = {}) {
+  const response = await fetch(
+    `/api/admin/config${buildQueryString({
+      scopeType: filters.scopeType,
+      scopeId: filters.scopeId,
+      module: filters.module,
+      configKey: filters.configKey,
+      status: filters.status,
+    })}`,
+  );
+
+  return parseResponse<AdminConfigEntriesResponse>(response);
+}
+
+export async function updateAdminConfigEntry(id: string, input: UpdateAdminConfigEntryInput) {
+  const response = await fetch(`/api/admin/config/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<UpdateAdminConfigEntryResponse>(response);
 }
 
 export async function getAdminRiskChecklist() {
@@ -256,7 +343,7 @@ export async function updateAdminUserFeatureOverride(id: string, input: UpdateAd
   return parseResponse<AdminUserFeatureOverridesResponse>(response);
 }
 
-export async function updateAdminDataSource(id: string, input: { isEnabled: boolean }) {
+export async function updateAdminDataSource(id: string, input: UpdateAdminDataSourceInput) {
   const response = await fetch(`/api/admin/data-sources/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -264,6 +351,26 @@ export async function updateAdminDataSource(id: string, input: { isEnabled: bool
   });
 
   return parseResponse<UpdateAdminDataSourceResponse>(response);
+}
+
+export async function batchUpdateAdminDataSources(input: { sourceIds: string[]; action: "approve" | "hold" }) {
+  const response = await fetch("/api/admin/data-sources/batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<BatchUpdateAdminDataSourcesResponse>(response);
+}
+
+export async function checkAdminDataSourceHealth(id: string, input: { timeoutMs?: number } = {}) {
+  const response = await fetch(`/api/admin/data-sources/${encodeURIComponent(id)}/health-check`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<AdminDataSourceHealthCheckResponse>(response);
 }
 
 export async function listAdminCrawlerLogs() {

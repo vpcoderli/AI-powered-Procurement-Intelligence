@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { transferWorkspaceOwnership } from "@/server/account/lifecycle";
+import { transferMysqlWorkspaceOwnership } from "@/server/account/mysql-workspace";
 import { WorkspaceMemberNotFoundError, WorkspacePermissionError } from "@/server/account/workspace";
 import { readSessionToken } from "@/server/auth/session";
 import { getSessionUser } from "@/server/auth/service";
+import { getMysqlSessionUser } from "@/server/auth/mysql-service";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -24,7 +27,10 @@ export async function POST(request: Request) {
     return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
   }
 
-  const user = await getSessionUser(db, sessionToken);
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const user = mysql
+    ? await getMysqlSessionUser(mysql, sessionToken)
+    : await getSessionUser(db, sessionToken);
 
   if (!user) {
     return errorResponse("AUTH_REQUIRED", "Authentication is required", 401);
@@ -37,7 +43,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    return NextResponse.json(transferWorkspaceOwnership(db, user.id, body.targetUserId));
+    return NextResponse.json(
+      mysql
+        ? await transferMysqlWorkspaceOwnership(mysql, user.id, body.targetUserId)
+        : transferWorkspaceOwnership(db, user.id, body.targetUserId),
+    );
   } catch (error) {
     if (error instanceof WorkspacePermissionError) {
       return errorResponse("FORBIDDEN", error.message, 403);

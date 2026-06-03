@@ -77,7 +77,7 @@ export function createAdminCrawlerLogsGet(dependencies?: AdminCrawlerLogsDepende
   return async function GET(request: Request) {
     try {
       const resolved = await resolveDependencies(dependencies);
-      await requireAdminAccess(resolved.authDatabase, request);
+      await requireAdminAccess(resolved.authDatabase, request, { roles: ["admin", "operator", "support"] });
       const logs = resolved.logsMysql
         ? await listAdminCrawlerLogsFromMysql(resolved.logsMysql, { limit: limitFromUrl(request) })
         : await listAdminCrawlerLogs(resolved.logsDatabase, { limit: limitFromUrl(request) });

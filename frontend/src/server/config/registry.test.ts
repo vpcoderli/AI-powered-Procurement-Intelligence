@@ -3,9 +3,12 @@ import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
   ConfigRegistryValidationError,
   getEffectiveConfigValue,
+  getEffectiveConfigValueFromMysql,
   listConfigEntries,
+  listConfigEntriesFromMysql,
   seedDefaultConfigEntries,
   upsertConfigEntry,
+  upsertConfigEntryFromMysql,
 } from "./registry";
 
 describe("config registry", () => {
@@ -115,5 +118,117 @@ describe("config registry", () => {
         changeReason: "  ",
       }),
     ).toThrow(ConfigRegistryValidationError);
+  });
+
+  it("runs the MySQL config registry lifecycle", async () => {
+    const rows = new Map<string, Record<string, unknown>>();
+    const mysql = {
+      execute: async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("INSERT INTO config_registry")) {
+          rows.set(values[0] as string, {
+            id: values[0],
+            scope_type: values[1],
+            scope_id: values[2],
+            module: values[3],
+            config_key: values[4],
+            config_value_json: values[5],
+            schema_version: values[6],
+            status: values[7],
+            effective_from: values[8],
+            effective_to: values[9],
+            created_by: values[10],
+            updated_by: values[11],
+            change_reason: values[12],
+            audit_event_id: values[13],
+            created_at: values[14],
+            updated_at: values[15],
+          });
+        }
+
+        if (sql.includes("UPDATE config_registry")) {
+          const row = rows.get(values.at(-1) as string);
+          if (row) {
+            row.scope_type = values[0];
+            row.scope_id = values[1];
+            row.module = values[2];
+            row.config_key = values[3];
+            row.config_value_json = values[4];
+            row.schema_version = values[5];
+            row.status = values[6];
+            row.effective_from = values[7];
+            row.effective_to = values[8];
+            row.updated_by = values[9];
+            row.change_reason = values[10];
+            row.audit_event_id = values[11];
+            row.updated_at = values[12];
+          }
+        }
+
+        return [{ affectedRows: 1 }, undefined];
+      },
+      query: async (sql: string, values: unknown[] = []) => {
+        const allRows = [...rows.values()];
+
+        if (sql.includes("WHERE id = ?")) {
+          return [[allRows.find((row) => row.id === values[0])].filter(Boolean), undefined];
+        }
+
+        if (sql.includes("COALESCE(scope_id")) {
+          return [[allRows.find((row) =>
+            row.scope_type === values[0] &&
+            (row.scope_id ?? "") === (values[1] ?? "") &&
+            row.module === values[2] &&
+            row.config_key === values[3],
+          )].filter(Boolean), undefined];
+        }
+
+        if (sql.includes("status = 'active'")) {
+          return [
+            allRows
+              .filter((row) => row.module === values[0] && row.config_key === values[1] && row.status === "active")
+              .filter((row) => row.scope_type === "global" || row.scope_id === values[2])
+              .sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at))),
+            undefined,
+          ];
+        }
+
+        return [allRows.sort((left, right) => `${left.module}:${left.config_key}`.localeCompare(`${right.module}:${right.config_key}`)), undefined];
+      },
+    };
+
+    const global = await upsertConfigEntryFromMysql(mysql, {
+      module: "source",
+      configKey: "approval_defaults",
+      configValue: { approvalStatus: "needs_review" },
+      changeReason: "Seed MySQL config.",
+      now: "2026-06-01T00:00:00.000Z",
+    });
+    const organization = await upsertConfigEntryFromMysql(mysql, {
+      scopeType: "organization",
+      scopeId: "org_1",
+      module: "source",
+      configKey: "approval_defaults",
+      configValue: { approvalStatus: "approved" },
+      changeReason: "Override MySQL config.",
+      auditEventId: "event_1",
+      now: "2026-06-01T00:01:00.000Z",
+    });
+
+    expect(global.configValue).toEqual({ approvalStatus: "needs_review" });
+    expect(organization).toMatchObject({
+      scopeType: "organization",
+      scopeId: "org_1",
+      auditEventId: "event_1",
+    });
+    await expect(listConfigEntriesFromMysql(mysql, { module: "source" })).resolves.toHaveLength(2);
+    await expect(getEffectiveConfigValueFromMysql(mysql, {
+      module: "source",
+      configKey: "approval_defaults",
+      organizationId: "org_1",
+      now: "2026-06-01T00:02:00.000Z",
+    })).resolves.toMatchObject({
+      id: organization.id,
+      configValue: { approvalStatus: "approved" },
+    });
   });
 });

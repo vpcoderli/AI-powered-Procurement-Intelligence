@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from apsi_crawler.config import DEFAULT_SOURCE
 from apsi_crawler.sources.registry import (
     get_fixture_loader,
@@ -111,6 +113,34 @@ US_STATE_CODES = {
     "WY",
 }
 
+ALLOWED_SOURCE_AUTHORITIES = {"official", "official_aggregator", "public_aggregator"}
+ALLOWED_TRUST_STATUSES = {"verified", "beta", "fallback", "needs_review", "blocked"}
+ALLOWED_EVIDENCE_MODES = {"direct_portal", "api", "aggregator_page", "fixture_fallback"}
+DISALLOWED_BASE_URL_HOSTS = {
+    "example.com",
+    "www.example.com",
+    "localhost",
+    "127.0.0.1",
+    "0.0.0.0",
+    "::1",
+}
+DISALLOWED_BASE_URL_FRAGMENTS = (
+    "example.com",
+    "sam.gov/opp/12345",
+    "localhost",
+    "127.0.0.1",
+    "0.0.0.0",
+    "<",
+    ">",
+    "{",
+    "}",
+    "[state]",
+    "placeholder",
+    "replace-me",
+    "todo",
+    "tbd",
+)
+
 
 def test_registry_includes_sam_gov_and_state_sources():
     source_ids = {source.id for source in list_sources()}
@@ -140,6 +170,10 @@ def test_registry_includes_exactly_50_state_sources_with_stable_metadata():
     assert all(source.adapter_kind in {"dedicated", "generic"} for source in state_sources)
     assert all(source.maturity in {"verified", "beta", "generic"} for source in state_sources)
     assert all(source.capabilities for source in state_sources)
+    assert all(source.source_authority in {"official", "official_aggregator", "public_aggregator"} for source in state_sources)
+    assert all(source.trust_status in {"verified", "beta", "fallback", "needs_review", "blocked"} for source in state_sources)
+    assert all(source.evidence_mode in {"direct_portal", "api", "aggregator_page", "fixture_fallback"} for source in state_sources)
+    assert all(source.validity_notes for source in state_sources)
 
 
 def test_state_source_metadata_is_stable():
@@ -169,6 +203,49 @@ def test_state_source_quality_maturity_metadata_is_tracked():
     assert beta_source.adapter_kind == "dedicated"
     assert beta_source.maturity == "beta"
     assert beta_source.capabilities == ("query", "attachments")
+
+
+def test_state_source_validity_metadata_matches_frontend_registry_contract():
+    verified_source = get_source("ca_caleprocure")
+    fallback_source = get_source("mi_state_procurement")
+    beta_source = get_source("wa_state_procurement")
+
+    assert verified_source.source_authority == "official"
+    assert verified_source.trust_status == "verified"
+    assert verified_source.evidence_mode == "direct_portal"
+    assert "Verified" in verified_source.validity_notes
+
+    assert fallback_source.source_authority == "public_aggregator"
+    assert fallback_source.trust_status == "fallback"
+    assert fallback_source.evidence_mode == "aggregator_page"
+    assert "public" in fallback_source.validity_notes
+
+    assert beta_source.source_authority == "official"
+    assert beta_source.trust_status == "beta"
+    assert beta_source.evidence_mode == "direct_portal"
+    assert "Beta" in beta_source.validity_notes
+
+
+def test_all_state_source_urls_and_validity_metadata_are_non_placeholder():
+    state_sources = [source for source in list_sources() if source.jurisdiction == "state"]
+
+    for source in state_sources:
+        parsed_url = urlparse(source.base_url)
+        normalized_url = source.base_url.lower()
+        hostname = (parsed_url.hostname or "").lower()
+
+        assert source.base_url.strip(), source.id
+        assert parsed_url.scheme in {"http", "https"}, source.id
+        assert parsed_url.netloc, source.id
+        assert hostname not in DISALLOWED_BASE_URL_HOSTS, source.id
+        assert not any(
+            fragment in normalized_url for fragment in DISALLOWED_BASE_URL_FRAGMENTS
+        ), source.id
+
+        assert source.validity_notes.strip(), source.id
+        assert source.source_authority in ALLOWED_SOURCE_AUTHORITIES, source.id
+        assert source.trust_status in ALLOWED_TRUST_STATUSES, source.id
+        assert source.evidence_mode in ALLOWED_EVIDENCE_MODES, source.id
 
 
 def test_batch_two_state_sources_are_registered_to_dedicated_fetchers():

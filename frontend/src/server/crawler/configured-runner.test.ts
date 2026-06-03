@@ -75,6 +75,25 @@ describe("configured crawler runner", () => {
     );
   });
 
+  it("passes the MySQL control store to every configured source", async () => {
+    const mysql = {} as RunCrawlerSourceOnceOptions<unknown>["mysql"];
+    const calls: RunCrawlerSourceOnceOptions<unknown>[] = [];
+    const runCrawlerSourceOnce = vi.fn(async (_db, options) => {
+      calls.push(options);
+      return successResult(options.source);
+    });
+
+    await runConfiguredCrawlerSourcesOnce({
+      database: {} as AppDatabase,
+      mysql,
+      owner: "test-owner",
+      runCrawlerSourceOnce,
+    });
+
+    expect(calls).toHaveLength(51);
+    expect(calls.every((call) => call.mysql === mysql)).toBe(true);
+  });
+
   it("parses positive state crawler limits from the environment", () => {
     vi.stubEnv("STATE_CRAWLER_LIMIT", "12");
 

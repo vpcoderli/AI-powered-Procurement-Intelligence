@@ -4,6 +4,7 @@ import type { SQL } from "drizzle-orm";
 import { hashPassword } from "@/server/auth/password";
 import { ensureUserWorkspace, syncOwnedWorkspaceTier } from "@/server/account/workspace";
 import type { AppDatabase } from "@/server/db/client";
+import { mysqlExecute, mysqlSelectMany, mysqlSelectOne } from "@/server/db/mysql-runtime";
 import { adminUserAuditLogs, organizationFeatureOverrides, users } from "@/server/db/schema";
 import {
   isFeatureKey,
@@ -149,6 +150,37 @@ export class AdminUserFeatureOverrideError extends Error {
   }
 }
 
+interface MysqlAdminUsersStore {
+  query: (sql: string, values?: unknown[]) => Promise<[unknown[], unknown?]>;
+  execute: (sql: string, values?: never[]) => Promise<[unknown, unknown?]>;
+}
+
+interface MysqlAdminUserRow {
+  id: string;
+  email: string | null;
+  displayName: string | null;
+  role: string;
+  accountTier: string;
+  isDisabled: number | string | boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt: string | null;
+}
+
+interface MysqlAdminWorkspaceRow {
+  organizationId: string;
+  organizationName: string;
+  role: string;
+  tier: string;
+}
+
+interface MysqlFeatureOverrideRow {
+  featureKey: string;
+  isEnabled: number | string | boolean;
+  reason: string | null;
+  expiresAt: string | null;
+}
+
 function toAdminUser(row: typeof users.$inferSelect): AdminUser {
   return {
     id: row.id,
@@ -157,6 +189,24 @@ function toAdminUser(row: typeof users.$inferSelect): AdminUser {
     role: normalizeUserRole(row.role),
     tier: normalizeAccountTier(row.accountTier),
     isDisabled: row.isDisabled === 1,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    lastLoginAt: row.lastLoginAt,
+  };
+}
+
+function mysqlBoolean(value: number | string | boolean | null | undefined) {
+  return value === true || value === 1 || value === "1";
+}
+
+function toAdminUserFromMysql(row: MysqlAdminUserRow): AdminUser {
+  return {
+    id: row.id,
+    email: row.email,
+    displayName: row.displayName,
+    role: normalizeUserRole(row.role),
+    tier: normalizeAccountTier(row.accountTier),
+    isDisabled: mysqlBoolean(row.isDisabled),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     lastLoginAt: row.lastLoginAt,
@@ -251,6 +301,16 @@ function toFeatureOverrideAuditState(row: { isEnabled: number; reason?: string |
   };
 }
 
+function toFeatureOverrideAuditStateFromMysql(row: MysqlFeatureOverrideRow | undefined | null) {
+  if (!row) return null;
+
+  return {
+    isEnabled: mysqlBoolean(row.isEnabled),
+    reason: row.reason ?? null,
+    expiresAt: row.expiresAt ?? null,
+  };
+}
+
 function featureOverrideWorkspace(db: AppDatabase, userId: string) {
   const user = db.select().from(users).where(eq(users.id, userId)).limit(1).get();
 
@@ -285,6 +345,100 @@ function listOrganizationFeatureOverrides(db: AppDatabase, organizationId: strin
     }));
 }
 
+async function featureOverrideWorkspaceFromMysql(mysql: MysqlAdminUsersStore, userId: string) {
+  const user = await mysqlSelectOne<{ email: string | null }>(
+    mysql,
+    "SELECT email FROM users WHERE id = ? LIMIT 1",
+    [userId],
+  );
+
+  if (!user?.email) {
+    throw new AdminUserNotFoundError();
+  }
+
+  let workspace = await mysqlSelectOne<MysqlAdminWorkspaceRow>(
+    mysql,
+    `
+      SELECT
+        organizations.id AS organizationId,
+        organizations.name AS organizationName,
+        organization_memberships.role AS role,
+        organizations.account_tier AS tier
+      FROM organization_memberships
+      INNER JOIN organizations ON organizations.id = organization_memberships.organization_id
+      WHERE organization_memberships.user_id = ? AND organization_memberships.status = 'active'
+      ORDER BY organization_memberships.created_at ASC
+      LIMIT 1
+    `,
+    [userId],
+  );
+
+  if (!workspace) {
+    const timestamp = nowIso();
+    const organizationId = `org_${crypto.randomUUID()}`;
+    await mysqlExecute(
+      mysql,
+      "INSERT INTO organizations (id, name, account_tier, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      [organizationId, `${user.email} Workspace`, "free", timestamp, timestamp],
+    );
+    await mysqlExecute(
+      mysql,
+      `
+        INSERT INTO organization_memberships (
+          organization_id,
+          user_id,
+          role,
+          status,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+      `,
+      [organizationId, userId, "owner", "active", timestamp, timestamp],
+    );
+    workspace = {
+      organizationId,
+      organizationName: `${user.email} Workspace`,
+      role: "owner",
+      tier: "free",
+    };
+  }
+
+  return workspace;
+}
+
+async function listOrganizationFeatureOverridesFromMysql(
+  mysql: MysqlAdminUsersStore,
+  organizationId: string,
+): Promise<AdminUserFeatureOverride[]> {
+  const rows = await mysqlSelectMany<MysqlFeatureOverrideRow>(
+    mysql,
+    `
+      SELECT
+        feature_key AS featureKey,
+        is_enabled AS isEnabled,
+        reason,
+        expires_at AS expiresAt
+      FROM organization_feature_overrides
+      WHERE organization_id = ?
+      ORDER BY feature_key ASC
+    `,
+    [organizationId],
+  );
+
+  return rows
+    .filter((row): row is MysqlFeatureOverrideRow & { featureKey: FeatureKey } =>
+      isFeatureKey(row.featureKey) && row.featureKey !== "admin_console",
+    )
+    .map((row) => ({
+      featureKey: row.featureKey,
+      isEnabled: mysqlBoolean(row.isEnabled),
+      reason: row.reason,
+      expiresAt: row.expiresAt,
+      isExpired: isExpired(row.expiresAt),
+    }));
+}
+
 function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
@@ -305,8 +459,26 @@ function isUniqueEmailConflict(error: unknown) {
   const code = "code" in error && typeof error.code === "string" ? error.code : "";
   return (
     code.includes("SQLITE_CONSTRAINT") ||
+    code.includes("ER_DUP_ENTRY") ||
     error.message.includes("UNIQUE constraint failed: users.email")
   );
+}
+
+function mysqlAdminUserSelectSql(whereClause: string) {
+  return `
+    SELECT
+      id,
+      email,
+      display_name AS displayName,
+      role,
+      account_tier AS accountTier,
+      is_disabled AS isDisabled,
+      created_at AS createdAt,
+      updated_at AS updatedAt,
+      last_login_at AS lastLoginAt
+    FROM users
+    ${whereClause}
+  `;
 }
 
 export function listAdminUsers(db: AppDatabase, filters: ListAdminUsersFilters = {}): AdminUsersResponse {
@@ -337,6 +509,43 @@ export function listAdminUsers(db: AppDatabase, filters: ListAdminUsersFilters =
       .all()
       .map(toAdminUser),
   };
+}
+
+export async function listAdminUsersFromMysql(
+  mysql: MysqlAdminUsersStore,
+  filters: ListAdminUsersFilters = {},
+): Promise<AdminUsersResponse> {
+  const conditions = ["email IS NOT NULL"];
+  const values: unknown[] = [];
+  const query = filters.q?.trim();
+
+  if (query) {
+    const pattern = `%${query}%`;
+    conditions.push("(email LIKE ? OR display_name LIKE ? OR id LIKE ?)");
+    values.push(pattern, pattern, pattern);
+  }
+
+  if (filters.role) {
+    conditions.push("role = ?");
+    values.push(filters.role);
+  }
+  if (filters.tier) {
+    conditions.push("account_tier = ?");
+    values.push(filters.tier);
+  }
+  if (filters.status) {
+    conditions.push("is_disabled = ?");
+    values.push(filters.status === "disabled" ? 1 : 0);
+  }
+
+  const rows = await mysqlSelectMany<MysqlAdminUserRow>(
+    mysql,
+    `${mysqlAdminUserSelectSql(`WHERE ${conditions.join(" AND ")}`)}
+     ORDER BY created_at ASC, id ASC`,
+    values,
+  );
+
+  return { users: rows.map(toAdminUserFromMysql) };
 }
 
 export async function createAdminUserInvite(
@@ -388,6 +597,102 @@ export async function createAdminUserInvite(
 
   return {
     user: toAdminUser({
+      ...user,
+      lastLoginAt: null,
+    }),
+    temporaryPassword: password,
+  };
+}
+
+export async function createAdminUserInviteFromMysql(
+  mysql: MysqlAdminUsersStore,
+  input: CreateAdminUserInviteInput,
+  actor: AdminUserAuditActor = { actorKind: "local-bypass", actorUserId: null },
+): Promise<CreateAdminUserInviteResponse> {
+  const email = normalizeEmail(input.email);
+
+  if (!email) {
+    throw new AdminUserEmailExistsError();
+  }
+
+  const timestamp = nowIso();
+  const password = temporaryPassword();
+  const user = {
+    id: `user_${crypto.randomUUID()}`,
+    email,
+    passwordHash: await hashPassword(password),
+    displayName: normalizeDisplayName(input.displayName),
+    role: input.role,
+    accountTier: input.tier,
+    isDisabled: 0,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+
+  try {
+    await mysqlExecute(
+      mysql,
+      `
+        INSERT INTO users (
+          id,
+          email,
+          password_hash,
+          display_name,
+          role,
+          account_tier,
+          is_disabled,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        user.id,
+        user.email,
+        user.passwordHash,
+        user.displayName,
+        user.role,
+        user.accountTier,
+        user.isDisabled,
+        user.createdAt,
+        user.updatedAt,
+      ],
+    );
+  } catch (error) {
+    if (isUniqueEmailConflict(error)) {
+      throw new AdminUserEmailExistsError();
+    }
+
+    throw error;
+  }
+
+  await mysqlExecute(
+    mysql,
+    `
+      INSERT INTO admin_user_audit_logs (
+        id,
+        actor_kind,
+        actor_user_id,
+        target_user_id,
+        action,
+        changes_json,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+    [
+      `audit_${crypto.randomUUID()}`,
+      actor.actorKind,
+      actor.actorUserId,
+      user.id,
+      "user_invited",
+      JSON.stringify([{ field: "created", before: null, after: email }]),
+      timestamp,
+    ],
+  );
+
+  return {
+    user: toAdminUserFromMysql({
       ...user,
       lastLoginAt: null,
     }),
@@ -458,6 +763,112 @@ export function updateAdminUser(
   return toAdminUser(row);
 }
 
+export async function updateAdminUserFromMysql(
+  mysql: MysqlAdminUsersStore,
+  userId: string,
+  input: UpdateAdminUserInput,
+  actor: AdminUserAuditActor = { actorKind: "local-bypass", actorUserId: null },
+): Promise<AdminUser> {
+  const before = await mysqlSelectOne<MysqlAdminUserRow>(
+    mysql,
+    `${mysqlAdminUserSelectSql("WHERE id = ?")} LIMIT 1`,
+    [userId],
+  );
+
+  if (!before) {
+    throw new AdminUserNotFoundError();
+  }
+
+  const timestamp = nowIso();
+  const assignments = ["updated_at = ?"];
+  const values: unknown[] = [timestamp];
+  const changes: AdminUserAuditChange[] = [];
+  const beforeRole = normalizeUserRole(before.role);
+  const beforeTier = normalizeAccountTier(before.accountTier);
+  const beforeIsDisabled = mysqlBoolean(before.isDisabled);
+
+  if (input.role !== undefined) {
+    assignments.unshift("role = ?");
+    values.unshift(input.role);
+    if (input.role !== beforeRole) changes.push({ field: "role", before: beforeRole, after: input.role });
+  }
+
+  if (input.tier !== undefined) {
+    assignments.splice(assignments.length - 1, 0, "account_tier = ?");
+    values.splice(values.length - 1, 0, input.tier);
+    if (input.tier !== beforeTier) changes.push({ field: "tier", before: beforeTier, after: input.tier });
+  }
+
+  if (input.isDisabled !== undefined) {
+    assignments.splice(assignments.length - 1, 0, "is_disabled = ?");
+    values.splice(values.length - 1, 0, input.isDisabled ? 1 : 0);
+    if (input.isDisabled !== beforeIsDisabled) {
+      changes.push({ field: "isDisabled", before: beforeIsDisabled, after: input.isDisabled });
+    }
+  }
+
+  await mysqlExecute(
+    mysql,
+    `UPDATE users SET ${assignments.join(", ")} WHERE id = ?`,
+    [...values, userId],
+  );
+
+  if (input.tier !== undefined) {
+    await mysqlExecute(
+      mysql,
+      `
+        UPDATE organizations
+        INNER JOIN organization_memberships
+          ON organization_memberships.organization_id = organizations.id
+        SET organizations.account_tier = ?, organizations.updated_at = ?
+        WHERE organization_memberships.user_id = ?
+          AND organization_memberships.role = 'owner'
+          AND organization_memberships.status = 'active'
+      `,
+      [input.tier, timestamp, userId],
+    );
+  }
+
+  const row = await mysqlSelectOne<MysqlAdminUserRow>(
+    mysql,
+    `${mysqlAdminUserSelectSql("WHERE id = ?")} LIMIT 1`,
+    [userId],
+  );
+
+  if (!row) {
+    throw new AdminUserNotFoundError();
+  }
+
+  if (changes.length > 0) {
+    await mysqlExecute(
+      mysql,
+      `
+        INSERT INTO admin_user_audit_logs (
+          id,
+          actor_kind,
+          actor_user_id,
+          target_user_id,
+          action,
+          changes_json,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        `audit_${crypto.randomUUID()}`,
+        actor.actorKind,
+        actor.actorUserId,
+        userId,
+        "user_access_updated",
+        JSON.stringify(changes),
+        timestamp,
+      ],
+    );
+  }
+
+  return toAdminUserFromMysql(row);
+}
+
 export function listAdminUserFeatureOverrides(db: AppDatabase, userId: string): AdminUserFeatureOverridesResponse {
   const workspace = featureOverrideWorkspace(db, userId);
 
@@ -465,6 +876,19 @@ export function listAdminUserFeatureOverrides(db: AppDatabase, userId: string): 
     organizationId: workspace.organizationId,
     organizationName: workspace.organizationName,
     overrides: listOrganizationFeatureOverrides(db, workspace.organizationId),
+  };
+}
+
+export async function listAdminUserFeatureOverridesFromMysql(
+  mysql: MysqlAdminUsersStore,
+  userId: string,
+): Promise<AdminUserFeatureOverridesResponse> {
+  const workspace = await featureOverrideWorkspaceFromMysql(mysql, userId);
+
+  return {
+    organizationId: workspace.organizationId,
+    organizationName: workspace.organizationName,
+    overrides: await listOrganizationFeatureOverridesFromMysql(mysql, workspace.organizationId),
   };
 }
 
@@ -554,6 +978,131 @@ export function updateAdminUserFeatureOverride(
   };
 }
 
+export async function updateAdminUserFeatureOverrideFromMysql(
+  mysql: MysqlAdminUsersStore,
+  userId: string,
+  input: UpdateAdminUserFeatureOverrideInput,
+  actor: AdminUserAuditActor = { actorKind: "local-bypass", actorUserId: null },
+): Promise<AdminUserFeatureOverridesResponse> {
+  validateFeatureOverrideKey(input.featureKey);
+
+  const workspace = await featureOverrideWorkspaceFromMysql(mysql, userId);
+  const timestamp = nowIso();
+  const before = await mysqlSelectOne<MysqlFeatureOverrideRow>(
+    mysql,
+    `
+      SELECT
+        feature_key AS featureKey,
+        is_enabled AS isEnabled,
+        reason,
+        expires_at AS expiresAt
+      FROM organization_feature_overrides
+      WHERE organization_id = ? AND feature_key = ?
+      LIMIT 1
+    `,
+    [workspace.organizationId, input.featureKey],
+  );
+  const beforeValue = toFeatureOverrideAuditStateFromMysql(before);
+  const reason = normalizeFeatureOverrideReason(input.reason);
+  const expiresAt = normalizeFeatureOverrideExpiresAt(input.expiresAt);
+
+  if (input.isEnabled === null) {
+    await mysqlExecute(
+      mysql,
+      "DELETE FROM organization_feature_overrides WHERE organization_id = ? AND feature_key = ?",
+      [workspace.organizationId, input.featureKey],
+    );
+  } else if (before) {
+    await mysqlExecute(
+      mysql,
+      `
+        UPDATE organization_feature_overrides
+        SET is_enabled = ?,
+            reason = ?,
+            expires_at = ?,
+            created_by_user_id = ?,
+            updated_at = ?
+        WHERE organization_id = ? AND feature_key = ?
+      `,
+      [
+        input.isEnabled ? 1 : 0,
+        reason,
+        expiresAt,
+        actor.actorUserId,
+        timestamp,
+        workspace.organizationId,
+        input.featureKey,
+      ],
+    );
+  } else {
+    await mysqlExecute(
+      mysql,
+      `
+        INSERT INTO organization_feature_overrides (
+          organization_id,
+          feature_key,
+          is_enabled,
+          reason,
+          expires_at,
+          created_by_user_id,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        workspace.organizationId,
+        input.featureKey,
+        input.isEnabled ? 1 : 0,
+        reason,
+        expiresAt,
+        actor.actorUserId,
+        timestamp,
+        timestamp,
+      ],
+    );
+  }
+
+  const afterValue = input.isEnabled === null ? null : { isEnabled: input.isEnabled, reason, expiresAt };
+  if (JSON.stringify(beforeValue) !== JSON.stringify(afterValue)) {
+    await mysqlExecute(
+      mysql,
+      `
+        INSERT INTO admin_user_audit_logs (
+          id,
+          actor_kind,
+          actor_user_id,
+          target_user_id,
+          action,
+          changes_json,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+      [
+        `audit_${crypto.randomUUID()}`,
+        actor.actorKind,
+        actor.actorUserId,
+        userId,
+        "user_access_updated",
+        JSON.stringify([{
+          field: "featureOverride",
+          featureKey: input.featureKey,
+          before: beforeValue,
+          after: afterValue,
+        }]),
+        timestamp,
+      ],
+    );
+  }
+
+  return {
+    organizationId: workspace.organizationId,
+    organizationName: workspace.organizationName,
+    overrides: await listOrganizationFeatureOverridesFromMysql(mysql, workspace.organizationId),
+  };
+}
+
 export function listAdminUserAuditLogs(
   db: AppDatabase,
   options: ListAdminUserAuditLogsOptions = {},
@@ -603,4 +1152,45 @@ export function listAdminUserAuditLogs(
   return {
     logs: rows,
   };
+}
+
+export async function listAdminUserAuditLogsFromMysql(
+  mysql: MysqlAdminUsersStore,
+  options: ListAdminUserAuditLogsOptions = {},
+): Promise<AdminUserAuditLogsResponse> {
+  const limit = Math.max(1, Math.min(options.limit ?? 20, 100));
+  const rows = await mysqlSelectMany<Parameters<typeof toAuditLog>[0]>(
+    mysql,
+    `
+      SELECT
+        admin_user_audit_logs.id AS id,
+        admin_user_audit_logs.actor_kind AS actorKind,
+        admin_user_audit_logs.actor_user_id AS actorUserId,
+        admin_user_audit_logs.target_user_id AS targetUserId,
+        users.email AS targetEmail,
+        admin_user_audit_logs.action AS action,
+        admin_user_audit_logs.changes_json AS changesJson,
+        admin_user_audit_logs.created_at AS createdAt
+      FROM admin_user_audit_logs
+      LEFT JOIN users ON admin_user_audit_logs.target_user_id = users.id
+      ORDER BY admin_user_audit_logs.created_at DESC, admin_user_audit_logs.id DESC
+      LIMIT 200
+    `,
+  );
+  const target = options.target?.trim().toLowerCase();
+  const logs = rows
+    .map(toAuditLog)
+    .filter((log) => (options.actorKind ? log.actorKind === options.actorKind : true))
+    .filter((log) => (options.action ? log.action === options.action : true))
+    .filter((log) => {
+      if (!target) return true;
+      return [
+        log.targetUserId,
+        log.targetEmail ?? "",
+      ].some((value) => value.toLowerCase().includes(target));
+    })
+    .filter((log) => (options.featureKey ? auditLogMatchesFeature(log, options.featureKey) : true))
+    .slice(0, limit);
+
+  return { logs };
 }

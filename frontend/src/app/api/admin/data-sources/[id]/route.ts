@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
-import { requireAdminAccess, AdminAuthError } from "@/server/admin/auth";
+import { requireAdminAccess, AdminAuthError, type AdminAccessPrincipal } from "@/server/admin/auth";
 import {
   AdminDataSourceNotFoundError,
   updateAdminDataSource,
+  updateAdminDataSourceFromMysql,
+  type MysqlDataSourcesStore,
+  type UpdateAdminDataSourceInput,
 } from "@/server/admin/data-sources-repository";
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import type { SourceApprovalStatus, SourceLegalReviewStatus } from "@/lib/state-crawler-sources";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -26,13 +31,51 @@ function routeError(error: unknown) {
   return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
 }
 
-async function parsePatchBody(request: Request) {
-  const body = (await request.json().catch(() => null)) as { isEnabled?: unknown } | null;
-  if (!body || typeof body.isEnabled !== "boolean") {
+function parseApprovalStatus(value: unknown): SourceApprovalStatus | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === "approved" || value === "needs_review" || value === "blocked") return value;
+  return null;
+}
+
+function parseLegalReviewStatus(value: unknown): SourceLegalReviewStatus | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === "approved_public" || value === "not_reviewed" || value === "restricted") return value;
+  return null;
+}
+
+async function parsePatchBody(request: Request): Promise<UpdateAdminDataSourceInput | null> {
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!body || typeof body !== "object") {
     return null;
   }
 
-  return { isEnabled: body.isEnabled };
+  const approvalStatus = parseApprovalStatus(body.approvalStatus);
+  const legalReviewStatus = parseLegalReviewStatus(body.legalReviewStatus);
+  if (approvalStatus === null || legalReviewStatus === null) {
+    return null;
+  }
+
+  const input: UpdateAdminDataSourceInput = {};
+  if (Object.hasOwn(body, "isEnabled")) {
+    if (typeof body.isEnabled !== "boolean") return null;
+    input.isEnabled = body.isEnabled;
+  }
+  if (Object.hasOwn(body, "approvedForIngestion")) {
+    if (typeof body.approvedForIngestion !== "boolean") return null;
+    input.approvedForIngestion = body.approvedForIngestion;
+  }
+  if (approvalStatus !== undefined) {
+    input.approvalStatus = approvalStatus;
+  }
+  if (legalReviewStatus !== undefined) {
+    input.legalReviewStatus = legalReviewStatus;
+  }
+  if (Object.hasOwn(body, "approvalNotes")) {
+    if (body.approvalNotes !== null && typeof body.approvalNotes !== "string") return null;
+    input.approvalNotes = body.approvalNotes;
+  }
+
+  return Object.keys(input).length > 0 ? input : null;
 }
 
 async function resolveDatabase(database?: AppDatabase) {
@@ -42,19 +85,41 @@ async function resolveDatabase(database?: AppDatabase) {
   return client.db;
 }
 
-export function createAdminDataSourcePatch(database?: AppDatabase) {
+function includesGovernanceUpdate(input: UpdateAdminDataSourceInput) {
+  return (
+    Object.hasOwn(input, "approvedForIngestion") ||
+    Object.hasOwn(input, "approvalStatus") ||
+    Object.hasOwn(input, "legalReviewStatus") ||
+    Object.hasOwn(input, "approvalNotes")
+  );
+}
+
+function actorUserIdForAdminAccess(access: AdminAccessPrincipal) {
+  return access.kind === "admin" ? access.userId : null;
+}
+
+export function createAdminDataSourcePatch(database?: AppDatabase, mysql?: MysqlDataSourcesStore) {
+  const shouldUseMysqlRuntime = () => Boolean(mysql) || (!database && isMysqlDatabaseUrlConfigured());
+
   return async function PATCH(request: Request, context: RouteContext) {
     try {
       const resolvedDb = await resolveDatabase(database);
-      await requireAdminAccess(resolvedDb, request, { roles: ["admin", "operator"] });
+      const access = await requireAdminAccess(resolvedDb, request, { roles: ["admin", "operator"] });
 
       const input = await parsePatchBody(request);
       if (!input) {
-        return errorResponse("INVALID_REQUEST", "Request body must include isEnabled.", 400);
+        return errorResponse("INVALID_REQUEST", "Request body must include a valid data source update.", 400);
+      }
+      let actorUserId = actorUserIdForAdminAccess(access);
+      if (includesGovernanceUpdate(input)) {
+        const adminAccess = await requireAdminAccess(resolvedDb, request, { roles: ["admin"] });
+        actorUserId = actorUserIdForAdminAccess(adminAccess);
       }
 
       const { id } = await context.params;
-      const source = await updateAdminDataSource(resolvedDb, id, input);
+      const source = shouldUseMysqlRuntime()
+        ? await updateAdminDataSourceFromMysql(mysql ?? resolveMysqlPool(), id, input, { actorUserId })
+        : await updateAdminDataSource(resolvedDb, id, input, { actorUserId });
 
       return NextResponse.json({ source });
     } catch (error) {

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as principal from "@/server/auth/principal";
-import { featuresForUser } from "@/server/auth/entitlements";
+import { applyFeatureOverrides, featuresForUser, type AccountTier } from "@/server/auth/entitlements";
 import type { RequestPrincipal } from "@/server/auth/principal";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import type { AppDatabase } from "@/server/db/client";
@@ -40,19 +40,30 @@ const enterprisePrincipal: RequestPrincipal = {
   },
 };
 
-const businessPrincipal: RequestPrincipal = {
-  kind: "authenticated",
-  userId: "anon_seed",
+const anonymousPrincipal: RequestPrincipal = {
+  kind: "anonymous",
+  userId: "anon_guest",
   role: "user",
-  tier: "business",
-  features: featuresForUser({ role: "user", tier: "business" }),
-  workspace: {
-    organizationId: "org_seed",
-    organizationName: "Seed Organization",
-    role: "owner",
-    tier: "business",
-  },
+  tier: "free",
+  features: featuresForUser({ role: "user", tier: "free" }),
+  anonymousCookie: "anon=anon_guest; Path=/; HttpOnly",
 };
+
+function principalForTier(tier: AccountTier, features = featuresForUser({ role: "user", tier })): RequestPrincipal {
+  return {
+    kind: "authenticated",
+    userId: "anon_seed",
+    role: "user",
+    tier,
+    features,
+    workspace: {
+      organizationId: "org_seed",
+      organizationName: "Seed Organization",
+      role: "owner",
+      tier,
+    },
+  };
+}
 
 async function createKnowledgeTestDatabase() {
   const testDb = await createTestDatabase({ seed: true });
@@ -101,8 +112,12 @@ describe("/api/knowledge", () => {
     await testDb?.cleanup();
   });
 
-  it("rejects users without knowledge_station", async () => {
-    resolvePrincipal.mockResolvedValueOnce(businessPrincipal);
+  it.each([
+    ["Free", "free"],
+    ["Pursuit Starter", "pro"],
+    ["Response Builder", "business"],
+  ] as const)("rejects %s users without knowledge_station by default", async (_label, tier) => {
+    resolvePrincipal.mockResolvedValueOnce(principalForTier(tier));
 
     const response = await route.GET(new Request("http://localhost/api/knowledge"));
     const body = await response.json();
@@ -112,6 +127,54 @@ describe("/api/knowledge", () => {
       code: "FEATURE_NOT_AVAILABLE",
       feature: "knowledge_station",
     });
+  });
+
+  it.each([
+    ["GET", (route: ReturnType<typeof createKnowledgeRouteHandlers>) =>
+      route.GET(new Request("http://localhost/api/knowledge"))],
+    ["POST", (route: ReturnType<typeof createKnowledgeRouteHandlers>) =>
+      route.POST(new Request("http://localhost/api/knowledge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Anonymous snippet",
+          body: "Anonymous users should not create private knowledge.",
+          type: "template_snippet",
+          tags: [],
+          sourceKind: "manual",
+        }),
+      }))],
+  ] as const)("requires authenticated workspace access for anonymous %s requests", async (_method, requestKnowledge) => {
+    resolvePrincipal.mockResolvedValueOnce(anonymousPrincipal);
+
+    const response = await requestKnowledge(route);
+    const body = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(body.error).toEqual({
+      code: "AUTH_REQUIRED",
+      message: "Authentication is required",
+    });
+    expect(response.headers.get("Set-Cookie")).toBeNull();
+  });
+
+  it("allows a lower-tier principal when an active organization override grants knowledge_station", async () => {
+    resolvePrincipal.mockResolvedValueOnce(principalForTier(
+      "business",
+      applyFeatureOverrides(featuresForUser({ role: "user", tier: "business" }), [
+        {
+          featureKey: "knowledge_station",
+          isEnabled: 1,
+          expiresAt: "2026-06-03T00:00:00.000Z",
+        },
+      ], new Date("2026-06-02T00:00:00.000Z")),
+    ));
+
+    const response = await route.GET(new Request("http://localhost/api/knowledge"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ items: [] });
   });
 
   it("creates and lists knowledge items for Enterprise users", async () => {

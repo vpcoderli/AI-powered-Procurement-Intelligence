@@ -29,9 +29,17 @@ export interface StripeSandboxSubscriptionLike {
   cancelAtPeriodEnd?: boolean | number | null;
 }
 
+export interface StripeSandboxSessionUserLike {
+  tier?: string | null;
+  workspace?: {
+    tier?: string | null;
+  } | null;
+}
+
 type StripeSandboxEnv = Record<string, string | undefined>;
 
 const paidReadyStatuses = new Set(["active", "trialing", "past_due"]);
+const sessionCookieName = "apsi_session";
 
 export function parseStripeSandboxArgs(argv: string[]): StripeSandboxArgs {
   const args: StripeSandboxArgs = {
@@ -159,4 +167,22 @@ export function isStripeSandboxSubscriptionReady(
 
 export function isStripeSandboxCancelReady(subscription: StripeSandboxSubscriptionLike | null | undefined) {
   return subscription?.status === "canceled" || subscription?.cancelAtPeriodEnd === true || subscription?.cancelAtPeriodEnd === 1;
+}
+
+export function isStripeSandboxTierSyncReady(
+  user: StripeSandboxSessionUserLike | null | undefined,
+  expectedTier: StripeSandboxTier,
+) {
+  return user?.tier === expectedTier && user.workspace?.tier === expectedTier;
+}
+
+export function extractStripeSandboxSessionCookie(setCookieHeaders: string[]) {
+  for (const header of setCookieHeaders) {
+    const cookiePair = header.split(";", 1)[0] ?? "";
+    if (cookiePair.startsWith(`${sessionCookieName}=`) && cookiePair.length > sessionCookieName.length + 1) {
+      return cookiePair;
+    }
+  }
+
+  throw new Error("Auth register response did not include a session cookie.");
 }

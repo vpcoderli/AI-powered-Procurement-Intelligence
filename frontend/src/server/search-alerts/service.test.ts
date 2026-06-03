@@ -144,6 +144,21 @@ describe("search alerts service", () => {
 
   it("runs the MySQL alert create/list/update/delete lifecycle", async () => {
     const rowsByAlertId = new Map<string, Record<string, unknown>>();
+    const digestRows = [
+      {
+        id: "digest_run_mysql",
+        alertId: "",
+        userId: "user_mysql",
+        frequency: "daily",
+        status: "sent",
+        matchCount: 1,
+        notificationId: "notification_mysql",
+        skippedReason: null,
+        failureReason: null,
+        matchedBidIdsJson: JSON.stringify(["bid_1"]),
+        createdAt: "2026-06-01T00:00:00.000Z",
+      },
+    ];
     const mysql = {
       execute: vi.fn(async (sql: string, values: unknown[] = []) => {
         if (sql.includes("INSERT INTO users")) return [{ affectedRows: 1 }, []];
@@ -186,6 +201,14 @@ describe("search alerts service", () => {
         if (sql.includes("FROM alerts") && sql.includes("WHERE user_id = ?")) {
           return [[...rowsByAlertId.values()].filter((row) => row.userId === values[0]), []];
         }
+        if (sql.includes("FROM search_alert_digest_runs")) {
+          return [
+            digestRows
+              .filter((row) => row.userId === values[0] && values.slice(1).includes(row.alertId))
+              .map((row) => ({ ...row })),
+            [],
+          ];
+        }
         return [[], []];
       }),
     };
@@ -196,17 +219,29 @@ describe("search alerts service", () => {
       frequency: "daily",
       isEnabled: true,
     });
+    digestRows[0].alertId = created.id;
     const updated = await updateSearchAlertFromMysql(mysql, "user_mysql", created.id, {
       name: "Cloud bids updated",
       isEnabled: false,
     });
 
-    expect((await listSearchAlertsFromMysql(mysql, "user_mysql")).map((alert) => alert.id)).toEqual([created.id]);
+    const listed = await listSearchAlertsFromMysql(mysql, "user_mysql");
+    expect(listed.map((alert) => alert.id)).toEqual([created.id]);
+    expect(listed[0].digestHistory).toEqual([
+      expect.objectContaining({
+        id: "digest_run_mysql",
+        notificationId: "notification_mysql",
+        matchedBidIds: ["bid_1"],
+      }),
+    ]);
     expect(updated).toMatchObject({
       id: created.id,
       name: "Cloud bids updated",
       isEnabled: false,
     });
+    expect(updated.digestHistory).toEqual([
+      expect.objectContaining({ id: "digest_run_mysql" }),
+    ]);
 
     await expect(deleteSearchAlertFromMysql(mysql, "user_other", created.id)).rejects.toThrow(
       "Search alert not found",

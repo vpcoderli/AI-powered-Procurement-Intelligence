@@ -25,7 +25,13 @@ STRIPE_PRICE_PRO_MONTHLY=price_REPLACE_ME
 STRIPE_PRICE_BUSINESS_MONTHLY=price_REPLACE_ME
 ```
 
-本地数据库默认使用 `frontend/data/apsi.sqlite`。dev server 和 verifier 都应在 `frontend` 目录运行，确保共享同一个 SQLite 数据库。
+本地默认不配置 MySQL 时使用 `frontend/data/apsi.sqlite`。如果要验证 MySQL runtime，请让 dev server 和 verifier 使用同一个 `DATABASE_URL` 或 `MYSQL_DATABASE_URL`：
+
+```bash
+DATABASE_URL=mysql://USER:PASSWORD@127.0.0.1:3306/winbids
+```
+
+verifier 通过本地 HTTP API 创建测试账号、发起 checkout、读取 subscription/session、创建 portal 和取消订阅；不会直接写 SQLite。因此 SQLite 默认模式和 MySQL 模式都走同一条产品 API 路径。
 
 ## 3. Start The Local App
 
@@ -33,6 +39,14 @@ STRIPE_PRICE_BUSINESS_MONTHLY=price_REPLACE_ME
 cd frontend
 npm run db:migrate
 npm run dev
+```
+
+MySQL 模式：
+
+```bash
+cd frontend
+DATABASE_URL=mysql://USER:PASSWORD@127.0.0.1:3306/winbids npm run db:mysql:migrate
+DATABASE_URL=mysql://USER:PASSWORD@127.0.0.1:3306/winbids npm run dev
 ```
 
 确认本地站点可访问：
@@ -58,6 +72,13 @@ Pro 默认验证：
 ```bash
 cd frontend
 npm run billing:stripe:sandbox -- --tier=pro
+```
+
+MySQL 模式需要在相同 shell 环境中带上 `DATABASE_URL`，并保持 dev server 使用同一个 URL：
+
+```bash
+DATABASE_URL=mysql://USER:PASSWORD@127.0.0.1:3306/winbids \
+  npm run billing:stripe:sandbox -- --tier=pro
 ```
 
 Business 验证：
@@ -88,7 +109,7 @@ npm run billing:stripe:sandbox -- --tier=pro --origin=http://localhost:3000 --ti
 2. Stripe CLI 收到并转发 `checkout.session.completed` 或相关订阅事件。
 3. 本地 `/api/account/subscription` 变为 `source=billing_provider`。
 4. 订阅状态为 `active`、`trialing` 或 `past_due`。
-5. 用户 `account_tier` 和 active owner organization `account_tier` 都更新为目标套餐。
+5. `/api/auth/session` 返回的用户 tier 和 active workspace organization tier 都更新为目标套餐。
 6. `/api/account/billing/portal` 返回 Stripe Billing Portal URL。
 7. 未传 `--skip-cancel` 时，`/api/account/subscription/cancel` 可安排 Stripe 测试订阅取消，并在本地显示 `cancelAtPeriodEnd=true` 或 `status=canceled`。
 
@@ -100,7 +121,7 @@ npm run billing:stripe:sandbox -- --tier=pro --origin=http://localhost:3000 --ti
 | `STRIPE_SECRET_KEY must be a Stripe test mode secret key` | 使用了 live key 或非 `sk_test_...` key。不要在 sandbox 使用生产 key。 |
 | Checkout API 返回 500 | 检查 price id 是否来自 test mode，Billing Portal 是否已配置，dev server 是否读取了最新 env。 |
 | verifier 一直等待 webhook | 确认 `stripe listen --forward-to localhost:3000/api/billing/webhook` 正在运行，且 `STRIPE_WEBHOOK_SECRET` 是当前 CLI session 输出的 `whsec_...`。 |
-| 订阅已在 Stripe 完成但本地 tier 未变 | 查看 dev server 日志中的 `/api/billing/webhook` 错误；常见原因是 webhook secret 不匹配或 dev server 与 verifier 使用了不同 SQLite 工作目录。 |
+| 订阅已在 Stripe 完成但本地 tier 未变 | 查看 dev server 日志中的 `/api/billing/webhook` 错误；常见原因是 webhook secret 不匹配，或 MySQL 模式下 dev server 与 verifier 使用了不同 `DATABASE_URL`。 |
 | Portal URL 创建失败 | 确认 checkout webhook 已写入 `providerCustomerId`，并在 Stripe test mode 中配置了 Billing Portal。 |
 
 ## 8. Cleanup
@@ -110,4 +131,4 @@ npm run billing:stripe:sandbox -- --tier=pro --origin=http://localhost:3000 --ti
 1. 在 Stripe Dashboard test mode 中搜索脚本输出的测试邮箱。
 2. 打开 customer，取消 active test subscription。
 3. 删除不再需要的 test customer。
-4. 如需重置本地数据，可删除 `frontend/data/apsi.sqlite*` 后重新运行 `npm run db:migrate`。
+4. 如需重置 SQLite 本地数据，可删除 `frontend/data/apsi.sqlite*` 后重新运行 `npm run db:migrate`；MySQL 本地数据可重建 disposable schema 后运行 `npm run db:mysql:migrate`。

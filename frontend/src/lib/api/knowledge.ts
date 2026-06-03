@@ -4,6 +4,7 @@ export type KnowledgeApiErrorCode =
   | "FEATURE_NOT_AVAILABLE"
   | "INVALID_REQUEST"
   | "INTERNAL_ERROR"
+  | "AUTH_REQUIRED"
   | "UNAUTHENTICATED";
 
 interface KnowledgeApiErrorResponse {
@@ -64,6 +65,7 @@ function isKnowledgeApiErrorResponse(body: unknown): body is KnowledgeApiErrorRe
     (code === "FEATURE_NOT_AVAILABLE" ||
       code === "INVALID_REQUEST" ||
       code === "INTERNAL_ERROR" ||
+      code === "AUTH_REQUIRED" ||
       code === "UNAUTHENTICATED") &&
     typeof message === "string"
   );

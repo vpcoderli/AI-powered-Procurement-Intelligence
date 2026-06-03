@@ -4,11 +4,17 @@ import { bidAttachments, bidFieldCorrections, bids } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
   batchUpdateAdminBidQaItems,
+  batchUpdateAdminBidQaItemsFromMysql,
   listAdminBidQaCorrections,
+  listAdminBidQaCorrectionsFromMysql,
   listAdminBidQaItems,
+  listAdminBidQaItemsFromMysql,
   updateAdminBidQaCorrection,
+  updateAdminBidQaCorrectionFromMysql,
   updateAdminBidQaDisplayStatus,
+  updateAdminBidQaDisplayStatusFromMysql,
   updateAdminBidQaReview,
+  updateAdminBidQaReviewFromMysql,
 } from "./bid-qa-repository";
 
 const NOW = "2026-05-30T00:00:00.000Z";
@@ -336,5 +342,213 @@ describe("admin bid QA repository", () => {
       expect.objectContaining({ id: "ca_failed_archive", displayStatus: "suppressed" }),
       expect.objectContaining({ id: "tx_low_quality", displayStatus: "suppressed" }),
     ]);
+  });
+
+  it("runs the MySQL QA lifecycle", async () => {
+    const bidRows = new Map<string, Record<string, unknown>>([
+      ["mysql_qa_1", {
+        id: "mysql_qa_1",
+        source: "mysql_state",
+        source_bid_id: "MYSQL-1",
+        dedupe_key: "MYSQL-1",
+        title: "MySQL QA original title",
+        description: "QA smoke description",
+        full_description: null,
+        original_category: null,
+        amount: null,
+        amount_min: null,
+        amount_max: null,
+        currency: "USD",
+        published_date: null,
+        deadline_date: null,
+        issuer_name: "MySQL Agency",
+        issuer_type: "state",
+        state_code: "CA",
+        contact_name: null,
+        contact_email: null,
+        contact_phone: null,
+        source_url: "https://example.com/mysql-qa",
+        is_active: 1,
+        raw_payload: null,
+        source_confidence: "low",
+        quality_flags_json: JSON.stringify(["missing_deadline"]),
+        admin_review_status: "unreviewed",
+        admin_review_note: null,
+        admin_reviewed_at: null,
+        admin_reviewed_by: null,
+        display_status: "published",
+        detail_archive_status: "unavailable",
+        detail_archive_path: null,
+        detail_fetched_at: null,
+        detail_checksum_sha256: null,
+        detail_archive_error: "Portal required",
+        first_seen_at: NOW,
+        last_seen_at: NOW,
+        created_at: NOW,
+        updated_at: NOW,
+      }],
+      ["mysql_qa_2", {
+        id: "mysql_qa_2",
+        source: "mysql_state",
+        source_bid_id: "MYSQL-2",
+        dedupe_key: "MYSQL-2",
+        title: "MySQL QA second title",
+        description: "QA smoke description",
+        full_description: null,
+        original_category: null,
+        amount: null,
+        amount_min: null,
+        amount_max: null,
+        currency: "USD",
+        published_date: null,
+        deadline_date: "2026-06-30",
+        issuer_name: "MySQL Agency",
+        issuer_type: "state",
+        state_code: "TX",
+        contact_name: null,
+        contact_email: null,
+        contact_phone: null,
+        source_url: "https://example.com/mysql-qa-2",
+        is_active: 1,
+        raw_payload: null,
+        source_confidence: "high",
+        quality_flags_json: JSON.stringify([]),
+        admin_review_status: "needs_review",
+        admin_review_note: null,
+        admin_reviewed_at: null,
+        admin_reviewed_by: null,
+        display_status: "published",
+        detail_archive_status: "archived",
+        detail_archive_path: null,
+        detail_fetched_at: null,
+        detail_checksum_sha256: null,
+        detail_archive_error: null,
+        first_seen_at: NOW,
+        last_seen_at: NOW,
+        created_at: NOW,
+        updated_at: NOW,
+      }],
+    ]);
+    const attachmentRows: Record<string, unknown>[] = [
+      {
+        id: "mysql_qa_1_attachment",
+        bid_id: "mysql_qa_1",
+        name: "Attachment",
+        url: "https://example.com/attachment",
+        archive_status: "failed",
+        archive_error: "HTTP 403",
+        created_at: NOW,
+      },
+    ];
+    const correctionRows: Record<string, unknown>[] = [];
+    const mysql = {
+      execute: async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("UPDATE bids")) {
+          const assignmentPart = String(sql.split("SET")[1]?.split("WHERE")[0] ?? "");
+          const columns = assignmentPart
+            .split(",")
+            .map((part) => part.split("=")[0]?.trim())
+            .filter(Boolean);
+          const targetIds = sql.includes("WHERE id = ?")
+            ? [values.at(-1) as string]
+            : values.slice(columns.length).map((value) => String(value));
+          for (const targetId of targetIds) {
+            const row = bidRows.get(targetId);
+            if (!row) continue;
+            columns.forEach((column, index) => {
+              row[column] = values[index];
+            });
+          }
+        }
+
+        if (sql.includes("INSERT INTO bid_field_corrections")) {
+          correctionRows.push({
+            id: values[0],
+            bid_id: values[1],
+            field_name: values[2],
+            original_value: values[3],
+            corrected_value: values[4],
+            note: values[5],
+            corrected_by: values[6],
+            corrected_at: values[7],
+          });
+        }
+
+        return [{ affectedRows: 1 }, undefined];
+      },
+      query: async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("FROM bid_attachments")) {
+          return [attachmentRows.filter((row) => !values.length || values.includes(row.bid_id)), undefined];
+        }
+
+        if (sql.includes("FROM bid_field_corrections")) {
+          return [correctionRows.filter((row) => !values.length || values.includes(row.bid_id)), undefined];
+        }
+
+        if (sql.includes("WHERE id = ?")) {
+          return [[bidRows.get(values[0] as string)].filter(Boolean), undefined];
+        }
+
+        if (sql.includes("WHERE id IN")) {
+          return [[...bidRows.values()].filter((row) => values.includes(row.id)), undefined];
+        }
+
+        return [[...bidRows.values()], undefined];
+      },
+    };
+
+    await expect(listAdminBidQaItemsFromMysql(mysql, { archiveStatus: "failed" })).resolves.toMatchObject({
+      items: [expect.objectContaining({ id: "mysql_qa_1", archiveIssueCount: 2 })],
+    });
+
+    await expect(updateAdminBidQaReviewFromMysql(mysql, "mysql_qa_1", {
+      reviewStatus: "reviewed",
+      note: "Verified in MySQL QA.",
+      reviewerId: "admin-1",
+      reviewedAt: "2026-05-30T01:00:00.000Z",
+    })).resolves.toMatchObject({
+      id: "mysql_qa_1",
+      adminReviewStatus: "reviewed",
+      adminReviewedBy: "admin-1",
+    });
+
+    await expect(updateAdminBidQaDisplayStatusFromMysql(mysql, "mysql_qa_1", {
+      displayStatus: "suppressed",
+      reviewerId: "operator-1",
+      reviewedAt: "2026-05-30T02:00:00.000Z",
+    })).resolves.toMatchObject({
+      id: "mysql_qa_1",
+      displayStatus: "suppressed",
+    });
+
+    await expect(updateAdminBidQaCorrectionFromMysql(mysql, "mysql_qa_1", {
+      corrections: {
+        title: "MySQL QA corrected title",
+        deadlineDate: "2026-08-01",
+      },
+      note: "Corrected from MySQL QA.",
+      reviewerId: "admin-1",
+      correctedAt: "2026-05-30T03:00:00.000Z",
+    })).resolves.toMatchObject({
+      id: "mysql_qa_1",
+      title: "MySQL QA corrected title",
+      deadlineDate: "2026-08-01",
+      correctionCount: 2,
+    });
+
+    await expect(listAdminBidQaCorrectionsFromMysql(mysql, "mysql_qa_1")).resolves.toHaveLength(2);
+    await expect(batchUpdateAdminBidQaItemsFromMysql(mysql, {
+      bidIds: ["mysql_qa_1", "mysql_qa_2"],
+      reviewStatus: "reviewed",
+      note: "Batch MySQL QA.",
+      reviewerId: "operator-1",
+      reviewedAt: "2026-05-30T04:00:00.000Z",
+    })).resolves.toMatchObject({
+      updatedCount: 2,
+      items: [
+        expect.objectContaining({ id: "mysql_qa_1", adminReviewStatus: "reviewed" }),
+        expect.objectContaining({ id: "mysql_qa_2", adminReviewStatus: "reviewed" }),
+      ],
+    });
   });
 });

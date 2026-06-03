@@ -11,6 +11,9 @@ export type CrawlerCapability = "query" | "attachments" | "detail_pages" | "pagi
 export type SourceApprovalStatus = "approved" | "needs_review" | "blocked";
 export type SourceAccessPattern = "public_http" | "public_api" | "browser_required" | "login_required" | "restricted" | "unknown";
 export type SourceLegalReviewStatus = "approved_public" | "not_reviewed" | "restricted";
+export type SourceAuthority = "official" | "official_aggregator" | "public_aggregator";
+export type SourceTrustStatus = "verified" | "beta" | "fallback" | "needs_review" | "blocked";
+export type SourceEvidenceMode = "direct_portal" | "api" | "aggregator_page" | "fixture_fallback";
 
 export type SourceGovernanceMetadata = {
   approvedForIngestion: boolean;
@@ -20,6 +23,13 @@ export type SourceGovernanceMetadata = {
   sourceOwner: string;
   approvalNotes: string;
   lastApprovalReviewedAt: string | null;
+};
+
+export type SourceValidityMetadata = {
+  sourceAuthority: SourceAuthority;
+  trustStatus: SourceTrustStatus;
+  evidenceMode: SourceEvidenceMode;
+  validityNotes: string;
 };
 
 const STATE_CRAWLER_SOURCE_DEFINITIONS = [
@@ -57,7 +67,7 @@ const STATE_CRAWLER_SOURCE_DEFINITIONS = [
   { stateCode: "NY", id: "ny_contract_reporter", label: "New York State Contract Reporter", baseUrl: "https://www.nyscr.ny.gov" },
   { stateCode: "NC", id: "nc_state_procurement", label: "North Carolina State Procurement", baseUrl: "https://www.ips.state.nc.us" },
   { stateCode: "ND", id: "nd_state_procurement", label: "North Dakota State Procurement", baseUrl: "https://apps.nd.gov/csd/spo/services/bidder/main.htm" },
-  { stateCode: "OH", id: "oh_state_procurement", label: "Ohio State Procurement", baseUrl: "https://procure.ohio.gov" },
+  { stateCode: "OH", id: "oh_state_procurement", label: "Ohio State Procurement", baseUrl: "https://www.bidnetdirect.com/ohio/solicitations/open-bids" },
   { stateCode: "OK", id: "ok_state_procurement", label: "Oklahoma State Procurement", baseUrl: "https://oklahoma.gov/omes/services/purchasing" },
   { stateCode: "OR", id: "or_state_procurement", label: "Oregon State Procurement", baseUrl: "https://oregonbuys.gov" },
   { stateCode: "PA", id: "pa_state_procurement", label: "Pennsylvania eMarketplace", baseUrl: "https://www.emarketplace.state.pa.us" },
@@ -72,7 +82,7 @@ const STATE_CRAWLER_SOURCE_DEFINITIONS = [
   { stateCode: "WA", id: "wa_state_procurement", label: "Washington State Procurement", baseUrl: "https://pr-webs-vendor.des.wa.gov" },
   { stateCode: "WV", id: "wv_state_procurement", label: "West Virginia State Procurement", baseUrl: "https://www.state.wv.us/admin/purchase" },
   { stateCode: "WI", id: "wi_state_procurement", label: "Wisconsin State Procurement", baseUrl: "https://vendornet.wi.gov" },
-  { stateCode: "WY", id: "wy_state_procurement", label: "Wyoming State Procurement", baseUrl: "https://ai.wyo.gov/divisions/procurement" },
+  { stateCode: "WY", id: "wy_state_procurement", label: "Wyoming State Procurement", baseUrl: "https://ai.wyo.gov/divisions/general-services/purchasing/bid-opportunities" },
 ] as const satisfies readonly StateCrawlerSourceDefinition[];
 
 type StateCrawlerSourceDefinitionId = (typeof STATE_CRAWLER_SOURCE_DEFINITIONS)[number]["id"];
@@ -112,6 +122,28 @@ const GENERIC_CRAWLER_METADATA = {
   maturity: "generic",
   capabilities: ["query"],
 } as const satisfies CrawlerMetadata;
+
+const BIDNET_FALLBACK_SOURCE_IDS: ReadonlySet<string> = new Set([
+  "al_state_procurement",
+  "ak_state_procurement",
+  "az_state_procurement",
+  "co_state_procurement",
+  "id_state_procurement",
+  "ky_state_procurement",
+  "la_state_procurement",
+  "md_state_procurement",
+  "mi_state_procurement",
+  "mn_state_procurement",
+  "nc_state_procurement",
+  "nd_state_procurement",
+  "ne_state_procurement",
+  "nh_state_procurement",
+  "oh_state_procurement",
+  "sc_state_procurement",
+  "vt_state_procurement",
+  "wi_state_procurement",
+  "wv_state_procurement",
+]);
 
 const DEDICATED_CRAWLER_METADATA_BY_ID: Partial<Record<StateCrawlerSourceDefinitionId, CrawlerMetadata>> = {
   al_state_procurement: {
@@ -370,11 +402,50 @@ function metadataForSourceId(id: StateCrawlerSourceDefinitionId): CrawlerMetadat
   return DEDICATED_CRAWLER_METADATA_BY_ID[id] ?? GENERIC_CRAWLER_METADATA;
 }
 
-export const STATE_CRAWLER_SOURCES = STATE_CRAWLER_SOURCE_DEFINITIONS.map((source) => ({
-  ...source,
-  ...metadataForSourceId(source.id),
-  ...governanceForMetadata(metadataForSourceId(source.id)),
-})) as readonly ((typeof STATE_CRAWLER_SOURCE_DEFINITIONS)[number] & CrawlerMetadata & SourceGovernanceMetadata)[];
+function validityForMetadata(
+  source: StateCrawlerSourceDefinition,
+  metadata: CrawlerMetadata,
+): SourceValidityMetadata {
+  if (BIDNET_FALLBACK_SOURCE_IDS.has(source.id)) {
+    return {
+      sourceAuthority: "public_aggregator",
+      trustStatus: "fallback",
+      evidenceMode: "aggregator_page",
+      validityNotes:
+        "Uses public aggregator opportunity pages when the official state route is unavailable, blocked, or not reliably machine-readable.",
+    };
+  }
+
+  if (metadata.maturity === "verified") {
+    return {
+      sourceAuthority: "official",
+      trustStatus: "verified",
+      evidenceMode: "direct_portal",
+      validityNotes: "Verified public state procurement portal with deterministic parser coverage.",
+    };
+  }
+
+  return {
+    sourceAuthority: "official",
+    trustStatus: "beta",
+    evidenceMode: "direct_portal",
+    validityNotes: "Beta public state procurement portal parser requiring ongoing operator review before production approval.",
+  };
+}
+
+export const STATE_CRAWLER_SOURCES = STATE_CRAWLER_SOURCE_DEFINITIONS.map((source) => {
+  const metadata = metadataForSourceId(source.id);
+
+  return {
+    ...source,
+    ...metadata,
+    ...governanceForMetadata(metadata),
+    ...validityForMetadata(source, metadata),
+  };
+}) as readonly ((typeof STATE_CRAWLER_SOURCE_DEFINITIONS)[number] &
+  CrawlerMetadata &
+  SourceGovernanceMetadata &
+  SourceValidityMetadata)[];
 
 export type StateCrawlerSourceId = StateCrawlerSourceDefinitionId;
 export type StateCrawlerSourceMetadata = (typeof STATE_CRAWLER_SOURCES)[number];

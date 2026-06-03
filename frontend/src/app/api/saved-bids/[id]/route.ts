@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
+import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import * as bidService from "@/server/bids/service";
 import { db } from "@/server/db/client";
 
@@ -36,6 +37,10 @@ function internalError(principal: RequestPrincipal) {
 
 export async function DELETE(request: Request, context: RouteContext) {
   const principal = await resolvePrincipal(db, request);
+
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
 
   try {
     const { id } = await context.params;

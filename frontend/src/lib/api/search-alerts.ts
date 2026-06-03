@@ -37,6 +37,7 @@ function isApiErrorResponse(body: unknown): body is SearchAlertApiErrorResponse 
     (code === "ALERT_NOT_FOUND" ||
       code === "INVALID_REQUEST" ||
       code === "USAGE_LIMIT_REACHED" ||
+      code === "AUTH_REQUIRED" ||
       code === "INTERNAL_ERROR") &&
     typeof message === "string"
   );

@@ -96,7 +96,7 @@ STATE_SOURCE_DEFINITIONS = (
     ("NY", "ny_contract_reporter", "New York State Contract Reporter", "https://www.nyscr.ny.gov"),
     ("NC", "nc_state_procurement", "North Carolina State Procurement", "https://www.ips.state.nc.us"),
     ("ND", "nd_state_procurement", "North Dakota State Procurement", "https://apps.nd.gov/csd/spo/services/bidder/main.htm"),
-    ("OH", "oh_state_procurement", "Ohio State Procurement", "https://procure.ohio.gov"),
+    ("OH", "oh_state_procurement", "Ohio State Procurement", "https://www.bidnetdirect.com/ohio/solicitations/open-bids"),
     ("OK", "ok_state_procurement", "Oklahoma State Procurement", "https://oklahoma.gov/omes/services/purchasing"),
     ("OR", "or_state_procurement", "Oregon State Procurement", "https://oregonbuys.gov"),
     ("PA", "pa_state_procurement", "Pennsylvania eMarketplace", "https://www.emarketplace.state.pa.us"),
@@ -111,7 +111,7 @@ STATE_SOURCE_DEFINITIONS = (
     ("WA", "wa_state_procurement", "Washington State Procurement", "https://pr-webs-vendor.des.wa.gov"),
     ("WV", "wv_state_procurement", "West Virginia State Procurement", "https://www.state.wv.us/admin/purchase"),
     ("WI", "wi_state_procurement", "Wisconsin State Procurement", "https://vendornet.wi.gov"),
-    ("WY", "wy_state_procurement", "Wyoming State Procurement", "https://ai.wyo.gov/divisions/procurement"),
+    ("WY", "wy_state_procurement", "Wyoming State Procurement", "https://ai.wyo.gov/divisions/general-services/purchasing/bid-opportunities"),
 )
 
 SPECIAL_FETCHERS = {
@@ -171,6 +171,28 @@ GENERIC_CRAWLER_METADATA = {
     "adapter_kind": "generic",
     "maturity": "generic",
     "capabilities": ("query",),
+}
+
+BIDNET_FALLBACK_SOURCE_IDS = {
+    "al_state_procurement",
+    "ak_state_procurement",
+    "az_state_procurement",
+    "co_state_procurement",
+    "id_state_procurement",
+    "ky_state_procurement",
+    "la_state_procurement",
+    "md_state_procurement",
+    "mi_state_procurement",
+    "mn_state_procurement",
+    "nc_state_procurement",
+    "nd_state_procurement",
+    "ne_state_procurement",
+    "nh_state_procurement",
+    "oh_state_procurement",
+    "sc_state_procurement",
+    "vt_state_procurement",
+    "wi_state_procurement",
+    "wv_state_procurement",
 }
 
 DEDICATED_CRAWLER_METADATA_BY_ID = {
@@ -240,8 +262,37 @@ def _quality_metadata_for_source(source_id):
     }
 
 
+def _validity_metadata_for_source(source_id, quality_metadata):
+    if source_id in BIDNET_FALLBACK_SOURCE_IDS:
+        return {
+            "source_authority": "public_aggregator",
+            "trust_status": "fallback",
+            "evidence_mode": "aggregator_page",
+            "validity_notes": (
+                "Uses public aggregator opportunity pages when the official state route "
+                "is unavailable, blocked, or not reliably machine-readable."
+            ),
+        }
+
+    if quality_metadata["maturity"] == "verified":
+        return {
+            "source_authority": "official",
+            "trust_status": "verified",
+            "evidence_mode": "direct_portal",
+            "validity_notes": "Verified public state procurement portal with deterministic parser coverage.",
+        }
+
+    return {
+        "source_authority": "official",
+        "trust_status": "beta",
+        "evidence_mode": "direct_portal",
+        "validity_notes": "Beta public state procurement portal parser requiring ongoing operator review before production approval.",
+    }
+
+
 def _build_source(state_code, source_id, label, base_url):
     quality_metadata = _quality_metadata_for_source(source_id)
+    validity_metadata = _validity_metadata_for_source(source_id, quality_metadata)
 
     return Source(
         id=source_id,
@@ -255,6 +306,10 @@ def _build_source(state_code, source_id, label, base_url):
         adapter_kind=quality_metadata["adapter_kind"],
         maturity=quality_metadata["maturity"],
         capabilities=quality_metadata["capabilities"],
+        source_authority=validity_metadata["source_authority"],
+        trust_status=validity_metadata["trust_status"],
+        evidence_mode=validity_metadata["evidence_mode"],
+        validity_notes=validity_metadata["validity_notes"],
     )
 
 

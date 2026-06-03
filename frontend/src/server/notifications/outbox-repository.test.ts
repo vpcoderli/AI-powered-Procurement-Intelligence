@@ -1,12 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { notificationOutbox } from "@/server/db/schema";
 import { createTestDatabase } from "@/server/db/test-utils";
 import {
   enqueueNotification,
+  enqueueNotificationFromMysql,
   listDeliverableNotifications,
+  listDeliverableNotificationsFromMysql,
   listRecentNotifications,
+  listRecentNotificationsFromMysql,
   markNotificationFailed,
+  markNotificationFailedFromMysql,
   markNotificationSent,
+  markNotificationSentFromMysql,
 } from "./outbox-repository";
 import type { NotificationOutboxInput } from "./types";
 
@@ -150,5 +155,114 @@ describe("notification outbox repository", () => {
     } finally {
       await testDb.cleanup();
     }
+  });
+
+  it("runs the MySQL notification outbox lifecycle", async () => {
+    const rows = new Map<string, Record<string, unknown>>();
+    const mysql = {
+      execute: vi.fn(async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("INSERT INTO notification_outbox")) {
+          if (!rows.has(values[6] as string)) {
+            rows.set(values[6] as string, {
+              id: values[0],
+              alertId: values[1],
+              userId: values[2],
+              channel: values[3],
+              recipient: values[4],
+              frequency: values[5],
+              dedupeKey: values[6],
+              subject: values[7],
+              bodyText: values[8],
+              matchedBidIds: values[9],
+              status: "pending",
+              attemptCount: 0,
+              lastError: null,
+              createdAt: values[10],
+              sentAt: null,
+            });
+          }
+        }
+
+        if (sql.includes("SET status = 'sent'")) {
+          for (const row of rows.values()) {
+            if (row.id === values[1]) {
+              row.status = "sent";
+              row.sentAt = values[0];
+              row.lastError = null;
+              row.attemptCount = Number(row.attemptCount) + 1;
+            }
+          }
+        }
+
+        if (sql.includes("SET status = 'failed'")) {
+          for (const row of rows.values()) {
+            if (row.id === values[1]) {
+              row.status = "failed";
+              row.sentAt = null;
+              row.lastError = values[0];
+              row.attemptCount = Number(row.attemptCount) + 1;
+            }
+          }
+        }
+
+        return [{ affectedRows: 1 }, undefined];
+      }),
+      query: vi.fn(async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("WHERE dedupe_key = ?")) {
+          return [[[...rows.values()].find((row) => row.dedupeKey === values[0])].filter(Boolean), undefined];
+        }
+
+        if (sql.includes("WHERE id = ?")) {
+          return [[[...rows.values()].find((row) => row.id === values[0])].filter(Boolean), undefined];
+        }
+
+        if (sql.includes("WHERE status IN")) {
+          return [
+            [...rows.values()]
+              .filter((row) => (row.status === "pending" || row.status === "failed") && Number(row.attemptCount) < Number(values[0]))
+              .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt))),
+            undefined,
+          ];
+        }
+
+        if (sql.includes("WHERE status = ?")) {
+          return [
+            [...rows.values()]
+              .filter((row) => row.status === values[0])
+              .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt))),
+            undefined,
+          ];
+        }
+
+        return [[...rows.values()].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt))), undefined];
+      }),
+    };
+
+    const first = await enqueueNotificationFromMysql(mysql, input);
+    const second = await enqueueNotificationFromMysql(mysql, input);
+    const sent = await markNotificationSentFromMysql(mysql, "notification_1", "2026-05-19T01:00:00.000Z");
+    await enqueueNotificationFromMysql(mysql, {
+      ...input,
+      id: "notification_failed",
+      dedupeKey: "alert_1:2026-05-20:email",
+      createdAt: "2026-05-19T00:01:00.000Z",
+    });
+    const failed = await markNotificationFailedFromMysql(
+      mysql,
+      "notification_failed",
+      "Provider unavailable",
+      "2026-05-19T02:00:00.000Z",
+    );
+
+    expect(first.created).toBe(true);
+    expect(second.created).toBe(false);
+    expect(sent).toMatchObject({ status: "sent", attemptCount: 1 });
+    expect(failed).toMatchObject({ status: "failed", lastError: "Provider unavailable", attemptCount: 1 });
+    await expect(listDeliverableNotificationsFromMysql(mysql, { maxAttempts: 3 })).resolves.toEqual([
+      expect.objectContaining({ id: "notification_failed" }),
+    ]);
+    await expect(listRecentNotificationsFromMysql(mysql, { status: "failed" })).resolves.toEqual([
+      expect.objectContaining({ id: "notification_failed" }),
+    ]);
   });
 });

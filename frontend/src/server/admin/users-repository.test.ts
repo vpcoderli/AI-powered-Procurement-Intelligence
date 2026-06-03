@@ -12,10 +12,16 @@ import { verifyPassword } from "@/server/auth/password";
 import {
   AdminUserEmailExistsError,
   createAdminUserInvite,
+  createAdminUserInviteFromMysql,
   listAdminUserFeatureOverrides,
+  listAdminUserFeatureOverridesFromMysql,
   listAdminUserAuditLogs,
+  listAdminUserAuditLogsFromMysql,
   listAdminUsers,
+  listAdminUsersFromMysql,
   updateAdminUser,
+  updateAdminUserFeatureOverrideFromMysql,
+  updateAdminUserFromMysql,
   updateAdminUserFeatureOverride,
 } from "./users-repository";
 
@@ -461,5 +467,213 @@ describe("admin users repository", () => {
     } finally {
       await testDb.cleanup();
     }
+  });
+
+  it("runs the MySQL admin user access lifecycle", async () => {
+    const userRows = new Map<string, Record<string, unknown>>([
+      ["admin_1", {
+        id: "admin_1",
+        email: "admin@example.com",
+        displayName: "Admin",
+        role: "admin",
+        accountTier: "enterprise",
+        isDisabled: 0,
+        createdAt: NOW,
+        updatedAt: NOW,
+        lastLoginAt: null,
+      }],
+      ["user_1", {
+        id: "user_1",
+        email: "buyer@example.com",
+        displayName: "Buyer",
+        role: "user",
+        accountTier: "free",
+        isDisabled: 0,
+        createdAt: NOW,
+        updatedAt: NOW,
+        lastLoginAt: null,
+      }],
+    ]);
+    const organizationsRows = new Map<string, Record<string, unknown>>([
+      ["org_1", {
+        id: "org_1",
+        name: "Buyer Workspace",
+        accountTier: "free",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+    ]);
+    const memberships = new Map<string, Record<string, unknown>>([
+      ["org_1:user_1", {
+        organizationId: "org_1",
+        userId: "user_1",
+        role: "owner",
+        status: "active",
+        createdAt: NOW,
+        updatedAt: NOW,
+      }],
+    ]);
+    const overrides = new Map<string, Record<string, unknown>>();
+    const auditRows: Record<string, unknown>[] = [];
+    const mysql = {
+      execute: async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("INSERT INTO users")) {
+          if ([...userRows.values()].some((row) => row.email === values[1])) {
+            const error = new Error("Duplicate email") as Error & { code: string };
+            error.code = "ER_DUP_ENTRY";
+            throw error;
+          }
+          userRows.set(values[0] as string, {
+            id: values[0],
+            email: values[1],
+            passwordHash: values[2],
+            displayName: values[3],
+            role: values[4],
+            accountTier: values[5],
+            isDisabled: values[6],
+            createdAt: values[7],
+            updatedAt: values[8],
+            lastLoginAt: null,
+          });
+        }
+
+        if (sql.includes("UPDATE users SET")) {
+          const user = userRows.get(values.at(-1) as string);
+          if (user) {
+            if (sql.includes("role = ?")) user.role = values[0];
+            if (sql.includes("account_tier = ?")) user.accountTier = values[1];
+            if (sql.includes("is_disabled = ?")) user.isDisabled = values[2];
+            user.updatedAt = values[3];
+          }
+        }
+
+        if (sql.includes("UPDATE organizations")) {
+          for (const membership of memberships.values()) {
+            if (membership.userId === values[2] && membership.role === "owner") {
+              const organization = organizationsRows.get(membership.organizationId as string);
+              if (organization) {
+                organization.accountTier = values[0];
+                organization.updatedAt = values[1];
+              }
+            }
+          }
+        }
+
+        if (sql.includes("INSERT INTO admin_user_audit_logs")) {
+          auditRows.push({
+            id: values[0],
+            actorKind: values[1],
+            actorUserId: values[2],
+            targetUserId: values[3],
+            action: values[4],
+            changesJson: values[5],
+            createdAt: values[6],
+            targetEmail: userRows.get(values[3] as string)?.email ?? null,
+          });
+        }
+
+        if (sql.includes("INSERT INTO organization_feature_overrides")) {
+          overrides.set(`${values[0]}:${values[1]}`, {
+            organizationId: values[0],
+            featureKey: values[1],
+            isEnabled: values[2],
+            reason: values[3],
+            expiresAt: values[4],
+            createdByUserId: values[5],
+            createdAt: values[6],
+            updatedAt: values[7],
+          });
+        }
+
+        if (sql.includes("UPDATE organization_feature_overrides")) {
+          const row = overrides.get(`${values[4]}:${values[5]}`);
+          if (row) {
+            row.isEnabled = values[0];
+            row.reason = values[1];
+            row.expiresAt = values[2];
+            row.createdByUserId = values[3];
+          }
+        }
+
+        if (sql.includes("DELETE FROM organization_feature_overrides")) {
+          overrides.delete(`${values[0]}:${values[1]}`);
+        }
+
+        return [{ affectedRows: 1 }, undefined];
+      },
+      query: async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("FROM users") && sql.includes("WHERE id = ?")) {
+          return [[[userRows.get(values[0] as string)].filter(Boolean)[0]].filter(Boolean), undefined];
+        }
+
+        if (sql.includes("FROM users") && sql.includes("WHERE email IS NOT NULL")) {
+          return [[...userRows.values()].filter((row) => row.email !== null), undefined];
+        }
+
+        if (sql.includes("FROM organization_memberships") && sql.includes("INNER JOIN organizations")) {
+          const membership = [...memberships.values()].find((row) => row.userId === values[0]);
+          const organization = membership ? organizationsRows.get(membership.organizationId as string) : null;
+          return [[organization ? {
+            organizationId: organization.id,
+            organizationName: organization.name,
+            role: membership?.role,
+            tier: organization.accountTier,
+          } : null].filter(Boolean), undefined];
+        }
+
+        if (sql.includes("FROM organization_feature_overrides")) {
+          return [[...overrides.values()].filter((row) => row.organizationId === values[0]), undefined];
+        }
+
+        if (sql.includes("FROM admin_user_audit_logs")) {
+          return [auditRows.slice().reverse(), undefined];
+        }
+
+        return [[], undefined];
+      },
+    };
+
+    await expect(listAdminUsersFromMysql(mysql)).resolves.toEqual({
+      users: expect.arrayContaining([
+        expect.objectContaining({ id: "user_1", email: "buyer@example.com", tier: "free" }),
+      ]),
+    });
+
+    const invited = await createAdminUserInviteFromMysql(mysql, {
+      email: "NewBuyer@Example.com",
+      displayName: "New Buyer",
+      role: "user",
+      tier: "pro",
+    }, { actorKind: "admin", actorUserId: "admin_1" });
+    expect(invited.user.email).toBe("newbuyer@example.com");
+
+    const updated = await updateAdminUserFromMysql(mysql, "user_1", {
+      role: "admin",
+      tier: "business",
+      isDisabled: true,
+    }, { actorKind: "admin", actorUserId: "admin_1" });
+    expect(updated).toMatchObject({ role: "admin", tier: "business", isDisabled: true });
+    expect(organizationsRows.get("org_1")).toMatchObject({ accountTier: "business" });
+
+    const enabled = await updateAdminUserFeatureOverrideFromMysql(mysql, "user_1", {
+      featureKey: "compliance_manifest",
+      isEnabled: true,
+      reason: "Pilot",
+      expiresAt: "2026-06-28T00:00:00.000Z",
+    }, { actorKind: "admin", actorUserId: "admin_1" });
+    expect(enabled.overrides).toEqual([
+      expect.objectContaining({ featureKey: "compliance_manifest", isEnabled: true, reason: "Pilot" }),
+    ]);
+    await expect(listAdminUserFeatureOverridesFromMysql(mysql, "user_1")).resolves.toEqual(enabled);
+
+    await updateAdminUserFeatureOverrideFromMysql(mysql, "user_1", {
+      featureKey: "compliance_manifest",
+      isEnabled: null,
+    }, { actorKind: "admin", actorUserId: "admin_1" });
+    await expect(listAdminUserAuditLogsFromMysql(mysql, { featureKey: "compliance_manifest" })).resolves.toEqual({
+      logs: expect.arrayContaining([
+        expect.objectContaining({ targetUserId: "user_1", action: "user_access_updated" }),
+      ]),
+    });
   });
 });

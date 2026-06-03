@@ -107,6 +107,9 @@ describe("bid service", () => {
     expect((await query({ states: ["ca"] })).bids.map((bid) => bid.id)).toEqual([
       "2",
     ]);
+    expect((await query({ states: ["CA"] })).bids.map((bid) => bid.id)).toEqual([
+      "2",
+    ]);
   });
 
   it("filters bids by issuer type", async () => {

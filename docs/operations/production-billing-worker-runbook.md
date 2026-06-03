@@ -43,9 +43,19 @@ Production guardrails:
 
 - Local sandbox verification intentionally rejects non-`sk_test_...` keys.
 - Production must not run `npm run billing:stripe:sandbox`.
+- Production must pass `npm run billing:production:check` before launch or webhook rotation.
 - Do not reuse test webhook secrets with production endpoints.
 - Keep live price IDs and test price IDs in separate secret stores.
 - Rotate keys through the deployment platform secret manager, not source control.
+
+Run the production billing preflight in the production deployment environment:
+
+```bash
+cd frontend
+NODE_ENV=production npm run billing:production:check
+```
+
+The command does not call Stripe and does not print secret values. It verifies live-mode Stripe key shape, webhook secret shape, production price variables, and MySQL runtime configuration.
 
 ## Stripe Webhook Endpoint Setup
 
@@ -92,6 +102,15 @@ Rollback:
 
 Run workers as separate processes from the web server. Use exactly one production instance of each continuous worker unless the deployment platform provides locking or singleton scheduling.
 
+Before starting or scheduling worker processes, run the aggregate preflight in the same environment that will run the workers:
+
+```bash
+cd frontend
+npm run workers:check
+```
+
+This runs crawler, event outbox, notification, and dunning-related environment checks without processing jobs.
+
 ### Notification and Dunning Worker
 
 Preferred continuous process:
@@ -132,6 +151,7 @@ If scheduled source ingestion is part of the deployment, run the crawler worker 
 
 ```bash
 cd frontend
+npm run worker:crawler:check
 npm run worker:crawler
 ```
 
@@ -168,7 +188,7 @@ Manual preflight:
 
 ```bash
 cd frontend
-npm run worker:notifications:check
+npm run workers:check
 ```
 
 Expected output:
@@ -267,12 +287,13 @@ Deployment platform:
 Use this sequence after deploying billing or worker changes:
 
 1. Confirm app health.
-2. Run `npm run worker:notifications:check` in the production worker environment.
-3. Confirm Stripe production webhook endpoint returns `2xx` for a test or low-risk live event.
-4. Create a low-risk live checkout using an internal account if the business process allows it.
-5. Confirm subscription source becomes `billing_provider`.
-6. Confirm Billing Portal opens for the internal account.
-7. Run `NOTIFICATION_WORKER_RUN_ONCE=1 npm run worker:notifications`.
-8. Confirm the worker JSON output has no unexpected failures.
+2. Run `NODE_ENV=production npm run billing:production:check` in the production app environment.
+3. Run `npm run workers:check` in the production worker environment.
+4. Confirm Stripe production webhook endpoint returns `2xx` for a test or low-risk live event.
+5. Create a low-risk live checkout using an internal account if the business process allows it.
+6. Confirm subscription source becomes `billing_provider`.
+7. Confirm Billing Portal opens for the internal account.
+8. Run `NOTIFICATION_WORKER_RUN_ONCE=1 npm run worker:notifications`.
+9. Confirm the worker JSON output has no unexpected failures.
 
 If a live checkout is not approved before launch, complete the dashboard checklist and run the same sequence in staging with test-mode keys.

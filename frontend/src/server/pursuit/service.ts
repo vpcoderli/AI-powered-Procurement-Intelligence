@@ -1,11 +1,14 @@
 import crypto from "node:crypto";
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { getUserIntent } from "@/server/intents/service";
 import { IntentNotFoundError } from "@/server/intents/types";
 import { generatePursuitRecommendation } from "./generator";
 import {
   createPursuitDecisionRow,
+  createPursuitDecisionRowFromMysql,
   listPursuitDecisionRows,
+  listPursuitDecisionRowsFromMysql,
   type PursuitDecisionRow,
 } from "./repository";
 import type {
@@ -61,7 +64,11 @@ export async function getPursuitDecisionBoard(
     throw new IntentNotFoundError();
   }
 
-  const history = listPursuitDecisionRows(database, intentId).map(hydrateDecision);
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const historyRows = mysql
+    ? await listPursuitDecisionRowsFromMysql(mysql, intentId)
+    : listPursuitDecisionRows(database, intentId);
+  const history = historyRows.map(hydrateDecision);
 
   return {
     intentId: intent.id,
@@ -86,7 +93,7 @@ export async function createPursuitDecision(
   }
 
   const timestamp = nowIso();
-  createPursuitDecisionRow(database, {
+  const decisionInput = {
     id: `pursuit_decision_${crypto.randomUUID()}`,
     intentId: intent.id,
     bidId: intent.bid.id,
@@ -95,7 +102,13 @@ export async function createPursuitDecision(
     reasons: normalizeReasons(input.reasons),
     notes: input.notes?.trim() ?? "",
     timestamp,
-  });
+  };
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  if (mysql) {
+    await createPursuitDecisionRowFromMysql(mysql, decisionInput);
+  } else {
+    createPursuitDecisionRow(database, decisionInput);
+  }
 
   return getPursuitDecisionBoard(database, userId, intentId);
 }

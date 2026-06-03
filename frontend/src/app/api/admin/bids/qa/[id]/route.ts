@@ -6,11 +6,16 @@ import {
   isAdminBidQaDisplayStatus,
   isAdminBidQaReviewStatus,
   listAdminBidQaCorrections,
+  listAdminBidQaCorrectionsFromMysql,
   updateAdminBidQaCorrection,
+  updateAdminBidQaCorrectionFromMysql,
   updateAdminBidQaDisplayStatus,
+  updateAdminBidQaDisplayStatusFromMysql,
   updateAdminBidQaReview,
+  updateAdminBidQaReviewFromMysql,
 } from "@/server/admin/bid-qa-repository";
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -98,6 +103,8 @@ async function parsePatchBody(request: Request) {
 }
 
 export function createAdminBidQaPatch(database?: AppDatabase) {
+  const shouldUseMysqlRuntime = () => !database && isMysqlDatabaseUrlConfigured();
+
   return async function PATCH(request: Request, context: RouteContext) {
     const input = await parsePatchBody(request);
     if (!input) {
@@ -109,19 +116,37 @@ export function createAdminBidQaPatch(database?: AppDatabase) {
       const principal = await requireAdminAccess(resolvedDb, request, { roles: ["admin", "operator"] });
       const { id } = await context.params;
       const reviewerId = principal.kind === "admin" ? principal.userId : "local-bypass";
+      const mysql = shouldUseMysqlRuntime() ? resolveMysqlPool() : null;
       const item =
         input.action === "review"
-          ? await updateAdminBidQaReview(resolvedDb, id, {
+          ? mysql
+            ? await updateAdminBidQaReviewFromMysql(mysql, id, {
+                reviewStatus: input.reviewStatus,
+                note: input.note,
+                reviewerId,
+              })
+            : await updateAdminBidQaReview(resolvedDb, id, {
               reviewStatus: input.reviewStatus,
               note: input.note,
               reviewerId,
             })
           : input.action === "display"
-            ? await updateAdminBidQaDisplayStatus(resolvedDb, id, {
+            ? mysql
+              ? await updateAdminBidQaDisplayStatusFromMysql(mysql, id, {
+                  displayStatus: input.displayStatus,
+                  reviewerId,
+                })
+              : await updateAdminBidQaDisplayStatus(resolvedDb, id, {
                 displayStatus: input.displayStatus,
                 reviewerId,
               })
-            : await updateAdminBidQaCorrection(resolvedDb, id, {
+            : mysql
+              ? await updateAdminBidQaCorrectionFromMysql(mysql, id, {
+                  corrections: input.corrections,
+                  note: input.note,
+                  reviewerId,
+                })
+              : await updateAdminBidQaCorrection(resolvedDb, id, {
                 corrections: input.corrections,
                 note: input.note,
                 reviewerId,
@@ -135,12 +160,16 @@ export function createAdminBidQaPatch(database?: AppDatabase) {
 }
 
 export function createAdminBidQaGet(database?: AppDatabase) {
+  const shouldUseMysqlRuntime = () => !database && isMysqlDatabaseUrlConfigured();
+
   return async function GET(request: Request, context: RouteContext) {
     try {
       const resolvedDb = await resolveDatabase(database);
       await requireAdminAccess(resolvedDb, request);
       const { id } = await context.params;
-      const corrections = await listAdminBidQaCorrections(resolvedDb, id);
+      const corrections = shouldUseMysqlRuntime()
+        ? await listAdminBidQaCorrectionsFromMysql(resolveMysqlPool(), id)
+        : await listAdminBidQaCorrections(resolvedDb, id);
 
       return NextResponse.json({ corrections });
     } catch (error) {

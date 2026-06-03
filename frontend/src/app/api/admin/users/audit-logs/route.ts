@@ -2,12 +2,14 @@ import { NextResponse } from "next/server";
 import { AdminAuthError, requireAdmin } from "@/server/admin/auth";
 import {
   listAdminUserAuditLogs,
+  listAdminUserAuditLogsFromMysql,
   type AdminUserAuditAction,
   type AdminUserAuditActorKind,
   type ListAdminUserAuditLogsOptions,
 } from "@/server/admin/users-repository";
 import { isFeatureKey, type FeatureKey } from "@/server/auth/entitlements";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -82,7 +84,11 @@ export async function GET(request: Request) {
 
   try {
     await requireAdmin(db, request);
-    return NextResponse.json(listAdminUserAuditLogs(db, options));
+    const logs = isMysqlDatabaseUrlConfigured()
+      ? await listAdminUserAuditLogsFromMysql(resolveMysqlPool(), options)
+      : listAdminUserAuditLogs(db, options);
+
+    return NextResponse.json(logs);
   } catch (error) {
     return routeError(error);
   }

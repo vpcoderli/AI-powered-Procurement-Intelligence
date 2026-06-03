@@ -5,6 +5,7 @@ import {
   requireFeature,
 } from "@/server/auth/feature-gate";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
+import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { db, type AppDatabase } from "@/server/db/client";
 import {
   createKnowledgeItem,
@@ -35,17 +36,8 @@ function errorResponse(
   return jsonWithPrincipalCookie({ error: { code, message } }, principal, { status });
 }
 
-function unauthenticatedResponse(principal: RequestPrincipal) {
-  return errorResponse(
-    "UNAUTHENTICATED",
-    "Sign in to use Knowledge Station.",
-    401,
-    principal,
-  );
-}
-
 function workspaceOrganizationId(principal: RequestPrincipal) {
-  if (principal.kind !== "authenticated") return null;
+  if (!isAuthenticatedPrincipal(principal)) return null;
 
   return principal.workspace?.organizationId ?? null;
 }
@@ -76,7 +68,7 @@ export function createKnowledgeRouteHandlers(database: AppDatabase) {
     const organizationId = workspaceOrganizationId(principal);
 
     if (!organizationId) {
-      return unauthenticatedResponse(principal);
+      return authRequiredResponse();
     }
 
     try {
@@ -112,7 +104,7 @@ export function createKnowledgeRouteHandlers(database: AppDatabase) {
     const organizationId = workspaceOrganizationId(principal);
 
     if (!organizationId) {
-      return unauthenticatedResponse(principal);
+      return authRequiredResponse();
     }
 
     try {

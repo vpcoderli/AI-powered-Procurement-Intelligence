@@ -4,11 +4,14 @@ import {
   ConfigRegistryNotFoundError,
   ConfigRegistryValidationError,
   getConfigEntryById,
+  getConfigEntryByIdFromMysql,
   upsertConfigEntry,
+  upsertConfigEntryFromMysql,
   type ConfigStatus,
 } from "@/server/config/registry";
 import type { AppDatabase } from "@/server/db/client";
-import { writeAuditEvent } from "@/server/events/event-log";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { writeAuditEvent, writeAuditEventFromMysql } from "@/server/events/event-log";
 import { createRequestContext } from "@/server/http/request-context";
 
 interface RouteContext {
@@ -65,21 +68,27 @@ async function requireAdminConfigAccess(db: AppDatabase, request: Request, targe
     return await requireAdminAccess(db, request, { roles: ["admin"] });
   } catch (error) {
     if (error instanceof AdminAuthError) {
-      writeAuditEvent(db, {
+      const auditInput = {
         eventName: "admin.config.access_denied",
-        actorType: "system",
+        actorType: "system" as const,
         actorRole: "anonymous",
         targetType: "config",
         targetId,
         source: "admin.config",
-        outcome: "denied",
-        severity: "warning",
+        outcome: "denied" as const,
+        severity: "warning" as const,
         requestContext: createRequestContext(request),
         metadata: {
           method: request.method,
           path: new URL(request.url).pathname,
         },
-      });
+      };
+
+      if (isMysqlDatabaseUrlConfigured()) {
+        await writeAuditEventFromMysql(resolveMysqlPool(), auditInput);
+      } else {
+        writeAuditEvent(db, auditInput);
+      }
     }
 
     throw error;
@@ -103,6 +112,8 @@ async function parsePatchBody(request: Request) {
 }
 
 export function createAdminConfigPatch(database?: AppDatabase) {
+  const shouldUseMysqlRuntime = () => !database && isMysqlDatabaseUrlConfigured();
+
   return async function PATCH(request: Request, context: RouteContext) {
     try {
       const resolvedDb = await resolveDatabase(database);
@@ -112,6 +123,78 @@ export function createAdminConfigPatch(database?: AppDatabase) {
       const input = await parsePatchBody(request);
       if (!input) {
         return errorResponse("INVALID_REQUEST", "Config patch body is invalid.", 400);
+      }
+
+      if (shouldUseMysqlRuntime()) {
+        const mysql = resolveMysqlPool();
+        const existing = await getConfigEntryByIdFromMysql(mysql, id);
+        if (!existing) {
+          throw new ConfigRegistryNotFoundError();
+        }
+
+        const entry = await upsertConfigEntryFromMysql(mysql, {
+          scopeType: existing.scopeType,
+          scopeId: existing.scopeId,
+          module: existing.module,
+          configKey: existing.configKey,
+          configValue: input.hasConfigValue ? input.configValue : existing.configValue,
+          schemaVersion: existing.schemaVersion,
+          status: input.status ?? existing.status,
+          effectiveFrom: input.effectiveFrom ?? existing.effectiveFrom,
+          effectiveTo: input.effectiveTo ?? existing.effectiveTo,
+          actorUserId: actorUserId(principal),
+          changeReason: input.changeReason,
+          auditEventId: existing.auditEventId,
+        });
+        const event = await writeAuditEventFromMysql(mysql, {
+          eventName: "admin.config.updated",
+          actorType: actorType(principal),
+          actorId: actorUserId(principal),
+          actorRole: actorRole(principal),
+          targetType: "config",
+          targetId: entry.id,
+          outcome: "success",
+          severity: "info",
+          requestContext: createRequestContext(request),
+          metadata: {
+            module: entry.module,
+            configKey: entry.configKey,
+            scopeType: entry.scopeType,
+            scopeId: entry.scopeId,
+            status: entry.status,
+          },
+          beforeAfter: {
+            before: {
+              configValue: existing.configValue,
+              status: existing.status,
+              effectiveFrom: existing.effectiveFrom,
+              effectiveTo: existing.effectiveTo,
+            },
+            after: {
+              configValue: entry.configValue,
+              status: entry.status,
+              effectiveFrom: entry.effectiveFrom,
+              effectiveTo: entry.effectiveTo,
+            },
+          },
+        });
+
+        const linkedEntry = await upsertConfigEntryFromMysql(mysql, {
+          scopeType: existing.scopeType,
+          scopeId: existing.scopeId,
+          module: existing.module,
+          configKey: existing.configKey,
+          configValue: entry.configValue,
+          schemaVersion: existing.schemaVersion,
+          status: entry.status,
+          effectiveFrom: entry.effectiveFrom,
+          effectiveTo: entry.effectiveTo,
+          actorUserId: actorUserId(principal),
+          changeReason: entry.changeReason,
+          auditEventId: event.id,
+        });
+
+        return NextResponse.json({ entry: linkedEntry });
       }
 
       const linkedEntry = resolvedDb.$client.transaction(() => {

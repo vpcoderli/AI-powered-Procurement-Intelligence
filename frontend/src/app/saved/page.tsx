@@ -1,6 +1,8 @@
 "use client";
 
 import { BidCard } from "@/components/bids/BidCard";
+import { AuthRequiredState } from "@/components/auth/AuthRequiredState";
+import { useAuth } from "@/context/AuthContext";
 import { useSavedBids } from "@/context/SavedBidsContext";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { Bookmark, Search } from "lucide-react";
@@ -8,7 +10,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
 
-export default function SavedBidsPage() {
+function SavedBidsContent() {
   const { savedBids, isLoading, error } = useSavedBids();
   const { t } = useLanguage();
 
@@ -98,4 +100,20 @@ export default function SavedBidsPage() {
       )}
     </div>
   );
+}
+
+export default function SavedBidsPage() {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="winbids-workspace">
+        <section className="winbids-hero-panel min-h-64 animate-pulse" />
+      </div>
+    );
+  }
+
+  if (!user) return <AuthRequiredState />;
+
+  return <SavedBidsContent />;
 }

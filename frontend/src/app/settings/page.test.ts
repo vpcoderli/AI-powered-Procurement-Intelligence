@@ -2,6 +2,27 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("settings page", () => {
+  it("surfaces current plan, usage limits, checkout upgrades, and locked feature guidance", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("ACCOUNT_TIER_LABELS[user.tier]");
+    expect(page).toContain("currentTier");
+    expect(page).toContain("usageLimitedItems");
+    expect(page).toContain("settings.usageRemaining");
+    expect(page).toContain("settings.unlimitedUsage");
+    expect(page).toContain("createCheckoutSession");
+    expect(page).toContain("settings.startCheckout");
+    expect(page).toContain("FEATURE_ACCESS_ITEMS.map");
+    expect(page).toContain("canUseFeature(user, feature.key)");
+    expect(page).toContain("lockedFeatureMessage(feature.key)");
+    expect(page).toContain("pursue_no_bid");
+    expect(page).toContain("bid.brief.full.generate");
+    expect(page).toContain("response.workspace.create");
+    expect(page).toContain("artifact.vault.upload");
+    expect(page).toContain("SettingsInlineState");
+    expect(page).toContain('code="plan_limit"');
+  });
+
   it("shows the current account tier and feature access states", () => {
     const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
 
@@ -11,6 +32,7 @@ describe("settings page", () => {
     expect(page).toContain("lockedFeatureMessage");
     expect(page).toContain("settings.currentPlan");
     expect(page).toContain("settings.featureAccess");
+    expect(page).toContain("deadline_notifications");
     expect(page).toContain("settings.usageDashboard");
     expect(page).toContain("settings.usageRemaining");
     expect(page).toContain("settings.usageFeature_search_alerts");
@@ -31,6 +53,13 @@ describe("settings page", () => {
     expect(page).toContain("fetchAccountUsage");
     expect(page).toContain("fetchAccountNotificationPreferences");
     expect(page).toContain("updateAccountNotificationPreferences");
+    expect(page).toContain("fetchAccountDeadlineReminders");
+    expect(page).toContain("updateAccountDeadlineReminder");
+    expect(page).toContain("deadlineReminderCenter");
+    expect(page).toContain("handleDeadlineReminderAction");
+    expect(page).toContain("settings.reminderCenter");
+    expect(page).toContain("settings.acknowledgeReminder");
+    expect(page).toContain("settings.snoozeReminder");
     expect(page).toContain("listSearchAlerts");
     expect(page).toContain("createSearchAlert");
     expect(page).toContain("updateSearchAlert");
@@ -120,5 +149,13 @@ describe("settings page", () => {
     expect(page).toContain('code="error"');
     expect(page).toContain('code="plan_limit"');
     expect(page).toContain("SettingsInlineState");
+  });
+
+  it("shows an auth-required state before rendering account settings", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("AuthRequiredState");
+    expect(page).toContain("if (!user)");
+    expect(page).toContain("settings.accountRequiresLogin");
   });
 });

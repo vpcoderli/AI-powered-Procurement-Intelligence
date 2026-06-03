@@ -1,6 +1,9 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { STATE_CRAWLER_SOURCES, type StateCrawlerSourceId } from "@/lib/state-crawler-sources";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { importCrawlerJsonRunIntoMysql, type CrawlerJsonRunPayload } from "./mysql-json-importer";
+import { prepareMysqlCrawlerRun } from "./mysql-runner";
 
 export { STATE_CRAWLER_SOURCES, type StateCrawlerSourceId };
 
@@ -13,6 +16,7 @@ export interface StateCrawlerRunOptions {
   archiveDocuments?: boolean;
   archiveDir?: string;
   archiveDetailPages?: boolean;
+  outputJson?: boolean;
 }
 
 export interface StateCrawlerOrchestratorOptions {
@@ -50,13 +54,20 @@ function buildArgs(options: StateCrawlerRunOptions) {
     "-m",
     "apsi_crawler.cli",
     "fetch-state",
-    "--database",
-    options.databasePath ?? defaultDatabasePath(),
+  ];
+
+  if (options.outputJson) {
+    args.push("--output-json");
+  } else {
+    args.push("--database", options.databasePath ?? defaultDatabasePath());
+  }
+
+  args.push(
     "--source",
     options.source,
     "--limit",
     String(options.limit ?? 25),
-  ];
+  );
 
   if (options.query) {
     args.push("--query", options.query);
@@ -77,23 +88,52 @@ function buildArgs(options: StateCrawlerRunOptions) {
   return args;
 }
 
+function parseCrawlerJsonPayload(stdout: string): CrawlerJsonRunPayload {
+  try {
+    return JSON.parse(stdout) as CrawlerJsonRunPayload;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Unable to parse crawler JSON output: ${message}`);
+  }
+}
+
 export async function runStateCrawler(options: StateCrawlerRunOptions): Promise<StateCrawlerRunResult> {
+  const useDirectMysqlImport = !options.databasePath && isMysqlDatabaseUrlConfigured();
+  const mysqlRun = useDirectMysqlImport ? null : prepareMysqlCrawlerRun(options.databasePath);
+  const databasePath = mysqlRun?.databasePath;
+
   return new Promise((resolve) => {
     execFile(
       "python3",
-      buildArgs(options),
+      buildArgs(useDirectMysqlImport ? { ...options, outputJson: true } : { ...options, databasePath }),
       {
         cwd: crawlerDirectory(),
         env: process.env,
       },
       (error, stdout, stderr) => {
-        resolve({
-          ok: !error,
-          source: options.source,
-          status: error ? "failure" : "success",
-          stdout: String(stdout ?? ""),
-          stderr: String(stderr ?? ""),
-        });
+        void (async () => {
+          let importError: unknown = null;
+          try {
+            if (useDirectMysqlImport) {
+              await importCrawlerJsonRunIntoMysql(resolveMysqlPool(), parseCrawlerJsonPayload(String(stdout ?? "")));
+            } else if (mysqlRun?.isMysqlImport) {
+              await mysqlRun.importIntoMysql();
+            }
+          } catch (caught) {
+            importError = caught;
+          } finally {
+            mysqlRun?.cleanup();
+          }
+
+          const errorText = importError instanceof Error ? importError.message : String(importError ?? "");
+          resolve({
+            ok: !error && !importError,
+            source: options.source,
+            status: error || importError ? "failure" : "success",
+            stdout: String(stdout ?? ""),
+            stderr: [String(stderr ?? ""), errorText].filter(Boolean).join("\n"),
+          });
+        })();
       },
     );
   });

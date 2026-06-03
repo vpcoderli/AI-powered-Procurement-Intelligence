@@ -13,6 +13,27 @@ describe("intent pages", () => {
     expect(page).toContain("winbids-panel");
   });
 
+  it("supports dashboard pipeline query drill-down filters", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("useSearchParams");
+    expect(page).toContain("pipelineFilter");
+    expect(page).toContain("PIPELINE_FILTERS");
+    expect(page).toContain("visibleIntents");
+    expect(page).toContain("pipeline=ready");
+    expect(page).toContain("pipeline=blocked");
+    expect(page).toContain("/intents");
+  });
+
+  it("shows an auth-required state before loading personal intent workspaces", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("AuthRequiredState");
+    expect(page).toContain("useAuth");
+    expect(page).toContain("if (!user)");
+    expect(page).toContain("fetchIntents");
+  });
+
   it("loads intent workspace details and guards status updates", () => {
     const detailPage = readFileSync(new URL("[id]/page.tsx", import.meta.url), "utf8");
 

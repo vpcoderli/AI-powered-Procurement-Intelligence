@@ -4,9 +4,11 @@ import {
   InvalidWorkspaceInvitationTokenError,
   acceptWorkspaceInvitation,
 } from "@/server/account/workspace";
+import { acceptMysqlWorkspaceInvitation } from "@/server/account/mysql-workspace";
 import { createSessionCookie } from "@/server/auth/session";
 import { UsageLimitError } from "@/server/auth/usage-limits";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -47,7 +49,12 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await acceptWorkspaceInvitation(db, {
+    const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+    const result = mysql ? await acceptMysqlWorkspaceInvitation(mysql, {
+      token: body.token,
+      password: body.password,
+      displayName: body.displayName,
+    }) : await acceptWorkspaceInvitation(db, {
       token: body.token,
       password: body.password,
       displayName: body.displayName,

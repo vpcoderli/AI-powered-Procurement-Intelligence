@@ -1,0 +1,15 @@
+{
+  "id": "notification_fe2f3a0b-93bb-40a9-af68-35e50a2fc50d",
+  "channel": "email",
+  "recipient": "admin@example.com",
+  "subject": "APSi daily alert: software (5 matches)",
+  "bodyText": "Alert: software\nFrequency: daily\nMatches: 5\n\n1. Healthcare Data Analytics Platform\n   Issuer: New York Department of Health\n   Deadline: 2026-07-10\n   Link: https://nyscr.ny.gov/opportunity/445566\n\n2. Emergency Response Logistics Modernization\n   Issuer: Florida Division of Emergency Management\n   Deadline: 2026-06-22\n   Link: https://vendor.myfloridamarketplace.com/bids/998877\n\n3. DA10--Hologic, Inc., Genius AI Detection License 2.0 Software Service\n   Issuer: BidNet AZ\n   Deadline: 06/05/2026\n   Link: https://www.bidnetdirect.com/public/supplier/solicitations/statewide/2695451792/abstract?purchasingGroupId=700132901&origin=1\n\n4. EMA - Sole Source - WebEOC Software Maintenance and Migration to Cloud\n   Issuer: EMA - Emergency Management Agency\n   Deadline: 05/28/2026 14:00:00\n   Link: https://www.bidbuy.illinois.gov/bso/external/bidDetail.sda?docId=26-588IEMA-MGMTA-B-52523&external=true&parentUrl=close\n\n5. J065--CLK 4K 32\" surgical display software, tranmitter/receiver\n   Issuer: BidNet West Virginia\n   Deadline: 06/16/2026\n   Link: https://www.bidnetdirect.com/public/supplier/solicitations/statewide/2695475252/abstract?purchasingGroupId=388531901&origin=1",
+  "dedupeKey": "alert_f3d643d7-0dc4-4906-b231-2e2588305499:2026-06-03:email",
+  "matchedBidIds": [
+    "4",
+    "5",
+    "az_state_procurement:2695451792",
+    "il_bidbuy:26-588IEMA-MGMTA-B-52523",
+    "wv_state_procurement:2695475252"
+  ]
+}

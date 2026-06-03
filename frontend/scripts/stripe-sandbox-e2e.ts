@@ -1,21 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { and, eq } from "drizzle-orm";
 import { loadEnvConfig } from "@next/env";
-import { registerUser } from "../src/server/auth/service";
-import { createSessionCookie } from "../src/server/auth/session";
-import { createDatabase, type AppDatabase } from "../src/server/db/client";
-import { runMigrations } from "../src/server/db/migrate";
-import { organizationMemberships, organizations, users } from "../src/server/db/schema";
+import type { AuthResponse, SessionResponse } from "../src/lib/api/auth";
 import type {
   AccountSubscriptionResponse,
   CheckoutSessionResponse,
   CustomerPortalSessionResponse,
 } from "../src/server/billing/subscriptions";
 import {
+  extractStripeSandboxSessionCookie,
   formatStripeSandboxConfigSummary,
   isStripeSandboxCancelReady,
+  isStripeSandboxTierSyncReady,
   isStripeSandboxSubscriptionReady,
   parseStripeSandboxArgs,
   validateStripeSandboxConfig,
@@ -77,6 +74,15 @@ async function apiPost<T>(origin: string, pathname: string, cookieHeader: string
   return readJsonResponse<T>(response);
 }
 
+function setCookieHeaders(response: Response) {
+  const headers = response.headers as Headers & { getSetCookie?: () => string[] };
+  const values = headers.getSetCookie?.();
+  if (values?.length) return values;
+
+  const header = response.headers.get("set-cookie");
+  return header ? [header] : [];
+}
+
 async function assertAppReachable(origin: string) {
   try {
     await fetch(origin, { method: "GET" });
@@ -88,57 +94,31 @@ async function assertAppReachable(origin: string) {
   }
 }
 
-async function createSandboxAccount(db: AppDatabase) {
+async function createSandboxAccount(origin: string) {
   const id = randomUUID().slice(0, 8);
   const email = `stripe-sandbox-${Date.now()}-${id}@example.test`;
   const password = `StripeSandbox-${id}!`;
-  const result = await registerUser(db, {
-    email,
-    password,
-    displayName: "Stripe Sandbox Buyer",
+  const response = await fetch(endpoint(origin, "/api/auth/register"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      email,
+      password,
+      displayName: "Stripe Sandbox Buyer",
+    }),
   });
+  const user = (await readJsonResponse<AuthResponse>(response)).user;
+  const cookieHeader = extractStripeSandboxSessionCookie(setCookieHeaders(response));
 
   return {
     email,
-    userId: result.user.id,
-    organizationId: result.user.workspace?.organizationId,
-    cookieHeader: createSessionCookie(result.sessionToken).split(";")[0],
+    userId: user.id,
+    organizationId: user.workspace?.organizationId,
+    cookieHeader,
   };
 }
 
-function tierRows(db: AppDatabase, userId: string) {
-  const user = db.select().from(users).where(eq(users.id, userId)).limit(1).get();
-  const membership = db
-    .select({
-      organizationId: organizationMemberships.organizationId,
-      accountTier: organizations.accountTier,
-    })
-    .from(organizationMemberships)
-    .innerJoin(organizations, eq(organizations.id, organizationMemberships.organizationId))
-    .where(and(eq(organizationMemberships.userId, userId), eq(organizationMemberships.status, "active")))
-    .limit(1)
-    .get();
-
-  return {
-    userTier: user?.accountTier ?? null,
-    organizationId: membership?.organizationId ?? null,
-    organizationTier: membership?.accountTier ?? null,
-  };
-}
-
-function assertTierSync(db: AppDatabase, userId: string, tier: StripeSandboxConfig["tier"]) {
-  const rows = tierRows(db, userId);
-
-  if (rows.userTier !== tier || rows.organizationTier !== tier) {
-    throw new Error(
-      `Waiting for local tier sync: user=${rows.userTier ?? "missing"}, organization=${rows.organizationTier ?? "missing"}`,
-    );
-  }
-
-  return rows;
-}
-
-async function pollSubscriptionReady(db: AppDatabase, config: StripeSandboxConfig, userId: string, cookieHeader: string) {
+async function pollSubscriptionReady(config: StripeSandboxConfig, cookieHeader: string) {
   const startedAt = Date.now();
   let lastLogAt = 0;
   let lastError = "not checked";
@@ -146,13 +126,28 @@ async function pollSubscriptionReady(db: AppDatabase, config: StripeSandboxConfi
   while (Date.now() - startedAt < config.timeoutMs) {
     try {
       const data = await apiGet<AccountSubscriptionResponse>(config.origin, "/api/account/subscription", cookieHeader);
-      const tiers = assertTierSync(db, userId, config.tier);
+      const session = await apiGet<SessionResponse>(config.origin, "/api/auth/session", cookieHeader);
 
-      if (isStripeSandboxSubscriptionReady(data.subscription, config.tier)) {
-        return { subscription: data.subscription, tiers };
+      if (
+        isStripeSandboxSubscriptionReady(data.subscription, config.tier) &&
+        isStripeSandboxTierSyncReady(session.user, config.tier)
+      ) {
+        return {
+          subscription: data.subscription,
+          tiers: {
+            userTier: session.user?.tier ?? null,
+            organizationTier: session.user?.workspace?.tier ?? null,
+          },
+        };
       }
 
-      lastError = `subscription status=${data.subscription.status}, source=${data.subscription.source}, tier=${data.subscription.tier}`;
+      lastError = [
+        `subscription status=${data.subscription.status}`,
+        `source=${data.subscription.source}`,
+        `subscriptionTier=${data.subscription.tier}`,
+        `userTier=${session.user?.tier ?? "missing"}`,
+        `organizationTier=${session.user?.workspace?.tier ?? "missing"}`,
+      ].join(", ");
     } catch (error) {
       lastError = error instanceof Error ? error.message : String(error);
     }
@@ -207,58 +202,51 @@ async function main() {
 
   await assertAppReachable(config.origin);
 
-  const db = createDatabase();
-  runMigrations(db);
+  const account = await createSandboxAccount(config.origin);
+  console.log(`Created sandbox account through local API: ${account.email}`);
+  console.log(`User id: ${account.userId}`);
+  console.log(`Organization id: ${account.organizationId ?? "not found"}`);
 
-  try {
-    const account = await createSandboxAccount(db);
-    console.log(`Created sandbox account: ${account.email}`);
-    console.log(`User id: ${account.userId}`);
-    console.log(`Organization id: ${account.organizationId ?? tierRows(db, account.userId).organizationId ?? "not found"}`);
+  const checkout = await apiPost<CheckoutSessionResponse>(
+    config.origin,
+    "/api/account/subscription/checkout",
+    account.cookieHeader,
+    { tier: config.tier },
+  );
+  console.log(`Checkout session id: ${checkout.checkoutSession.providerSessionId}`);
+  console.log(`Checkout URL: ${checkout.checkoutSession.checkoutUrl}`);
+  console.log("Use Stripe test card 4242 4242 4242 4242, any future expiry, any CVC.");
 
-    const checkout = await apiPost<CheckoutSessionResponse>(
-      config.origin,
-      "/api/account/subscription/checkout",
-      account.cookieHeader,
-      { tier: config.tier },
-    );
-    console.log(`Checkout session id: ${checkout.checkoutSession.providerSessionId}`);
-    console.log(`Checkout URL: ${checkout.checkoutSession.checkoutUrl}`);
-    console.log("Use Stripe test card 4242 4242 4242 4242, any future expiry, any CVC.");
+  await waitForOperator();
 
-    await waitForOperator();
+  const paid = await pollSubscriptionReady(config, account.cookieHeader);
+  console.log(`Verified paid subscription: tier=${paid.subscription.tier}, status=${paid.subscription.status}`);
+  console.log(`Verified local tier sync: user=${paid.tiers.userTier}, organization=${paid.tiers.organizationTier}`);
 
-    const paid = await pollSubscriptionReady(db, config, account.userId, account.cookieHeader);
-    console.log(`Verified paid subscription: tier=${paid.subscription.tier}, status=${paid.subscription.status}`);
-    console.log(`Verified local tier sync: user=${paid.tiers.userTier}, organization=${paid.tiers.organizationTier}`);
-
-    const portal = await apiPost<CustomerPortalSessionResponse>(
-      config.origin,
-      "/api/account/billing/portal",
-      account.cookieHeader,
-    );
-    if (!portal.portalSession.portalUrl.includes("billing.stripe.com")) {
-      throw new Error(`Unexpected portal URL host: ${portal.portalSession.portalUrl}`);
-    }
-    console.log(`Verified Stripe customer portal URL: ${portal.portalSession.portalUrl}`);
-
-    if (config.skipCancel) {
-      console.log("Skipping cancellation cleanup because --skip-cancel was provided.");
-      return;
-    }
-
-    await apiPost<AccountSubscriptionResponse>(
-      config.origin,
-      "/api/account/subscription/cancel",
-      account.cookieHeader,
-    );
-    const canceled = await pollCancelReady(config, account.cookieHeader);
-    console.log(
-      `Verified sandbox cleanup: status=${canceled.status}, cancelAtPeriodEnd=${canceled.cancelAtPeriodEnd}`,
-    );
-  } finally {
-    db.$client.close();
+  const portal = await apiPost<CustomerPortalSessionResponse>(
+    config.origin,
+    "/api/account/billing/portal",
+    account.cookieHeader,
+  );
+  if (!portal.portalSession.portalUrl.includes("billing.stripe.com")) {
+    throw new Error(`Unexpected portal URL host: ${portal.portalSession.portalUrl}`);
   }
+  console.log(`Verified Stripe customer portal URL: ${portal.portalSession.portalUrl}`);
+
+  if (config.skipCancel) {
+    console.log("Skipping cancellation cleanup because --skip-cancel was provided.");
+    return;
+  }
+
+  await apiPost<AccountSubscriptionResponse>(
+    config.origin,
+    "/api/account/subscription/cancel",
+    account.cookieHeader,
+  );
+  const canceled = await pollCancelReady(config, account.cookieHeader);
+  console.log(
+    `Verified sandbox cleanup: status=${canceled.status}, cancelAtPeriodEnd=${canceled.cancelAtPeriodEnd}`,
+  );
 }
 
 void main().catch((error) => {

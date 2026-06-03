@@ -1,13 +1,27 @@
 "use client";
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
-import { Home, Bookmark, Settings, Search, ShieldCheck, ClipboardList, UserRound, Route, BookOpen } from "lucide-react"
+import { usePathname, useRouter } from "next/navigation"
+import {
+  Home,
+  Bookmark,
+  Settings,
+  Search,
+  ShieldCheck,
+  ClipboardList,
+  UserRound,
+  Route,
+  BookOpen,
+  LogOut,
+  LogIn,
+  UserPlus,
+} from "lucide-react"
 import { useLanguage } from "@/lib/i18n/LanguageContext"
 import { useAuth } from "@/context/AuthContext"
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -21,11 +35,17 @@ const adminConsoleRoles = ["admin", "operator", "support"];
 
 export function AppSidebar() {
   const { t } = useLanguage();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const pathname = usePathname();
+  const router = useRouter();
 
-  // Menu items.
-  const items = [
+  const handleLogout = async () => {
+    await logout();
+    router.push("/login");
+    router.refresh();
+  };
+
+  const anonymousItems = [
     {
       title: t('common.dashboard'),
       url: "/",
@@ -36,6 +56,10 @@ export function AppSidebar() {
       url: "/search",
       icon: Search,
     },
+  ];
+
+  const authenticatedItems = [
+    ...anonymousItems,
     {
       title: t('common.saved'),
       url: "/saved",
@@ -79,7 +103,8 @@ export function AppSidebar() {
           },
         ]
       : []),
-  ]
+  ];
+  const items = user ? authenticatedItems : anonymousItems;
 
   return (
     <Sidebar className="winbids-sidebar border-r-0 bg-transparent">
@@ -119,6 +144,48 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      <SidebarFooter className="px-4 pb-5">
+        <SidebarMenu>
+          {user ? (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                className="winbids-sidebar-link text-white/75 hover:text-white"
+                onClick={() => {
+                  void handleLogout();
+                }}
+              >
+                <LogOut />
+                <span>{t("common.logout")}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ) : (
+            <>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  className="winbids-sidebar-link text-white/75 hover:text-white"
+                  render={
+                    <Link href="/login">
+                      <LogIn />
+                      <span>{t("common.login")}</span>
+                    </Link>
+                  }
+                />
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  className="winbids-sidebar-link text-white/75 hover:text-white"
+                  render={
+                    <Link href="/register">
+                      <UserPlus />
+                      <span>{t("common.register")}</span>
+                    </Link>
+                  }
+                />
+              </SidebarMenuItem>
+            </>
+          )}
+        </SidebarMenu>
+      </SidebarFooter>
     </Sidebar>
   )
 }

@@ -1,6 +1,8 @@
 import type { Bid } from "@/server/bids/domain";
 import type { AppDatabase } from "@/server/db/client";
 import { listWorkspaceMemberUserIds } from "@/server/account/workspace";
+import { listMysqlWorkspaceMemberUserIds } from "@/server/account/mysql-workspace";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { calculateBidMatch } from "@/server/match/service";
 import { getSupplierProfile } from "@/server/profile/service";
 import { generateIntentBrief } from "@/server/intents/brief-generator";
@@ -11,6 +13,10 @@ import {
   updateIntentQualificationSnapshotForUsers,
 } from "@/server/intents/repository";
 import { buildQualificationCitations } from "./citations";
+import {
+  findIntentQualificationSnapshotFromMysql,
+  updateIntentQualificationSnapshotForUsersFromMysql,
+} from "./mysql-runtime";
 import type {
   QualificationAmendmentSignal,
   QualificationCitation,
@@ -108,6 +114,29 @@ export function detectQualificationAmendmentSignals(bid: Bid): QualificationAmen
 }
 
 async function getScopedIntent(database: AppDatabase, userId: string, intentId: string) {
+  if (isMysqlDatabaseUrlConfigured()) {
+    const mysql = resolveMysqlPool();
+    const scopeUserIds = await listMysqlWorkspaceMemberUserIds(mysql, userId);
+    const row = await findIntentQualificationSnapshotFromMysql(mysql, scopeUserIds, intentId);
+
+    if (!row) {
+      throw new IntentNotFoundError();
+    }
+
+    const intent = await getUserIntent(database, userId, intentId, { scopeUserIds }).catch((error) => {
+      if (error instanceof IntentBidNotFoundError) {
+        throw new IntentNotFoundError();
+      }
+      throw error;
+    });
+
+    if (!intent) {
+      throw new IntentNotFoundError();
+    }
+
+    return { scopeUserIds, row, intent };
+  }
+
   const scopeUserIds = listWorkspaceMemberUserIds(database, userId);
   const row = findIntentByUsersAndId(database, scopeUserIds, intentId);
 
@@ -189,12 +218,19 @@ export async function refreshQualificationEvidence(
     updatedAt: timestamp,
   };
   const citations = buildQualificationCitations(refreshedIntent, timestamp);
-  const row = updateIntentQualificationSnapshotForUsers(database, scopeUserIds, intentId, {
-    generated,
-    match,
-    citationsJson: JSON.stringify(citations),
-    timestamp,
-  });
+  const row = isMysqlDatabaseUrlConfigured()
+    ? await updateIntentQualificationSnapshotForUsersFromMysql(resolveMysqlPool(), scopeUserIds, intentId, {
+      generated,
+      match,
+      citationsJson: JSON.stringify(citations),
+      timestamp,
+    })
+    : updateIntentQualificationSnapshotForUsers(database, scopeUserIds, intentId, {
+      generated,
+      match,
+      citationsJson: JSON.stringify(citations),
+      timestamp,
+    });
 
   if (!row) {
     throw new IntentNotFoundError();

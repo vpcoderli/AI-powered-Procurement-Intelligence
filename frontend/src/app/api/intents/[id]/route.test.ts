@@ -56,8 +56,23 @@ const intent: IntentDetail = {
 
 describe("GET /api/intents/[id]", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     resolvePrincipal.mockResolvedValue({ kind: "authenticated", userId: "user_1" });
+  });
+
+  it("requires an authenticated principal", async () => {
+    resolvePrincipal.mockResolvedValueOnce({ kind: "anonymous", userId: "anon_existing" });
+
+    const response = await GET(new Request("http://localhost/api/intents/intent_1"), {
+      params: Promise.resolve({ id: "intent_1" }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(body).toEqual({
+      error: { code: "AUTH_REQUIRED", message: "Authentication is required" },
+    });
+    expect(getUserIntent).not.toHaveBeenCalled();
   });
 
   it("returns an intent for the current principal", async () => {
@@ -88,8 +103,27 @@ describe("GET /api/intents/[id]", () => {
 
 describe("PATCH /api/intents/[id]", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     resolvePrincipal.mockResolvedValue({ kind: "authenticated", userId: "user_1" });
+  });
+
+  it("requires an authenticated principal", async () => {
+    resolvePrincipal.mockResolvedValueOnce({ kind: "anonymous", userId: "anon_existing" });
+
+    const response = await PATCH(
+      new Request("http://localhost/api/intents/intent_1", {
+        method: "PATCH",
+        body: JSON.stringify({ status: "needs_review" }),
+      }),
+      { params: Promise.resolve({ id: "intent_1" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(body).toEqual({
+      error: { code: "AUTH_REQUIRED", message: "Authentication is required" },
+    });
+    expect(updateIntentStatus).not.toHaveBeenCalled();
   });
 
   it("updates intent status", async () => {

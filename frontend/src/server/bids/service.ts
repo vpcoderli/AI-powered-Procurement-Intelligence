@@ -33,7 +33,7 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 function normalizeQuery(query: BidQuery): NormalizedBidQuery {
   return {
     q: query.q?.trim().toLowerCase() ?? "",
-    states: query.states ?? [],
+    states: (query.states ?? []).map((state) => state.trim().toLowerCase()).filter(Boolean),
     issuerType: query.issuerType ?? "all",
     deadline: query.deadline ?? "any",
     published: query.published ?? "any",

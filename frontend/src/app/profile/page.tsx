@@ -2,11 +2,13 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { UserRound } from "lucide-react";
+import { AuthRequiredState } from "@/components/auth/AuthRequiredState";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAuth } from "@/context/AuthContext";
 import { fetchSupplierProfile, updateSupplierProfile } from "@/lib/api/profile";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import type { SupplierProfile, SupplierProfileInput } from "@/server/profile/types";
@@ -96,7 +98,7 @@ function formToInput(form: ProfileFormState): SupplierProfileInput | null {
   };
 }
 
-export default function ProfilePage() {
+function ProfileContent() {
   const { t } = useLanguage();
   const mountedRef = useRef(true);
   const [form, setForm] = useState<ProfileFormState>(emptyForm);
@@ -358,4 +360,20 @@ export default function ProfilePage() {
       )}
     </div>
   );
+}
+
+export default function ProfilePage() {
+  const { user, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="winbids-workspace">
+        <section className="winbids-hero-panel min-h-64 animate-pulse" />
+      </div>
+    );
+  }
+
+  if (!user) return <AuthRequiredState />;
+
+  return <ProfileContent />;
 }

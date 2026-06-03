@@ -8,6 +8,7 @@ const PAID_PRODUCT_FEATURE_KEYS: FeatureKey[] = [
   "compliance_manifest",
   "pursue_no_bid",
   "quote_workflow",
+  "deadline_notifications",
   "knowledge_station",
   "bid.brief.full.generate",
   "compliance.manifest.generate",
@@ -46,6 +47,17 @@ describe("feature gate coverage", () => {
       expect(source).toContain("requireFeature");
       expect(source).toContain(`"${feature}"`);
       expect(source).toContain("FeatureAccessError");
+    },
+  );
+
+  it.each(FEATURE_API_COVERAGE.filter(({ sourcePath }) => sourcePath.startsWith("../../app/api/intents/")))(
+    "keeps intent paid route $sourcePath behind explicit auth-required handling",
+    ({ sourcePath }) => {
+      const source = readFileSync(new URL(sourcePath, import.meta.url), "utf8");
+
+      expect(source).toContain("@/server/auth/route-guards");
+      expect(source).toContain("authRequiredResponse");
+      expect(source).toContain("isAuthenticatedPrincipal");
     },
   );
 

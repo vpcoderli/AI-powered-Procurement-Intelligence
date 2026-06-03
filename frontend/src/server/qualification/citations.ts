@@ -1,11 +1,19 @@
 import type { AppDatabase } from "@/server/db/client";
+import { bidDetailPath } from "@/lib/bid-routes";
 import { listWorkspaceMemberUserIds } from "@/server/account/workspace";
+import { listMysqlWorkspaceMemberUserIds } from "@/server/account/mysql-workspace";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { getUserIntent } from "@/server/intents/service";
 import { IntentBidNotFoundError, IntentNotFoundError } from "@/server/intents/types";
+import { validateBidSourceUrl } from "@/server/source-validity/url-validity";
 import {
   findIntentByUsersAndId,
   updateIntentEvidenceCitationsForUsers,
 } from "@/server/intents/repository";
+import {
+  findIntentQualificationSnapshotFromMysql,
+  updateIntentEvidenceCitationsForUsersFromMysql,
+} from "./mysql-runtime";
 import type {
   QualificationCitation,
   QualificationCitationsResponse,
@@ -52,9 +60,14 @@ function makeCitation(input: Omit<QualificationCitation, "generatedAt">, generat
   return { ...input, generatedAt };
 }
 
+function bidEvidenceUrl(bid: NonNullable<Awaited<ReturnType<typeof getUserIntent>>>["bid"]) {
+  return validateBidSourceUrl(bid.sourceUrl).length === 0 ? bid.sourceUrl : bidDetailPath(bid.id);
+}
+
 export function buildQualificationCitations(intent: NonNullable<Awaited<ReturnType<typeof getUserIntent>>>, generatedAt: string) {
   const bid = intent.bid;
   const baseConfidence = confidence(bid.sourceConfidence);
+  const safeBidEvidenceUrl = bidEvidenceUrl(bid);
   const citations: QualificationCitation[] = [
     makeCitation({
       id: "citation_bid_title",
@@ -62,7 +75,7 @@ export function buildQualificationCitations(intent: NonNullable<Awaited<ReturnTy
       sourceType: "bid_field",
       sourceLabel: "Solicitation title",
       excerpt: bid.title,
-      url: bid.sourceUrl,
+      url: safeBidEvidenceUrl,
       confidence: baseConfidence,
     }, generatedAt),
     makeCitation({
@@ -71,7 +84,7 @@ export function buildQualificationCitations(intent: NonNullable<Awaited<ReturnTy
       sourceType: "bid_field",
       sourceLabel: "Issuer",
       excerpt: bid.issuerName,
-      url: bid.sourceUrl,
+      url: safeBidEvidenceUrl,
       confidence: baseConfidence,
     }, generatedAt),
     makeCitation({
@@ -80,7 +93,7 @@ export function buildQualificationCitations(intent: NonNullable<Awaited<ReturnTy
       sourceType: "bid_field",
       sourceLabel: "Deadline",
       excerpt: bid.deadlineDate || "No deadline published",
-      url: bid.sourceUrl,
+      url: safeBidEvidenceUrl,
       confidence: bid.deadlineDate ? baseConfidence : "low",
     }, generatedAt),
     makeCitation({
@@ -88,8 +101,8 @@ export function buildQualificationCitations(intent: NonNullable<Awaited<ReturnTy
       section: "submission",
       sourceType: "bid_field",
       sourceLabel: "Original source",
-      excerpt: bid.sourceUrl,
-      url: bid.sourceUrl,
+      excerpt: safeBidEvidenceUrl,
+      url: safeBidEvidenceUrl,
       confidence: baseConfidence,
     }, generatedAt),
   ];
@@ -101,7 +114,7 @@ export function buildQualificationCitations(intent: NonNullable<Awaited<ReturnTy
       sourceType: "detail_archive",
       sourceLabel: "Archived detail page",
       excerpt: bid.detailArchivePath,
-      url: bid.sourceUrl,
+      url: safeBidEvidenceUrl,
       confidence: "high",
     }, generatedAt));
   }
@@ -125,7 +138,7 @@ export function buildQualificationCitations(intent: NonNullable<Awaited<ReturnTy
       sourceType: "generated_output",
       sourceLabel: "Generated bid brief",
       excerpt: intent.generated.aiBidBrief,
-      url: bid.sourceUrl,
+      url: safeBidEvidenceUrl,
       confidence: baseConfidence,
     }, generatedAt));
   }
@@ -143,6 +156,42 @@ export async function getOrCreateQualificationCitations(
   userId: string,
   intentId: string,
 ): Promise<QualificationCitationsResponse> {
+  if (isMysqlDatabaseUrlConfigured()) {
+    const mysql = resolveMysqlPool();
+    const scopeUserIds = await listMysqlWorkspaceMemberUserIds(mysql, userId);
+    const row = await findIntentQualificationSnapshotFromMysql(mysql, scopeUserIds, intentId);
+
+    if (!row) {
+      throw new IntentNotFoundError();
+    }
+
+    const intent = await getUserIntent(database, userId, intentId, { scopeUserIds }).catch((error) => {
+      if (error instanceof IntentBidNotFoundError) {
+        throw new IntentNotFoundError();
+      }
+      throw error;
+    });
+    if (!intent) {
+      throw new IntentNotFoundError();
+    }
+
+    const persisted = parsePersistedCitations(row.evidenceCitationsJson);
+    if (persisted.length > 0) {
+      return { intentId: row.id, bidId: row.bidId, citations: persisted };
+    }
+
+    const citations = generateCitations(intent, nowIso());
+    await updateIntentEvidenceCitationsForUsersFromMysql(
+      mysql,
+      scopeUserIds,
+      intentId,
+      JSON.stringify(citations),
+      nowIso(),
+    );
+
+    return { intentId: intent.id, bidId: intent.bid.id, citations };
+  }
+
   const scopeUserIds = listWorkspaceMemberUserIds(database, userId);
   const row = findIntentByUsersAndId(database, scopeUserIds, intentId);
 

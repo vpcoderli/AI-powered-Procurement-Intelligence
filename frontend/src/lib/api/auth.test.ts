@@ -9,6 +9,7 @@ import {
   createCheckoutSession,
   deleteAccount,
   exportAccountData,
+  fetchAccountDeadlineReminders,
   fetchAccountNotificationPreferences,
   fetchBillingInvoices,
   fetchAccountSubscription,
@@ -21,6 +22,7 @@ import {
   revokeWorkspaceInvitation,
   setWorkspaceMemberStatus,
   transferWorkspaceOwnership,
+  updateAccountDeadlineReminder,
   updateAccountWorkspace,
   updateAccountNotificationPreferences,
   updateAccountProfile,
@@ -253,6 +255,41 @@ describe("auth API client", () => {
         defaultAlertFrequency: "weekly",
         marketingUpdatesEnabled: true,
       }),
+    });
+  });
+
+  it("fetches account deadline reminders", async () => {
+    const body = {
+      center: {
+        organizationId: "org_1",
+        summary: { total: 1, active: 1, dueSoon: 1, overdue: 0, acknowledged: 0, snoozed: 0 },
+        reminders: [{ id: "deadline_reminder_1", title: "Bid deadline" }],
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(fetchAccountDeadlineReminders()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/deadline-reminders");
+  });
+
+  it("updates account deadline reminders", async () => {
+    const body = {
+      center: {
+        organizationId: "org_1",
+        summary: { total: 1, active: 0, dueSoon: 0, overdue: 0, acknowledged: 1, snoozed: 0 },
+        reminders: [{ id: "deadline_reminder_1", status: "acknowledged" }],
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(updateAccountDeadlineReminder({
+      reminderId: "deadline_reminder_1",
+      action: "acknowledge",
+    })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/account/deadline-reminders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reminderId: "deadline_reminder_1", action: "acknowledge" }),
     });
   });
 

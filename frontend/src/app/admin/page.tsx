@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   Bell,
   Database,
+  Download,
   History,
   Play,
   RefreshCw,
@@ -22,6 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { UniversalState } from "@/components/universal-state";
 import { useAuth } from "@/context/AuthContext";
+import { bidDetailPath } from "@/lib/bid-routes";
 import {
   Table,
   TableBody,
@@ -31,11 +33,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  batchUpdateAdminDataSources,
   batchUpdateAdminBidQaItems,
+  checkAdminDataSourceHealth,
   createAdminUser,
   deliverAdminNotifications,
   getAdminRiskChecklist,
   getAdminBidQaCorrections,
+  listAdminConfigEntries,
   listAdminBidQaItems,
   listAdminCrawlerLogs,
   listAdminDataSources,
@@ -45,6 +50,7 @@ import {
   listAdminUsers,
   reconcileAdminSubscriptions,
   runStateCrawlersNow,
+  updateAdminConfigEntry,
   updateAdminDataSource,
   updateAdminBidQaReview,
   updateAdminUserFeatureOverride,
@@ -55,6 +61,7 @@ import {
   type AdminBidQaDisplayStatus,
   type AdminBidQaReviewStatus,
   type AdminCrawlerLog,
+  type AdminConfigRegistryEntry,
   type AdminDataSource,
   type AdminDataSourcesResponse,
   type AdminUserFeatureOverridesResponse,
@@ -80,10 +87,17 @@ type LoadState =
       logs: AdminCrawlerLog[];
       bidQa: AdminBidQaResponse;
       riskReport: AdminRiskChecklistResponse["report"];
+      riskHistory: AdminRiskChecklistResponse["history"];
+      riskTrend: AdminRiskChecklistResponse["trend"];
       users: AdminUser[];
       userAuditLogs: AdminUserAuditLog[];
       notifications: AdminNotificationsResponse["notifications"];
     };
+
+type ConfigRegistryStatus =
+  | { status: "loading"; configEntries: AdminConfigRegistryEntry[] }
+  | { status: "error"; configEntries: AdminConfigRegistryEntry[] }
+  | { status: "ready"; configEntries: AdminConfigRegistryEntry[] };
 
 type UserFilters = {
   q?: string;
@@ -122,6 +136,12 @@ type BidQaFilters = {
   reviewerId: string;
   reviewedFrom: string;
   reviewedTo: string;
+};
+
+type ConfigEditDraft = {
+  configValueJson: string;
+  status: AdminConfigRegistryEntry["status"];
+  changeReason: string;
 };
 
 const DEFAULT_BID_QA_FILTERS: BidQaFilters = {
@@ -242,6 +262,43 @@ function statusTone(status: string | null | undefined) {
   return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
+function liveSourceHealthTone(status: string | null | undefined) {
+  if (status === "healthy") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "skipped") return "border-slate-200 bg-slate-50 text-slate-600";
+  if (status === "unhealthy") return "border-rose-200 bg-rose-50 text-rose-700";
+  return "border-slate-200 bg-white text-slate-500";
+}
+
+function liveSourceHealthLabel(t: (key: string) => string, status: string | null | undefined) {
+  if (status === "healthy") return t("admin.liveSourceHealth_healthy");
+  if (status === "unhealthy") return t("admin.liveSourceHealth_unhealthy");
+  if (status === "skipped") return t("admin.liveSourceHealth_skipped");
+  return t("admin.liveSourceHealthNoCheck");
+}
+
+function liveSourceOperationalSeverityTone(value: string | null | undefined) {
+  if (value === "critical") return "border-rose-200 bg-rose-50 text-rose-700";
+  if (value === "warning") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (value === "info") return "border-sky-200 bg-sky-50 text-sky-700";
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function liveSourceRecommendedActionLabel(t: (key: string) => string, action: string | null | undefined) {
+  if (action === "update_registry_url") return t("admin.sourceHealthAction_update_registry_url");
+  if (action === "browser_or_access_review") return t("admin.sourceHealthAction_browser_or_access_review");
+  if (action === "retry_or_increase_timeout") return t("admin.sourceHealthAction_retry_or_increase_timeout");
+  if (action === "network_or_tls_review") return t("admin.sourceHealthAction_network_or_tls_review");
+  if (action === "add_base_url") return t("admin.sourceHealthAction_add_base_url");
+  return t("admin.sourceHealthAction_none");
+}
+
+function liveSourceTrendStatusLabel(t: (key: string) => string, status: string | null | undefined) {
+  if (status === "healthy") return t("admin.liveSourceHealth_healthy");
+  if (status === "unhealthy") return t("admin.liveSourceHealth_unhealthy");
+  if (status === "skipped") return t("admin.liveSourceHealth_skipped");
+  return t("admin.liveSourceHealthNoCheck");
+}
+
 function qualityTone(score: number) {
   if (score >= 85) return "border-emerald-200 bg-emerald-50 text-emerald-700";
   if (score >= 70) return "border-amber-200 bg-amber-50 text-amber-700";
@@ -268,6 +325,13 @@ function sourceApprovalTone(value: AdminDataSource["approvalStatus"]) {
   return "border-amber-200 bg-amber-50 text-amber-700";
 }
 
+function sourceTrustTone(value: AdminDataSource["trustStatus"]) {
+  if (value === "verified") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (value === "fallback" || value === "beta") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (value === "blocked") return "border-rose-200 bg-rose-50 text-rose-700";
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
 function crawlerAdapterLabel(t: (key: string) => string, adapterKind: AdminDataSource["crawlerAdapterKind"]) {
   if (adapterKind === "dedicated") return t("admin.crawlerAdapter_dedicated");
   if (adapterKind === "generic") return t("admin.crawlerAdapter_generic");
@@ -292,6 +356,34 @@ function sourceApprovalLabel(t: (key: string) => string, source: AdminDataSource
   if (source.approvalStatus === "approved") return t("admin.sourceApproval_approved");
   if (source.approvalStatus === "blocked") return t("admin.sourceApproval_blocked");
   return t("admin.sourceApproval_needs_review");
+}
+
+function sourceApprovalActionLabel(t: (key: string) => string, action: string) {
+  if (action === "approved") return t("admin.sourceApprovalAction_approved");
+  if (action === "blocked") return t("admin.sourceApprovalAction_blocked");
+  if (action === "held") return t("admin.sourceApprovalAction_held");
+  return t("admin.sourceApprovalAction_updated");
+}
+
+function sourceAuthorityLabel(t: (key: string) => string, value: AdminDataSource["sourceAuthority"]) {
+  if (value === "official_aggregator") return t("admin.sourceAuthority_official_aggregator");
+  if (value === "public_aggregator") return t("admin.sourceAuthority_public_aggregator");
+  return t("admin.sourceAuthority_official");
+}
+
+function sourceTrustLabel(t: (key: string) => string, value: AdminDataSource["trustStatus"]) {
+  if (value === "verified") return t("admin.sourceTrust_verified");
+  if (value === "fallback") return t("admin.sourceTrust_fallback");
+  if (value === "blocked") return t("admin.sourceTrust_blocked");
+  if (value === "needs_review") return t("admin.sourceTrust_needs_review");
+  return t("admin.sourceTrust_beta");
+}
+
+function sourceEvidenceLabel(t: (key: string) => string, value: AdminDataSource["evidenceMode"]) {
+  if (value === "api") return t("admin.sourceEvidence_api");
+  if (value === "aggregator_page") return t("admin.sourceEvidence_aggregator_page");
+  if (value === "fixture_fallback") return t("admin.sourceEvidence_fixture_fallback");
+  return t("admin.sourceEvidence_direct_portal");
 }
 
 function sourceRequirementLabels(t: (key: string) => string, source: AdminDataSource) {
@@ -366,17 +458,252 @@ function SummaryCard({
   );
 }
 
+function formatConfigScope(entry: AdminConfigRegistryEntry) {
+  return entry.scopeId ? `${entry.scopeType}: ${entry.scopeId}` : entry.scopeType;
+}
+
+function configStatusTone(status: AdminConfigRegistryEntry["status"]) {
+  if (status === "active") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "draft") return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function formatConfigValueJson(entry: AdminConfigRegistryEntry) {
+  return JSON.stringify(entry.configValue, null, 2);
+}
+
+function configDraftFor(entry: AdminConfigRegistryEntry, drafts: Record<string, ConfigEditDraft>) {
+  return drafts[entry.id] ?? {
+    configValueJson: formatConfigValueJson(entry),
+    status: entry.status,
+    changeReason: "",
+  };
+}
+
+function ConfigRegistrySection({
+  configEntries,
+  configEditDrafts,
+  isLoading,
+  isError,
+  savingConfigEntryId,
+  onDraftChange,
+  onRefresh,
+  onSave,
+}: {
+  configEntries: AdminConfigRegistryEntry[];
+  configEditDrafts: Record<string, ConfigEditDraft>;
+  isLoading: boolean;
+  isError: boolean;
+  savingConfigEntryId: string | null;
+  onDraftChange: (id: string, updater: (draft: ConfigEditDraft) => ConfigEditDraft) => void;
+  onRefresh: () => void;
+  onSave: (entry: AdminConfigRegistryEntry) => void;
+}) {
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2 font-semibold text-slate-950">
+            <ServerCog size={18} />
+            Config Registry
+          </div>
+          <div className="mt-1 text-xs font-medium text-slate-500">Config Matrix</div>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={onRefresh}
+          disabled={isLoading}
+          className="h-8 rounded-lg border-slate-200 px-2 text-xs"
+        >
+          <RefreshCw size={14} />
+          {isLoading ? "Refreshing" : "Refresh"}
+        </Button>
+      </div>
+      {isError && (
+        <div className="border-b border-rose-100 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
+          Config registry could not be loaded.
+        </div>
+      )}
+      {isLoading && configEntries.length === 0 ? (
+        <div className="grid gap-3 p-4 md:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, index) => (
+            <div key={index} className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+              <Skeleton className="h-4 w-28" />
+              <Skeleton className="mt-3 h-4 w-20" />
+              <Skeleton className="mt-3 h-4 w-full" />
+            </div>
+          ))}
+        </div>
+      ) : configEntries.length === 0 ? (
+        <div className="px-4 py-5 text-sm text-slate-500">No config registry entries found.</div>
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Module</TableHead>
+              <TableHead>Key</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Scope</TableHead>
+              <TableHead>Config JSON</TableHead>
+              <TableHead>Change reason</TableHead>
+              <TableHead>Updated</TableHead>
+              <TableHead className="text-right">Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {configEntries.map((entry) => {
+              const draft = configDraftFor(entry, configEditDrafts);
+              const isSaving = savingConfigEntryId === entry.id;
+
+              return (
+                <TableRow key={entry.id} className="align-top">
+                  <TableCell className="font-medium text-slate-900">{entry.module}</TableCell>
+                  <TableCell>
+                    <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-700">
+                      {entry.configKey}
+                    </code>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-col gap-2">
+                      <Badge variant="outline" className={configStatusTone(draft.status)}>
+                        {draft.status}
+                      </Badge>
+                      <select
+                        value={draft.status}
+                        onChange={(event) =>
+                          onDraftChange(entry.id, (current) => ({
+                            ...current,
+                            status: event.target.value as AdminConfigRegistryEntry["status"],
+                          }))
+                        }
+                        className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 outline-none"
+                      >
+                        <option value="active">active</option>
+                        <option value="draft">draft</option>
+                        <option value="inactive">inactive</option>
+                      </select>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-sm text-slate-700">{formatConfigScope(entry)}</div>
+                    <div className="text-xs text-slate-500">v{entry.schemaVersion}</div>
+                  </TableCell>
+                  <TableCell>
+                    <textarea
+                      aria-label={`${entry.module}.${entry.configKey} Config JSON`}
+                      value={draft.configValueJson}
+                      onChange={(event) =>
+                        onDraftChange(entry.id, (current) => ({
+                          ...current,
+                          configValueJson: event.target.value,
+                        }))
+                      }
+                      spellCheck={false}
+                      className="min-h-28 w-80 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs leading-5 text-slate-700 outline-none focus:border-slate-400"
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Input
+                      aria-label={`${entry.module}.${entry.configKey} Change reason`}
+                      value={draft.changeReason}
+                      onChange={(event) =>
+                        onDraftChange(entry.id, (current) => ({
+                          ...current,
+                          changeReason: event.target.value,
+                        }))
+                      }
+                      placeholder="Change reason"
+                      className="h-9 min-w-56 rounded-lg border-slate-200 text-sm"
+                    />
+                    <div className="mt-2 max-w-56 truncate text-xs text-slate-500" title={entry.changeReason}>
+                      Last: {entry.changeReason || "-"}
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-sm text-slate-500">{formatDate(entry.updatedAt)}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => onSave(entry)}
+                      disabled={isSaving || draft.changeReason.trim().length === 0}
+                      className="h-8 rounded-lg border-slate-200 px-2 text-xs"
+                    >
+                      {isSaving ? "Saving" : "Save config"}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      )}
+    </section>
+  );
+}
+
 function riskCheckTone(ok: boolean) {
   return ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700";
 }
 
+function riskReportFilename(report: AdminRiskChecklistResponse["report"]) {
+  const stamp = report.checkedAt.replace(/[^0-9A-Za-z]/g, "").slice(0, 15);
+  return `risk-check-report-${stamp || "latest"}.json`;
+}
+
+function riskDetailBidHref(detail: string) {
+  const markers = [
+    ": sourceUrl ",
+    ": attachment ",
+    " fails route encode/decode round trip",
+    " cannot be found by detail lookup",
+    " has empty required content",
+  ];
+  const match = markers
+    .map((marker) => ({ marker, index: detail.indexOf(marker) }))
+    .filter((entry) => entry.index > 0)
+    .sort((a, b) => a.index - b.index)[0];
+
+  if (!match) return null;
+
+  return bidDetailPath(detail.slice(0, match.index));
+}
+
+function RiskDetailItem({ detail }: { detail: string }) {
+  const href = riskDetailBidHref(detail);
+
+  if (!href) return <li>{detail}</li>;
+
+  return (
+    <li>
+      <a href={href} className="break-words underline decoration-rose-300 underline-offset-2 hover:text-rose-900">
+        {detail}
+      </a>
+    </li>
+  );
+}
+
 function RiskCheck({
+  history,
+  isRefreshing,
+  onExport,
+  onRefresh,
   report,
   t,
+  trend,
 }: {
+  history: AdminRiskChecklistResponse["history"];
+  isRefreshing: boolean;
+  onExport: () => void;
+  onRefresh: () => void;
   report: AdminRiskChecklistResponse["report"];
   t: (key: string) => string;
+  trend: AdminRiskChecklistResponse["trend"];
 }) {
+  const globalUrlCheck = report.checks.find((check) => check.id === "global-url-validity");
+  const globalUrlSummary = (snapshotReport: AdminRiskChecklistResponse["report"]) =>
+    snapshotReport.checks.find((check) => check.id === "global-url-validity")?.summary ?? "-";
+
   return (
     <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
@@ -391,31 +718,138 @@ function RiskCheck({
           <span className="text-xs font-medium text-slate-500">
             {t("admin.riskCheckCheckedAt").replace("{time}", formatDate(report.checkedAt))}
           </span>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onRefresh}
+            disabled={isRefreshing}
+            className="h-8 rounded-lg border-slate-200 px-2 text-xs"
+          >
+            <RefreshCw size={14} />
+            {isRefreshing ? t("admin.refreshingRiskCheck") : t("admin.refreshRiskCheck")}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={onExport}
+            className="h-8 rounded-lg border-slate-200 px-2 text-xs"
+          >
+            <Download size={14} />
+            {t("admin.exportRiskCheck")}
+          </Button>
         </div>
       </div>
-      <div className="grid gap-3 p-4 lg:grid-cols-5">
-        {report.checks.map((check) => (
-          <div key={check.id} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="break-words text-sm font-semibold text-slate-950">{check.label}</div>
-                <div className="mt-1 text-xs leading-5 text-slate-600">{check.summary}</div>
-              </div>
-              <Badge variant="outline" className={riskCheckTone(check.ok)}>
-                {check.ok ? t("admin.riskCheckOk") : t("admin.riskCheckIssue")}
+      <div className="space-y-3 p-4">
+        <div className="rounded-lg border border-slate-200 bg-white p-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
+            <Activity size={15} />
+            {t("admin.riskCheckTrend")}
+          </div>
+          <div className="mt-2 grid gap-2 md:grid-cols-3">
+            <div className="rounded-md border border-slate-200 bg-slate-50/70 p-2">
+              <div className="text-xs font-semibold text-slate-700">{t("admin.riskTrendGlobalUrlStable")}</div>
+              <div className="mt-1 text-xs leading-5 text-slate-500">{trend.latestGlobalUrlSummary ?? "-"}</div>
+              <Badge variant="outline" className={riskCheckTone(trend.globalUrlAllPassing !== false)}>
+                {trend.globalUrlAllPassing === false ? t("admin.riskCheckIssue") : t("admin.riskCheckOk")}
               </Badge>
             </div>
-            {check.details && check.details.length > 0 ? (
+            <div className="rounded-md border border-slate-200 bg-slate-50/70 p-2">
+              <div className="text-xs font-semibold text-slate-700">{t("admin.riskTrendStateCoverageDeclined")}</div>
+              <div className="mt-1 text-xs leading-5 text-slate-500">{trend.latestStateCoverageSummary ?? "-"}</div>
+              <Badge variant="outline" className={riskCheckTone(trend.stateCoverageDeclined !== true)}>
+                {trend.stateCoverageDeclined ? t("admin.riskCheckIssue") : t("admin.riskCheckOk")}
+              </Badge>
+            </div>
+            <div className="rounded-md border border-slate-200 bg-slate-50/70 p-2">
+              <div className="text-xs font-semibold text-slate-700">{t("admin.riskTrendAttachmentChanged")}</div>
+              <div className="mt-1 text-xs leading-5 text-slate-500">{trend.latestAttachmentSummary ?? "-"}</div>
+              <Badge variant="outline" className={riskCheckTone(trend.attachmentDownloadCountChanged !== true)}>
+                {trend.attachmentDownloadCountChanged ? t("admin.riskCheckIssue") : t("admin.riskCheckOk")}
+              </Badge>
+            </div>
+          </div>
+        </div>
+        {globalUrlCheck && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold text-slate-950">{t("admin.riskCheckGlobalUrlTitle")}</span>
+                  <Badge variant="outline" className={riskCheckTone(globalUrlCheck.ok)}>
+                    {globalUrlCheck.ok ? t("admin.riskCheckOk") : t("admin.riskCheckIssue")}
+                  </Badge>
+                </div>
+                <div className="mt-1 text-xs leading-5 text-slate-600">
+                  {t("admin.riskCheckGlobalUrlDescription")}
+                </div>
+                <div className="mt-1 text-xs leading-5 text-slate-500">{globalUrlCheck.summary}</div>
+              </div>
+            </div>
+            {globalUrlCheck.details && globalUrlCheck.details.length > 0 ? (
               <ul className="mt-2 space-y-1 text-xs leading-5 text-rose-700">
-                {check.details.slice(0, 3).map((detail) => (
-                  <li key={detail}>{detail}</li>
+                {globalUrlCheck.details.slice(0, 5).map((detail) => (
+                  <RiskDetailItem key={detail} detail={detail} />
                 ))}
+                {globalUrlCheck.details.length > 5 && (
+                  <li>{t("admin.riskCheckMoreIssues").replace("{count}", String(globalUrlCheck.details.length - 5))}</li>
+                )}
               </ul>
             ) : (
               <div className="mt-2 text-xs leading-5 text-slate-500">{t("admin.riskCheckNoIssues")}</div>
             )}
           </div>
-        ))}
+        )}
+        <div className="grid gap-3 lg:grid-cols-5">
+          {report.checks.map((check) => (
+            <div key={check.id} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="break-words text-sm font-semibold text-slate-950">{check.label}</div>
+                  <div className="mt-1 text-xs leading-5 text-slate-600">{check.summary}</div>
+                </div>
+                <Badge variant="outline" className={riskCheckTone(check.ok)}>
+                  {check.ok ? t("admin.riskCheckOk") : t("admin.riskCheckIssue")}
+                </Badge>
+              </div>
+              {check.details && check.details.length > 0 ? (
+                <ul className="mt-2 space-y-1 text-xs leading-5 text-rose-700">
+                  {check.details.slice(0, 3).map((detail) => (
+                    <RiskDetailItem key={detail} detail={detail} />
+                  ))}
+                </ul>
+              ) : (
+                <div className="mt-2 text-xs leading-5 text-slate-500">{t("admin.riskCheckNoIssues")}</div>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-white p-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
+            <History size={15} />
+            {t("admin.riskCheckHistory")}
+          </div>
+          {history.length === 0 ? (
+            <div className="mt-2 text-xs leading-5 text-slate-500">{t("admin.riskCheckHistoryEmpty")}</div>
+          ) : (
+            <div className="mt-2 divide-y divide-slate-100">
+              {history.slice(0, 5).map((snapshot) => (
+                <div key={snapshot.id} className="grid gap-2 py-2 md:grid-cols-[auto_1fr] md:items-start">
+                  <Badge variant="outline" className={riskCheckTone(snapshot.ok)}>
+                    {snapshot.ok ? t("admin.riskCheckOk") : t("admin.riskCheckIssue")}
+                  </Badge>
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-slate-600">
+                      {t("admin.riskCheckCheckedAt").replace("{time}", formatDate(snapshot.checkedAt))}
+                    </div>
+                    <div className="mt-1 break-words text-xs leading-5 text-slate-500">
+                      {globalUrlSummary(snapshot.report)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
@@ -452,12 +886,22 @@ export default function AdminPage() {
   const { t } = useLanguage();
   const { user, isLoading: isAuthLoading } = useAuth();
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [configRegistryStatus, setConfigRegistryStatus] = useState<ConfigRegistryStatus>({
+    status: "loading",
+    configEntries: [],
+  });
+  const [configEditDrafts, setConfigEditDrafts] = useState<Record<string, ConfigEditDraft>>({});
+  const [savingConfigEntryId, setSavingConfigEntryId] = useState<string | null>(null);
   const [pendingSourceId, setPendingSourceId] = useState<string | null>(null);
+  const [sourceApprovalPendingId, setSourceApprovalPendingId] = useState<string | null>(null);
+  const [sourceApprovalBatchPending, setSourceApprovalBatchPending] = useState(false);
+  const [sourceHealthPendingId, setSourceHealthPendingId] = useState<string | null>(null);
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [pendingBidQaId, setPendingBidQaId] = useState<string | null>(null);
   const [pendingBidQaBatch, setPendingBidQaBatch] = useState(false);
   const [bidQaFilters, setBidQaFilters] = useState<BidQaFilters>(DEFAULT_BID_QA_FILTERS);
   const [selectedBidQaIds, setSelectedBidQaIds] = useState<string[]>([]);
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [correctionHistoryBidId, setCorrectionHistoryBidId] = useState<string | null>(null);
   const [correctionHistoryItems, setCorrectionHistoryItems] = useState<AdminBidQaCorrectionHistoryItem[]>([]);
   const [isLoadingCorrectionHistory, setIsLoadingCorrectionHistory] = useState(false);
@@ -471,6 +915,7 @@ export default function AdminPage() {
   const [invitedTemporaryPassword, setInvitedTemporaryPassword] = useState<string | null>(null);
   const [isInvitingUser, setIsInvitingUser] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
+  const [isRefreshingRiskReport, setIsRefreshingRiskReport] = useState(false);
   const [isDeliveringNotifications, setIsDeliveringNotifications] = useState(false);
   const [isReconcilingSubscriptions, setIsReconcilingSubscriptions] = useState(false);
   const [featureOverrideUser, setFeatureOverrideUser] = useState<AdminUser | null>(null);
@@ -484,6 +929,7 @@ export default function AdminPage() {
   const isOperator = user?.role === "operator";
   const canAccessAdminConsole = Boolean(user && ADMIN_CONSOLE_USER_ROLES.includes(user.role));
   const canManageUsers = isAdmin;
+  const canManageConfig = isAdmin;
   const canRunOperations = isAdmin || isOperator;
 
   const auditLogRequest = useCallback(() => ({
@@ -493,6 +939,19 @@ export default function AdminPage() {
     target: userAuditFilters.target?.trim() || undefined,
     featureKey: userAuditFilters.featureKey,
   }), [userAuditFilters]);
+
+  const refreshConfigRegistry = useCallback(() => {
+    if (!canManageConfig) return Promise.resolve();
+
+    setConfigRegistryStatus((current) => ({ status: "loading", configEntries: current.configEntries }));
+    return listAdminConfigEntries()
+      .then((response) => {
+        setConfigRegistryStatus({ status: "ready", configEntries: response.entries });
+      })
+      .catch(() => {
+        setConfigRegistryStatus((current) => ({ status: "error", configEntries: current.configEntries }));
+      });
+  }, [canManageConfig]);
 
   const bidQaRequest = useCallback(() => ({
     limit: 10,
@@ -512,6 +971,7 @@ export default function AdminPage() {
     if (!canAccessAdminConsole) return;
 
     setState({ status: "loading" });
+    void refreshConfigRegistry();
     Promise.all([
       listAdminDataSources(),
       getAdminRiskChecklist(),
@@ -526,6 +986,8 @@ export default function AdminPage() {
           status: "ready",
           data,
           riskReport: riskResponse.report,
+          riskHistory: riskResponse.history,
+          riskTrend: riskResponse.trend,
           logs: logsResponse.logs,
           bidQa,
           users: usersResponse.users,
@@ -536,7 +998,7 @@ export default function AdminPage() {
       .catch(() => {
         setState({ status: "error" });
       });
-  }, [auditLogRequest, bidQaRequest, canAccessAdminConsole, canManageUsers, userFilters]);
+  }, [auditLogRequest, bidQaRequest, canAccessAdminConsole, canManageUsers, refreshConfigRegistry, userFilters]);
 
   useEffect(() => {
     if (isAuthLoading) return;
@@ -547,38 +1009,121 @@ export default function AdminPage() {
 
   const summary = state.status === "ready" ? state.data.summary : null;
   const riskReport = state.status === "ready" ? state.riskReport : null;
+  const riskHistory = state.status === "ready" ? state.riskHistory : [];
+  const riskTrend = state.status === "ready" ? state.riskTrend : null;
   const sources = state.status === "ready" ? state.data.sources : [];
   const logs = state.status === "ready" ? state.logs : [];
   const bidQa = state.status === "ready" ? state.bidQa : null;
   const bidQaItems = bidQa?.items ?? [];
   const visibleSelectedBidQaIds = selectedBidQaIds.filter((id) => bidQaItems.some((item) => item.id === id));
   const allVisibleBidQaSelected = bidQaItems.length > 0 && bidQaItems.every((item) => selectedBidQaIds.includes(item.id));
+  const visibleSelectedSourceIds = selectedSourceIds.filter((id) => sources.some((source) => source.id === id));
+  const allVisibleSourcesSelected = sources.length > 0 && sources.every((source) => selectedSourceIds.includes(source.id));
   const users = state.status === "ready" ? state.users : [];
   const userAuditLogs = state.status === "ready" ? state.userAuditLogs : [];
   const notifications = state.status === "ready" ? state.notifications : [];
+  const configEntries = configRegistryStatus.configEntries;
+
+  const updateConfigEditDraft = (id: string, updater: (draft: ConfigEditDraft) => ConfigEditDraft) => {
+    const entry = configEntries.find((item) => item.id === id);
+    if (!entry) return;
+
+    setConfigEditDrafts((current) => ({
+      ...current,
+      [id]: updater(configDraftFor(entry, current)),
+    }));
+  };
+
+  const handleConfigRegistrySave = (entry: AdminConfigRegistryEntry) => {
+    const draft = configDraftFor(entry, configEditDrafts);
+    let configValue: unknown;
+
+    try {
+      configValue = JSON.parse(draft.configValueJson);
+    } catch {
+      setRunMessage("Config JSON is invalid.");
+      return;
+    }
+
+    if (draft.changeReason.trim().length === 0) {
+      setRunMessage("Change reason is required.");
+      return;
+    }
+
+    setSavingConfigEntryId(entry.id);
+    setRunMessage(null);
+    updateAdminConfigEntry(entry.id, {
+      configValue,
+      status: draft.status,
+      changeReason: draft.changeReason.trim(),
+    })
+      .then(({ entry: updated }) => {
+        setConfigRegistryStatus((current) => ({
+          ...current,
+          configEntries: current.configEntries.map((item) => (item.id === updated.id ? updated : item)),
+        }));
+        setConfigEditDrafts((current) => {
+          const next = { ...current };
+          delete next[entry.id];
+          return next;
+        });
+        setRunMessage("Config saved.");
+      })
+      .catch(() => {
+        setRunMessage("Config update failed.");
+      })
+      .finally(() => {
+        setSavingConfigEntryId(null);
+      });
+  };
+
+  const replaceSource = (updated: AdminDataSource) => {
+    setState((current) => {
+      if (current.status !== "ready") return current;
+
+      const sources = current.data.sources.map((item) => (item.id === updated.id ? updated : item));
+
+      return {
+        ...current,
+        data: {
+          ...current.data,
+          sources,
+          summary: {
+            ...current.data.summary,
+            enabledSources: sources.filter((item) => item.isEnabled).length,
+          },
+        },
+      };
+    });
+  };
+
+  const replaceSources = (updatedSources: AdminDataSource[]) => {
+    const updates = new Map(updatedSources.map((source) => [source.id, source]));
+
+    setState((current) => {
+      if (current.status !== "ready") return current;
+
+      const sources = current.data.sources.map((item) => updates.get(item.id) ?? item);
+
+      return {
+        ...current,
+        data: {
+          ...current.data,
+          sources,
+          summary: {
+            ...current.data.summary,
+            enabledSources: sources.filter((item) => item.isEnabled).length,
+          },
+        },
+      };
+    });
+  };
 
   const toggleSource = (source: AdminDataSource) => {
     setPendingSourceId(source.id);
     updateAdminDataSource(source.id, { isEnabled: !source.isEnabled })
       .then(({ source: updated }) => {
-        setState((current) => {
-          if (current.status !== "ready") return current;
-
-          return {
-            ...current,
-            data: {
-              ...current.data,
-              sources: current.data.sources.map((item) =>
-                item.id === updated.id ? { ...item, isEnabled: updated.isEnabled, updatedAt: updated.updatedAt } : item,
-              ),
-              summary: {
-                ...current.data.summary,
-                enabledSources:
-                  current.data.summary.enabledSources + (updated.isEnabled === source.isEnabled ? 0 : updated.isEnabled ? 1 : -1),
-              },
-            },
-          };
-        });
+        replaceSource(updated);
       })
       .catch(() => {
         setRunMessage(t("admin.updateFailed"));
@@ -586,6 +1131,121 @@ export default function AdminPage() {
       .finally(() => {
         setPendingSourceId(null);
       });
+  };
+
+  const updateSourceApproval = (source: AdminDataSource, approvalStatus: "approved" | "needs_review") => {
+    setSourceApprovalPendingId(source.id);
+    setRunMessage(null);
+    updateAdminDataSource(source.id, approvalStatus === "approved"
+      ? {
+          approvedForIngestion: true,
+          approvalStatus: "approved",
+          legalReviewStatus: "approved_public",
+          approvalNotes: "Approved from Admin source approval workflow.",
+        }
+      : {
+          approvedForIngestion: false,
+          approvalStatus: "needs_review",
+          legalReviewStatus: "not_reviewed",
+          approvalNotes: "Held for source health or legal review.",
+        })
+      .then(({ source: updated }) => {
+        replaceSource(updated);
+        setRunMessage(t("admin.sourceApprovalUpdated"));
+      })
+      .catch(() => {
+        setRunMessage(t("admin.sourceApprovalFailed"));
+      })
+      .finally(() => {
+        setSourceApprovalPendingId(null);
+      });
+  };
+
+  const toggleSelectedSourceId = (id: string) => {
+    setSelectedSourceIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+  };
+
+  const toggleAllVisibleSources = () => {
+    setSelectedSourceIds((current) => {
+      const visibleIds = sources.map((source) => source.id);
+      if (visibleIds.length > 0 && visibleIds.every((id) => current.includes(id))) {
+        return current.filter((id) => !visibleIds.includes(id));
+      }
+
+      return [...new Set([...current, ...visibleIds])];
+    });
+  };
+
+  const batchUpdateSourceApproval = (action: "approve" | "hold") => {
+    if (visibleSelectedSourceIds.length === 0) return;
+
+    setSourceApprovalBatchPending(true);
+    setRunMessage(null);
+    batchUpdateAdminDataSources({
+      sourceIds: visibleSelectedSourceIds,
+      action,
+    })
+      .then(({ sources: updatedSources }) => {
+        replaceSources(updatedSources);
+        setSelectedSourceIds((current) => current.filter((id) => !visibleSelectedSourceIds.includes(id)));
+        setRunMessage(t("admin.sourceBatchApprovalUpdated"));
+      })
+      .catch(() => {
+        setRunMessage(t("admin.sourceBatchApprovalFailed"));
+      })
+      .finally(() => {
+        setSourceApprovalBatchPending(false);
+      });
+  };
+
+  const recheckSourceHealth = (source: AdminDataSource) => {
+    setSourceHealthPendingId(source.id);
+    setRunMessage(null);
+    checkAdminDataSourceHealth(source.id, { timeoutMs: 10_000 })
+      .then(({ source: updated }) => {
+        replaceSource(updated);
+        setRunMessage(t("admin.sourceHealthRechecked"));
+      })
+      .catch(() => {
+        setRunMessage(t("admin.sourceHealthRecheckFailed"));
+      })
+      .finally(() => {
+        setSourceHealthPendingId(null);
+      });
+  };
+
+  const refreshRiskReport = () => {
+    if (state.status !== "ready") return;
+
+    setIsRefreshingRiskReport(true);
+    getAdminRiskChecklist()
+      .then((response) => {
+        setState((current) => current.status === "ready"
+          ? { ...current, riskReport: response.report, riskHistory: response.history, riskTrend: response.trend }
+          : current);
+      })
+      .catch(() => {
+        setRunMessage(t("admin.riskCheckRefreshFailed"));
+      })
+      .finally(() => {
+        setIsRefreshingRiskReport(false);
+      });
+  };
+
+  const exportRiskReport = () => {
+    if (!riskReport) return;
+
+    const blob = new Blob([JSON.stringify(riskReport, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = riskReportFilename(riskReport);
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   };
 
   const updateBidQaFilters = (updater: (current: BidQaFilters) => BidQaFilters) => {
@@ -1093,7 +1753,30 @@ export default function AdminPage() {
         </div>
       )}
 
-      {riskReport && <RiskCheck report={riskReport} t={t} />}
+      {riskReport && riskTrend && (
+        <RiskCheck
+          history={riskHistory}
+          isRefreshing={isRefreshingRiskReport}
+          onExport={exportRiskReport}
+          onRefresh={refreshRiskReport}
+          report={riskReport}
+          t={t}
+          trend={riskTrend}
+        />
+      )}
+
+      {canManageConfig && state.status === "ready" && (
+        <ConfigRegistrySection
+          configEntries={configEntries}
+          configEditDrafts={configEditDrafts}
+          isError={configRegistryStatus.status === "error"}
+          isLoading={configRegistryStatus.status === "loading"}
+          savingConfigEntryId={savingConfigEntryId}
+          onDraftChange={updateConfigEditDraft}
+          onRefresh={refreshConfigRegistry}
+          onSave={handleConfigRegistrySave}
+        />
+      )}
 
       {state.status === "ready" && bidQa && (
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
@@ -1983,9 +2666,49 @@ export default function AdminPage() {
               {t("admin.sources")}
             </div>
           </div>
+          {canManageUsers && (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+              <div className="text-sm font-medium text-slate-600">
+                {t("admin.selectedSources").replace("{count}", String(visibleSelectedSourceIds.length))}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={sourceApprovalBatchPending || visibleSelectedSourceIds.length === 0}
+                  onClick={() => batchUpdateSourceApproval("approve")}
+                  className="h-8 rounded-lg border-emerald-200 px-2 text-emerald-700"
+                >
+                  {t("admin.batchApproveSources")}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={sourceApprovalBatchPending || visibleSelectedSourceIds.length === 0}
+                  onClick={() => batchUpdateSourceApproval("hold")}
+                  className="h-8 rounded-lg border-amber-200 px-2 text-amber-700"
+                >
+                  {t("admin.batchHoldSources")}
+                </Button>
+              </div>
+            </div>
+          )}
           <Table>
             <TableHeader>
               <TableRow>
+                {canManageUsers && (
+                  <TableHead>
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSourcesSelected}
+                      onChange={toggleAllVisibleSources}
+                      aria-label={t("admin.selectAllSources")}
+                      className="h-4 w-4 rounded border-slate-300"
+                    />
+                  </TableHead>
+                )}
                 <TableHead>{t("admin.source")}</TableHead>
                 <TableHead>{t("admin.type")}</TableHead>
                 <TableHead>{t("admin.crawler")}</TableHead>
@@ -1998,8 +2721,25 @@ export default function AdminPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {sources.map((source) => (
+              {sources.map((source) => {
+                const liveHealth = source.latestLiveHealth;
+                const healthTrend = source.sourceHealthTrend;
+                const liveHealthCode = liveHealth?.statusCode ?? liveHealth?.httpStatus ?? null;
+                const liveHealthErrorMessage = liveHealth?.error ?? liveHealth?.errorMessage ?? null;
+
+                return (
                 <TableRow key={source.id}>
+                  {canManageUsers && (
+                    <TableCell>
+                      <input
+                        type="checkbox"
+                        checked={selectedSourceIds.includes(source.id)}
+                        onChange={() => toggleSelectedSourceId(source.id)}
+                        aria-label={t("admin.selectSource").replace("{name}", source.label)}
+                        className="h-4 w-4 rounded border-slate-300"
+                      />
+                    </TableCell>
+                  )}
                   <TableCell>
                     <div className="font-medium text-slate-900">{source.label}</div>
                     <div className="text-xs text-slate-500">{source.stateCode}</div>
@@ -2025,6 +2765,21 @@ export default function AdminPage() {
                       </div>
                     )}
                     <div className="mt-2 flex max-w-64 flex-wrap gap-1">
+                      {source.sourceAuthority && (
+                        <Badge variant="outline" className="border-indigo-200 bg-indigo-50 text-indigo-700">
+                          {sourceAuthorityLabel(t, source.sourceAuthority)}
+                        </Badge>
+                      )}
+                      {source.trustStatus && (
+                        <Badge variant="outline" className={sourceTrustTone(source.trustStatus)}>
+                          {sourceTrustLabel(t, source.trustStatus)}
+                        </Badge>
+                      )}
+                      {source.evidenceMode && (
+                        <Badge variant="outline" className="border-slate-200 bg-white text-slate-600">
+                          {sourceEvidenceLabel(t, source.evidenceMode)}
+                        </Badge>
+                      )}
                       <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
                         {source.sourceConfidence}
                       </Badge>
@@ -2061,9 +2816,56 @@ export default function AdminPage() {
                         {source.fallbackNotes}
                       </div>
                     )}
+                    {source.validityNotes && (
+                      <div className="mt-1 max-w-64 truncate text-xs text-indigo-700" title={source.validityNotes}>
+                        {source.validityNotes}
+                      </div>
+                    )}
                     {source.approvalNotes && (
                       <div className="mt-1 max-w-64 truncate text-xs text-slate-500" title={source.approvalNotes}>
                         {source.approvalNotes}
+                      </div>
+                    )}
+                    {source.approvalHistory.length > 0 && (
+                      <div className="mt-2 max-w-64 rounded-md border border-slate-200 bg-slate-50/70 p-2 text-xs leading-5 text-slate-600">
+                        <div className="font-semibold text-slate-700">{t("admin.sourceApprovalHistory")}</div>
+                        {source.approvalHistory.slice(0, 2).map((event) => (
+                          <div key={event.id} className="mt-1">
+                            <span className="font-medium">{sourceApprovalActionLabel(t, event.action)}</span>
+                            {" · "}
+                            <span>{formatDate(event.createdAt)}</span>
+                            {event.actorUserId ? (
+                              <>
+                                {" · "}
+                                <span>{t("admin.sourceApprovalActor").replace("{actor}", event.actorUserId)}</span>
+                              </>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {canManageUsers && (
+                      <div className="mt-2 flex max-w-64 flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => updateSourceApproval(source, "approved")}
+                          disabled={sourceApprovalPendingId === source.id || source.approvalStatus === "approved"}
+                          className="h-8 rounded-lg border-emerald-200 px-2 text-xs text-emerald-700"
+                        >
+                          {t("admin.approveSource")}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => updateSourceApproval(source, "needs_review")}
+                          disabled={sourceApprovalPendingId === source.id || source.approvalStatus === "needs_review"}
+                          className="h-8 rounded-lg border-amber-200 px-2 text-xs text-amber-700"
+                        >
+                          {t("admin.holdSource")}
+                        </Button>
                       </div>
                     )}
                   </TableCell>
@@ -2086,6 +2888,79 @@ export default function AdminPage() {
                           {fallbackMessage(source.latestLog) ? `: ${fallbackMessage(source.latestLog)}` : null}
                         </div>
                       )}
+                      <div className="mt-2 rounded-md border border-slate-200 bg-white p-2 text-xs leading-5 text-slate-600">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-medium text-slate-700">{t("admin.liveSourceHealth")}</span>
+                          <Badge variant="outline" className={liveSourceHealthTone(liveHealth?.status)}>
+                            {liveSourceHealthLabel(t, liveHealth?.status)}
+                          </Badge>
+                        </div>
+                        {liveHealth ? (
+                          <>
+                            <div className="mt-1 text-slate-500">
+                              {t("admin.liveSourceCheckedAt").replace("{time}", formatDate(liveHealth.checkedAt))}
+                              {liveHealthCode ? ` · HTTP ${liveHealthCode}` : ""}
+                              {liveHealth?.latencyMs !== null && liveHealth?.latencyMs !== undefined
+                                ? ` · ${liveHealth.latencyMs} ms`
+                                : ""}
+                            </div>
+                            {liveHealthErrorMessage && (
+                              <div className="mt-1 text-rose-700">
+                                {compactErrorMessage(liveHealthErrorMessage)}
+                              </div>
+                            )}
+                            {liveHealth?.recommendedAction && liveHealth.recommendedAction !== "none" && (
+                              <div className="mt-1 flex flex-wrap items-center gap-1 text-slate-600">
+                                <span className="font-medium">{t("admin.liveSourceRecommendedAction")}:</span>
+                                <span>{liveSourceRecommendedActionLabel(t, liveHealth?.recommendedAction)}</span>
+                                <Badge
+                                  variant="outline"
+                                  className={liveSourceOperationalSeverityTone(liveHealth?.operationalSeverity)}
+                                >
+                                  {liveHealth?.operationalSeverity}
+                                </Badge>
+                              </div>
+                            )}
+                            {healthTrend && (
+                              <div className="mt-2 rounded border border-slate-100 bg-slate-50 px-2 py-1">
+                                <div className="font-medium text-slate-700">{t("admin.liveSourceHealthTrend")}</div>
+                                <div className="mt-1 text-slate-500">
+                                  {t("admin.liveSourceHealthTrendSummary")
+                                    .replace("{sampleSize}", String(healthTrend.sampleSize))
+                                    .replace("{healthyPercent}", String(healthTrend.healthyPercent))}
+                                </div>
+                                <div className="mt-1 text-slate-500">
+                                  {t("admin.liveSourceHealthCurrentStreak")
+                                    .replace("{status}", liveSourceTrendStatusLabel(t, healthTrend.currentStatus))
+                                    .replace("{count}", String(healthTrend.currentStreak))}
+                                </div>
+                                {healthTrend.lastUnhealthyAt && (
+                                  <div className="mt-1 text-rose-700">
+                                    {t("admin.liveSourceHealthLastUnhealthy").replace(
+                                      "{time}",
+                                      formatDate(healthTrend.lastUnhealthyAt),
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="mt-1 text-slate-500">{t("admin.liveSourceHealthNoCheck")}</div>
+                        )}
+                        {canRunOperations && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => recheckSourceHealth(source)}
+                            disabled={sourceHealthPendingId === source.id}
+                            className="mt-2 h-7 rounded-lg border-slate-200 px-2 text-xs"
+                          >
+                            {sourceHealthPendingId === source.id ? t("admin.recheckingSource") : t("admin.recheckSource")}
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   </TableCell>
                   <TableCell>
@@ -2134,7 +3009,8 @@ export default function AdminPage() {
                     )}
                   </TableCell>
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </section>

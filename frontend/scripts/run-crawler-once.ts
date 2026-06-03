@@ -1,4 +1,5 @@
 import { createDatabase } from "../src/server/db/client";
+import { closeResolvedMysqlPool, isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "../src/server/db/mysql";
 import { runMigrations } from "../src/server/db/migrate";
 import { parseStateCrawlerLimit, runConfiguredCrawlerSourcesOnce } from "../src/server/crawler/configured-runner";
 
@@ -13,10 +14,12 @@ export async function runCrawlerOnce() {
   try {
     return await runConfiguredCrawlerSourcesOnce({
       database: db,
+      mysql: isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : undefined,
       owner: owner(),
       stateRunnerOptions: { limit: parseStateCrawlerLimit() },
     });
   } finally {
+    await closeResolvedMysqlPool();
     db.$client.close();
   }
 }

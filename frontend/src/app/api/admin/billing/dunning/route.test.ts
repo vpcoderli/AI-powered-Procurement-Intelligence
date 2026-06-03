@@ -11,6 +11,7 @@ vi.mock("@/server/admin/auth", async (importOriginal) => {
 });
 vi.mock("@/server/billing/dunning", () => ({
   scheduleDunningReminders: vi.fn(),
+  scheduleDunningRemindersFromMysql: vi.fn(),
 }));
 
 describe("POST /api/admin/billing/dunning", () => {

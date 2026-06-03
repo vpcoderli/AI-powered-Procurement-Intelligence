@@ -33,6 +33,51 @@ export const FEATURE_API_COVERAGE: readonly FeatureApiCoverageEntry[] = [
     methods: ["GET", "PATCH"],
   },
   {
+    sourcePath: "../../app/api/intents/[id]/response-workspace/comments/route.ts",
+    feature: "response.workspace.create",
+    methods: ["GET", "POST"],
+  },
+  {
+    sourcePath: "../../app/api/intents/[id]/response-workspace/package/route.ts",
+    feature: "response.workspace.create",
+    methods: ["GET", "POST"],
+  },
+  {
+    sourcePath: "../../app/api/intents/[id]/response-workspace/package/exports/route.ts",
+    feature: "response.workspace.create",
+    methods: ["POST"],
+  },
+  {
+    sourcePath: "../../app/api/intents/[id]/response-workspace/package/exports/[exportId]/route.ts",
+    feature: "response.workspace.create",
+    methods: ["GET"],
+  },
+  {
+    sourcePath: "../../app/api/intents/[id]/artifacts/route.ts",
+    feature: "artifact.vault.upload",
+    methods: ["GET", "POST"],
+  },
+  {
+    sourcePath: "../../app/api/intents/[id]/artifacts/[artifactId]/route.ts",
+    feature: "artifact.vault.upload",
+    methods: ["GET"],
+  },
+  {
+    sourcePath: "../../app/api/intents/[id]/quotes/route.ts",
+    feature: "quote_workflow",
+    methods: ["GET", "POST", "PATCH"],
+  },
+  {
+    sourcePath: "../../app/api/intents/[id]/deadlines/route.ts",
+    feature: "deadline_notifications",
+    methods: ["GET", "PATCH"],
+  },
+  {
+    sourcePath: "../../app/api/account/deadline-reminders/route.ts",
+    feature: "deadline_notifications",
+    methods: ["GET", "PATCH"],
+  },
+  {
     sourcePath: "../../app/api/intents/[id]/qa/route.ts",
     feature: "bid.brief.full.generate",
     methods: ["POST"],
@@ -45,10 +90,8 @@ export const FEATURE_API_COVERAGE: readonly FeatureApiCoverageEntry[] = [
 ] as const;
 
 export const UNIMPLEMENTED_PAID_FEATURE_API_COVERAGE = [
-  "quote_workflow",
   "compliance.manifest.generate",
   "readiness.review.run",
-  "artifact.vault.upload",
   "response.section.draft",
   "package.review.run",
   "amendment.delta.run",

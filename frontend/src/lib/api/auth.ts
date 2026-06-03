@@ -6,6 +6,7 @@ import type {
   AccountNotificationPreferences,
   UpdateAccountNotificationPreferencesInput,
 } from "@/server/account/notification-preferences";
+import type { AccountDeadlineReminderCenter } from "@/server/deadlines/types";
 
 export type SubscriptionStatus = "none" | "trialing" | "active" | "past_due" | "canceled";
 export type SubscriptionSource = "admin_override" | "local_checkout" | "billing_provider";
@@ -60,6 +61,9 @@ export interface AccountSubscriptionResponse {
 
 export type AccountUsageData = AccountUsageResponse;
 export type AccountNotificationPreferencesResponse = AccountNotificationPreferences;
+export interface AccountDeadlineRemindersResponse {
+  center: AccountDeadlineReminderCenter;
+}
 
 export interface CheckoutSession {
   id: string;
@@ -171,6 +175,7 @@ type AuthErrorCode =
   | "AUTH_REQUIRED"
   | "EMAIL_ALREADY_REGISTERED"
   | "FORBIDDEN"
+  | "FEATURE_NOT_AVAILABLE"
   | "INVALID_CREDENTIALS"
   | "INVALID_INVITATION_TOKEN"
   | "INVALID_REQUEST"
@@ -219,6 +224,7 @@ function isApiErrorResponse(body: unknown): body is ApiErrorResponse {
       code === "AUTH_REQUIRED" ||
       code === "EMAIL_ALREADY_REGISTERED" ||
       code === "FORBIDDEN" ||
+      code === "FEATURE_NOT_AVAILABLE" ||
       code === "INVALID_CREDENTIALS" ||
       code === "INVALID_INVITATION_TOKEN" ||
       code === "INVALID_REQUEST" ||
@@ -356,6 +362,25 @@ export async function updateAccountNotificationPreferences(
   });
 
   return parseResponse<AccountNotificationPreferencesResponse>(response);
+}
+
+export async function fetchAccountDeadlineReminders(): Promise<AccountDeadlineRemindersResponse> {
+  const response = await fetch("/api/account/deadline-reminders");
+
+  return parseResponse<AccountDeadlineRemindersResponse>(response);
+}
+
+export async function updateAccountDeadlineReminder(input:
+  | { reminderId: string; action: "acknowledge" }
+  | { reminderId: string; action: "snooze"; snoozedUntil: string }
+): Promise<AccountDeadlineRemindersResponse> {
+  const response = await fetch("/api/account/deadline-reminders", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<AccountDeadlineRemindersResponse>(response);
 }
 
 export async function createCheckoutSession(input: { tier: AccountTier }): Promise<CheckoutSessionResponse> {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { FeatureAccessError, requireFeature } from "@/server/auth/feature-gate";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
 import {
@@ -76,6 +77,10 @@ function parseUpdate(body: unknown): UpdateComplianceManifestItemInput | null {
 export async function GET(request: Request, context: RouteContext) {
   const principal = await resolvePrincipal(db, request);
 
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
+
   try {
     requireFeature(principal, "compliance_manifest");
     const { id } = await context.params;
@@ -99,6 +104,10 @@ export async function PATCH(request: Request, context: RouteContext) {
   const body = await request.json().catch(() => null);
   const input = parseUpdate(body);
   const principal = await resolvePrincipal(db, request);
+
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
 
   if (!input) {
     return errorResponse("INVALID_REQUEST", "Supported compliance manifest fields are required.", 400, principal);

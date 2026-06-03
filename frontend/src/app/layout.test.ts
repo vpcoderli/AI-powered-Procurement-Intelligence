@@ -16,4 +16,18 @@ describe("root layout", () => {
     expect(globals).toContain(".winbids-workspace");
     expect(globals).toContain(".winbids-panel");
   });
+
+  it("exposes login and registration actions from the topbar when no user is signed in", () => {
+    const layout = readFileSync(new URL("layout.tsx", import.meta.url), "utf8");
+    const topbarActions = readFileSync(
+      new URL("../components/layout/topbar-auth-actions.tsx", import.meta.url),
+      "utf8",
+    );
+
+    expect(layout).toContain("TopbarAuthActions");
+    expect(topbarActions).toContain('href="/login"');
+    expect(topbarActions).toContain('href="/register"');
+    expect(topbarActions).toContain("!user");
+    expect(topbarActions).toContain("await logout()");
+  });
 });
