@@ -20,6 +20,7 @@
     "db:migrate-saved-bids": "tsx scripts/migrate-saved-bids.ts",
     "auth:reset-admin": "tsx scripts/reset-admin-password.ts",
     "billing:stripe:sandbox": "tsx scripts/stripe-sandbox-e2e.ts",
+    "billing:stripe:live-smoke": "tsx scripts/stripe-live-smoke.ts",
     "billing:production:check": "tsx scripts/production-billing-check.ts",
     "ops:production:check": "tsx scripts/production-readiness-check.ts",
     "ops:launch-handoff": "tsx scripts/launch-handoff.ts",

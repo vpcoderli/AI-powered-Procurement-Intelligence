@@ -1,18 +1,17 @@
-export type StripeSandboxTier = "pro" | "business";
+export type StripeLiveTier = "pro" | "business";
 
-export interface StripeSandboxArgs {
+export interface StripeLiveArgs {
   tier: string;
   origin: string;
-  skipCancel: boolean;
   timeoutMs: number;
+  confirmed: boolean;
 }
 
-export interface StripeSandboxConfig {
-  tier: StripeSandboxTier;
+export interface StripeLiveConfig {
+  tier: StripeLiveTier;
   origin: string;
-  skipCancel: boolean;
   timeoutMs: number;
-  priceIds: Record<StripeSandboxTier, string>;
+  priceIds: Record<StripeLiveTier, string>;
   configuredEnv: {
     BILLING_PROVIDER: "stripe";
     STRIPE_SECRET_KEY: true;
@@ -22,41 +21,43 @@ export interface StripeSandboxConfig {
   };
 }
 
-export interface StripeSandboxSubscriptionLike {
+export interface StripeLiveSubscriptionLike {
   tier?: string | null;
   status?: string | null;
   source?: string | null;
   cancelAtPeriodEnd?: boolean | number | null;
 }
 
-export interface StripeSandboxSessionUserLike {
+export interface StripeLiveSessionUserLike {
   tier?: string | null;
   workspace?: {
     tier?: string | null;
   } | null;
 }
 
-type StripeSandboxEnv = Record<string, string | undefined>;
+type StripeLiveEnv = Record<string, string | undefined>;
 
 const paidReadyStatuses = new Set(["active", "trialing", "past_due"]);
 const sessionCookieName = "apsi_session";
+
+const CONFIRM_FLAG = "--i-understand-this-charges-a-real-card";
 
 function isPlaceholderValue(raw: string) {
   const value = raw.toLowerCase();
   return value.includes("replace_me") || value.includes("placeholder") || value.endsWith("_...");
 }
 
-export function parseStripeSandboxArgs(argv: string[]): StripeSandboxArgs {
-  const args: StripeSandboxArgs = {
+export function parseStripeLiveArgs(argv: string[]): StripeLiveArgs {
+  const args: StripeLiveArgs = {
     tier: "pro",
     origin: "http://localhost:3000",
-    skipCancel: false,
     timeoutMs: 300000,
+    confirmed: false,
   };
 
   for (const arg of argv) {
-    if (arg === "--skip-cancel") {
-      args.skipCancel = true;
+    if (arg === CONFIRM_FLAG) {
+      args.confirmed = true;
       continue;
     }
 
@@ -69,11 +70,18 @@ export function parseStripeSandboxArgs(argv: string[]): StripeSandboxArgs {
   return args;
 }
 
-export function validateStripeSandboxConfig(
-  env: StripeSandboxEnv,
-  args: Partial<StripeSandboxArgs> = {},
-): StripeSandboxConfig {
-  const parsedArgs = { ...parseStripeSandboxArgs([]), ...args };
+/**
+ * This is the live-mode counterpart of validateStripeSandboxConfig. It requires
+ * STRIPE_SECRET_KEY to start with sk_live_ and refuses sk_test_ keys outright, the
+ * mirror image of the sandbox verifier's refusal of sk_live_ keys. Keeping both
+ * checks explicit (rather than "not sk_test_") means a malformed or unknown-prefix
+ * key fails closed in both directions instead of silently passing one of them.
+ */
+export function validateStripeLiveConfig(
+  env: StripeLiveEnv,
+  args: Partial<StripeLiveArgs> = {},
+): StripeLiveConfig {
+  const parsedArgs = { ...parseStripeLiveArgs([]), ...args };
   const missing = [
     "BILLING_PROVIDER",
     "STRIPE_SECRET_KEY",
@@ -91,12 +99,13 @@ export function validateStripeSandboxConfig(
     errors.push("BILLING_PROVIDER must be stripe");
   }
 
-  if (env.STRIPE_SECRET_KEY && env.STRIPE_SECRET_KEY.startsWith("sk_live_")) {
-    errors.push("STRIPE_SECRET_KEY must be a Stripe test mode secret key; refusing to run the sandbox verifier with a live sk_live_ key. Use a sk_test_ key, or run npm run billing:stripe:live-smoke instead.");
-  } else if (env.STRIPE_SECRET_KEY && !env.STRIPE_SECRET_KEY.startsWith("sk_test_")) {
-    errors.push("STRIPE_SECRET_KEY must be a Stripe test mode secret key");
+  const secretKey = env.STRIPE_SECRET_KEY ?? "";
+  if (secretKey && secretKey.startsWith("sk_test_")) {
+    errors.push("STRIPE_SECRET_KEY is a Stripe test mode key; refusing to run the live smoke test with sk_test_. Use a sk_live_ key or run npm run billing:stripe:sandbox instead.");
+  } else if (secretKey && !secretKey.startsWith("sk_live_")) {
+    errors.push("STRIPE_SECRET_KEY must be a Stripe live mode secret key (sk_live_...)");
   }
-  if (env.STRIPE_SECRET_KEY && isPlaceholderValue(env.STRIPE_SECRET_KEY)) {
+  if (secretKey && isPlaceholderValue(secretKey)) {
     errors.push("STRIPE_SECRET_KEY must not use a placeholder value");
   }
 
@@ -138,9 +147,8 @@ export function validateStripeSandboxConfig(
   }
 
   return {
-    tier: parsedArgs.tier as StripeSandboxTier,
+    tier: parsedArgs.tier as StripeLiveTier,
     origin: parsedArgs.origin,
-    skipCancel: parsedArgs.skipCancel,
     timeoutMs: parsedArgs.timeoutMs,
     priceIds: {
       pro: env.STRIPE_PRICE_PRO_MONTHLY!,
@@ -156,23 +164,36 @@ export function validateStripeSandboxConfig(
   };
 }
 
-export function formatStripeSandboxConfigSummary(config: StripeSandboxConfig) {
+/**
+ * Separate from validateStripeLiveConfig so the "did a human actually confirm this"
+ * gate is enforced even if a caller only checks config validity. Requires either the
+ * CLI flag or an explicit interactive confirmation to have been recorded.
+ */
+export function assertStripeLiveConfirmed(confirmedByFlag: boolean, confirmedInteractively: boolean) {
+  if (!confirmedByFlag && !confirmedInteractively) {
+    throw new Error(
+      `Refusing to run: this script charges and refunds a real card on a live Stripe account. ` +
+        `Re-run with ${CONFIRM_FLAG} or confirm the interactive prompt.`,
+    );
+  }
+}
+
+export function formatStripeLiveConfigSummary(config: StripeLiveConfig) {
   return [
     `tier=${config.tier}`,
     `origin=${config.origin}`,
     `timeoutMs=${config.timeoutMs}`,
-    `skipCancel=${config.skipCancel}`,
     "BILLING_PROVIDER=stripe",
-    "STRIPE_SECRET_KEY=configured",
+    "STRIPE_SECRET_KEY=configured(live)",
     "STRIPE_WEBHOOK_SECRET=configured",
     "STRIPE_PRICE_PRO_MONTHLY=configured",
     "STRIPE_PRICE_BUSINESS_MONTHLY=configured",
   ].join("\n");
 }
 
-export function isStripeSandboxSubscriptionReady(
-  subscription: StripeSandboxSubscriptionLike | null | undefined,
-  expectedTier: StripeSandboxTier,
+export function isStripeLiveSubscriptionReady(
+  subscription: StripeLiveSubscriptionLike | null | undefined,
+  expectedTier: StripeLiveTier,
 ) {
   return (
     subscription?.tier === expectedTier &&
@@ -181,18 +202,14 @@ export function isStripeSandboxSubscriptionReady(
   );
 }
 
-export function isStripeSandboxCancelReady(subscription: StripeSandboxSubscriptionLike | null | undefined) {
-  return subscription?.status === "canceled" || subscription?.cancelAtPeriodEnd === true || subscription?.cancelAtPeriodEnd === 1;
-}
-
-export function isStripeSandboxTierSyncReady(
-  user: StripeSandboxSessionUserLike | null | undefined,
-  expectedTier: StripeSandboxTier,
+export function isStripeLiveTierSyncReady(
+  user: StripeLiveSessionUserLike | null | undefined,
+  expectedTier: StripeLiveTier,
 ) {
   return user?.tier === expectedTier && user.workspace?.tier === expectedTier;
 }
 
-export function extractStripeSandboxSessionCookie(setCookieHeaders: string[]) {
+export function extractStripeLiveSessionCookie(setCookieHeaders: string[]) {
   for (const header of setCookieHeaders) {
     const cookiePair = header.split(";", 1)[0] ?? "";
     if (cookiePair.startsWith(`${sessionCookieName}=`) && cookiePair.length > sessionCookieName.length + 1) {
@@ -202,3 +219,5 @@ export function extractStripeSandboxSessionCookie(setCookieHeaders: string[]) {
 
   throw new Error("Auth register response did not include a session cookie.");
 }
+
+export const STRIPE_LIVE_CONFIRM_FLAG = CONFIRM_FLAG;

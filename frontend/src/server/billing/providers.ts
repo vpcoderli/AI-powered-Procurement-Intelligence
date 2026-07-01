@@ -250,8 +250,36 @@ export function constructStripeWebhookEvent(rawBody: string, signature: string, 
   return stripe.webhooks.constructEvent(rawBody, signature, secret);
 }
 
+const productionLikeRuntimeValues = new Set(["production", "prod"]);
+
+function isProductionLikeRuntime(env: Env) {
+  return [env.NODE_ENV, env.APP_ENV, env.DEPLOY_ENV, env.VERCEL_ENV, env.RUNTIME_ENV].some((raw) =>
+    productionLikeRuntimeValues.has((raw ?? "").trim().toLowerCase()),
+  );
+}
+
+/**
+ * Fail-closed guard against booting the real billing provider with a Stripe test
+ * key while running in a production-like environment. This runs on every
+ * createStripeBillingProvider() call (checkout, portal, cancel) rather than only
+ * in the opt-in CLI preflight scripts, so a misconfigured production deploy cannot
+ * silently process real subscriptions against sk_test_ credentials.
+ */
+export function assertStripeKeyModeForRuntime(secretKey: string, env: Env = process.env) {
+  const trimmed = secretKey.trim();
+  if (!trimmed) return;
+
+  if (isProductionLikeRuntime(env) && !trimmed.startsWith("sk_live_")) {
+    throw new InvalidSubscriptionInputError(
+      "STRIPE_SECRET_KEY must be a Stripe live mode secret key (sk_live_...) when running in a production-like environment",
+    );
+  }
+}
+
 export function createStripeBillingProvider(secretKey = process.env.STRIPE_SECRET_KEY): BillingProviderAdapter | null {
   if (!secretKey?.trim()) return null;
+
+  assertStripeKeyModeForRuntime(secretKey);
 
   const stripe = new Stripe(secretKey, stripeConfig());
 
