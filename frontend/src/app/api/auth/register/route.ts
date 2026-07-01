@@ -12,6 +12,9 @@ import { mergeSavedBidIds, mergeSavedBidIdsFromMysql } from "@/server/bids/repos
 import { clearAnonymousUserCookie, resolveAnonymousUser } from "@/server/bids/user";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { recordMarketingFunnelEvent, recordMarketingFunnelEventFromMysql } from "@/server/marketing/funnel";
+import { logger } from "@/lib/observability/logger";
+
+const routeLogger = logger.child({ service: "api:auth:register" });
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -94,9 +97,12 @@ export async function POST(request: Request) {
       }
     }
 
+    routeLogger.info("registration_succeeded", { userId: result.user.id });
+
     return response;
   } catch (error) {
     if (error instanceof DuplicateEmailError) {
+      routeLogger.warn("registration_failed", { reason: "duplicate_email" });
       return errorResponse("EMAIL_ALREADY_REGISTERED", error.message, 409);
     }
 
@@ -108,6 +114,7 @@ export async function POST(request: Request) {
       return errorResponse("INVALID_REQUEST", error.message, 400);
     }
 
+    routeLogger.error("registration_unexpected_error", { error });
     return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
   }
 }

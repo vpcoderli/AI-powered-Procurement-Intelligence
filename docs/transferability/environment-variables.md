@@ -87,6 +87,22 @@ cd frontend
 npm run worker:notifications:check
 ```
 
+## Observability
+
+| Variable | Local boundary | Production boundary |
+|---|---|---|
+| `SENTRY_DSN` | Usually unset; logging falls back to structured console JSON only. | Required to enable error tracking; store in secret manager. Set on both the Next.js server runtime and the three worker processes. |
+| `SENTRY_ENVIRONMENT` | Optional; defaults to `NODE_ENV` or `development`. | Set to `production` (or the specific deploy environment name). |
+| `SENTRY_RELEASE` | Optional; usually unset locally. | Set to the deployed build/commit identifier for release tracking. |
+| `SENTRY_TRACES_SAMPLE_RATE` | Optional; defaults to `0` (tracing disabled). | Set a low sample rate (for example `0.1`) if performance tracing is desired; leave unset/`0` otherwise. |
+
+Notes:
+
+- `frontend/src/lib/observability/logger.ts` provides the shared structured JSON logger used by API routes, `src/server/**`, and the worker scripts. It requires no environment variables and always logs to stdout/stderr as JSON.
+- `frontend/src/lib/observability/sentry.ts` and `frontend/instrumentation.ts` wire up `@sentry/nextjs`, guarded entirely by `SENTRY_DSN`. When `SENTRY_DSN` is unset, or when `@sentry/nextjs` is not yet installed (see `npm install` follow-up below), Sentry calls no-op and the app/workers continue to function on console-only logging.
+- `GET /api/health` reports `checks.errorTracking.configured` as `true`/`false` based on whether `SENTRY_DSN` is set — it does not verify the DSN is a real, reachable Sentry project.
+- `@sentry/nextjs` is declared in `frontend/package.json` but has not been installed in this environment; run `npm install` locally before relying on Sentry reporting (see human follow-ups).
+
 ## Crawlers
 
 | Variable | Local boundary | Production boundary |
@@ -123,6 +139,7 @@ CRAWLER_RUN_TOKEN
 OBJECT_STORAGE_ACCESS_KEY_ID
 OBJECT_STORAGE_SECRET_ACCESS_KEY
 OBJECT_STORAGE_SESSION_TOKEN
+SENTRY_DSN
 ```
 
 For App Runner first web release:
