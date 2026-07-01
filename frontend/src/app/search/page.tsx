@@ -159,7 +159,7 @@ export default function Dashboard() {
 
   return (
     <div className="winbids-workspace">
-      <section className="winbids-hero-grid" aria-label="WinBids overview">
+      <section className="winbids-hero-grid" aria-label={t("dashboard.overviewRegionLabel")}>
         <article className="winbids-hero-panel">
           <p className="winbids-kicker">American Public Supply Intelligence LLC</p>
           <h1 className="winbids-title">{t("dashboard.title")}</h1>
@@ -178,12 +178,12 @@ export default function Dashboard() {
           </div>
         </article>
 
-        <div className="grid gap-3 sm:grid-cols-2" aria-label="Discovery metrics">
+        <div className="grid gap-3 sm:grid-cols-2" aria-label={t("dashboard.discoveryMetricsLabel")}>
           {[
             { label: t("dashboard.highFitBids"), value: String(total), icon: Gauge },
-            { label: t("dashboard.activePursuits"), value: "Intent", icon: ClipboardCheck },
-            { label: t("dashboard.submissionRisks"), value: "Lite", icon: CircleAlert },
-            { label: t("dashboard.readyArtifacts"), value: "API", icon: FileCheck2 },
+            { label: t("dashboard.activePursuits"), value: t("dashboard.activePursuitsModeIntent"), icon: ClipboardCheck },
+            { label: t("dashboard.submissionRisks"), value: t("dashboard.submissionRisksModeLite"), icon: CircleAlert },
+            { label: t("dashboard.readyArtifacts"), value: t("dashboard.readyArtifactsModeApi"), icon: FileCheck2 },
           ].map((metric) => {
             const Icon = metric.icon;
             return (

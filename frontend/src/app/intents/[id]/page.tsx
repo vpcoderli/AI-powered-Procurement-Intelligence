@@ -240,10 +240,6 @@ function LockedFeatureState({
   );
 }
 
-const prototypeWorkspace = "Intent Workspace";
-const submissionPath = "Submission Path";
-const knowledgeStationPanel = "Knowledge Station";
-
 const submissionMethods: SubmissionMethod[] = [
   "external_portal",
   "email",
@@ -1891,7 +1887,7 @@ export default function IntentWorkspacePage() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-700">
-                {prototypeWorkspace}
+                {t("intentsPage.workspaceKicker")}
               </p>
               <h2 className="mt-1 text-2xl font-black text-slate-950">{t("intentsPage.brief")}</h2>
             </div>
@@ -2587,18 +2583,18 @@ export default function IntentWorkspacePage() {
         <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
           <div>
             <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-700">
-              Procurement read models
+              {t("intentsPage.procurementReadModels")}
             </p>
-            <h2 className="mt-1 text-2xl font-black text-slate-950">Workflow intelligence</h2>
+            <h2 className="mt-1 text-2xl font-black text-slate-950">{t("intentsPage.workflowIntelligence")}</h2>
           </div>
           <span className="w-fit rounded-full border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700">
-            Local deterministic summaries
+            {t("intentsPage.localDeterministicSummaries")}
           </span>
         </div>
 
         <div className="mt-5 grid gap-4 lg:grid-cols-3">
           <article className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
-            <p className="text-xs font-black uppercase text-slate-500">Quote comparison summary</p>
+            <p className="text-xs font-black uppercase text-slate-500">{t("intentsPage.quoteComparisonSummary")}</p>
             {quoteComparisonSummary ? (
               <div className="mt-3 space-y-3">
                 <div className="grid gap-2 sm:grid-cols-2">
@@ -2612,9 +2608,9 @@ export default function IntentWorkspacePage() {
                   ))}
                 </div>
                 <p className="text-xs font-bold leading-5 text-slate-600">
-                  {quoteComparisonSummary.quotedCount} priced quotes
+                  {t("intentsPage.quoteComparisonPricedQuotes").replace("{count}", String(quoteComparisonSummary.quotedCount))}
                   {quoteComparisonSummary.variancePercent !== null
-                    ? `, ${quoteComparisonSummary.variancePercent}% variance`
+                    ? `, ${t("intentsPage.quoteComparisonVariance").replace("{percent}", String(quoteComparisonSummary.variancePercent))}`
                     : ""}
                 </p>
                 {quoteComparisonSummary.recommendedReviewFlags.length > 0 ? (
@@ -2626,18 +2622,18 @@ export default function IntentWorkspacePage() {
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-xs font-bold text-emerald-700">No quote review flags.</p>
+                  <p className="text-xs font-bold text-emerald-700">{t("intentsPage.quoteComparisonNoFlags")}</p>
                 )}
               </div>
             ) : (
               <p className="mt-3 text-sm font-semibold leading-6 text-slate-500">
-                Quote comparison will appear after quote workflow loads.
+                {t("intentsPage.quoteComparisonUnavailable")}
               </p>
             )}
           </article>
 
           <article className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
-            <p className="text-xs font-black uppercase text-slate-500">Win/loss learning summary</p>
+            <p className="text-xs font-black uppercase text-slate-500">{t("intentsPage.winLossLearningSummary")}</p>
             {learningSummary ? (
               <div className="mt-3 space-y-3">
                 <div className="flex flex-wrap gap-2">
@@ -2658,31 +2654,31 @@ export default function IntentWorkspacePage() {
                 </ul>
                 {learningSummary.recommendedActions.length > 0 ? (
                   <p className="text-xs font-bold leading-5 text-slate-600">
-                    Recommended actions: {learningSummary.recommendedActions.join(", ")}
+                    {t("intentsPage.winLossRecommendedActions").replace("{actions}", learningSummary.recommendedActions.join(", "))}
                   </p>
                 ) : null}
               </div>
             ) : (
               <p className="mt-3 text-sm font-semibold leading-6 text-slate-500">
-                Win/loss learning appears after award tracking loads.
+                {t("intentsPage.winLossLearningUnavailable")}
               </p>
             )}
           </article>
 
           <article className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
-            <p className="text-xs font-black uppercase text-slate-500">Evidence links summary</p>
+            <p className="text-xs font-black uppercase text-slate-500">{t("intentsPage.evidenceLinksSummary")}</p>
             <p className="mt-3 text-sm font-black leading-6 text-slate-950">{evidenceAutoLinkSummary}</p>
             <dl className="mt-3 grid gap-2 text-xs font-bold text-slate-600">
               <div className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2">
-                <dt>Package exports</dt>
+                <dt>{t("intentsPage.evidenceLinksPackageExports")}</dt>
                 <dd>{submissionEvidenceLinks.responsePackageExports.length}</dd>
               </div>
               <div className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2">
-                <dt>Supplier artifacts</dt>
+                <dt>{t("intentsPage.evidenceLinksSupplierArtifacts")}</dt>
                 <dd>{submissionEvidenceLinks.linkedSupplierArtifacts.length}</dd>
               </div>
               <div className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2">
-                <dt>Award notice</dt>
+                <dt>{t("intentsPage.evidenceLinksAwardNotice")}</dt>
                 <dd>{submissionEvidenceLinks.awardOutcome ? 1 : 0}</dd>
               </div>
             </dl>
@@ -2734,7 +2730,7 @@ export default function IntentWorkspacePage() {
       />
 
       <section
-        aria-label={`${knowledgeStationPanel} workflow coach`}
+        aria-label={t("intentsPage.knowledgeStationCoachAriaLabel")}
         className={`winbids-panel knowledgeStation rounded-lg border p-5 shadow-sm ${
           knowledgeStationFeature.enabled ? "border-slate-200 bg-white" : "border-amber-200 bg-amber-50/60"
         }`}
@@ -3005,7 +3001,7 @@ export default function IntentWorkspacePage() {
             </p>
             <h2 className="mt-1 flex items-center gap-2 text-2xl font-black text-slate-950">
               <Route size={21} className="text-blue-700" aria-hidden="true" />
-              {submissionPath}
+              {t("intentsPage.submissionPathTitle")}
             </h2>
           </div>
           <span className="w-fit rounded-full border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-black text-amber-700">
