@@ -299,6 +299,89 @@ export async function markNotificationFailedFromMysql(
   return toOutboxRowFromMysql(row);
 }
 
+/**
+ * Records an async bounce or complaint event reported by an email provider
+ * webhook (SES via SNS, SendGrid Event Webhook) against a previously sent
+ * `notification_outbox` row.
+ *
+ * This intentionally does NOT reuse `markNotificationFailed`: that function
+ * increments `attemptCount`, which models a synchronous send-attempt outcome
+ * from `deliverPendingNotifications`. A bounce/complaint is a distinct,
+ * asynchronous, post-delivery signal that can arrive well after the row was
+ * already marked `sent`, so it must not affect delivery retry accounting.
+ * The row's `status` is set to `failed` (the schema does not yet have
+ * dedicated `bounced`/`complained` enum values) with a structured
+ * `lastError` prefix so operators and the admin notifications API can still
+ * distinguish the reason. See docs/operations/notification-delivery-runbook.md.
+ */
+export type NotificationDeliveryEventKind = "bounce" | "complaint" | "delivered";
+
+function formatDeliveryEventError(kind: NotificationDeliveryEventKind, detail: string) {
+  return `provider_event:${kind}: ${detail}`;
+}
+
+export function recordNotificationDeliveryEvent(
+  db: AppDatabase,
+  id: string,
+  kind: NotificationDeliveryEventKind,
+  detail: string,
+  observedAt: string,
+) {
+  if (isMysqlDatabaseUrlConfigured()) {
+    throw new Error("Use recordNotificationDeliveryEventFromMysql in MySQL runtime.");
+  }
+
+  const existing = findById(db, id);
+  if (!existing) return null;
+
+  // A "delivered" confirmation should not downgrade a row already marked
+  // failed by a bounce/complaint that arrived first.
+  if (kind === "delivered") {
+    return toOutboxRow(existing);
+  }
+
+  db.update(notificationOutbox)
+    .set({
+      status: "failed",
+      lastError: formatDeliveryEventError(kind, detail),
+    })
+    .where(eq(notificationOutbox.id, id))
+    .run();
+
+  const row = findById(db, id);
+  if (!row) throw new Error(`Notification not found: ${id} at ${observedAt}`);
+  return toOutboxRow(row);
+}
+
+export async function recordNotificationDeliveryEventFromMysql(
+  mysql: MysqlNotificationOutboxStore,
+  id: string,
+  kind: NotificationDeliveryEventKind,
+  detail: string,
+  observedAt: string,
+) {
+  const existing = await findMysqlById(mysql, id);
+  if (!existing) return null;
+
+  if (kind === "delivered") {
+    return toOutboxRowFromMysql(existing);
+  }
+
+  await mysqlExecute(
+    mysql,
+    `
+      UPDATE notification_outbox
+      SET status = 'failed', last_error = ?
+      WHERE id = ?
+    `,
+    [formatDeliveryEventError(kind, detail), id],
+  );
+
+  const row = await findMysqlById(mysql, id);
+  if (!row) throw new Error(`Notification not found: ${id} at ${observedAt}`);
+  return toOutboxRowFromMysql(row);
+}
+
 export function listDeliverableNotifications(
   db: AppDatabase,
   options: { limit?: number; maxAttempts?: number } = {},

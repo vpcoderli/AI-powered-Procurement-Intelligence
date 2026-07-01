@@ -136,8 +136,47 @@ describe("notification provider factory", () => {
       provider: "file",
       outputDir: undefined,
       warnings: [
-        "NODE_ENV=production is using the file notification provider fallback; set NOTIFICATION_PROVIDER=http for live email delivery.",
+        "NODE_ENV=production is using the file notification provider fallback; set NOTIFICATION_PROVIDER=ses, sendgrid, or http for live email delivery.",
       ],
     });
+  });
+
+  it("constructs an SES provider when requested", async () => {
+    process.env.NOTIFICATION_PROVIDER = "ses";
+    process.env.NOTIFICATION_SES_REGION = "us-east-1";
+    process.env.NOTIFICATION_SES_FROM_ADDRESS = "alerts@apsi.example.com";
+
+    try {
+      const provider = createNotificationProvider();
+      expect(provider).toHaveProperty("send");
+    } finally {
+      delete process.env.NOTIFICATION_SES_REGION;
+      delete process.env.NOTIFICATION_SES_FROM_ADDRESS;
+    }
+  });
+
+  it("constructs a SendGrid provider when requested", async () => {
+    process.env.NOTIFICATION_PROVIDER = "sendgrid";
+    process.env.NOTIFICATION_SENDGRID_API_KEY = "SG.test-api-key";
+    process.env.NOTIFICATION_SENDGRID_FROM_ADDRESS = "alerts@apsi.example.com";
+
+    try {
+      const provider = createNotificationProvider();
+      expect(provider).toHaveProperty("send");
+    } finally {
+      delete process.env.NOTIFICATION_SENDGRID_API_KEY;
+      delete process.env.NOTIFICATION_SENDGRID_FROM_ADDRESS;
+    }
+  });
+
+  it("does not warn in production when ses or sendgrid is the configured provider", () => {
+    process.env.NODE_ENV = "production";
+    process.env.NOTIFICATION_PROVIDER = "ses";
+
+    expect(resolveNotificationProviderConfig().warnings).toEqual([]);
+
+    process.env.NOTIFICATION_PROVIDER = "sendgrid";
+
+    expect(resolveNotificationProviderConfig().warnings).toEqual([]);
   });
 });

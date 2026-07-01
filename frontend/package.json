@@ -41,8 +41,10 @@
     "risk:check": "tsx scripts/risk-check.ts && npm audit --omit=dev --audit-level=moderate"
   },
   "dependencies": {
+    "@aws-sdk/client-sesv2": "^3.700.0",
     "@base-ui/react": "^1.4.1",
     "@next/env": "16.2.6",
+    "@sendgrid/mail": "^8.1.4",
     "better-sqlite3": "^12.10.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
