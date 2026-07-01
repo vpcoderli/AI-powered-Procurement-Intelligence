@@ -12,8 +12,13 @@ export const RESPONSE_WORKSPACE_ITEM_STATUSES = [
   "blocked",
 ] as const;
 
+export const RESPONSE_PACKAGE_EXPORT_FORMATS = ["markdown", "zip", "pdf", "docx"] as const;
+export const RESPONSE_PACKAGE_EXPORT_REVIEW_STATUSES = ["pending_review", "approved", "needs_changes"] as const;
+
 export type ResponseWorkspaceItemKind = (typeof RESPONSE_WORKSPACE_ITEM_KINDS)[number];
 export type ResponseWorkspaceItemStatus = (typeof RESPONSE_WORKSPACE_ITEM_STATUSES)[number];
+export type ResponsePackageExportFormat = (typeof RESPONSE_PACKAGE_EXPORT_FORMATS)[number];
+export type ResponsePackageExportReviewStatus = (typeof RESPONSE_PACKAGE_EXPORT_REVIEW_STATUSES)[number];
 export type ResponseWorkspaceActivityEventType =
   | "status_changed"
   | "notes_updated"
@@ -54,7 +59,19 @@ export interface ResponseWorkspaceLinkedArtifact {
   fileName: string;
   artifactType: string;
   purpose: string;
+  contentType: string;
+  byteSize: number;
+  checksumSha256: string;
+  reviewStatus: string;
   downloadUrl: string;
+  evidenceLinks: ArtifactEvidenceLink[];
+}
+
+export interface ArtifactEvidenceLink {
+  complianceCategory: "eligibility" | "documents" | "pricing" | "submission" | "risk";
+  evidenceRole: string;
+  submissionEvidenceKey: string;
+  label: string;
 }
 
 export interface ResponseWorkspaceActivity {
@@ -108,6 +125,70 @@ export interface ResponsePackageOutlineSection {
   linkedArtifacts: ResponseWorkspaceLinkedArtifact[];
 }
 
+export type ResponsePackageSnapshotVersionChangeKind =
+  | "created"
+  | "readiness_changed"
+  | "outline_status_changed"
+  | "linked_artifacts_changed";
+
+export interface ResponsePackageSnapshotVersionChange {
+  kind: ResponsePackageSnapshotVersionChangeKind;
+  label: string;
+  fromValue: string | null;
+  toValue: string | null;
+}
+
+export interface ResponsePackageSnapshotVersionSummary {
+  versionNumber: number;
+  previousSnapshotId: string | null;
+  changeCount: number;
+  changes: ResponsePackageSnapshotVersionChange[];
+}
+
+export interface ResponsePackageVersionHistoryEntry {
+  snapshotId: string;
+  title: string;
+  createdAt: string;
+  versionNumber: number;
+  previousSnapshotId: string | null;
+  changeCount: number;
+  changes: ResponsePackageSnapshotVersionChange[];
+}
+
+export interface ResponsePackageVersionHistory {
+  totalVersions: number;
+  latestVersionNumber: number;
+  totalChanges: number;
+  entries: ResponsePackageVersionHistoryEntry[];
+}
+
+export type ResponsePackageComparisonItemKind =
+  | "readiness"
+  | "outline_status"
+  | "outline_notes"
+  | "linked_artifacts";
+
+export interface ResponsePackageComparisonItem {
+  kind: ResponsePackageComparisonItemKind;
+  label: string;
+  fromValue: string | null;
+  toValue: string | null;
+}
+
+export interface ResponsePackageSnapshotComparison {
+  comparisonKey: string;
+  fromSnapshotId: string;
+  toSnapshotId: string;
+  fromTitle: string;
+  toTitle: string;
+  fromCreatedAt: string;
+  toCreatedAt: string;
+  fromVersionNumber: number;
+  toVersionNumber: number;
+  changeCount: number;
+  items: ResponsePackageComparisonItem[];
+}
+
 export interface ResponsePackageSnapshot {
   id: string;
   intentId: string;
@@ -118,6 +199,7 @@ export interface ResponsePackageSnapshot {
   outline: ResponsePackageOutlineSection[];
   readiness: ResponsePackageReadinessSummary;
   exports: ResponsePackageExport[];
+  version: ResponsePackageSnapshotVersionSummary;
   createdAt: string;
 }
 
@@ -129,6 +211,7 @@ export interface ResponsePackageExport {
   userId: string;
   requestedByUserId: string;
   status: "ready";
+  format: ResponsePackageExportFormat;
   fileName: string;
   contentType: string;
   byteSize: number;
@@ -138,6 +221,57 @@ export interface ResponsePackageExport {
   createdAt: string;
   updatedAt: string;
   downloadedAt: string | null;
+  reviewStatus: ResponsePackageExportReviewStatus;
+  reviewedAt: string | null;
+  reviewedByUserId: string | null;
+  reviewNotes: string;
+  reviewHistory: ResponsePackageExportReviewEvent[];
+}
+
+export interface ResponsePackageExportReviewEvent {
+  id: string;
+  exportId: string;
+  snapshotId: string;
+  intentId: string;
+  bidId: string;
+  userId: string;
+  actorUserId: string;
+  fromReviewStatus: ResponsePackageExportReviewStatus;
+  toReviewStatus: ResponsePackageExportReviewStatus;
+  reviewNotes: string;
+  createdAt: string;
+}
+
+export interface ResponsePackageReviewerSummaryEntry {
+  userId: string;
+  reviewCount: number;
+  approvedCount: number;
+  needsChangesCount: number;
+  latestReviewedAt: string;
+}
+
+export interface ResponsePackageReviewerSummary {
+  reviewerCount: number;
+  reviewers: ResponsePackageReviewerSummaryEntry[];
+}
+
+export interface ResponsePackageApprovalThreshold {
+  requiredApprovedExports: number;
+  approvedExports: number;
+  met: boolean;
+}
+
+export interface ResponsePackageGovernanceSummary {
+  pendingReviewCount: number;
+  approvedCount: number;
+  needsChangesCount: number;
+  longestPendingAgeHours: number | null;
+  latestReviewerUserId: string | null;
+  canSubmitWithReviewedExport: boolean;
+  reviewerSummary: ResponsePackageReviewerSummary;
+  reviewTimeline: ResponsePackageExportReviewEvent[];
+  approvalThreshold: ResponsePackageApprovalThreshold;
+  readinessReason: string;
 }
 
 export interface ResponsePackageWorkspace {
@@ -145,6 +279,10 @@ export interface ResponsePackageWorkspace {
   outline: ResponsePackageOutlineSection[];
   readiness: ResponsePackageReadinessSummary;
   snapshots: ResponsePackageSnapshot[];
+  governanceSummary: ResponsePackageGovernanceSummary;
+  versionHistory: ResponsePackageVersionHistory;
+  versionComparisons: ResponsePackageSnapshotComparison[];
+  defaultVersionComparison: ResponsePackageSnapshotComparison | null;
 }
 
 export interface ResponseWorkspaceResponse {
@@ -166,6 +304,12 @@ export interface ResponsePackageSnapshotResponse {
 
 export interface CreateResponsePackageExportInput {
   snapshotId: string;
+  format?: ResponsePackageExportFormat;
+}
+
+export interface UpdateResponsePackageExportReviewInput {
+  reviewStatus: ResponsePackageExportReviewStatus;
+  reviewNotes?: string | null;
 }
 
 export interface ResponsePackageExportResponse {
@@ -212,4 +356,13 @@ export function isResponseWorkspaceItemKind(value: unknown): value is ResponseWo
 
 export function isResponseWorkspaceItemStatus(value: unknown): value is ResponseWorkspaceItemStatus {
   return typeof value === "string" && RESPONSE_WORKSPACE_ITEM_STATUSES.includes(value as ResponseWorkspaceItemStatus);
+}
+
+export function isResponsePackageExportFormat(value: unknown): value is ResponsePackageExportFormat {
+  return typeof value === "string" && RESPONSE_PACKAGE_EXPORT_FORMATS.includes(value as ResponsePackageExportFormat);
+}
+
+export function isResponsePackageExportReviewStatus(value: unknown): value is ResponsePackageExportReviewStatus {
+  return typeof value === "string" &&
+    RESPONSE_PACKAGE_EXPORT_REVIEW_STATUSES.includes(value as ResponsePackageExportReviewStatus);
 }

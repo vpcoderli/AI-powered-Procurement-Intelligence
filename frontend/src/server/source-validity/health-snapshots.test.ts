@@ -27,9 +27,15 @@ const REPORT: LiveSourceHealthReport = {
       status: "healthy",
       method: "HEAD",
       httpStatus: 200,
+      statusCode: 200,
       statusText: "OK",
       errorCode: null,
       errorMessage: null,
+      classification: "ok",
+      reason: "Source responded with usable content.",
+      evidenceSnippets: ["HTTP 200 OK"],
+      checkedAt: "2026-06-01T03:00:00.000Z",
+      latencyMs: 214,
       operationalSeverity: "none",
       recommendedAction: "none",
     },
@@ -43,9 +49,15 @@ const REPORT: LiveSourceHealthReport = {
       status: "unhealthy",
       method: "GET",
       httpStatus: 503,
+      statusCode: 503,
       statusText: "Service Unavailable",
       errorCode: "http_error",
       errorMessage: "HTTP 503 Service Unavailable",
+      classification: "http_error",
+      reason: "HTTP 503 Service Unavailable",
+      evidenceSnippets: ["HTTP 503 Service Unavailable"],
+      checkedAt: "2026-06-01T03:00:00.000Z",
+      latencyMs: 842,
       operationalSeverity: "warning",
       recommendedAction: "browser_or_access_review",
     },
@@ -77,9 +89,24 @@ describe("live source health snapshots", () => {
       expect.objectContaining({
         id: snapshot.id,
         ok: false,
-        report: REPORT,
+        report: expect.objectContaining({
+          checkedAt: "2026-06-01T03:00:00.000Z",
+          results: expect.arrayContaining([
+            expect.objectContaining({
+              sourceId: "tx_esbd",
+              stateCode: "TX",
+              classification: "http_error",
+              reason: "HTTP 503 Service Unavailable",
+              statusCode: 503,
+              latencyMs: 842,
+              checkedAt: "2026-06-01T03:00:00.000Z",
+              evidenceSnippets: ["HTTP 503 Service Unavailable"],
+            }),
+          ]),
+        }),
       }),
     ]);
+    expect(JSON.stringify(listLiveSourceHealthSnapshots(testDb.db, 1))).not.toContain("<html");
   });
 
   it("aggregates per-source health trend from recent snapshots", () => {

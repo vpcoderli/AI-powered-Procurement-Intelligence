@@ -16,6 +16,17 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+## Demo Smoke
+
+Start the local app before running the repeatable Browser/API smoke:
+
+```bash
+npm run dev -- --port 3000
+npm run demo:smoke -- --origin=http://localhost:3000
+```
+
+The smoke runner uses headless HTTP checks, not a real browser dependency. It verifies anonymous public pages, auth-required workspace APIs, generated ordinary-user registration/login/session/settings, ordinary-user admin rejection, local admin reset/login plus admin summary/users/data-sources/risk APIs, a generated Business paid fixture against the response workspace API, and `/api/bids/1` attachment download safety. It does not print generated passwords, admin passwords, temporary paid-user passwords, or session cookies.
+
 ## Local Admin Login
 
 Reset or create the local development admin account with:
@@ -50,7 +61,33 @@ npm run billing:stripe:sandbox -- --tier=pro
 
 Use `--tier=business` for the Business plan, `--origin=http://localhost:3000` to target a different local origin, `--timeout-ms=300000` to change the webhook wait timeout, and `--skip-cancel` to keep the test subscription after verification. Full setup and troubleshooting steps live in [`../docs/operations/stripe-sandbox-e2e.md`](../docs/operations/stripe-sandbox-e2e.md).
 
-Production billing deployment, live/test key isolation, webhook rotation, worker scheduling, and provider dashboard checks are covered in [`../docs/operations/production-billing-worker-runbook.md`](../docs/operations/production-billing-worker-runbook.md).
+Production billing deployment, live/test key isolation, webhook rotation, worker scheduling, owner handoff, backup runbook ownership, and provider dashboard checks are covered in [`../docs/operations/production-billing-worker-runbook.md`](../docs/operations/production-billing-worker-runbook.md). The production handoff preflight is:
+
+```bash
+NODE_ENV=production npm run ops:production:check
+```
+
+To generate one consolidated external launch handoff report across Stripe sandbox, production preflight,
+AWS staging dry-run evidence, live source-health evidence, browser demo evidence, and risk gate evidence:
+
+```bash
+npm run ops:launch-handoff -- --allow-blocked
+```
+
+Use `--format=json --output=../ops-evidence/launch-handoff.json` to save a machine-readable report.
+The root-level `ops-evidence/` directory is intentionally ignored by Git because it can contain local
+operator notes and environment-specific release evidence.
+For Stripe sandbox evidence alongside production live billing config, set the sandbox-only aliases
+`STRIPE_SANDBOX_SECRET_KEY`, `STRIPE_SANDBOX_WEBHOOK_SECRET`, `STRIPE_SANDBOX_PRICE_PRO_MONTHLY`, and
+`STRIPE_SANDBOX_PRICE_BUSINESS_MONTHLY`. The report prints configured markers and blocker names only,
+not secret values. If `SOURCE_HEALTH_OPS_EVIDENCE_FILE` is set, the report reads the JSON bundle and
+requires `ok=true`, 50-state coverage, a fresh snapshot, zero critical unhealthy sources, and no missing
+owner/disposition/next-review blockers. The source-health track also requires
+`SOURCE_HEALTH_ACCESS_REVIEW_URL` or `SOURCE_HEALTH_ACCESS_REVIEW_FILE`; local access-review JSON is
+validated for review count, `reviewMode`, and `requiredEvidence`. Use URL variables for external evidence
+systems that cannot be read locally.
+
+AWS publishing steps are covered in [`../docs/operations/aws-deployment-runbook.md`](../docs/operations/aws-deployment-runbook.md). The recommended first AWS web release is App Runner + RDS MySQL + Secrets Manager/SSM + CloudWatch; full production requires a separate worker runtime such as ECS/Fargate scheduled tasks.
 
 ## Risk Checklist
 
@@ -70,29 +107,29 @@ Business-tier users can upload supplier-managed artifacts from an Intent detail 
 frontend/data/artifact-vault/
 ```
 
-The database keeps the intent/bid association, artifact type, purpose, expiry date, review status, file metadata, checksum, and internal download route. Do not commit uploaded files or copy local storage paths into production configuration. Production hardening still needs object storage, malware scanning, retention rules, audit events, and delete/version workflows.
+The database keeps the intent/bid association, artifact type, purpose, expiry date, review status, file metadata, checksum, internal download route, soft-delete metadata, derived security scan status, retention policy, and append-only file version records. Local uploads now go through the shared object-storage provider, downloads verify byte size plus SHA-256 before returning file content, deterministic local/noop malware test signatures are blocked before storage/DB writes, deletes write `artifact.deleted` audit events while hiding the artifact from the active vault, Response Workspace links, and Quote Workspace links, and replacements write a new artifact version plus `artifact.replaced` audit metadata while preserving the prior file history. The provider supports local files by default and an S3-compatible SigV4 REST path when `OBJECT_STORAGE_PROVIDER=s3` plus runtime credentials are injected. Do not commit uploaded files, local storage paths, or object-storage credentials. Production hardening still needs real AWS/S3 staging validation, signed URL/CDN posture, external malware scanning, and approved retention/lifecycle policy proof.
 
 ## Quote Workspace
 
 Business-tier users can manage a lightweight quote workflow from an Intent detail page. The local v1 stores organization-scoped sourcing partners, intent-level quote requests, requested due dates, status, quoted amount, response notes, and links to uploaded supplier artifacts.
 
-The Quote Workspace is manual-first: it does not send supplier emails, expose a supplier portal, or parse quote attachments automatically. Future depth should add richer notification/audit integration, response uploads, comparison scoring, and richer supplier profiles.
+The Quote Workspace is manual-first: it does not send supplier emails or expose a supplier portal. Quote comparison and deterministic CSV/JSON quote parser logic exist locally, while the visible upload UI, XLSX parsing, richer notification/audit integration, response uploads, deeper scoring, and richer supplier profiles remain future depth.
 
 ## Deadline Notifications
 
 Business-tier users can view deadline reminders from an Intent detail page. Local v1 stores reminders in `deadline_reminders` and derives them idempotently from bid deadlines, response workspace task due dates, quote request due dates, and supplier artifact expiry dates.
 
-Users can acknowledge reminders or snooze them for 24 hours from the Intent panel. This is a local workflow surface only: production email/calendar delivery, notification outbox scheduling, digest preferences, submission checkpoint reminders, audit events, Settings reminder center, and the MySQL deadline adapter remain future depth.
+Users can acknowledge reminders or snooze them for 24 hours from the Intent panel and account reminder center. The workflow is MySQL-runtime aware when `DATABASE_URL` or `MYSQL_DATABASE_URL` points to MySQL. Production email/calendar delivery, notification outbox scheduling, digest preferences, submission checkpoint reminders, and richer audit events remain future depth.
 
 ## Response Workspace Collaboration
 
-Business-tier users can coordinate response workspace items from an Intent detail page. Local v1 stores task/checkpoint/artifact/outline items in `response_workspace_items`, supports owner assignment through `assigned_user_id`, and stores item-level notes in `response_workspace_comments`.
+Business-tier users can coordinate response workspace items from an Intent detail page. Local v1 stores task/checkpoint/artifact/outline items in `response_workspace_items`, supports owner assignment through `assigned_user_id`, item-level comments, linked artifacts with soft-delete filtering, activity history, response package snapshots with full version-history totals, an expandable all-version list, adjacent version summaries/change comparisons, any-version side-by-side comparison, Markdown/ZIP/PDF/DOCX exports, package manifests, download audit timestamps, approve/request-changes review actions, redacted review audit events, export review-state metadata, and manifest-backed export download integrity checks.
 
-The current collaboration slice is manual-first: users can update item status/notes, assign owners from visible workspace members, and add comments. Future depth should add activity/version history, artifact-task links, reusable package outlines, richer team directory selection, audit events, and eventual drafting automation.
+The current collaboration slice is manual-first: users can update item status/notes, assign owners from visible workspace members, add comments, link artifacts, create package snapshots, inspect the full version list, compare any two package versions, export Markdown/ZIP/PDF/DOCX packages, approve or request changes on generated packages, download generated packages, and freeze concrete package/export evidence on submission confirmations. Future depth should add real AWS/S3 staging validation, external malware scanning, approved retention lifecycle proof, review governance reporting, and eventual drafting automation.
 
 ## MySQL Runtime And Migration
 
-SQLite remains the default local runtime when no MySQL URL is configured. When `DATABASE_URL` or `MYSQL_DATABASE_URL` points to MySQL, the main product/runtime paths use the MySQL adapters and the migration tooling below:
+SQLite remains the default local runtime when no MySQL URL is configured. When `DATABASE_URL` or `MYSQL_DATABASE_URL` points to MySQL, the runtime `db` singleton becomes an explicit guard instead of opening SQLite; migrated product paths use MySQL adapters and unmigrated paths fail loudly. Use the migration tooling below:
 
 ```bash
 DATABASE_URL=mysql://USER:PASSWORD@HOST:3306/winbids npm run db:mysql:migrate
@@ -100,9 +137,9 @@ DATABASE_URL=mysql://USER:PASSWORD@HOST:3306/winbids npm run db:mysql:import-sql
 DATABASE_URL=mysql://USER:PASSWORD@HOST:3306/winbids npm run db:mysql:smoke
 ```
 
-This migration path has been smoke-tested against MySQL 8 with a fresh schema, an idempotent re-run, a long bid-description insert, repeatable SQLite-to-MySQL data import, crawler/admin reads, direct JSON crawler import/upsert, crawler control locks/source enablement, crawler alert matching/digest notification, event outbox delivery, bid search/detail, saved bids, attachment metadata, auth/account/workspace/admin-users/admin-config/admin-bid-QA/billing/dunning, search alerts/notifications, and the core intent panels for compliance, submission, response workspace, pursuit decision, and qualification evidence. The `db:mysql:smoke` command redacts credentials in logs. Indexed text columns are converted to `VARCHAR(191)`, while long content columns are preserved as `LONGTEXT`.
+This migration path has been smoke-tested against MySQL 8 with a fresh schema, an idempotent re-run, a long bid-description insert, repeatable SQLite-to-MySQL data import, crawler/admin reads, direct JSON crawler import/upsert, crawler control locks/source enablement, crawler alert matching/digest notification, event outbox delivery, bid search/detail, saved bids, attachment metadata, auth/account/workspace/admin-users/admin-config/admin-bid-QA/dashboard/billing/dunning/subscription-reconcile, search alerts/notifications, deadline reminders, Knowledge Station, and the core intent panels for compliance, submission, response workspace, pursuit decision, and qualification evidence. The `db:mysql:smoke` command redacts credentials in logs. Indexed text columns are converted to `VARCHAR(191)`, while long content columns are preserved as `LONGTEXT`.
 
-The remaining production signoff items are Stripe sandbox verification in MySQL mode, production worker deployment dry runs, and final credential/runbook execution. The tracking runbook is in [`../docs/operations/mysql-cutover.md`](../docs/operations/mysql-cutover.md).
+Local MySQL verification also includes route-level guard coverage, admin versus ordinary-user browser smoke, paid-feature locked states, 50-state detail sampling, and the refreshed deterministic release gate with 50/50 states, 1,146 active state bid detail routes, and 216 safe local attachment download routes. The remaining production signoff items are Stripe sandbox verification in MySQL mode with real test credentials, low-risk live billing webhook/checkout validation, production worker deployment dry runs, and final credential/runbook execution. The tracking runbook is in [`../docs/operations/mysql-cutover.md`](../docs/operations/mysql-cutover.md).
 
 ## State Crawler Validation
 
@@ -185,7 +222,40 @@ Persist the latest probe for the Admin Data Sources table:
 npm run source:health:check -- --source CA --timeout-ms 5000 --report-only --persist
 ```
 
+When `DATABASE_URL` or `MYSQL_DATABASE_URL` is MySQL, `--persist` writes the snapshot to MySQL so the running Admin UI reads the same source-health data; otherwise it writes to local SQLite.
+
+For release checks, add `--inspect-body` so successful pages are also checked for empty bodies, login pages, CAPTCHA, or bot-check content:
+
+```bash
+npm run source:health:check -- --all --timeout-ms 10000 --report-only --persist --inspect-body
+```
+
 This command performs live HTTP checks and may report blocked/403/timeout statuses for otherwise valid public portals. It is intentionally separate from `risk:check` so normal local/CI verification stays deterministic. Use the output as an operations signal alongside crawler non-empty results, source-validity metadata, bid detail routes, and local attachment download checks.
+
+After a live probe has been persisted, generate the handoff evidence bundle:
+
+```bash
+npm run source:health:evidence -- --allow-blocked
+npm run source:health:evidence -- --format=json --output=../ops-evidence/source-health-evidence.json
+```
+
+The evidence bundle reads the latest persisted snapshot from the current shell runtime, does not call public portals, includes safe source URLs with query strings/fragments stripped for high-priority follow-up rows, and blocks release signoff when unhealthy sources lack owner, disposition, or next-review date.
+
+If the bundle is blocked only by missing owner/disposition/next-review values, generate and apply a bulk triage plan:
+
+```bash
+npm run source:health:triage -- --owner=source-ops@example.com
+npm run source:health:triage -- --owner=source-ops@example.com --apply
+```
+
+To turn access-blocked live source findings into a handoff queue for browser/vendor-account or production-network review, generate the access review packet:
+
+```bash
+npm run source:health:access-review
+npm run source:health:access-review -- --format=json --output=../ops-evidence/source-health/source-health-access-review.json
+```
+
+This reads the latest persisted source-health snapshot and triage fields, groups unhealthy sources by required operator review mode, includes sanitized source URLs, and lists the evidence needed for the next manual or production-network verification step. It does not call external portals or store credentials.
 
 ## Notification Worker
 
@@ -219,6 +289,25 @@ NOTIFICATION_WORKER_MAX_ATTEMPTS=3
 NOTIFICATION_PROVIDER=file # file, console, or http
 DATABASE_PATH=data/apsi.sqlite
 ```
+
+## Local MVP Status
+
+Latest local baseline on June 11, 2026:
+
+- Production Artifact / Package Storage Lite is complete locally: strict S3 production posture preflight, artifact version records, replace API/client, Intent UI replacement controls, and artifact version display have landed.
+- Response Package Review History + UI Polish Wave 1 is complete locally.
+- Response package exports include append-only review events and Intent UI review timelines.
+- `/search` has operational loading/error/empty/filter feedback and anonymous save login/register guidance.
+- `/bids/[id]` has mobile-safe action, title, metadata, contact, attachment, and evidence-link wrapping.
+- Verified commands: `npm test` (228 files / 1,131 tests), `npm run lint`, `npm run build`, `npm run db:migrate`, `.env.local` loaded `npm run db:mysql:migrate`, `.env.local` loaded `npm run db:mysql:smoke`, `.env.local` loaded `npm run workers:check`, `npm run demo:check`, `npm run demo:smoke -- --origin=http://localhost:3020`, `npm run risk:check`, `npm audit --omit=dev --audit-level=high`, and `git diff --check`.
+
+Remaining top priorities:
+
+1. Real AWS/S3 staging validation for Production Artifact / Package Storage.
+2. Stripe Sandbox E2E with real test mode keys, webhook secret, and price ids.
+3. Production worker/secrets/backup dry run.
+4. Live source-health operations for real portal 403/timeout/bot-check triage.
+5. Review governance deepening: approver display, policy thresholds, and review report export.
 
 You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 

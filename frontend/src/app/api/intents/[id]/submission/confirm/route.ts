@@ -83,9 +83,9 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     requireFeature(principal, "submission_guidance");
     const { id } = await context.params;
-    const confirmation = await createSubmissionConfirmation(db, principal.userId, id, input);
+    const confirmationResponse = await createSubmissionConfirmation(db, principal.userId, id, input);
 
-    return jsonWithPrincipalCookie({ confirmation }, principal, { status: 201 });
+    return jsonWithPrincipalCookie(confirmationResponse, principal, { status: 201 });
   } catch (error) {
     if (error instanceof FeatureAccessError) {
       return errorResponse(error.code, error.message, error.status, principal);

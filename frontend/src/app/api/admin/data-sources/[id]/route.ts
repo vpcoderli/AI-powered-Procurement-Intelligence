@@ -43,6 +43,12 @@ function parseLegalReviewStatus(value: unknown): SourceLegalReviewStatus | null 
   return null;
 }
 
+function parseNullableString(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || typeof value === "string") return value;
+  return undefined;
+}
+
 async function parsePatchBody(request: Request): Promise<UpdateAdminDataSourceInput | null> {
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body || typeof body !== "object") {
@@ -74,12 +80,38 @@ async function parsePatchBody(request: Request): Promise<UpdateAdminDataSourceIn
     if (body.approvalNotes !== null && typeof body.approvalNotes !== "string") return null;
     input.approvalNotes = body.approvalNotes;
   }
+  if (Object.hasOwn(body, "liveHealthOwner")) {
+    const value = parseNullableString(body.liveHealthOwner);
+    if (value === undefined) return null;
+    input.liveHealthOwner = value;
+  }
+  if (Object.hasOwn(body, "liveHealthDisposition")) {
+    const value = parseNullableString(body.liveHealthDisposition);
+    if (value === undefined) return null;
+    input.liveHealthDisposition = value;
+  }
+  if (Object.hasOwn(body, "liveHealthNextReviewAt")) {
+    const value = parseNullableString(body.liveHealthNextReviewAt);
+    if (value === undefined) return null;
+    input.liveHealthNextReviewAt = value;
+  }
+  if (Object.hasOwn(body, "liveHealthNotes")) {
+    const value = parseNullableString(body.liveHealthNotes);
+    if (value === undefined) return null;
+    input.liveHealthNotes = value;
+  }
+  if (Object.hasOwn(body, "liveHealthReviewedAt")) {
+    const value = parseNullableString(body.liveHealthReviewedAt);
+    if (value === undefined) return null;
+    input.liveHealthReviewedAt = value;
+  }
 
   return Object.keys(input).length > 0 ? input : null;
 }
 
 async function resolveDatabase(database?: AppDatabase) {
   if (database) return database;
+  if (isMysqlDatabaseUrlConfigured()) return {} as AppDatabase;
 
   const client = await import("@/server/db/client");
   return client.db;

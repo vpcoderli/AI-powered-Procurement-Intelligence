@@ -1,17 +1,29 @@
 import crypto from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { writeAuditEvent, writeAuditEventFromMysql } from "@/server/events/event-log";
 import { getUserIntent } from "@/server/intents/service";
 import { IntentNotFoundError } from "@/server/intents/types";
+import { createObjectStorageProvider } from "@/server/storage/object-storage";
 import {
+  createArtifactVersionRow,
+  createArtifactVersionRowFromMysql,
   createSupplierArtifactRow,
   createSupplierArtifactRowFromMysql,
   findSupplierArtifactRow,
   findSupplierArtifactRowFromMysql,
+  listArtifactVersionRows,
+  listArtifactVersionRowsFromMysql,
   listSupplierArtifactRows,
   listSupplierArtifactRowsFromMysql,
+  maxArtifactVersionNumber,
+  maxArtifactVersionNumberFromMysql,
+  softDeleteSupplierArtifactRow,
+  softDeleteSupplierArtifactRowFromMysql,
+  updateSupplierArtifactManifestRow,
+  updateSupplierArtifactManifestRowFromMysql,
+  type ArtifactVersionRow,
   type SupplierArtifactRow,
 } from "./repository";
 import {
@@ -19,14 +31,23 @@ import {
   isArtifactReviewStatus,
   isArtifactType,
   type ArtifactComputedStatus,
+  type ArtifactRetentionPolicy,
+  type ArtifactSecurityScanStatus,
   type ArtifactVault,
   type CreateSupplierArtifactInput,
+  type ReplaceSupplierArtifactInput,
   type SupplierArtifact,
+  type SupplierArtifactVersion,
 } from "./types";
 
 const MAX_TITLE_LENGTH = 180;
 const MAX_NOTES_LENGTH = 2000;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
+const DEFAULT_RETENTION_POLICY: ArtifactRetentionPolicy = "standard_business_record";
+const MALWARE_TEST_SIGNATURES = [
+  "EICAR-STANDARD-ANTIVIRUS-TEST-FILE",
+  "MALWARE_TEST_SIGNATURE",
+] as const;
 
 export class ArtifactVaultValidationError extends Error {
   constructor(message: string) {
@@ -38,6 +59,23 @@ export class ArtifactVaultValidationError extends Error {
 interface ArtifactServiceOptions {
   storageRoot?: string;
   now?: Date;
+  malwareScanner?: ArtifactMalwareScanner;
+}
+
+interface ArtifactMalwareScanInput {
+  fileName: string;
+  contentType: string;
+  bytes: Buffer;
+}
+
+interface ArtifactMalwareScanResult {
+  status: ArtifactSecurityScanStatus;
+  provider: "local/noop";
+  signature?: string;
+}
+
+interface ArtifactMalwareScanner {
+  scan(input: ArtifactMalwareScanInput): Promise<ArtifactMalwareScanResult>;
 }
 
 function nowIso(options: ArtifactServiceOptions = {}) {
@@ -94,6 +132,72 @@ function computedStatus(row: Pick<SupplierArtifactRow, "expiresAt">, now: Date):
   return row.expiresAt && new Date(row.expiresAt).getTime() < now.getTime() ? "expired" : "active";
 }
 
+const localNoopMalwareScanner: ArtifactMalwareScanner = {
+  async scan(input) {
+    const text = input.bytes.toString("utf8");
+    const signature = MALWARE_TEST_SIGNATURES.find((value) => text.includes(value));
+
+    if (signature) {
+      return {
+        status: "blocked",
+        provider: "local/noop",
+        signature,
+      };
+    }
+
+    return {
+      status: "clean",
+      provider: "local/noop",
+    };
+  },
+};
+
+function malwareScanner(options: ArtifactServiceOptions = {}) {
+  return options.malwareScanner ?? localNoopMalwareScanner;
+}
+
+function hydrateArtifactVersion(row: ArtifactVersionRow): SupplierArtifactVersion {
+  return {
+    id: row.id,
+    artifactId: row.artifactId,
+    versionNumber: row.versionNumber,
+    title: row.title,
+    fileName: row.fileName,
+    contentType: row.contentType,
+    byteSize: row.byteSize,
+    storagePath: row.storagePath,
+    storageProvider: row.storageProvider,
+    checksumSha256: row.checksumSha256,
+    securityScanStatus: row.securityScanStatus === "blocked" || row.securityScanStatus === "pending"
+      ? row.securityScanStatus
+      : "clean",
+    retentionPolicy: row.retentionPolicy === "standard_business_record"
+      ? row.retentionPolicy
+      : DEFAULT_RETENTION_POLICY,
+    replacementReason: row.replacementReason,
+    createdByUserId: row.createdByUserId,
+    createdAt: row.createdAt,
+  };
+}
+
+function attachVersionsToArtifacts(
+  artifacts: SupplierArtifact[],
+  versionRows: ArtifactVersionRow[],
+) {
+  const versionsByArtifactId = new Map<string, SupplierArtifactVersion[]>();
+
+  for (const row of versionRows) {
+    const versions = versionsByArtifactId.get(row.artifactId) ?? [];
+    versions.push(hydrateArtifactVersion(row));
+    versionsByArtifactId.set(row.artifactId, versions);
+  }
+
+  return artifacts.map((artifact) => ({
+    ...artifact,
+    versions: versionsByArtifactId.get(artifact.id) ?? [],
+  }));
+}
+
 function downloadUrl(intentId: string, artifactId: string) {
   return `/api/intents/${encodeURIComponent(intentId)}/artifacts/${encodeURIComponent(artifactId)}`;
 }
@@ -125,15 +229,28 @@ function hydrateArtifact(row: SupplierArtifactRow, now: Date): SupplierArtifact 
     expiresAt: row.expiresAt,
     reviewStatus: row.reviewStatus,
     computedStatus: computedStatus(row, now),
+    securityScanStatus: "clean",
+    retentionPolicy: DEFAULT_RETENTION_POLICY,
     notes: row.notes,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     downloadUrl: downloadUrl(row.intentId, row.id),
+    versions: [],
   };
 }
 
-function buildVault(userId: string, intentId: string, bidId: string, rows: SupplierArtifactRow[], now: Date): ArtifactVault {
-  const artifacts = rows.map((row) => hydrateArtifact(row, now));
+function buildVault(
+  userId: string,
+  intentId: string,
+  bidId: string,
+  rows: SupplierArtifactRow[],
+  versionRows: ArtifactVersionRow[],
+  now: Date,
+): ArtifactVault {
+  const artifacts = attachVersionsToArtifacts(
+    rows.map((row) => hydrateArtifact(row, now)),
+    versionRows,
+  );
 
   return {
     intentId,
@@ -156,6 +273,13 @@ async function listRows(database: AppDatabase, userId: string, intentId: string)
     : listSupplierArtifactRows(database, userId, intentId);
 }
 
+async function listVersionRows(database: AppDatabase, userId: string, intentId: string) {
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  return mysql
+    ? listArtifactVersionRowsFromMysql(mysql, userId, intentId)
+    : listArtifactVersionRows(database, userId, intentId);
+}
+
 export async function getArtifactVault(
   database: AppDatabase,
   userId: string,
@@ -168,7 +292,14 @@ export async function getArtifactVault(
     throw new IntentNotFoundError();
   }
 
-  return buildVault(userId, intent.id, intent.bid.id, await listRows(database, userId, intent.id), options.now ?? new Date());
+  return buildVault(
+    userId,
+    intent.id,
+    intent.bid.id,
+    await listRows(database, userId, intent.id),
+    await listVersionRows(database, userId, intent.id),
+    options.now ?? new Date(),
+  );
 }
 
 export async function createSupplierArtifact(
@@ -204,13 +335,24 @@ export async function createSupplierArtifact(
   const id = `artifact_${crypto.randomUUID()}`;
   const timestamp = nowIso(options);
   const bytes = Buffer.from(await input.file.arrayBuffer());
-  const checksumSha256 = crypto.createHash("sha256").update(bytes).digest("hex");
   const fileName = sanitizeFileName(input.file.name);
-  const storageDirectory = path.join(artifactStorageRoot(options), userId, intent.id);
-  const storagePath = path.join(storageDirectory, `${id}-${fileName}`);
+  const contentType = input.file.type || "application/octet-stream";
+  const scanResult = await malwareScanner(options).scan({
+    fileName,
+    contentType,
+    bytes,
+  });
 
-  await mkdir(storageDirectory, { recursive: true });
-  await writeFile(storagePath, bytes);
+  if (scanResult.status === "blocked") {
+    throw new ArtifactVaultValidationError("Artifact upload blocked by malware scan.");
+  }
+
+  const storage = createObjectStorageProvider({ localRoot: artifactStorageRoot(options) });
+  const stored = await storage.putObject({
+    key: [userId, intent.id, `${id}-${fileName}`],
+    bytes,
+    contentType,
+  });
 
   const row = {
     id,
@@ -221,22 +363,194 @@ export async function createSupplierArtifact(
     artifactType: input.artifactType,
     purpose: input.purpose,
     fileName,
-    contentType: input.file.type || "application/octet-stream",
-    byteSize: input.file.size,
-    storagePath,
-    checksumSha256,
+    contentType,
+    byteSize: stored.byteSize,
+    storagePath: stored.storagePath,
+    checksumSha256: stored.checksumSha256,
     expiresAt: normalizeExpiresAt(input.expiresAt),
     reviewStatus: "pending_review",
     notes: normalizeOptionalText(input.notes, "Artifact notes", MAX_NOTES_LENGTH),
+    deletedAt: null,
+    deletedByUserId: null,
     createdAt: timestamp,
     updatedAt: timestamp,
   } satisfies SupplierArtifactRow;
 
   const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const versionRow = {
+    id: `artifact_version_${crypto.randomUUID()}`,
+    artifactId: id,
+    intentId: intent.id,
+    bidId: intent.bid.id,
+    userId,
+    versionNumber: 1,
+    title,
+    fileName,
+    contentType,
+    byteSize: stored.byteSize,
+    storagePath: stored.storagePath,
+    storageProvider: stored.provider,
+    checksumSha256: stored.checksumSha256,
+    securityScanStatus: scanResult.status,
+    retentionPolicy: DEFAULT_RETENTION_POLICY,
+    replacementReason: "",
+    createdByUserId: userId,
+    createdAt: timestamp,
+  };
+
   if (mysql) {
     await createSupplierArtifactRowFromMysql(mysql, row);
+    await createArtifactVersionRowFromMysql(mysql, versionRow);
   } else {
     createSupplierArtifactRow(database, row);
+    createArtifactVersionRow(database, versionRow);
+  }
+
+  return getArtifactVault(database, userId, intent.id, options);
+}
+
+export async function replaceSupplierArtifact(
+  database: AppDatabase,
+  userId: string,
+  intentId: string,
+  artifactId: string,
+  input: ReplaceSupplierArtifactInput,
+  options: ArtifactServiceOptions = {},
+): Promise<ArtifactVault> {
+  const intent = await getUserIntent(database, userId, intentId);
+
+  if (!intent) {
+    throw new IntentNotFoundError();
+  }
+
+  if (!(input.file instanceof File)) {
+    throw new ArtifactVaultValidationError("Replacement artifact file is required.");
+  }
+  if (input.file.size <= 0) {
+    throw new ArtifactVaultValidationError("Replacement artifact file cannot be empty.");
+  }
+  if (input.file.size > MAX_FILE_BYTES) {
+    throw new ArtifactVaultValidationError("Replacement artifact file is too large.");
+  }
+
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const existing = mysql
+    ? await findSupplierArtifactRowFromMysql(mysql, userId, intent.id, artifactId)
+    : findSupplierArtifactRow(database, userId, intent.id, artifactId);
+
+  if (!existing) {
+    throw new ArtifactVaultValidationError("Artifact is not available.");
+  }
+
+  const timestamp = nowIso(options);
+  const bytes = Buffer.from(await input.file.arrayBuffer());
+  const fileName = sanitizeFileName(input.file.name);
+  const contentType = input.file.type || "application/octet-stream";
+  const title = input.title === undefined || input.title === null || input.title === ""
+    ? existing.title
+    : normalizeText(input.title, "Artifact title", MAX_TITLE_LENGTH);
+  const notes = input.notes === undefined ? existing.notes : normalizeOptionalText(input.notes, "Artifact notes", MAX_NOTES_LENGTH);
+  const expiresAt = input.expiresAt === undefined ? existing.expiresAt : normalizeExpiresAt(input.expiresAt);
+  const replacementReason = normalizeOptionalText(input.replacementReason, "Replacement reason", MAX_NOTES_LENGTH);
+  const scanResult = await malwareScanner(options).scan({
+    fileName,
+    contentType,
+    bytes,
+  });
+
+  if (scanResult.status === "blocked") {
+    throw new ArtifactVaultValidationError("Artifact replacement blocked by malware scan.");
+  }
+
+  const storage = createObjectStorageProvider({ localRoot: artifactStorageRoot(options) });
+  const stored = await storage.putObject({
+    key: [userId, intent.id, `${artifactId}-${timestamp.replace(/[^0-9A-Za-z]/g, "")}-${fileName}`],
+    bytes,
+    contentType,
+  });
+  const versionNumber = (mysql
+    ? await maxArtifactVersionNumberFromMysql(mysql, userId, intent.id, artifactId)
+    : maxArtifactVersionNumber(database, userId, intent.id, artifactId)) + 1;
+  const versionRow = {
+    id: `artifact_version_${crypto.randomUUID()}`,
+    artifactId,
+    intentId: intent.id,
+    bidId: intent.bid.id,
+    userId,
+    versionNumber,
+    title,
+    fileName,
+    contentType,
+    byteSize: stored.byteSize,
+    storagePath: stored.storagePath,
+    storageProvider: stored.provider,
+    checksumSha256: stored.checksumSha256,
+    securityScanStatus: scanResult.status,
+    retentionPolicy: DEFAULT_RETENTION_POLICY,
+    replacementReason,
+    createdByUserId: userId,
+    createdAt: timestamp,
+  };
+  const manifestPatch = {
+    title,
+    fileName,
+    contentType,
+    byteSize: stored.byteSize,
+    storagePath: stored.storagePath,
+    checksumSha256: stored.checksumSha256,
+    expiresAt,
+    notes,
+    updatedAt: timestamp,
+  };
+
+  if (mysql) {
+    await createArtifactVersionRowFromMysql(mysql, versionRow);
+    await updateSupplierArtifactManifestRowFromMysql(mysql, userId, intent.id, artifactId, manifestPatch);
+    await writeAuditEventFromMysql(mysql, {
+      eventName: "artifact.replaced",
+      actorType: "user",
+      actorId: userId,
+      actorRole: "user",
+      targetType: "supplier_artifact",
+      targetId: artifactId,
+      outcome: "success",
+      severity: "info",
+      source: "artifact.vault",
+      occurredAt: timestamp,
+      metadata: {
+        intentId: intent.id,
+        bidId: intent.bid.id,
+        versionNumber,
+        previousChecksumSha256: existing.checksumSha256,
+        checksumSha256: stored.checksumSha256,
+        hasReplacementReason: Boolean(replacementReason),
+      },
+      idempotencyKey: `artifact:${artifactId}:replaced:${timestamp}`,
+    });
+  } else {
+    createArtifactVersionRow(database, versionRow);
+    updateSupplierArtifactManifestRow(database, userId, intent.id, artifactId, manifestPatch);
+    writeAuditEvent(database, {
+      eventName: "artifact.replaced",
+      actorType: "user",
+      actorId: userId,
+      actorRole: "user",
+      targetType: "supplier_artifact",
+      targetId: artifactId,
+      outcome: "success",
+      severity: "info",
+      source: "artifact.vault",
+      occurredAt: timestamp,
+      metadata: {
+        intentId: intent.id,
+        bidId: intent.bid.id,
+        versionNumber,
+        previousChecksumSha256: existing.checksumSha256,
+        checksumSha256: stored.checksumSha256,
+        hasReplacementReason: Boolean(replacementReason),
+      },
+      idempotencyKey: `artifact:${artifactId}:replaced:${timestamp}`,
+    });
   }
 
   return getArtifactVault(database, userId, intent.id, options);
@@ -264,4 +578,85 @@ export async function getSupplierArtifactFile(
   }
 
   return hydrateArtifact(row, new Date());
+}
+
+export async function deleteSupplierArtifact(
+  database: AppDatabase,
+  userId: string,
+  intentId: string,
+  artifactId: string,
+  options: ArtifactServiceOptions = {},
+): Promise<ArtifactVault> {
+  const intent = await getUserIntent(database, userId, intentId);
+
+  if (!intent) {
+    throw new IntentNotFoundError();
+  }
+
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const row = mysql
+    ? await findSupplierArtifactRowFromMysql(mysql, userId, intent.id, artifactId)
+    : findSupplierArtifactRow(database, userId, intent.id, artifactId);
+
+  if (!row) {
+    throw new ArtifactVaultValidationError("Artifact is not available.");
+  }
+
+  const timestamp = nowIso(options);
+
+  if (mysql) {
+    await softDeleteSupplierArtifactRowFromMysql(mysql, userId, intent.id, artifactId, timestamp);
+    await writeAuditEventFromMysql(mysql, {
+      eventName: "artifact.deleted",
+      actorType: "user",
+      actorId: userId,
+      actorRole: "user",
+      targetType: "supplier_artifact",
+      targetId: artifactId,
+      outcome: "success",
+      severity: "info",
+      source: "artifact.vault",
+      occurredAt: timestamp,
+      metadata: {
+        intentId: intent.id,
+        bidId: intent.bid.id,
+        fileName: row.fileName,
+        artifactType: row.artifactType,
+        purpose: row.purpose,
+      },
+      beforeAfter: {
+        before: { deletedAt: null },
+        after: { deletedAt: timestamp, deletedByUserId: userId },
+      },
+      idempotencyKey: `artifact:${artifactId}:deleted:${timestamp}`,
+    });
+  } else {
+    softDeleteSupplierArtifactRow(database, userId, intent.id, artifactId, timestamp);
+    writeAuditEvent(database, {
+      eventName: "artifact.deleted",
+      actorType: "user",
+      actorId: userId,
+      actorRole: "user",
+      targetType: "supplier_artifact",
+      targetId: artifactId,
+      outcome: "success",
+      severity: "info",
+      source: "artifact.vault",
+      occurredAt: timestamp,
+      metadata: {
+        intentId: intent.id,
+        bidId: intent.bid.id,
+        fileName: row.fileName,
+        artifactType: row.artifactType,
+        purpose: row.purpose,
+      },
+      beforeAfter: {
+        before: { deletedAt: null },
+        after: { deletedAt: timestamp, deletedByUserId: userId },
+      },
+      idempotencyKey: `artifact:${artifactId}:deleted:${timestamp}`,
+    });
+  }
+
+  return getArtifactVault(database, userId, intent.id, options);
 }

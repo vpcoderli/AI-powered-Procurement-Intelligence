@@ -5,11 +5,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDatabase } from "./client";
 import { runMigrations } from "./migrate";
 import {
+  artifactVersions,
   bidAttachments,
   bidFieldCorrections,
   bids,
   configRegistry,
   crawlerLocks,
+  awardOutcomes,
   dataSources,
   sourceApprovalEvents,
   deadlineReminders,
@@ -28,6 +30,7 @@ import {
   responseWorkspaceItemArtifacts,
   responseWorkspaceItems,
   responsePackageExports,
+  responsePackageExportReviewEvents,
   responsePackageSnapshots,
   searchAlertDigestRuns,
   sourcingPartners,
@@ -305,6 +308,78 @@ describe("database schema", () => {
     expect(row).toEqual({ evidence_citations_json: "[]" });
   });
 
+  it("adds draft status to legacy submission path tables", async () => {
+    directory = await mkdtemp(path.join(os.tmpdir(), "apsi-db-"));
+    const databasePath = path.join(directory, "apsi.sqlite");
+    db = createDatabase(databasePath);
+
+    db.$client.exec(`
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        email TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE bids (
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        source_bid_id TEXT,
+        dedupe_key TEXT NOT NULL,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        issuer_name TEXT NOT NULL,
+        issuer_type TEXT NOT NULL,
+        state_code TEXT NOT NULL,
+        published_date TEXT,
+        deadline_date TEXT,
+        source_url TEXT NOT NULL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        first_seen_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE intent_to_bid (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        bid_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'intent_added',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE submission_paths (
+        id TEXT PRIMARY KEY,
+        intent_id TEXT NOT NULL,
+        bid_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        method TEXT NOT NULL DEFAULT 'unknown',
+        portal_url TEXT NOT NULL DEFAULT '',
+        contact_email TEXT NOT NULL DEFAULT '',
+        requires_registration INTEGER NOT NULL DEFAULT 0,
+        requires_physical_delivery INTEGER NOT NULL DEFAULT 0,
+        requires_addenda_acknowledgement INTEGER NOT NULL DEFAULT 0,
+        complexity_score INTEGER NOT NULL DEFAULT 0,
+        guidance_text TEXT NOT NULL DEFAULT '',
+        readiness_checklist_json TEXT NOT NULL DEFAULT '[]',
+        risk_flags_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+    `);
+
+    expect(() => runMigrations(db!)).not.toThrow();
+
+    const columns = db.$client
+      .prepare("PRAGMA table_info(submission_paths)")
+      .all()
+      .map((row) => (row as { name: string }).name);
+
+    expect(columns).toContain("status");
+  });
+
   it("creates supplier profile and intent tables", async () => {
     const testDb = await createTestDatabase({ seed: false });
 
@@ -318,6 +393,7 @@ describe("database schema", () => {
       expect(tables).toContain("intent_to_bid");
       expect(tables).toContain("submission_paths");
       expect(tables).toContain("submission_confirmations");
+      expect(tables).toContain("award_outcomes");
       expect(tables).toContain("compliance_manifest_items");
       expect(tables).toContain("pursuit_decisions");
       expect(tables).toContain("response_workspace_items");
@@ -360,6 +436,47 @@ describe("database schema", () => {
         .map((row) => (row as { name: string }).name);
 
       expect(intentColumns).toContain("evidence_citations_json");
+
+      const submissionConfirmationColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(submission_confirmations)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(submissionConfirmationColumns).toContain("evidence_snapshot_json");
+
+      const awardOutcomeColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(award_outcomes)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(awardOutcomeColumns).toEqual(expect.arrayContaining([
+        "id",
+        "organization_id",
+        "intent_id",
+        "bid_id",
+        "user_id",
+        "status",
+        "award_notice_url",
+        "tabulation_artifact_id",
+        "tabulation_artifact_url",
+        "winner_name",
+        "award_amount_cents",
+        "currency",
+        "loss_reason",
+        "loss_reason_notes",
+        "next_action",
+        "next_action_due_at",
+        "notes",
+        "decided_at",
+        "created_at",
+        "updated_at",
+      ]));
+
+      expect(
+        testDb.db.$client
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
+          .get("idx_award_outcomes_intent_id"),
+      ).toEqual({ name: "idx_award_outcomes_intent_id" });
 
       const featureOverrideColumns = testDb.db.$client
         .prepare("PRAGMA table_info(organization_feature_overrides)")
@@ -492,6 +609,56 @@ describe("database schema", () => {
           updatedAt: "2026-05-19T00:00:00.000Z",
         }).run(),
       ).not.toThrow();
+
+      expect(() => {
+        testDb.db.insert(bids).values({
+          id: "award_bid_schema",
+          source: "SAM.gov",
+          sourceBidId: "award:schema",
+          dedupeKey: "award:schema",
+          title: "Award schema bid",
+          description: "Bid for award outcome schema assertions.",
+          issuerName: "General Services Administration",
+          issuerType: "federal",
+          stateCode: "US",
+          sourceUrl: "https://sam.gov/award-schema",
+          isActive: 1,
+          firstSeenAt: "2026-05-19T00:00:00.000Z",
+          lastSeenAt: "2026-05-19T00:00:00.000Z",
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        }).run();
+        testDb.db.insert(intentToBid).values({
+          id: "award_intent_schema",
+          userId: "user_1",
+          bidId: "award_bid_schema",
+          status: "intent_added",
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        }).run();
+        testDb.db.insert(awardOutcomes).values({
+          id: "award_outcome_schema",
+          organizationId: "org_1",
+          intentId: "award_intent_schema",
+          bidId: "award_bid_schema",
+          userId: "user_1",
+          status: "awaiting_award",
+          awardNoticeUrl: "",
+          tabulationArtifactId: null,
+          tabulationArtifactUrl: "",
+          winnerName: "",
+          awardAmountCents: null,
+          currency: "USD",
+          lossReason: "unknown",
+          lossReasonNotes: "",
+          nextAction: "capture_tabulation",
+          nextActionDueAt: null,
+          notes: "",
+          decidedAt: null,
+          createdAt: "2026-05-19T00:00:00.000Z",
+          updatedAt: "2026-05-19T00:00:00.000Z",
+        }).run();
+      }).not.toThrow();
 
       expect(() =>
         testDb.db.insert(userNotificationPreferences).values({
@@ -716,6 +883,11 @@ describe("database schema", () => {
           "source_owner",
           "approval_notes",
           "last_approval_reviewed_at",
+          "live_health_owner",
+          "live_health_disposition",
+          "live_health_next_review_at",
+          "live_health_notes",
+          "live_health_reviewed_at",
         ]),
       );
 
@@ -745,6 +917,11 @@ describe("database schema", () => {
           sourceOwner: "APSI Data Ops",
           approvalNotes: "Schema test approval.",
           lastApprovalReviewedAt: "2026-06-01T00:00:00.000Z",
+          liveHealthOwner: "APSI Data Ops",
+          liveHealthDisposition: "needs_manual_triage",
+          liveHealthNextReviewAt: "2026-06-08T00:00:00.000Z",
+          liveHealthNotes: "Review after next live source check.",
+          liveHealthReviewedAt: "2026-06-01T01:00:00.000Z",
           createdAt: "2026-05-19T00:00:00.000Z",
           updatedAt: "2026-05-19T00:00:00.000Z",
         }).run(),
@@ -1098,8 +1275,35 @@ describe("database schema", () => {
         .map((row) => (row as { name: string }).name);
 
       expect(tables).toContain("response_workspace_item_artifacts");
+      expect(tables).toContain("artifact_versions");
       expect(indexes).toEqual(expect.arrayContaining([
+        "idx_artifact_versions_artifact_id",
+        "idx_artifact_versions_intent_id",
+        "idx_artifact_versions_user_id",
+        "idx_artifact_versions_created_at",
+        "idx_artifact_versions_artifact_version",
         "idx_response_workspace_item_artifacts_artifact_id",
+      ]));
+      const supplierArtifactColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(supplier_artifacts)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      expect(supplierArtifactColumns).toEqual(expect.arrayContaining([
+        "deleted_at",
+        "deleted_by_user_id",
+      ]));
+      const artifactVersionColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(artifact_versions)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      expect(artifactVersionColumns).toEqual(expect.arrayContaining([
+        "artifact_id",
+        "version_number",
+        "storage_provider",
+        "security_scan_status",
+        "retention_policy",
+        "replacement_reason",
+        "created_by_user_id",
       ]));
 
       testDb.db.insert(users).values({
@@ -1148,6 +1352,26 @@ describe("database schema", () => {
       expect(() => testDb.db.insert(responseWorkspaceItemArtifacts).values({
         itemId: "response_link_item_schema",
         artifactId: "response_link_artifact_schema",
+        createdAt: "2026-06-01T00:00:00.000Z",
+      }).run()).not.toThrow();
+      expect(() => testDb.db.insert(artifactVersions).values({
+        id: "artifact_version_schema_1",
+        artifactId: "response_link_artifact_schema",
+        intentId: "response_link_intent_schema",
+        bidId: "1",
+        userId: "response_link_user_schema",
+        versionNumber: 1,
+        title: "Capability statement",
+        fileName: "capability.pdf",
+        contentType: "application/pdf",
+        byteSize: 1024,
+        storagePath: "data/artifact-vault/capability.pdf",
+        storageProvider: "local",
+        checksumSha256: "hash_response_link_artifact_schema",
+        securityScanStatus: "clean",
+        retentionPolicy: "standard_business_record",
+        replacementReason: "",
+        createdByUserId: "response_link_user_schema",
         createdAt: "2026-06-01T00:00:00.000Z",
       }).run()).not.toThrow();
     } finally {
@@ -1271,12 +1495,45 @@ describe("database schema", () => {
         .prepare("SELECT name FROM sqlite_master WHERE type = 'index'")
         .all()
         .map((row) => (row as { name: string }).name);
+      const columns = testDb.db.$client
+        .prepare("PRAGMA table_info(response_package_exports)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const reviewEventColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(response_package_export_review_events)")
+        .all()
+        .map((row) => (row as { name: string }).name);
 
       expect(tables).toContain("response_package_exports");
+      expect(tables).toContain("response_package_export_review_events");
       expect(indexes).toEqual(expect.arrayContaining([
         "idx_response_package_exports_intent_id",
         "idx_response_package_exports_snapshot_id",
         "idx_response_package_exports_user_id",
+        "idx_response_package_export_review_events_export_id",
+        "idx_response_package_export_review_events_intent_id",
+        "idx_response_package_export_review_events_user_id",
+        "idx_response_package_export_review_events_actor_user_id",
+        "idx_response_package_export_review_events_created_at",
+      ]));
+      expect(columns).toEqual(expect.arrayContaining([
+        "format",
+        "review_status",
+        "reviewed_at",
+        "reviewed_by_user_id",
+        "review_notes",
+      ]));
+      expect(reviewEventColumns).toEqual(expect.arrayContaining([
+        "export_id",
+        "snapshot_id",
+        "intent_id",
+        "bid_id",
+        "user_id",
+        "actor_user_id",
+        "from_review_status",
+        "to_review_status",
+        "review_notes",
+        "created_at",
       ]));
 
       testDb.db.insert(intentToBid).values({
@@ -1308,6 +1565,7 @@ describe("database schema", () => {
           userId: "anon_seed",
           requestedByUserId: "anon_seed",
           status: "ready",
+          format: "markdown",
           fileName: "response-package.md",
           contentType: "text/markdown; charset=utf-8",
           byteSize: 128,
@@ -1316,6 +1574,21 @@ describe("database schema", () => {
           readinessJson: "{}",
           createdAt: "2026-06-01T00:00:00.000Z",
           updatedAt: "2026-06-01T00:00:00.000Z",
+        }).run(),
+      ).not.toThrow();
+      expect(() =>
+        testDb.db.insert(responsePackageExportReviewEvents).values({
+          id: "response_package_export_review_event_schema",
+          exportId: "response_package_export_schema",
+          snapshotId: "response_export_snapshot_schema",
+          intentId: "response_export_intent_schema",
+          bidId: "1",
+          userId: "anon_seed",
+          actorUserId: "anon_seed",
+          fromReviewStatus: "pending_review",
+          toReviewStatus: "approved",
+          reviewNotes: "Approved for submission.",
+          createdAt: "2026-06-01T00:01:00.000Z",
         }).run(),
       ).not.toThrow();
     } finally {

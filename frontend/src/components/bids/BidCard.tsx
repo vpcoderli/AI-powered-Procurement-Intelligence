@@ -1,10 +1,12 @@
 "use client";
 
 import Link from "next/link";
+import type { MouseEvent } from "react";
 import { Building2, Star, Clock, Calendar } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useAuth } from "@/context/AuthContext";
 import { useSavedBids } from "@/context/SavedBidsContext";
 import type { Bid } from "@/lib/mock-data";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
@@ -12,12 +14,26 @@ import { bidDetailPath } from "@/lib/bid-routes";
 
 interface BidCardProps {
   bid: Bid;
+  onAuthPrompt?: () => void;
 }
 
-export function BidCard({ bid }: BidCardProps) {
+export function BidCard({ bid, onAuthPrompt }: BidCardProps) {
+  const { user } = useAuth();
   const { isSaved, toggleSaveBid } = useSavedBids();
   const { t } = useLanguage();
   const saved = isSaved(bid.id);
+
+  const handleToggleSave = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!user) {
+      onAuthPrompt?.();
+      return;
+    }
+
+    void toggleSaveBid(bid.id);
+  };
 
   return (
     <Card className="winbids-bid-card relative h-full border-slate-200 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-blue-200 group">
@@ -71,7 +87,7 @@ export function BidCard({ bid }: BidCardProps) {
         size="icon"
         className="absolute right-4 top-5 text-slate-400 hover:text-slate-900 hover:bg-slate-100 transition-colors"
         aria-label={saved ? t("bid.saved") : t("bid.save")}
-        onClick={() => toggleSaveBid(bid.id)}
+        onClick={handleToggleSave}
       >
         <Star size={18} className={saved ? "fill-slate-900 text-slate-900" : ""} />
       </Button>

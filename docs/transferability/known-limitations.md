@@ -4,11 +4,13 @@ This document lists transferability and production readiness gaps that a receivi
 
 ## Current Boundaries
 
-- Full AWS deployment is not implemented in this repository. The AWS service map is a target architecture and ownership guide.
+- Full AWS infrastructure is not provisioned by this repository. The AWS service map and AWS deployment runbook document the target architecture and operating steps, but an operator must still create App Runner/ECS, RDS, Secrets Manager/SSM, CloudWatch, EventBridge, and backup resources.
+- ECS/Fargate worker deployment needs a production container image or equivalent task runtime. The repository currently has no Dockerfile.
 - SQLite is the current local database path. Production can start on durable SQLite only with explicit backup/restore ownership, but managed database migration should be planned before scale.
 - Observability is basic: logs, provider dashboards, database state, and manual checks. Centralized metrics, tracing, alert routing, and uptime checks are future production requirements.
 - Notification delivery supports file, console, and generic HTTP provider paths. A provider-specific email adapter and bounce/complaint webhook handling are not complete.
 - Billing production readiness depends on live Stripe configuration, production webhook setup, secret rotation drills, and a low-risk live smoke test.
+- Artifact Vault and response package exports still use local file storage helpers; production S3/object-storage adapter and malware scanning are future production requirements.
 - Source ingestion governance is still being hardened. Login-required, paid, restricted, browser-check, or terms-uncertain sources must remain blocked or needs-review until approval exists.
 - AI-backed extraction, confidence handling, prompt/version logging, and production LLM cost controls are not complete.
 - Universal UX state coverage is not yet complete across every route.

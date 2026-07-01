@@ -31,10 +31,17 @@ import type {
   UpdateAdminUserFeatureOverrideInput,
 } from "@/server/admin/users-repository";
 import type { NotificationOutboxRow, NotificationStatus } from "@/server/notifications/types";
+import type { MarketingFunnelSummary } from "@/server/marketing/funnel";
 import type { SubscriptionLifecycleReconcileResult } from "@/server/billing/subscriptions";
 import type { ScheduleDunningRemindersResult } from "@/server/billing/dunning";
 import type { RiskChecklistReport } from "@/server/risk/checklist";
 import type { RiskChecklistSnapshot, RiskChecklistTrend } from "@/server/risk/snapshots";
+import type {
+  StateDataQualityReasonCode,
+  StateDataQualityReport,
+  StateDataQualityRiskLevel,
+  StateDataQualityRow,
+} from "@/server/source-validity/state-data-quality";
 import type {
   ConfigModule,
   ConfigRegistryEntry,
@@ -67,6 +74,10 @@ export type {
   CreateAdminUserInviteResponse,
   ListAdminUserAuditLogsOptions,
   ListAdminUsersFilters,
+  StateDataQualityReasonCode,
+  StateDataQualityReport,
+  StateDataQualityRiskLevel,
+  StateDataQualityRow,
   UpdateAdminUserInput,
   UpdateAdminUserFeatureOverrideInput,
 };
@@ -116,6 +127,7 @@ export interface AdminRiskChecklistResponse {
   report: RiskChecklistReport;
   history: RiskChecklistSnapshot[];
   trend: RiskChecklistTrend;
+  stateDataQuality?: StateDataQualityReport | null;
 }
 
 export interface UpdateAdminBidQaReviewResponse {
@@ -161,6 +173,10 @@ export interface UpdateAdminUserResponse {
 
 export interface AdminNotificationsResponse {
   notifications: NotificationOutboxRow[];
+}
+
+export interface AdminMarketingFunnelResponse {
+  summary: MarketingFunnelSummary;
 }
 
 export interface AdminNotificationDeliveryResponse {
@@ -265,6 +281,12 @@ export async function getAdminRiskChecklist() {
   const response = await fetch("/api/admin/risk-check");
 
   return parseResponse<AdminRiskChecklistResponse>(response);
+}
+
+export async function getAdminMarketingFunnel() {
+  const response = await fetch("/api/admin/marketing/funnel");
+
+  return parseResponse<AdminMarketingFunnelResponse>(response);
 }
 
 function buildQueryString(params: Record<string, string | number | undefined>) {

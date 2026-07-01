@@ -14,7 +14,11 @@ export function canUseFeature(user: PublicUser | null, feature: FeatureKey) {
 export function lockedFeatureMessage(feature: FeatureKey) {
   const requiredTier = minimumTierLabelForFeature(feature);
 
-  return `${requiredTier} plan is required for this feature.`;
+  if (requiredTier === "Admin") {
+    return "Admin role is required for this feature.";
+  }
+
+  return `Upgrade to ${requiredTier} to unlock this feature.`;
 }
 
 export function useFeature(feature: FeatureKey) {

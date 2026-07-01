@@ -260,18 +260,40 @@ describe("event log", () => {
         created_at: "2026-06-01T00:01:00.000Z",
         delivered_at: null,
       }],
+      ["event_outbox_3", {
+        id: "event_outbox_3",
+        event_log_id: "event_3",
+        destination: "crm.marketing_leads",
+        status: "pending",
+        attempt_count: 0,
+        last_error: null,
+        created_at: "2026-06-01T00:01:30.000Z",
+        delivered_at: null,
+      }],
     ]);
     const mysql = {
       query: async (sql: string, values: unknown[] = []) => {
         if (sql.includes("COUNT(*)")) {
-          return [[{ candidateCount: outboxRows.size }], undefined];
+          const destinationFilter = sql.includes("destination IN");
+          const destinations = destinationFilter ? values.map(String) : [];
+          return [[{
+            candidateCount: [...outboxRows.values()].filter((row) =>
+              !destinationFilter || destinations.includes(String(row.destination))
+            ).length,
+          }], undefined];
         }
 
         if (sql.includes("FROM event_outbox")) {
-          const maxAttempts = Number(values[0]);
-          const limit = Number(values[1]);
+          const destinationFilter = sql.includes("destination IN");
+          const destinationCount = destinationFilter ? 1 : 0;
+          const destinations = destinationFilter ? values.slice(0, destinationCount).map(String) : [];
+          const maxAttempts = Number(values[destinationCount]);
+          const limit = Number(values[destinationCount + 1]);
           return [[...outboxRows.values()]
-            .filter((row) => Number(row.attempt_count) < maxAttempts)
+            .filter((row) =>
+              (!destinationFilter || destinations.includes(String(row.destination))) &&
+              Number(row.attempt_count) < maxAttempts
+            )
             .slice(0, limit), undefined];
         }
 
@@ -292,8 +314,8 @@ describe("event log", () => {
 
     const result = await deliverPendingEventOutboxRowsFromMysql(
       mysql,
-      async () => ({ ok: true }),
-      { now: "2026-06-01T00:02:00.000Z", maxAttempts: 3 },
+      async (row) => row.destination === "ops" ? { ok: true } : { ok: false, error: "unexpected destination" },
+      { now: "2026-06-01T00:02:00.000Z", maxAttempts: 3, destinations: ["ops"] },
     );
 
     expect(result).toEqual({ attempted: 1, delivered: 1, failed: 0, skipped: 1 });
@@ -304,6 +326,10 @@ describe("event log", () => {
     expect(outboxRows.get("event_outbox_2")).toEqual(expect.objectContaining({
       status: "failed",
       attempt_count: 3,
+    }));
+    expect(outboxRows.get("event_outbox_3")).toEqual(expect.objectContaining({
+      status: "pending",
+      destination: "crm.marketing_leads",
     }));
   });
 });

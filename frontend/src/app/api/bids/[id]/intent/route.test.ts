@@ -73,7 +73,29 @@ describe("POST /api/bids/[id]/intent", () => {
     });
   });
 
-  it("creates an intent for the current principal", async () => {
+  it("requires authentication before creating a personal intent workspace", async () => {
+    const response = await POST(new Request("http://localhost/api/bids/bid_1/intent"), {
+      params: Promise.resolve({ id: "bid_1" }),
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(body).toEqual({
+      error: { code: "AUTH_REQUIRED", message: "Authentication is required" },
+    });
+    expect(enforceUsageLimit).not.toHaveBeenCalled();
+    expect(createIntentForBid).not.toHaveBeenCalled();
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("creates an intent for the current authenticated principal", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "authenticated",
+      userId: "user_1",
+      role: "user",
+      tier: "free",
+      features: [],
+    });
     createIntentForBid.mockResolvedValueOnce(intent);
 
     const response = await POST(new Request("http://localhost/api/bids/bid_1/intent"), {
@@ -84,18 +106,23 @@ describe("POST /api/bids/[id]/intent", () => {
     expect(response.status).toBe(200);
     expect(body).toEqual({ intent });
     expect(enforceUsageLimit).toHaveBeenCalledWith(expect.anything(), {
-      userId: "anon_intent",
+      userId: "user_1",
       tier: "free",
       feature: "intent_workspace",
       resourceId: "bid_1",
     });
-    expect(createIntentForBid).toHaveBeenCalledWith(expect.anything(), "anon_intent", "bid_1");
-    expect(response.headers.get("set-cookie")).toContain(
-      `${ANONYMOUS_USER_COOKIE_NAME}=anon_intent`,
-    );
+    expect(createIntentForBid).toHaveBeenCalledWith(expect.anything(), "user_1", "bid_1");
+    expect(response.headers.get("set-cookie")).toBeNull();
   });
 
   it("returns USAGE_LIMIT_REACHED when the current plan cannot create more intents", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "authenticated",
+      userId: "user_1",
+      role: "user",
+      tier: "free",
+      features: [],
+    });
     enforceUsageLimit.mockImplementationOnce(() => {
       throw new usageLimits.UsageLimitError({
         feature: "intent_workspace",
@@ -122,6 +149,13 @@ describe("POST /api/bids/[id]/intent", () => {
   });
 
   it("returns BID_NOT_FOUND when the bid is missing", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "authenticated",
+      userId: "user_1",
+      role: "user",
+      tier: "free",
+      features: [],
+    });
     createIntentForBid.mockRejectedValueOnce(new IntentBidNotFoundError());
 
     const response = await POST(new Request("http://localhost/api/bids/missing/intent"), {
@@ -134,6 +168,13 @@ describe("POST /api/bids/[id]/intent", () => {
   });
 
   it("returns INTERNAL_ERROR for unexpected failures", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "authenticated",
+      userId: "user_1",
+      role: "user",
+      tier: "free",
+      features: [],
+    });
     createIntentForBid.mockRejectedValueOnce(new Error("private detail"));
 
     const response = await POST(new Request("http://localhost/api/bids/bid_1/intent"), {

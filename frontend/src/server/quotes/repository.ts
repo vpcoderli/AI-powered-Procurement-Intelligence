@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { mysqlExecute, mysqlSelectMany, mysqlSelectOne } from "@/server/db/mysql-runtime";
 import { quoteRequestArtifacts, quoteRequests, sourcingPartners, supplierArtifacts } from "@/server/db/schema";
@@ -27,6 +27,8 @@ interface MysqlSourcingPartnerRow {
   capabilityTagsJson: string;
   status: string;
   notes: string;
+  deletedAt: string | null;
+  deletedByUserId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -67,6 +69,8 @@ interface MysqlQuoteArtifactRow {
   expiresAt: string | null;
   reviewStatus: string;
   notes: string;
+  deletedAt: string | null;
+  deletedByUserId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -478,7 +482,10 @@ export function listQuoteArtifactsForRequests(db: AppDatabase, requestIds: strin
     })
     .from(quoteRequestArtifacts)
     .innerJoin(supplierArtifacts, eq(quoteRequestArtifacts.artifactId, supplierArtifacts.id))
-    .where(inArray(quoteRequestArtifacts.quoteRequestId, requestIds))
+    .where(and(
+      inArray(quoteRequestArtifacts.quoteRequestId, requestIds),
+      isNull(supplierArtifacts.deletedAt),
+    ))
     .all();
 }
 
@@ -508,11 +515,14 @@ export async function listQuoteArtifactsForRequestsFromMysql(
         supplier_artifacts.expires_at AS expiresAt,
         supplier_artifacts.review_status AS reviewStatus,
         supplier_artifacts.notes,
+        supplier_artifacts.deleted_at AS deletedAt,
+        supplier_artifacts.deleted_by_user_id AS deletedByUserId,
         supplier_artifacts.created_at AS createdAt,
         supplier_artifacts.updated_at AS updatedAt
       FROM quote_request_artifacts
       INNER JOIN supplier_artifacts ON supplier_artifacts.id = quote_request_artifacts.artifact_id
       WHERE quote_request_artifacts.quote_request_id IN (${placeholders})
+        AND supplier_artifacts.deleted_at IS NULL
     `,
     requestIds,
   );
@@ -538,6 +548,7 @@ export function listArtifactRowsByIds(
       eq(supplierArtifacts.userId, userId),
       eq(supplierArtifacts.intentId, intentId),
       inArray(supplierArtifacts.id, artifactIds),
+      isNull(supplierArtifacts.deletedAt),
     ))
     .all();
 }
@@ -569,10 +580,12 @@ export async function listArtifactRowsByIdsFromMysql(
         expires_at AS expiresAt,
         review_status AS reviewStatus,
         notes,
+        deleted_at AS deletedAt,
+        deleted_by_user_id AS deletedByUserId,
         created_at AS createdAt,
         updated_at AS updatedAt
       FROM supplier_artifacts
-      WHERE user_id = ? AND intent_id = ? AND id IN (${placeholders})
+      WHERE user_id = ? AND intent_id = ? AND id IN (${placeholders}) AND deleted_at IS NULL
     `,
     [userId, intentId, ...artifactIds],
   );

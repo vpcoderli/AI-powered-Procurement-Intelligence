@@ -1,7 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Search, Filter, Gauge, ClipboardCheck, CircleAlert, FileCheck2 } from "lucide-react";
+import {
+  Search,
+  Filter,
+  Gauge,
+  ClipboardCheck,
+  CircleAlert,
+  FileCheck2,
+  Loader2,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -41,6 +49,7 @@ export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const [retryTick, setRetryTick] = useState(0);
+  const [authPromptVisible, setAuthPromptVisible] = useState(false);
 
   const toggleStateFilter = (stateId: string) => {
     setSelectedStates((prev) =>
@@ -60,6 +69,53 @@ export default function Dashboard() {
   const retryFetch = () => {
     setRetryTick((tick) => tick + 1);
   };
+
+  const formatMessage = (key: string, values: Record<string, string>) =>
+    Object.entries(values).reduce(
+      (message, [name, value]) => message.replace(`{${name}}`, value),
+      t(key),
+    );
+  const selectedStateLabels = STATE_FILTERS.filter((state) => selectedStates.includes(state.id)).map((state) => state.label);
+  const deadlineLabelKey = DEADLINE_PRESETS.find((option) => option.value === deadlinePreset)?.labelKey;
+  const publishedLabelKey = PUBLISHED_PRESETS.find((option) => option.value === publishedPreset)?.labelKey;
+  const sortLabelKey = sortBy === "deadline"
+    ? "dashboard.soonestDeadline"
+    : sortBy === "newest"
+      ? "dashboard.newest"
+      : "dashboard.relevance";
+  const activeFilterLabels = [
+    searchQuery.trim() ? formatMessage("dashboard.filterKeyword", { value: searchQuery.trim() }) : null,
+    ...selectedStateLabels.map((label) => formatMessage("dashboard.filterRegion", { value: label })),
+    issuerType !== "all"
+      ? formatMessage("dashboard.filterIssuer", {
+        value: issuerType === "federal" ? t("dashboard.federal") : t("dashboard.state"),
+      })
+      : null,
+    deadlinePreset !== "any" && deadlineLabelKey
+      ? formatMessage("dashboard.filterDeadline", { value: t(deadlineLabelKey) })
+      : null,
+    publishedPreset !== "any" && publishedLabelKey
+      ? formatMessage("dashboard.filterPublished", { value: t(publishedLabelKey) })
+      : null,
+  ].filter((label): label is string => Boolean(label));
+  const filterStatusLabel = activeFilterLabels.length > 0 ? t("dashboard.filtersActive") : t("dashboard.noFiltersActive");
+  const resultStatusTitle = isLoading
+    ? t("dashboard.updatingBidQueue")
+    : hasError
+      ? t("dashboard.searchRefreshFailed")
+      : bids.length === 0
+        ? t("dashboard.noMatchingBids")
+        : formatMessage(total === 1 ? "dashboard.activeBid" : "dashboard.activeBids", { count: String(total) });
+  const resultStatusDescription = isLoading
+    ? t("dashboard.updatingBidQueueDescription")
+    : hasError
+      ? t("dashboard.searchRefreshFailedDescription")
+      : bids.length === 0
+        ? t("dashboard.noMatchingBidsDescription")
+        : formatMessage("dashboard.searchReadyDescription", {
+          filters: filterStatusLabel,
+          sort: t(sortLabelKey),
+        });
 
   useEffect(() => {
     let cancelled = false;
@@ -108,15 +164,15 @@ export default function Dashboard() {
           <p className="winbids-kicker">American Public Supply Intelligence LLC</p>
           <h1 className="winbids-title">{t("dashboard.title")}</h1>
           <p className="winbids-lead mt-4">{t("dashboard.description")}</p>
-          <div className="relative group mt-6">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-700 transition-colors" size={20} />
+          <div className="relative group mt-6 flex flex-col gap-2 sm:block">
+            <Search className="absolute left-4 top-7 -translate-y-1/2 text-blue-700 transition-colors sm:top-1/2" size={20} />
             <Input
               placeholder={t("dashboard.searchPlaceholder")}
-              className="pl-12 pr-32 h-14 text-base shadow-sm border-slate-200 focus-visible:ring-1 focus-visible:ring-blue-700 rounded-lg"
+              className="h-14 rounded-lg border-slate-200 pl-12 pr-4 text-base shadow-sm focus-visible:ring-1 focus-visible:ring-blue-700 sm:pr-32"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
-            <Button className="winbids-primary-action absolute right-2 top-1/2 -translate-y-1/2 h-10 border-0 px-6 hover:bg-blue-800">
+            <Button className="winbids-primary-action h-10 border-0 px-6 hover:bg-blue-800 sm:absolute sm:right-2 sm:top-1/2 sm:-translate-y-1/2">
               {t("dashboard.searchButton")}
             </Button>
           </div>
@@ -124,10 +180,10 @@ export default function Dashboard() {
 
         <div className="grid gap-3 sm:grid-cols-2" aria-label="Discovery metrics">
           {[
-            { label: "High-fit bids", value: String(total), icon: Gauge },
-            { label: "Active pursuits", value: "Intent", icon: ClipboardCheck },
-            { label: "Submission risks", value: "Lite", icon: CircleAlert },
-            { label: "Ready artifacts", value: "API", icon: FileCheck2 },
+            { label: t("dashboard.highFitBids"), value: String(total), icon: Gauge },
+            { label: t("dashboard.activePursuits"), value: "Intent", icon: ClipboardCheck },
+            { label: t("dashboard.submissionRisks"), value: "Lite", icon: CircleAlert },
+            { label: t("dashboard.readyArtifacts"), value: "API", icon: FileCheck2 },
           ].map((metric) => {
             const Icon = metric.icon;
             return (
@@ -144,7 +200,7 @@ export default function Dashboard() {
       <section className="winbids-content-grid">
       <aside className="winbids-filter-panel flex flex-col gap-6 overflow-visible lg:overflow-y-auto pb-2">
         <div>
-          <p className="winbids-kicker mb-2">Discovery controls</p>
+          <p className="winbids-kicker mb-2">{t("dashboard.discoveryControls")}</p>
           <h3 className="font-black text-sm text-slate-950 flex items-center gap-2 mb-3">
             <Filter size={16} />
             {t("dashboard.filters")}
@@ -245,10 +301,10 @@ export default function Dashboard() {
       <main className="winbids-main-column flex flex-col gap-5">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
-            <p className="winbids-kicker">Discovery-first queue</p>
-            <h2 className="winbids-section-title mt-1">New high-fit bids</h2>
+            <p className="winbids-kicker">{t("dashboard.discoveryFirstQueue")}</p>
+            <h2 className="winbids-section-title mt-1">{t("dashboard.newHighFitBids")}</h2>
             <div className="mt-2 text-sm text-slate-600 font-medium">
-            {t("dashboard.resultsCount").replace("{count}", String(total))}
+              {t("dashboard.resultsCount").replace("{count}", String(total))}
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -265,6 +321,59 @@ export default function Dashboard() {
             </Select>
           </div>
         </div>
+
+        <section
+          aria-live="polite"
+          className={`rounded-lg border p-4 shadow-sm ${
+            hasError ? "border-rose-200 bg-rose-50/70" : isLoading ? "border-blue-100 bg-blue-50/60" : "border-slate-200 bg-white"
+          }`}
+          role={hasError ? "alert" : "status"}
+        >
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                {isLoading ? <Loader2 className="h-4 w-4 animate-spin text-blue-700" /> : null}
+                <p className="text-xs font-black uppercase text-slate-500">{t("dashboard.searchStatus")}</p>
+              </div>
+              <h3 className="mt-1 text-base font-semibold text-slate-950">{resultStatusTitle}</h3>
+              <p className="mt-1 text-sm leading-6 text-slate-600">{resultStatusDescription}</p>
+            </div>
+            <div className="flex min-w-0 flex-wrap gap-2 lg:max-w-[52%] lg:justify-end">
+              <span className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
+                {filterStatusLabel}
+              </span>
+              {activeFilterLabels.length > 0 ? (
+                activeFilterLabels.map((label) => (
+                  <span
+                    className="max-w-full rounded-md border border-blue-100 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 break-words"
+                    key={label}
+                  >
+                    {label}
+                  </span>
+                ))
+              ) : (
+                <span className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-500">
+                  {t("dashboard.publicDiscoveryQueue")}
+                </span>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {authPromptVisible && (
+          <UniversalState
+            actions={[
+              { href: "/login", label: t("common.login") },
+              { href: "/register", label: t("common.register"), variant: "secondary" },
+              { label: t("common.dismiss"), onClick: () => setAuthPromptVisible(false), variant: "secondary" },
+            ]}
+            className="border-blue-100 bg-blue-50/60"
+            code="permission_denied"
+            message={t("dashboard.saveBidAuthDescription")}
+            severity="info"
+            title={t("dashboard.signInToSaveBid")}
+          />
+        )}
 
         <div className="flex flex-col gap-4 pb-8">
           {isLoading &&
@@ -303,7 +412,7 @@ export default function Dashboard() {
           )}
 
           {!isLoading && !hasError && bids.map((bid) => (
-            <BidCard key={bid.id} bid={bid} />
+            <BidCard key={bid.id} bid={bid} onAuthPrompt={() => setAuthPromptVisible(true)} />
           ))}
 
           {!isLoading && !hasError && bids.length === 0 && (

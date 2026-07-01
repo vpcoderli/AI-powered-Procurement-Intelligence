@@ -35,6 +35,7 @@ export interface FetchKnowledgeItemsParams {
   q?: string;
   type?: string;
   limit?: number;
+  includeRetrievalTrace?: boolean;
 }
 
 export interface CreateKnowledgeItemApiInput {
@@ -99,6 +100,7 @@ function buildKnowledgeUrl(params: FetchKnowledgeItemsParams = {}) {
   if (params.q) searchParams.set("q", params.q);
   if (params.type) searchParams.set("type", params.type);
   if (typeof params.limit === "number") searchParams.set("limit", String(params.limit));
+  if (params.includeRetrievalTrace) searchParams.set("includeRetrievalTrace", "1");
 
   const query = searchParams.toString();
 

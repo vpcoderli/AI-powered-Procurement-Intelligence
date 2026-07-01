@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
+import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { db } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { recordMarketingFunnelEvent, recordMarketingFunnelEventFromMysql } from "@/server/marketing/funnel";
 import { getSupplierProfile, upsertSupplierProfile } from "@/server/profile/service";
 import type { SupplierProfileInput } from "@/server/profile/types";
 
@@ -79,6 +82,10 @@ function parseSupplierProfileInput(body: unknown): SupplierProfileInput | null {
 export async function GET(request: Request) {
   const principal = await resolvePrincipal(db, request);
 
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
+
   try {
     const profile = await getSupplierProfile(db, principal.userId);
 
@@ -89,6 +96,12 @@ export async function GET(request: Request) {
 }
 
 export async function PUT(request: Request) {
+  const principal = await resolvePrincipal(db, request);
+
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
+
   const body = await request.json().catch(() => null);
   const input = parseSupplierProfileInput(body);
 
@@ -96,10 +109,33 @@ export async function PUT(request: Request) {
     return invalidRequest();
   }
 
-  const principal = await resolvePrincipal(db, request);
-
   try {
     const profile = await upsertSupplierProfile(db, principal.userId, input);
+    const startProfileEvent = {
+      eventName: "marketing.start_supplier_profile" as const,
+      actorId: principal.userId,
+      targetId: principal.userId,
+      metadata: { completionScore: profile.completionScore },
+    };
+    const completeProfileEvent = {
+      eventName: "marketing.complete_supplier_profile" as const,
+      actorId: principal.userId,
+      targetId: principal.userId,
+      metadata: { completionScore: profile.completionScore },
+    };
+
+    if (isMysqlDatabaseUrlConfigured()) {
+      const mysql = resolveMysqlPool();
+      await recordMarketingFunnelEventFromMysql(mysql, startProfileEvent);
+      if (profile.completionScore >= 50) {
+        await recordMarketingFunnelEventFromMysql(mysql, completeProfileEvent);
+      }
+    } else {
+      recordMarketingFunnelEvent(db, startProfileEvent);
+      if (profile.completionScore >= 50) {
+        recordMarketingFunnelEvent(db, completeProfileEvent);
+      }
+    }
 
     return jsonWithPrincipalCookie({ profile }, principal);
   } catch {

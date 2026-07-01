@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ArtifactVaultPanel } from "@/components/intents/ArtifactVaultPanel";
 import type { ArtifactDraft } from "@/components/intents/ArtifactVaultPanel";
 import { DeadlineNotificationsPanel } from "@/components/intents/DeadlineNotificationsPanel";
+import { AwardWinLossPanel } from "@/components/intents/AwardWinLossPanel";
 import { QuoteWorkspacePanel } from "@/components/intents/QuoteWorkspacePanel";
 import type { QuoteDraft } from "@/components/intents/QuoteWorkspacePanel";
 import { ResponseWorkspacePanel } from "@/components/intents/ResponseWorkspacePanel";
@@ -22,6 +23,8 @@ import {
   createResponsePackageExport,
   createResponsePackageSnapshot,
   createResponseWorkspaceComment,
+  deleteSupplierArtifact,
+  fetchAwardOutcome,
   fetchArtifactVault,
   fetchComplianceManifest,
   fetchDeadlineWorkspace,
@@ -37,13 +40,16 @@ import {
   createQuoteRequestDraft,
   postQualificationQuestion,
   refreshQualificationEvidence,
+  replaceSupplierArtifact,
   updateComplianceManifestItem,
   updateIntentStatus,
   updateDeadlineReminder,
   updatePursuitDecision,
   updateQuoteRequestDraft,
+  updateAwardOutcome,
   updateResponseWorkspaceItemArtifactLinks,
   updateResponseWorkspaceItem,
+  updateResponsePackageExportReview,
   updateSubmissionGuidance,
   uploadSupplierArtifact,
 } from "@/lib/api/intents";
@@ -55,7 +61,7 @@ import { generateWorkflowCoachCards } from "@/lib/knowledge/coach";
 import { safeKnowledgeSourceUrl } from "@/lib/knowledge/source-url";
 import type { IntentDetail, IntentStatus } from "@/server/intents/types";
 import { INTENT_STATUSES } from "@/server/intents/types";
-import type { KnowledgeItem, WorkflowCoachCard } from "@/server/knowledge/types";
+import type { KnowledgeItem, KnowledgeRetrievalTrace, WorkflowCoachCard } from "@/server/knowledge/types";
 import type {
   QualificationCitation,
   QualificationFreshnessResponse,
@@ -81,6 +87,8 @@ import type {
   ResponseWorkspace,
   ResponseWorkspaceComment,
   ResponseWorkspaceItem,
+  ResponsePackageExportFormat,
+  ResponsePackageExportReviewStatus,
   ResponsePackageWorkspace,
 } from "@/server/response-workspace/types";
 import type { ArtifactVault } from "@/server/artifacts/types";
@@ -94,7 +102,12 @@ import type {
   DeadlineWorkspace,
 } from "@/server/deadlines/types";
 import type {
+  AwardOutcome,
+  UpdateAwardOutcomeInput,
+} from "@/server/awards/types";
+import type {
   SubmissionConfirmation,
+  SubmissionEvidenceLinks,
   SubmissionGuidance,
   SubmissionMethod,
 } from "@/server/submission/types";
@@ -133,8 +146,16 @@ function safeEvidenceUrl(value: string) {
   return safeKnowledgeSourceUrl(value);
 }
 
+function safeSubmissionEvidenceUrl(value: string) {
+  return value.startsWith("/") ? value : safeEvidenceUrl(value);
+}
+
 function evidenceRefUrl(ref: Pick<PursuitEvidenceRef, "url">) {
   return ref.url ? safeEvidenceUrl(ref.url) : "";
+}
+
+function artifactDownloadUrl(intentId: string, artifactId: string) {
+  return `/api/intents/${encodeURIComponent(intentId)}/artifacts/${encodeURIComponent(artifactId)}`;
 }
 
 function formatEvidenceDate(value: string | null) {
@@ -142,6 +163,58 @@ function formatEvidenceDate(value: string | null) {
 
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function formatCentsAmount(value: number | null, currency: string | null | undefined) {
+  if (value === null) return "Not available";
+
+  return `${currency || "USD"} ${(value / 100).toFixed(2)}`;
+}
+
+const emptySubmissionEvidenceLinks: SubmissionEvidenceLinks = {
+  responsePackageExports: [],
+  linkedSupplierArtifacts: [],
+  awardOutcome: null,
+};
+
+type SubmissionEvidenceExport = SubmissionEvidenceLinks["responsePackageExports"][number] & {
+  createdAt?: string;
+  downloadedAt?: string | null;
+  fileName?: string;
+  sizeLabel?: string;
+};
+
+type SubmissionEvidenceArtifact = SubmissionEvidenceLinks["linkedSupplierArtifacts"][number] & {
+  category?: string;
+  downloadUrl?: string;
+  fileName?: string;
+  sizeLabel?: string;
+  type?: string;
+};
+
+function hasSubmissionEvidenceLinks(evidenceLinks: SubmissionEvidenceLinks) {
+  return (
+    evidenceLinks.responsePackageExports.length > 0 ||
+    evidenceLinks.linkedSupplierArtifacts.length > 0 ||
+    Boolean(evidenceLinks.awardOutcome)
+  );
+}
+
+function submissionEvidenceAutoLinkSummary(evidenceLinks: SubmissionEvidenceLinks) {
+  const packageCount = evidenceLinks.responsePackageExports.length;
+  const artifactCount = evidenceLinks.linkedSupplierArtifacts.length;
+  const awardCount = evidenceLinks.awardOutcome ? 1 : 0;
+  const totalLinks = packageCount + artifactCount + awardCount;
+
+  if (totalLinks === 0) {
+    return "No artifact/submission evidence auto-links yet.";
+  }
+
+  return `${totalLinks} artifact/submission evidence auto-links: ${packageCount} package exports, ${artifactCount} supplier artifacts, ${awardCount} award notices.`;
+}
+
+function submissionPackageVersionLabel(t: (key: string) => string, versionNumber: number) {
+  return t("intentsPage.submissionEvidencePackageVersion").replace("{version}", String(versionNumber));
 }
 
 function freshnessTone(status: QualificationFreshnessResponse["status"] | undefined) {
@@ -299,6 +372,19 @@ function parseKnowledgeTags(value: string) {
     .filter(Boolean);
 }
 
+function knowledgeRetrievalTraceQuery(intent: IntentDetail) {
+  return [
+    intent.bid.title,
+    intent.bid.description,
+    intent.generated.aiBidBrief,
+    intent.match.explanation,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .trim()
+    .slice(0, 500);
+}
+
 const pursuitLanes = [
   { key: "intent", count: "1", items: ["match", "brief"] },
   { key: "review", count: "3", items: ["risk", "questions"] },
@@ -321,7 +407,9 @@ export default function IntentWorkspacePage() {
   const [isSaved, setIsSaved] = useState(false);
   const [submissionGuidance, setSubmissionGuidance] = useState<SubmissionGuidance | null>(null);
   const [submissionDraft, setSubmissionDraft] = useState<SubmissionDraft>(defaultSubmissionDraft);
+  const [submissionConfirmations, setSubmissionConfirmations] = useState<SubmissionConfirmation[]>([]);
   const [submissionConfirmation, setSubmissionConfirmation] = useState<SubmissionConfirmation | null>(null);
+  const [submissionEvidenceLinks, setSubmissionEvidenceLinks] = useState<SubmissionEvidenceLinks>(emptySubmissionEvidenceLinks);
   const [confirmationDraft, setConfirmationDraft] = useState<ConfirmationDraft>({
     submittedAt: currentDatetimeLocal(),
     method: "unknown",
@@ -355,10 +443,13 @@ export default function IntentWorkspacePage() {
   const [responsePackageWorkspace, setResponsePackageWorkspace] = useState<ResponsePackageWorkspace | null>(null);
   const [isResponsePackageSaving, setIsResponsePackageSaving] = useState(false);
   const [responsePackageExportingSnapshotId, setResponsePackageExportingSnapshotId] = useState<string | null>(null);
+  const [responsePackageReviewingExportId, setResponsePackageReviewingExportId] = useState<string | null>(null);
   const [artifactVault, setArtifactVault] = useState<ArtifactVault | null>(null);
   const [artifactDraft, setArtifactDraft] = useState<ArtifactDraft>(defaultArtifactDraft);
   const [isArtifactVaultLoading, setIsArtifactVaultLoading] = useState(false);
   const [isArtifactUploading, setIsArtifactUploading] = useState(false);
+  const [deletingArtifactId, setDeletingArtifactId] = useState<string | null>(null);
+  const [replacingArtifactId, setReplacingArtifactId] = useState<string | null>(null);
   const [artifactVaultError, setArtifactVaultError] = useState<Error | null>(null);
   const [artifactVaultNotice, setArtifactVaultNotice] = useState("");
   const [quoteWorkspace, setQuoteWorkspace] = useState<QuoteWorkspace | null>(null);
@@ -373,6 +464,11 @@ export default function IntentWorkspacePage() {
   const [deadlineSavingReminderId, setDeadlineSavingReminderId] = useState<string | null>(null);
   const [deadlineError, setDeadlineError] = useState<Error | null>(null);
   const [deadlineNotice, setDeadlineNotice] = useState("");
+  const [awardOutcome, setAwardOutcome] = useState<AwardOutcome | null>(null);
+  const [isAwardOutcomeLoading, setIsAwardOutcomeLoading] = useState(false);
+  const [isAwardOutcomeSaving, setIsAwardOutcomeSaving] = useState(false);
+  const [awardOutcomeError, setAwardOutcomeError] = useState<Error | null>(null);
+  const [awardOutcomeNotice, setAwardOutcomeNotice] = useState("");
   const [qualificationCitations, setQualificationCitations] = useState<QualificationCitation[]>([]);
   const [qualificationFreshness, setQualificationFreshness] = useState<QualificationFreshnessResponse | null>(null);
   const [isCitationsLoading, setIsCitationsLoading] = useState(false);
@@ -384,6 +480,7 @@ export default function IntentWorkspacePage() {
   const [isQaLoading, setIsQaLoading] = useState(false);
   const [qaError, setQaError] = useState<Error | null>(null);
   const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>([]);
+  const [knowledgeRetrievalTrace, setKnowledgeRetrievalTrace] = useState<KnowledgeRetrievalTrace | null>(null);
   const [knowledgeNotice, setKnowledgeNotice] = useState("");
   const [knowledgeError, setKnowledgeError] = useState<Error | null>(null);
   const [knowledgeDraft, setKnowledgeDraft] = useState<KnowledgeDraft>(defaultKnowledgeDraft);
@@ -397,6 +494,7 @@ export default function IntentWorkspacePage() {
   const artifactVaultFeature = useFeature("artifact.vault.upload");
   const quoteWorkflowFeature = useFeature("quote_workflow");
   const deadlineNotificationsFeature = useFeature("deadline_notifications");
+  const awardOutcomeFeature = useFeature("award.tabulation.analyze");
   const qualificationQaFeature = useFeature("bid.brief.full.generate");
   const knowledgeStationFeature = useFeature("knowledge_station");
 
@@ -510,7 +608,9 @@ export default function IntentWorkspacePage() {
 
       setSubmissionGuidance(null);
       setSubmissionDraft(defaultSubmissionDraft);
+      setSubmissionConfirmations([]);
       setSubmissionConfirmation(null);
+      setSubmissionEvidenceLinks(emptySubmissionEvidenceLinks);
       setSubmissionNotice("");
       setSubmissionError(null);
 
@@ -526,6 +626,9 @@ export default function IntentWorkspacePage() {
           if (cancelled || !mountedRef.current) return;
 
           setSubmissionGuidance(response.submission);
+          setSubmissionConfirmations(response.confirmations);
+          setSubmissionConfirmation(response.confirmations[response.confirmations.length - 1] ?? null);
+          setSubmissionEvidenceLinks(response.evidenceLinks);
           setSubmissionDraft(toSubmissionDraft(response.submission));
           setConfirmationDraft({
             submittedAt: currentDatetimeLocal(),
@@ -801,7 +904,45 @@ export default function IntentWorkspacePage() {
     queueMicrotask(() => {
       if (cancelled || !mountedRef.current) return;
 
+      setAwardOutcome(null);
+      setAwardOutcomeNotice("");
+      setAwardOutcomeError(null);
+
+      if (!intentId || !awardOutcomeFeature.enabled) {
+        setIsAwardOutcomeLoading(false);
+        return;
+      }
+
+      setIsAwardOutcomeLoading(true);
+
+      fetchAwardOutcome(intentId)
+        .then((response) => {
+          if (cancelled || !mountedRef.current) return;
+          setAwardOutcome(response.outcome);
+        })
+        .catch((err) => {
+          if (cancelled || !mountedRef.current) return;
+          setAwardOutcomeError(err instanceof Error ? err : new Error("Failed to load award outcome"));
+        })
+        .finally(() => {
+          if (cancelled || !mountedRef.current) return;
+          setIsAwardOutcomeLoading(false);
+        });
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [intentId, awardOutcomeFeature.enabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    queueMicrotask(() => {
+      if (cancelled || !mountedRef.current) return;
+
       setKnowledgeItems([]);
+      setKnowledgeRetrievalTrace(null);
       setKnowledgeNotice("");
       setKnowledgeError(null);
       setKnowledgeDraft(defaultKnowledgeDraft);
@@ -826,6 +967,20 @@ export default function IntentWorkspacePage() {
           if (cancelled || !mountedRef.current) return;
           setIsKnowledgeLoading(false);
         });
+
+      const traceQuery = knowledgeRetrievalTraceQuery(intent);
+
+      if (traceQuery) {
+        fetchKnowledgeItems({ q: traceQuery, limit: 10, includeRetrievalTrace: true })
+          .then((response) => {
+            if (cancelled || !mountedRef.current) return;
+            setKnowledgeRetrievalTrace(response.retrievalTrace ?? null);
+          })
+          .catch(() => {
+            if (cancelled || !mountedRef.current) return;
+            setKnowledgeRetrievalTrace(null);
+          });
+      }
     });
 
     return () => {
@@ -842,6 +997,16 @@ export default function IntentWorkspacePage() {
     if (!intent) return [];
     return generateWorkflowCoachCards(intent);
   }, [intent]);
+
+  const quoteComparisonSummary = quoteWorkspace?.summary.comparison ?? null;
+  const quoteComparisonMetrics = [
+    ["Low", quoteComparisonSummary?.lowAmountCents ?? null],
+    ["Median", quoteComparisonSummary?.medianAmountCents ?? null],
+    ["High", quoteComparisonSummary?.highAmountCents ?? null],
+    ["Spread", quoteComparisonSummary?.spreadAmountCents ?? null],
+  ] as const;
+  const learningSummary = awardOutcome?.learningSummary ?? null;
+  const evidenceAutoLinkSummary = submissionEvidenceAutoLinkSummary(submissionEvidenceLinks);
 
   const handleAskEvidenceQuestion = async () => {
     if (!intent || !qualificationQaFeature.enabled || isQaLoading) return;
@@ -940,6 +1105,9 @@ export default function IntentWorkspacePage() {
       if (!mountedRef.current) return;
 
       setSubmissionGuidance(response.submission);
+      setSubmissionConfirmations(response.confirmations);
+      setSubmissionConfirmation(response.confirmations[response.confirmations.length - 1] ?? null);
+      setSubmissionEvidenceLinks(response.evidenceLinks);
       setSubmissionDraft(toSubmissionDraft(response.submission));
       setConfirmationDraft((current) => ({ ...current, method: response.submission.method }));
       setSubmissionNotice(t("intentsPage.submissionGuidanceSaved"));
@@ -970,6 +1138,9 @@ export default function IntentWorkspacePage() {
       if (!mountedRef.current) return;
 
       setSubmissionConfirmation(response.confirmation);
+      setSubmissionGuidance(response.submission);
+      setSubmissionConfirmations(response.confirmations);
+      setSubmissionEvidenceLinks(response.evidenceLinks);
       setConfirmationDraft({
         submittedAt: currentDatetimeLocal(),
         method: response.confirmation.method,
@@ -1074,6 +1245,18 @@ export default function IntentWorkspacePage() {
     const packageResponse = await fetchResponsePackageWorkspace(intentId);
     if (!mountedRef.current) return;
     setResponsePackageWorkspace(packageResponse.packageWorkspace);
+  }
+
+  async function refreshResponseWorkspace(intentId: string) {
+    const workspaceResponse = await fetchResponseWorkspace(intentId);
+    if (!mountedRef.current) return;
+    setResponseWorkspace(workspaceResponse.workspace);
+  }
+
+  async function refreshQuoteWorkspace(intentId: string) {
+    const quoteResponse = await fetchQuoteWorkspace(intentId);
+    if (!mountedRef.current) return;
+    setQuoteWorkspace(quoteResponse.workspace);
   }
 
   const handleResponseWorkspaceItemUpdate = async (
@@ -1188,7 +1371,7 @@ export default function IntentWorkspacePage() {
     }
   };
 
-  const handleCreateResponsePackageExport = async (snapshotId: string) => {
+  const handleCreateResponsePackageExport = async (snapshotId: string, format: ResponsePackageExportFormat) => {
     if (!intent || !responseWorkspaceFeature.enabled || responsePackageExportingSnapshotId) return;
 
     setResponsePackageExportingSnapshotId(snapshotId);
@@ -1196,7 +1379,7 @@ export default function IntentWorkspacePage() {
     setResponseWorkspaceError(null);
 
     try {
-      const response = await createResponsePackageExport(intent.id, { snapshotId });
+      const response = await createResponsePackageExport(intent.id, { snapshotId, format });
       if (!mountedRef.current) return;
 
       await refreshResponsePackageWorkspace(intent.id);
@@ -1208,6 +1391,36 @@ export default function IntentWorkspacePage() {
     } finally {
       if (mountedRef.current) {
         setResponsePackageExportingSnapshotId(null);
+      }
+    }
+  };
+
+  const handleReviewResponsePackageExport = async (
+    exportId: string,
+    reviewStatus: ResponsePackageExportReviewStatus,
+    reviewNotes: string,
+  ) => {
+    if (!intent || !responseWorkspaceFeature.enabled || responsePackageReviewingExportId) return;
+
+    setResponsePackageReviewingExportId(exportId);
+    setResponseWorkspaceNotice("");
+    setResponseWorkspaceError(null);
+
+    try {
+      await updateResponsePackageExportReview(intent.id, exportId, {
+        reviewStatus,
+        reviewNotes,
+      });
+      if (!mountedRef.current) return;
+
+      await refreshResponsePackageWorkspace(intent.id);
+      setResponseWorkspaceNotice(t("intentsPage.responsePackageReviewSaved"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setResponseWorkspaceError(err instanceof Error ? err : new Error("Failed to review response package"));
+    } finally {
+      if (mountedRef.current) {
+        setResponsePackageReviewingExportId(null);
       }
     }
   };
@@ -1244,6 +1457,87 @@ export default function IntentWorkspacePage() {
     } finally {
       if (mountedRef.current) {
         setIsArtifactUploading(false);
+      }
+    }
+  };
+
+  const handleDeleteSupplierArtifact = async (artifactId: string) => {
+    if (!intent || !artifactVaultFeature.enabled || deletingArtifactId) return;
+
+    setDeletingArtifactId(artifactId);
+    setArtifactVaultNotice("");
+    setArtifactVaultError(null);
+
+    try {
+      const response = await deleteSupplierArtifact(intent.id, artifactId);
+      if (!mountedRef.current) return;
+
+      setArtifactVault(response.vault);
+      setQuoteDraft((current) => ({
+        ...current,
+        artifactIds: current.artifactIds.filter((id) => id !== artifactId),
+      }));
+
+      await Promise.all([
+        responseWorkspaceFeature.enabled
+          ? Promise.all([
+              refreshResponseWorkspace(intent.id),
+              refreshResponsePackageWorkspace(intent.id),
+            ])
+          : Promise.resolve(),
+        quoteWorkflowFeature.enabled ? refreshQuoteWorkspace(intent.id) : Promise.resolve(),
+      ]);
+      if (!mountedRef.current) return;
+
+      setArtifactVaultNotice(t("intentsPage.artifactDeleted"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setArtifactVaultError(err instanceof Error ? err : new Error("Failed to delete artifact"));
+    } finally {
+      if (mountedRef.current) {
+        setDeletingArtifactId(null);
+      }
+    }
+  };
+
+  const handleReplaceSupplierArtifact = async (
+    artifactId: string,
+    file: File,
+    replacementReason: string,
+  ) => {
+    if (!intent || !artifactVaultFeature.enabled || replacingArtifactId) return;
+
+    setReplacingArtifactId(artifactId);
+    setArtifactVaultNotice("");
+    setArtifactVaultError(null);
+
+    try {
+      const response = await replaceSupplierArtifact(intent.id, artifactId, {
+        file,
+        replacementReason,
+      });
+      if (!mountedRef.current) return;
+
+      setArtifactVault(response.vault);
+
+      await Promise.all([
+        responseWorkspaceFeature.enabled
+          ? Promise.all([
+              refreshResponseWorkspace(intent.id),
+              refreshResponsePackageWorkspace(intent.id),
+            ])
+          : Promise.resolve(),
+        quoteWorkflowFeature.enabled ? refreshQuoteWorkspace(intent.id) : Promise.resolve(),
+      ]);
+      if (!mountedRef.current) return;
+
+      setArtifactVaultNotice(t("intentsPage.artifactReplaced"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setArtifactVaultError(err instanceof Error ? err : new Error("Failed to replace artifact"));
+    } finally {
+      if (mountedRef.current) {
+        setReplacingArtifactId(null);
       }
     }
   };
@@ -1339,6 +1633,27 @@ export default function IntentWorkspacePage() {
       setDeadlineError(err instanceof Error ? err : new Error("Failed to update deadline reminder"));
     } finally {
       if (mountedRef.current) setDeadlineSavingReminderId(null);
+    }
+  };
+
+  const handleAwardOutcomeUpdate = async (patch: UpdateAwardOutcomeInput) => {
+    if (!intent || !awardOutcomeFeature.enabled || isAwardOutcomeSaving) return;
+
+    setIsAwardOutcomeSaving(true);
+    setAwardOutcomeNotice("");
+    setAwardOutcomeError(null);
+
+    try {
+      const response = await updateAwardOutcome(intent.id, patch);
+      if (!mountedRef.current) return;
+
+      setAwardOutcome(response.outcome);
+      setAwardOutcomeNotice(t("intentsPage.awardOutcomeSaved"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setAwardOutcomeError(err instanceof Error ? err : new Error("Failed to save award outcome"));
+    } finally {
+      if (mountedRef.current) setIsAwardOutcomeSaving(false);
     }
   };
 
@@ -1478,6 +1793,10 @@ export default function IntentWorkspacePage() {
       </div>
     );
   }
+
+  const qaAiRun = qaAnswer?.aiRun;
+  const canViewKnowledgeRetrievalTrace =
+    knowledgeStationFeature.enabled || user.role === "admin" || user.role === "operator";
 
   return (
     <div className="winbids-detail-workspace prototypeWorkspace">
@@ -1771,6 +2090,77 @@ export default function IntentWorkspacePage() {
                     <p className="mt-2 whitespace-pre-wrap break-words text-sm font-semibold leading-7 text-slate-700">
                       {qaAnswer.answer}
                     </p>
+                    <div className="mt-4 rounded-lg border border-emerald-100 bg-white p-3">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                          <p className="text-xs font-black uppercase text-slate-500">
+                            {t("intentsPage.aiRunMetadata")}
+                          </p>
+                          <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
+                            {t("intentsPage.aiDeterministicNoLlmNotice")}
+                          </p>
+                        </div>
+                        {qaAnswer.creditUsage ? (
+                          <Badge variant="outline" className="w-fit border-blue-100 bg-blue-50 text-blue-700">
+                            {t("intentsPage.creditDryRun")}
+                          </Badge>
+                        ) : null}
+                      </div>
+                      {qaAiRun ? (
+                        <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">
+                          <div>
+                            <dt className="font-black text-slate-500">{t("intentsPage.aiProvider")}</dt>
+                            <dd className="mt-0.5 break-words font-semibold text-slate-700">{qaAiRun.provider}</dd>
+                          </div>
+                          <div>
+                            <dt className="font-black text-slate-500">{t("intentsPage.aiModelOrRulesVersion")}</dt>
+                            <dd className="mt-0.5 break-words font-semibold text-slate-700">
+                              {qaAiRun.model} / {qaAiRun.rulesVersion}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="font-black text-slate-500">{t("intentsPage.aiPromptVersion")}</dt>
+                            <dd className="mt-0.5 break-words font-semibold text-slate-700">
+                              {qaAiRun.promptVersion}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="font-black text-slate-500">{t("intentsPage.aiConfidence")}</dt>
+                            <dd className="mt-0.5 break-words font-semibold text-slate-700">
+                              {t(`intentsPage.confidence.${qaAiRun.confidence}`)}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="font-black text-slate-500">{t("intentsPage.aiCostTotal")}</dt>
+                            <dd className="mt-0.5 break-words font-semibold text-slate-700">
+                              ${qaAiRun.cost.total}
+                            </dd>
+                          </div>
+                          <div>
+                            <dt className="font-black text-slate-500">{t("intentsPage.aiFallbackReason")}</dt>
+                            <dd className="mt-0.5 break-words font-semibold text-slate-700">
+                              {qaAiRun.fallbackReason}
+                            </dd>
+                          </div>
+                          <div className="sm:col-span-2">
+                            <dt className="font-black text-slate-500">{t("intentsPage.aiGeneratedAt")}</dt>
+                            <dd className="mt-0.5 break-words font-semibold text-slate-700">
+                              {qaAiRun.generatedAt}
+                            </dd>
+                          </div>
+                        </dl>
+                      ) : (
+                        <p className="mt-3 text-xs font-semibold text-slate-500">
+                          {t("intentsPage.aiMetadataUnavailable")}
+                        </p>
+                      )}
+                      {qaAnswer.creditUsage ? (
+                        <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50/60 p-3 text-xs font-semibold text-blue-900">
+                          <span className="font-black">{t("intentsPage.creditChargedAmount")}:</span>{" "}
+                          chargedAmount={qaAnswer.creditUsage.chargedAmount}
+                        </div>
+                      ) : null}
+                    </div>
                     <p className="mt-4 text-xs font-black uppercase text-slate-400">
                       {t("intentsPage.answerEvidence")}
                     </p>
@@ -2157,8 +2547,11 @@ export default function IntentWorkspacePage() {
         notice={responseWorkspaceNotice}
         onCommentDraftsChange={setResponseWorkspaceCommentDrafts}
         onCreateComment={(item) => void handleCreateResponseWorkspaceComment(item)}
-        onCreatePackageExport={(snapshotId) => void handleCreateResponsePackageExport(snapshotId)}
+        onCreatePackageExport={(snapshotId, formatOption) => void handleCreateResponsePackageExport(snapshotId, formatOption)}
         onCreatePackageSnapshot={() => void handleCreateResponsePackageSnapshot()}
+        onReviewPackageExport={(exportId, reviewStatus, reviewNotes) =>
+          void handleReviewResponsePackageExport(exportId, reviewStatus, reviewNotes)
+        }
         onLocalItemUpdate={updateLocalResponseWorkspaceItem}
         onSaveLinkedArtifacts={(item, linkedArtifactIds) =>
           void handleSaveResponseWorkspaceLinkedArtifacts(item, linkedArtifactIds)
@@ -2166,6 +2559,7 @@ export default function IntentWorkspacePage() {
         onSaveItem={(item, patch) => void handleResponseWorkspaceItemUpdate(item, patch)}
         savingCommentItemId={responseWorkspaceSavingCommentItemId}
         savingItemId={responseWorkspaceSavingItemId}
+        reviewingExportId={responsePackageReviewingExportId}
         t={t}
         packageWorkspace={responsePackageWorkspace}
         workspace={responseWorkspace}
@@ -2176,14 +2570,125 @@ export default function IntentWorkspacePage() {
         error={artifactVaultError}
         featureEnabled={artifactVaultFeature.enabled}
         isLoading={isArtifactVaultLoading}
+        deletingArtifactId={deletingArtifactId}
+        replacingArtifactId={replacingArtifactId}
         isUploading={isArtifactUploading}
         lockedMessage={lockedFeatureMessage("artifact.vault.upload")}
         notice={artifactVaultNotice}
         onDraftChange={setArtifactDraft}
+        onDelete={handleDeleteSupplierArtifact}
+        onReplace={handleReplaceSupplierArtifact}
         onUpload={() => void handleUploadArtifact()}
         t={t}
         vault={artifactVault}
       />
+
+      <section className="winbids-panel procurementReadModels rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+          <div>
+            <p className="text-[11px] font-black uppercase tracking-[0.12em] text-blue-700">
+              Procurement read models
+            </p>
+            <h2 className="mt-1 text-2xl font-black text-slate-950">Workflow intelligence</h2>
+          </div>
+          <span className="w-fit rounded-full border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-black text-blue-700">
+            Local deterministic summaries
+          </span>
+        </div>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-3">
+          <article className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
+            <p className="text-xs font-black uppercase text-slate-500">Quote comparison summary</p>
+            {quoteComparisonSummary ? (
+              <div className="mt-3 space-y-3">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {quoteComparisonMetrics.map(([label, value]) => (
+                    <div key={label} className="rounded-lg border border-slate-200 bg-white p-3">
+                      <p className="text-[11px] font-black uppercase text-slate-400">{label}</p>
+                      <p className="mt-1 text-sm font-black text-slate-950">
+                        {formatCentsAmount(value, quoteComparisonSummary.currency)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs font-bold leading-5 text-slate-600">
+                  {quoteComparisonSummary.quotedCount} priced quotes
+                  {quoteComparisonSummary.variancePercent !== null
+                    ? `, ${quoteComparisonSummary.variancePercent}% variance`
+                    : ""}
+                </p>
+                {quoteComparisonSummary.recommendedReviewFlags.length > 0 ? (
+                  <ul className="space-y-2">
+                    {quoteComparisonSummary.recommendedReviewFlags.map((flag) => (
+                      <li key={flag.code} className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs font-bold leading-5 text-amber-800">
+                        <span className="font-black">{flag.code}:</span> {flag.message}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs font-bold text-emerald-700">No quote review flags.</p>
+                )}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm font-semibold leading-6 text-slate-500">
+                Quote comparison will appear after quote workflow loads.
+              </p>
+            )}
+          </article>
+
+          <article className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
+            <p className="text-xs font-black uppercase text-slate-500">Win/loss learning summary</p>
+            {learningSummary ? (
+              <div className="mt-3 space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="outline" className="border-blue-100 bg-white text-blue-700">
+                    {learningSummary.outcomeClass}
+                  </Badge>
+                  <Badge variant="outline" className="border-slate-200 bg-white text-slate-700">
+                    {learningSummary.primaryDriver}
+                  </Badge>
+                </div>
+                <p className="text-sm font-black leading-6 text-slate-950">{learningSummary.headline}</p>
+                <ul className="space-y-2">
+                  {learningSummary.lessons.map((lesson) => (
+                    <li key={lesson} className="text-xs font-semibold leading-5 text-slate-600">
+                      {lesson}
+                    </li>
+                  ))}
+                </ul>
+                {learningSummary.recommendedActions.length > 0 ? (
+                  <p className="text-xs font-bold leading-5 text-slate-600">
+                    Recommended actions: {learningSummary.recommendedActions.join(", ")}
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm font-semibold leading-6 text-slate-500">
+                Win/loss learning appears after award tracking loads.
+              </p>
+            )}
+          </article>
+
+          <article className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
+            <p className="text-xs font-black uppercase text-slate-500">Evidence links summary</p>
+            <p className="mt-3 text-sm font-black leading-6 text-slate-950">{evidenceAutoLinkSummary}</p>
+            <dl className="mt-3 grid gap-2 text-xs font-bold text-slate-600">
+              <div className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2">
+                <dt>Package exports</dt>
+                <dd>{submissionEvidenceLinks.responsePackageExports.length}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2">
+                <dt>Supplier artifacts</dt>
+                <dd>{submissionEvidenceLinks.linkedSupplierArtifacts.length}</dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-white px-3 py-2">
+                <dt>Award notice</dt>
+                <dd>{submissionEvidenceLinks.awardOutcome ? 1 : 0}</dd>
+              </div>
+            </dl>
+          </article>
+        </div>
+      </section>
 
       <QuoteWorkspacePanel
         artifactVault={artifactVault}
@@ -2212,6 +2717,20 @@ export default function IntentWorkspacePage() {
         savingReminderId={deadlineSavingReminderId}
         t={t}
         workspace={deadlineWorkspace}
+      />
+
+      <AwardWinLossPanel
+        key={awardOutcome?.updatedAt ?? awardOutcome?.id ?? "award-outcome"}
+        availableArtifacts={artifactVault?.artifacts ?? []}
+        error={awardOutcomeError}
+        featureEnabled={awardOutcomeFeature.enabled}
+        isLoading={isAwardOutcomeLoading}
+        isSaving={isAwardOutcomeSaving}
+        lockedMessage={lockedFeatureMessage("award.tabulation.analyze")}
+        notice={awardOutcomeNotice}
+        onUpdate={(patch) => void handleAwardOutcomeUpdate(patch)}
+        outcome={awardOutcome}
+        t={t}
       />
 
       <section
@@ -2422,6 +2941,51 @@ export default function IntentWorkspacePage() {
                     : t("knowledge.saveFailed")
                   : knowledgeNotice}
               </p>
+              {canViewKnowledgeRetrievalTrace ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-4">
+                  <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-sm font-black text-slate-950">{t("knowledge.retrievalTrace")}</p>
+                      <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
+                        {t("knowledge.retrievalTraceOperatorOnly")}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="w-fit border-slate-200 bg-white text-slate-700">
+                      {knowledgeRetrievalTrace?.provider ?? "lexical"}
+                    </Badge>
+                  </div>
+                  {knowledgeRetrievalTrace ? (
+                    <dl className="mt-3 grid gap-2 text-xs">
+                      <div>
+                        <dt className="font-black text-slate-500">{t("knowledge.selectedItemIds")}</dt>
+                        <dd className="mt-0.5 break-words font-semibold text-slate-700">
+                          {knowledgeRetrievalTrace.selectedItemIds.length > 0
+                            ? knowledgeRetrievalTrace.selectedItemIds.join(", ")
+                            : t("knowledge.retrievalTraceUnavailable")}
+                        </dd>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div>
+                          <dt className="font-black text-slate-500">{t("knowledge.matchedFields")}</dt>
+                          <dd className="mt-0.5 break-words font-semibold text-slate-700">
+                            {knowledgeRetrievalTrace.matchedFields.length}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="font-black text-slate-500">{t("knowledge.futureEmbeddingStatus")}</dt>
+                          <dd className="mt-0.5 break-words font-semibold text-slate-700">
+                            {knowledgeRetrievalTrace.futureEmbeddingStatus.status}
+                          </dd>
+                        </div>
+                      </div>
+                    </dl>
+                  ) : (
+                    <p className="mt-3 text-sm font-semibold text-slate-500">
+                      {t("knowledge.retrievalTraceUnavailable")}
+                    </p>
+                  )}
+                </div>
+              ) : null}
             </div>
           </div>
         )}
@@ -2477,6 +3041,11 @@ export default function IntentWorkspacePage() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <p className="text-sm font-black text-slate-950">{t("intentsPage.generatedGuidance")}</p>
+                    {submissionGuidance ? (
+                      <p className="mt-1 text-xs font-black uppercase text-blue-700">
+                        {t("intentsPage.submissionStatus")}: {t(`intentsPage.submissionStatuses.${submissionGuidance.status}`)}
+                      </p>
+                    ) : null}
                     <p className="mt-1 text-sm leading-6 text-slate-600">
                       {isSubmissionLoading
                         ? t("intentsPage.submissionLoading")
@@ -2700,6 +3269,164 @@ export default function IntentWorkspacePage() {
                       {t("intentsPage.latestConfirmation")}: {submissionConfirmation.confirmationReference || submissionConfirmation.method}
                     </p>
                   ) : null}
+                  <div className="rounded-lg border border-blue-100 bg-white p-3">
+                    <p className="text-xs font-black uppercase text-slate-500">{t("intentsPage.confirmationHistory")}</p>
+                    {submissionConfirmations.length > 0 ? (
+                      <ul className="mt-2 space-y-2">
+                        {submissionConfirmations.map((confirmation) => {
+                          const frozenExports = confirmation.evidenceSnapshot.responsePackageExports;
+
+                          return (
+                            <li key={confirmation.id} className="text-sm font-semibold leading-6 text-slate-700">
+                              <span className="font-black text-slate-950">
+                                {confirmation.confirmationReference || t(`intentsPage.submissionMethods.${confirmation.method}`)}
+                              </span>
+                              <span className="text-slate-500"> · {confirmation.submittedAt}</span>
+                              {confirmation.confirmationNotes ? (
+                                <span className="block break-words text-slate-600">{confirmation.confirmationNotes}</span>
+                              ) : null}
+                              {frozenExports.length > 0 ? (
+                                <div className="mt-2 rounded-md border border-slate-100 bg-slate-50 p-2">
+                                  <p className="text-[11px] font-black uppercase text-slate-500">
+                                    {t("intentsPage.submissionEvidenceFrozenAt")} · {formatEvidenceDate(confirmation.evidenceSnapshot.capturedAt)}
+                                  </p>
+                                  <ul className="mt-1 space-y-1">
+                                    {frozenExports.map((exportRecord) => {
+                                      const downloadUrl = safeSubmissionEvidenceUrl(exportRecord.downloadUrl);
+
+                                      return (
+                                        <li key={exportRecord.id} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-bold text-slate-600">
+                                          <span className="font-black text-slate-900">
+                                            {submissionPackageVersionLabel(t, exportRecord.snapshotVersionNumber)}
+                                          </span>
+                                          <span>{exportRecord.format}</span>
+                                          <span>{t(`intentsPage.responsePackageExportReviewStatuses.${exportRecord.reviewStatus}`)}</span>
+                                          <Link
+                                            href={downloadUrl}
+                                            target={downloadUrl.startsWith("/") ? undefined : "_blank"}
+                                            rel={downloadUrl.startsWith("/") ? undefined : "noreferrer"}
+                                            className="inline-flex items-center font-black text-blue-700 hover:text-blue-900"
+                                          >
+                                            <ExternalLink size={12} className="mr-1" aria-hidden="true" />
+                                            {t("intentsPage.downloadEvidence")}
+                                          </Link>
+                                        </li>
+                                      );
+                                    })}
+                                  </ul>
+                                </div>
+                              ) : null}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : (
+                      <p className="mt-2 text-sm font-semibold text-slate-500">{t("intentsPage.submissionUnavailable")}</p>
+                    )}
+                  </div>
+                  <div className="rounded-lg border border-blue-100 bg-white p-3">
+                    <p className="text-xs font-black uppercase text-slate-500">{t("intentsPage.submissionEvidence")}</p>
+                    {hasSubmissionEvidenceLinks(submissionEvidenceLinks) ? (
+                      <div className="mt-3 space-y-3">
+                        {submissionEvidenceLinks.responsePackageExports.length > 0 ? (
+                          <div>
+                            <p className="text-xs font-black text-slate-500">
+                              {t("intentsPage.submissionEvidencePackageExports")}
+                            </p>
+                            <ul className="mt-2 space-y-2">
+                              {submissionEvidenceLinks.responsePackageExports.map((exportRecord) => {
+                                const record = exportRecord as SubmissionEvidenceExport;
+                                const downloadUrl = record.downloadUrl ? safeSubmissionEvidenceUrl(record.downloadUrl) : "";
+                                const timestamp = record.downloadedAt ?? record.createdAt ?? "";
+
+                                return (
+                                  <li key={record.id} className="text-sm font-semibold leading-6 text-slate-700">
+                                    <span className="font-black text-slate-950">{record.format}</span>
+                                    {timestamp ? (
+                                      <span className="text-slate-500"> · {formatEvidenceDate(timestamp)}</span>
+                                    ) : null}
+                                    {downloadUrl ? (
+                                      <Link
+                                        href={downloadUrl}
+                                        target={downloadUrl.startsWith("/") ? undefined : "_blank"}
+                                        rel={downloadUrl.startsWith("/") ? undefined : "noreferrer"}
+                                        className="ml-2 inline-flex items-center font-black text-blue-700 hover:text-blue-900"
+                                      >
+                                        <ExternalLink size={13} className="mr-1" aria-hidden="true" />
+                                        {t("intentsPage.downloadEvidence")}
+                                      </Link>
+                                    ) : null}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        ) : null}
+
+                        {submissionEvidenceLinks.linkedSupplierArtifacts.length > 0 ? (
+                          <div>
+                            <p className="text-xs font-black text-slate-500">
+                              {t("intentsPage.submissionEvidenceLinkedArtifacts")}
+                            </p>
+                            <ul className="mt-2 space-y-2">
+                              {submissionEvidenceLinks.linkedSupplierArtifacts.map((artifact) => {
+                                const record = artifact as SubmissionEvidenceArtifact;
+                                const downloadUrl = safeSubmissionEvidenceUrl(
+                                  record.downloadUrl || artifactDownloadUrl(intent?.id ?? intentId, record.id),
+                                );
+                                const title = record.name || record.fileName || record.id;
+                                const details = [record.type ?? record.category, record.sizeLabel].filter(Boolean);
+
+                                return (
+                                  <li key={record.id} className="text-sm font-semibold leading-6 text-slate-700">
+                                    <Link
+                                      href={downloadUrl}
+                                      target={downloadUrl.startsWith("/") ? undefined : "_blank"}
+                                      rel={downloadUrl.startsWith("/") ? undefined : "noreferrer"}
+                                      className="font-black text-blue-700 hover:text-blue-900"
+                                    >
+                                      {title}
+                                    </Link>
+                                    {details.length > 0 ? (
+                                      <span className="text-slate-500"> · {details.join(" · ")}</span>
+                                    ) : null}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        ) : null}
+
+                        {submissionEvidenceLinks.awardOutcome ? (
+                          <div>
+                            <p className="text-xs font-black text-slate-500">
+                              {t("intentsPage.submissionEvidenceAwardOutcome")}
+                            </p>
+                            <p className="mt-2 text-sm font-semibold leading-6 text-slate-700">
+                              <span className="font-black text-slate-950">
+                                {t(`intentsPage.awardStatuses.${submissionEvidenceLinks.awardOutcome.status}`)}
+                              </span>
+                              {submissionEvidenceLinks.awardOutcome.awardNoticeUrl ? (
+                                <Link
+                                  href={safeSubmissionEvidenceUrl(submissionEvidenceLinks.awardOutcome.awardNoticeUrl)}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="ml-2 inline-flex items-center font-black text-blue-700 hover:text-blue-900"
+                                >
+                                  <ExternalLink size={13} className="mr-1" aria-hidden="true" />
+                                  {t("intentsPage.openAwardNotice")}
+                                </Link>
+                              ) : null}
+                            </p>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-sm font-semibold leading-6 text-slate-500">
+                        {t("intentsPage.submissionEvidenceEmpty")}
+                      </p>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>

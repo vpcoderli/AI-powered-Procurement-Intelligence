@@ -1,4 +1,5 @@
 import type { Bid } from "@/server/bids/domain";
+import { createDeterministicAiRunMetadata } from "@/server/ai/run-metadata";
 import type { BidMatchResult } from "@/server/match/types";
 import type { GeneratedIntentContent } from "./types";
 
@@ -71,5 +72,11 @@ export function generateIntentBrief({
     },
     initialChecklist: [...CHECKLIST],
     riskFlags: riskFlagsForBid(bid, match),
+    aiRun: createDeterministicAiRunMetadata({
+      action: "intent_brief",
+      promptVersion: "intent-brief-lite@2026-06-10",
+      confidence: match.confidence,
+      fallbackReason: "no_llm_provider_configured",
+    }),
   };
 }

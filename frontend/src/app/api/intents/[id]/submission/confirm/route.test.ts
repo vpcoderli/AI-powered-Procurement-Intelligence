@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as principal from "@/server/auth/principal";
 import { IntentNotFoundError } from "@/server/intents/types";
 import * as submissionService from "@/server/submission/service";
-import type { SubmissionConfirmation } from "@/server/submission/types";
+import type { SubmissionConfirmation, SubmissionEvidenceLinks, SubmissionGuidance } from "@/server/submission/types";
 import { POST } from "./route";
 
 vi.mock("@/server/db/client", () => ({ db: {} }));
@@ -49,6 +49,42 @@ const confirmation: SubmissionConfirmation = {
   updatedAt: "2026-05-29T15:31:00.000Z",
 };
 
+const submission: SubmissionGuidance = {
+  id: "submission_path_1",
+  intentId: "intent_1",
+  bidId: "bid_1",
+  userId: "user_1",
+  method: "external_portal",
+  status: "submitted",
+  portalUrl: "https://sam.gov/example",
+  contactEmail: "buyer@example.gov",
+  requiresRegistration: true,
+  requiresPhysicalDelivery: false,
+  requiresAddendaAcknowledgement: true,
+  complexityScore: 65,
+  guidanceText: "Submit through the external procurement portal.",
+  readinessChecklist: ["Confirm portal access."],
+  riskFlags: ["Addenda acknowledgement may be required."],
+  createdAt: "2026-05-28T00:00:00.000Z",
+  updatedAt: "2026-05-29T15:31:00.000Z",
+};
+
+const evidenceLinks: SubmissionEvidenceLinks = {
+  responsePackageExports: [{
+    id: "response_package_export_1",
+    format: "zip",
+    downloadUrl: "/api/intents/intent_1/response-workspace/package/exports/response_package_export_1",
+  }],
+  linkedSupplierArtifacts: [{
+    id: "supplier_artifact_1",
+    name: "Signed capability statement",
+  }],
+  awardOutcome: {
+    status: "awarded_to_us",
+    awardNoticeUrl: "https://sam.gov/award/notice",
+  },
+};
+
 describe("POST /api/intents/[id]/submission/confirm", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -56,7 +92,12 @@ describe("POST /api/intents/[id]/submission/confirm", () => {
   });
 
   it("stores a manual external submission confirmation", async () => {
-    createSubmissionConfirmation.mockResolvedValueOnce(confirmation);
+    createSubmissionConfirmation.mockResolvedValueOnce({
+      confirmation,
+      submission,
+      confirmations: [confirmation],
+      evidenceLinks,
+    });
 
     const response = await POST(
       new Request("http://localhost/api/intents/intent_1/submission/confirm", {
@@ -73,7 +114,7 @@ describe("POST /api/intents/[id]/submission/confirm", () => {
     const body = await response.json();
 
     expect(response.status).toBe(201);
-    expect(body).toEqual({ confirmation });
+    expect(body).toEqual({ confirmation, submission, confirmations: [confirmation], evidenceLinks });
     expect(createSubmissionConfirmation).toHaveBeenCalledWith(
       expect.anything(),
       "user_1",
@@ -85,6 +126,34 @@ describe("POST /api/intents/[id]/submission/confirm", () => {
         confirmationNotes: "Receipt downloaded.",
       },
     );
+  });
+
+  it("returns needs_recovery status when a confirmation lacks a reference", async () => {
+    const recoveryConfirmation = { ...confirmation, confirmationReference: "" };
+    const recoverySubmission = { ...submission, status: "needs_recovery" as const };
+    createSubmissionConfirmation.mockResolvedValueOnce({
+      confirmation: recoveryConfirmation,
+      submission: recoverySubmission,
+      confirmations: [recoveryConfirmation],
+      evidenceLinks,
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/intents/intent_1/submission/confirm", {
+        method: "POST",
+        body: JSON.stringify({
+          submittedAt: "2026-05-29T15:30:00.000Z",
+          method: "external_portal",
+        }),
+      }),
+      { params: Promise.resolve({ id: "intent_1" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body.submission.status).toBe("needs_recovery");
+    expect(body.confirmations).toEqual([recoveryConfirmation]);
+    expect(body.evidenceLinks).toEqual(evidenceLinks);
   });
 
   it("returns INVALID_REQUEST when submittedAt is missing", async () => {

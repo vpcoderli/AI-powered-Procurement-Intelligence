@@ -38,6 +38,12 @@ describe("mysql database foundation", () => {
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS users");
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS bids");
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS data_sources");
+    expect(joined).toContain("CREATE TABLE IF NOT EXISTS award_outcomes");
+    expect(joined).toContain("CREATE TABLE IF NOT EXISTS artifact_versions");
+    expect(joined).toContain("CREATE TABLE IF NOT EXISTS response_package_export_review_events");
+    expect(joined).toContain("award_notice_url LONGTEXT NOT NULL DEFAULT ('')");
+    expect(joined).toContain("idx_award_outcomes_intent_id");
+    expect(joined).toContain("status LONGTEXT NOT NULL DEFAULT ('draft')");
     expect(joined).toContain("VARCHAR(191) PRIMARY KEY");
     expect(joined).not.toContain("PRAGMA");
     expect(joined).not.toContain("sqlite_master");

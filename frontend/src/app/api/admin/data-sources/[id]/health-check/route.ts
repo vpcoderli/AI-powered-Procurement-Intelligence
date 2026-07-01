@@ -42,6 +42,7 @@ function routeError(error: unknown) {
 
 async function resolveDatabase(database?: AppDatabase) {
   if (database) return database;
+  if (isMysqlDatabaseUrlConfigured()) return {} as AppDatabase;
 
   const client = await import("@/server/db/client");
   return client.db;
@@ -50,12 +51,17 @@ async function resolveDatabase(database?: AppDatabase) {
 async function parsePostBody(request: Request) {
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const timeoutMs = body.timeoutMs === undefined ? undefined : Number(body.timeoutMs);
+  const inspectBody = body.inspectBody === undefined ? undefined : body.inspectBody;
 
   if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 60_000)) {
     return null;
   }
 
-  return { timeoutMs };
+  if (inspectBody !== undefined && typeof inspectBody !== "boolean") {
+    return null;
+  }
+
+  return { timeoutMs, inspectBody };
 }
 
 function sourceHealthInput(source: AdminDataSource) {
@@ -106,6 +112,7 @@ export function createAdminDataSourceHealthCheckPost(
         fetchImpl: options.fetchImpl,
         now: options.now,
         timeoutMs: body.timeoutMs,
+        inspectBody: body.inspectBody,
       };
       const report = await checkLiveSourceHealth([sourceHealthInput(target)], healthOptions);
 

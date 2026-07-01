@@ -26,6 +26,26 @@ describe("qualification grounded Q&A", () => {
         section: "key_dates",
       }));
       expect(response.grounded).toBe(true);
+      expect(response.groundingStatus).toBe("grounded");
+      expect(response.evidenceCoverage).toEqual({
+        status: "direct",
+        matchedCitationCount: 2,
+        selectedCitationCount: 3,
+        totalCitationCount: expect.any(Number),
+        coveredSections: ["key_dates", "submission", "brief"],
+      });
+      expect(response.limitations).toContain("Deterministic local answer generated from stored bid fields, archives, attachments, and generated brief citations only.");
+      expect(response.aiRun).toMatchObject({
+        provider: "deterministic",
+        model: "rules://winbids/deterministic-ai-enterprise-depth-lite",
+        rulesVersion: "ai-enterprise-depth-lite-rules@2026-06-10",
+        promptVersion: "qualification-qa-lite@2026-06-10",
+        confidence: "medium",
+        cost: { currency: "USD", total: 0, estimatedUsd: 0 },
+        credits: { estimated: 1, charged: 0, mode: "dry_run" },
+        fallback: { used: false, reason: "no_llm_provider_configured" },
+        fallbackReason: "no_llm_provider_configured",
+      });
     } finally {
       await testDb.cleanup();
     }
@@ -43,6 +63,10 @@ describe("qualification grounded Q&A", () => {
       expect(response.answer).toContain("available evidence");
       expect(response.citations.length).toBeGreaterThan(0);
       expect(response.grounded).toBe(true);
+      expect(response.groundingStatus).toBe("partially_grounded");
+      expect(response.evidenceCoverage.status).toBe("partial");
+      expect(response.evidenceCoverage.matchedCitationCount).toBe(0);
+      expect(response.limitations).toContain("No live LLM, embeddings, vector database, or external retrieval were used.");
     } finally {
       await testDb.cleanup();
     }

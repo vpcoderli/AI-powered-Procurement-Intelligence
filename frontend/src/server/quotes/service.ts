@@ -32,6 +32,8 @@ import {
   isQuoteRequestStatus,
   isSourcingPartnerStatus,
   type CreateQuoteRequestInput,
+  type QuoteComparisonSummary,
+  type QuoteComparisonReviewFlag,
   type QuoteRequest,
   type QuoteRequestArtifact,
   type QuoteRequestStatus,
@@ -39,6 +41,8 @@ import {
   type SourcingPartner,
   type UpdateQuoteRequestInput,
 } from "./types";
+
+export { parseQuoteUploadText } from "./upload-parser";
 
 const MAX_NAME_LENGTH = 160;
 const MAX_TITLE_LENGTH = 180;
@@ -176,6 +180,98 @@ function buildSummary(partners: SourcingPartner[], requests: QuoteRequest[]) {
     sent: count("sent"),
     received: count("received"),
     accepted: count("accepted"),
+    comparison: buildQuoteComparisonSummary(requests),
+  };
+}
+
+function emptyQuoteComparisonSummary(flags: QuoteComparisonReviewFlag[] = []): QuoteComparisonSummary {
+  return {
+    quotedCount: 0,
+    currency: null,
+    lowAmountCents: null,
+    medianAmountCents: null,
+    highAmountCents: null,
+    spreadAmountCents: null,
+    variancePercent: null,
+    lowestRequestId: null,
+    highestRequestId: null,
+    recommendedReviewFlags: flags,
+  };
+}
+
+function medianAmount(sortedAmounts: number[]) {
+  const middle = Math.floor(sortedAmounts.length / 2);
+  if (sortedAmounts.length % 2 === 1) return sortedAmounts[middle];
+
+  return Math.round((sortedAmounts[middle - 1] + sortedAmounts[middle]) / 2);
+}
+
+function buildQuoteComparisonSummary(requests: QuoteRequest[]): QuoteComparisonSummary {
+  const comparableRequests = requests.filter((request) =>
+    (request.status === "received" || request.status === "accepted") && request.quotedAmountCents !== null
+  );
+  const amountPendingRequests = requests.filter((request) =>
+    (request.status === "received" || request.status === "accepted") && request.quotedAmountCents === null
+  );
+  const currencies = new Set(comparableRequests.map((request) => request.currency || "USD"));
+  const flags: QuoteComparisonReviewFlag[] = [];
+
+  if (amountPendingRequests.length > 0) {
+    flags.push({
+      code: "missing_amount",
+      message: "One or more received quotes are missing an amount; add pricing before comparison.",
+      requestIds: amountPendingRequests.map((request) => request.id).sort(),
+    });
+  }
+
+  if (currencies.size > 1) {
+    flags.push({
+      code: "mixed_currency",
+      message: "Received quotes use multiple currencies; normalize before comparing price.",
+      requestIds: comparableRequests.map((request) => request.id).sort(),
+    });
+  }
+
+  if (comparableRequests.length === 0) return emptyQuoteComparisonSummary(flags);
+
+  const sortedByAmount = [...comparableRequests].sort((left, right) => {
+    const amountDelta = Number(left.quotedAmountCents) - Number(right.quotedAmountCents);
+    return amountDelta === 0 ? left.id.localeCompare(right.id) : amountDelta;
+  });
+  const low = sortedByAmount[0];
+  const high = sortedByAmount[sortedByAmount.length - 1];
+  const amounts = sortedByAmount.map((request) => Number(request.quotedAmountCents));
+  const median = medianAmount(amounts);
+  const spread = Number(high.quotedAmountCents) - Number(low.quotedAmountCents);
+  const variancePercent = median > 0 ? Math.round((spread / median) * 100) : null;
+
+  if (comparableRequests.length === 1) {
+    flags.push({
+      code: "single_quote",
+      message: "Only one priced quote is available; collect another quote before supplier selection.",
+      requestIds: [comparableRequests[0].id],
+    });
+  }
+
+  if (variancePercent !== null && variancePercent >= 25) {
+    flags.push({
+      code: "high_variance",
+      message: `Quote spread is ${variancePercent}% of the median; review scope assumptions before award.`,
+      requestIds: [low.id, high.id],
+    });
+  }
+
+  return {
+    quotedCount: comparableRequests.length,
+    currency: currencies.size === 1 ? comparableRequests[0].currency || "USD" : null,
+    lowAmountCents: Number(low.quotedAmountCents),
+    medianAmountCents: median,
+    highAmountCents: Number(high.quotedAmountCents),
+    spreadAmountCents: spread,
+    variancePercent,
+    lowestRequestId: low.id,
+    highestRequestId: high.id,
+    recommendedReviewFlags: flags,
   };
 }
 

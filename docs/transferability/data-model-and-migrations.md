@@ -1,6 +1,6 @@
 # Data Model and Migrations
 
-WinBids / APSI currently uses a local SQLite-backed data model in the frontend application. Schema and migration logic live under `frontend/src/server/db` and `frontend/scripts`. A MySQL migration entry point now exists for cutover preparation, but SQLite remains the active runtime until repository calls are converted to async MySQL operations.
+WinBids / APSI supports SQLite for disposable local development and MySQL for the current default local/staging-style runtime. Schema and migration logic live under `frontend/src/server/db` and `frontend/scripts`; the MySQL cutover path has route-level guard coverage and a smoke test.
 
 ## Local Database
 
@@ -25,7 +25,7 @@ DATABASE_URL=mysql://USER:PASSWORD@HOST:3306/winbids npm run db:mysql:migrate
 DATABASE_URL=mysql://USER:PASSWORD@HOST:3306/winbids npm run db:mysql:smoke
 ```
 
-The MySQL cutover runbook is in `docs/operations/mysql-cutover.md`. The current compatibility migration has been validated against MySQL 8 for fresh schema creation, idempotent re-run behavior, and long bid content storage, but it is not yet the active application runtime.
+The MySQL cutover runbook is in `docs/operations/mysql-cutover.md`. The current compatibility migration has been validated against MySQL 8 for fresh schema creation, idempotent re-run behavior, long bid content storage, route-level MySQL guard coverage, and product smoke checks.
 
 Seed local development data:
 
@@ -43,7 +43,7 @@ npm test
 
 ## Production Boundary
 
-Production must use persistent storage. If SQLite remains the production store for an early deployment, `DATABASE_PATH` must point to a durable volume and must be included in the backup schedule. If the platform moves to MySQL, `DATABASE_URL` or `MYSQL_DATABASE_URL` must point to the managed database secret and `npm run db:mysql:migrate` must be part of the release checklist.
+Production must use persistent storage. The preferred production path is MySQL through `DATABASE_URL` or `MYSQL_DATABASE_URL`; those values must point to the managed database secret and `npm run db:mysql:migrate` must be part of the release checklist. If SQLite remains the production store for an early deployment, `DATABASE_PATH` must point to a durable volume and must be included in the backup schedule.
 
 ## Migration Ownership
 
@@ -51,6 +51,7 @@ Production must use persistent storage. If SQLite remains the production store f
 - Production migration execution is owned by the deploy operator.
 - A pre-migration backup is required before production deployment.
 - Migrations must not be run manually from an untracked local checkout against production.
+- Backup and restore ownership must be present in `PRODUCTION_OWNER_BACKUPS` and `PRODUCTION_BACKUP_RUNBOOK_URL`, and `NODE_ENV=production npm run ops:production:check` must pass before signoff.
 
 ## Backup
 
@@ -69,6 +70,15 @@ For production SQLite on a durable volume, run the same `.backup` command from t
 - Timestamp.
 - Operator or job identity.
 - Restore test status.
+
+For production MySQL, the managed database platform should own scheduled backups and point-in-time recovery. The restore drill record must include:
+
+- Database identifier and environment.
+- Backup snapshot or PITR timestamp.
+- Restore target identifier.
+- RPO/RTO target and observed restore duration.
+- Operator or job identity from `PRODUCTION_OWNER_BACKUPS`.
+- Smoke commands executed after restore, including `npm run db:mysql:migrate`, `npm run db:mysql:smoke`, and a web/API smoke test.
 
 ## Restore
 

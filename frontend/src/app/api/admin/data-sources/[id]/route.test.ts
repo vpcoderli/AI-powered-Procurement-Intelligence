@@ -109,6 +109,63 @@ describe("PATCH /api/admin/data-sources/[id]", () => {
     });
   });
 
+  it("allows operators to update live source health triage fields", async () => {
+    vi.mocked(adminAuth.requireAdminAccess).mockResolvedValueOnce({
+      kind: "admin",
+      role: "operator",
+      userId: "operator_1",
+    });
+    const PATCH = createAdminDataSourcePatch(testDb.db);
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/data-sources/sam_gov", {
+        method: "PATCH",
+        body: JSON.stringify({
+          liveHealthOwner: "operator_1",
+          liveHealthDisposition: "needs_manual_triage",
+          liveHealthNextReviewAt: "2026-06-15T00:00:00.000Z",
+          liveHealthNotes: "Credential-like password=secret should be redacted.",
+        }),
+      }),
+      { params: Promise.resolve({ id: "sam_gov" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(adminAuth.requireAdminAccess).toHaveBeenCalledTimes(1);
+    expect(adminAuth.requireAdminAccess).toHaveBeenCalledWith(testDb.db, expect.anything(), {
+      roles: ["admin", "operator"],
+    });
+    expect(body).toEqual({
+      source: expect.objectContaining({
+        id: "sam_gov",
+        liveHealthOwner: "operator_1",
+        liveHealthDisposition: "needs_manual_triage",
+        liveHealthNextReviewAt: "2026-06-15T00:00:00.000Z",
+        liveHealthNotes: "Credential-like password=[REDACTED] should be redacted.",
+        liveHealthReviewedAt: expect.any(String),
+      }),
+    });
+  });
+
+  it("rejects ordinary users before live source health triage updates", async () => {
+    vi.mocked(adminAuth.requireAdminAccess).mockRejectedValueOnce(new adminAuth.AdminAuthError("Admin access is required."));
+    const PATCH = createAdminDataSourcePatch(testDb.db);
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/data-sources/sam_gov", {
+        method: "PATCH",
+        body: JSON.stringify({ liveHealthDisposition: "needs_manual_triage" }),
+      }),
+      { params: Promise.resolve({ id: "sam_gov" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body).toEqual({ error: { code: "FORBIDDEN", message: "Admin access is required." } });
+    expect(adminAuth.requireAdminAccess).toHaveBeenCalledWith(testDb.db, expect.anything(), {
+      roles: ["admin", "operator"],
+    });
+  });
+
   it("rejects malformed patch bodies", async () => {
     const PATCH = createAdminDataSourcePatch(testDb.db);
     const response = await PATCH(

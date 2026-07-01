@@ -177,6 +177,57 @@ describe("/api/knowledge", () => {
     expect(body).toEqual({ items: [] });
   });
 
+  it("returns RAG-ready lexical retrieval contract when requested with a query", async () => {
+    await route.POST(new Request("http://localhost/api/knowledge", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Past performance cloud snippet",
+        body: "Reusable cloud response wording.",
+        type: "template_snippet",
+        tags: ["cloud"],
+        sourceKind: "manual",
+      }),
+    }));
+
+    const response = await route.GET(
+      new Request("http://localhost/api/knowledge?q=cloud&includeRetrievalTrace=1"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.items).toHaveLength(1);
+    expect(body.retrievalTrace).toMatchObject({
+      provider: "lexical",
+      retrievalMode: "lexical_mock_rag",
+      query: "cloud",
+      embeddingStatus: {
+        status: "mock_unavailable",
+        provider: null,
+        vectorStore: "none",
+        reason: "embedding_provider_out_of_scope_for_lite_phase",
+      },
+    });
+    expect(body.retrievalTrace.chunks).toEqual([
+      expect.objectContaining({
+        itemId: body.items[0].id,
+        title: "Past performance cloud snippet",
+        sourceRefs: {
+          sourceKind: "manual",
+          sourceIntentId: null,
+          sourceBidId: null,
+          sourceUrl: null,
+        },
+        score: expect.any(Number),
+        matchedReason: expect.stringContaining("cloud"),
+        textExcerpt: expect.stringContaining("Reusable cloud response wording."),
+      }),
+    ]);
+    expect(body.retrievalTrace.matchedFields[0]).toMatchObject({
+      field: expect.stringMatching(/title|body|tags/),
+    });
+  });
+
   it("creates and lists knowledge items for Enterprise users", async () => {
     const createResponse = await route.POST(new Request("http://localhost/api/knowledge", {
       method: "POST",

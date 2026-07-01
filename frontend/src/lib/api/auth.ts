@@ -269,6 +269,8 @@ export async function register(input: {
   email: string;
   password: string;
   displayName?: string;
+  marketingIntent?: "demo";
+  leadEventId?: string;
 }): Promise<AuthResponse> {
   const response = await fetch("/api/auth/register", {
     method: "POST",

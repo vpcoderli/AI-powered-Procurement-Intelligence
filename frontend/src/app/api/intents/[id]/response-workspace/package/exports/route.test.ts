@@ -39,6 +39,7 @@ const exportResponse: ResponsePackageExportResponse = {
     userId: "user_1",
     requestedByUserId: "user_1",
     status: "ready",
+    format: "markdown",
     fileName: "response-package.md",
     contentType: "text/markdown; charset=utf-8",
     byteSize: 100,
@@ -57,6 +58,11 @@ const exportResponse: ResponsePackageExportResponse = {
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
     downloadedAt: null,
+    reviewStatus: "pending_review",
+    reviewedAt: null,
+    reviewedByUserId: null,
+    reviewNotes: "",
+    reviewHistory: [],
   },
 };
 
@@ -97,6 +103,36 @@ describe("POST /api/intents/[id]/response-workspace/package/exports", () => {
 
     expect(response.status).toBe(400);
     expect(body.error.code).toBe("INVALID_REQUEST");
+    expect(createResponsePackageExport).not.toHaveBeenCalled();
+  });
+
+  it("passes supported export formats to the response package service", async () => {
+    createResponsePackageExport.mockResolvedValueOnce(exportResponse);
+
+    await POST(
+      new Request("http://localhost/api/intents/intent_1/response-workspace/package/exports", {
+        method: "POST",
+        body: JSON.stringify({ snapshotId: "response_package_snapshot_1", format: "pdf" }),
+      }),
+      { params: Promise.resolve({ id: "intent_1" }) },
+    );
+
+    expect(createResponsePackageExport).toHaveBeenCalledWith(expect.anything(), "user_1", "intent_1", {
+      snapshotId: "response_package_snapshot_1",
+      format: "pdf",
+    });
+  });
+
+  it("rejects invalid response package export formats at the route boundary", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/intents/intent_1/response-workspace/package/exports", {
+        method: "POST",
+        body: JSON.stringify({ snapshotId: "response_package_snapshot_1", format: "pptx" }),
+      }),
+      { params: Promise.resolve({ id: "intent_1" }) },
+    );
+
+    expect(response.status).toBe(400);
     expect(createResponsePackageExport).not.toHaveBeenCalled();
   });
 

@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { bidAttachments } from "@/server/db/schema";
-import { getBidAttachmentDownloadFromMysql, getLocalBidAttachment } from "./attachments";
+import { getBidAttachmentDownload, getBidAttachmentDownloadFromMysql, getLocalBidAttachment } from "./attachments";
 
 describe("bid attachment files", () => {
   let testDb: TestDatabase;
@@ -110,6 +110,45 @@ describe("bid attachment files", () => {
     });
   });
 
+  it("marks archived attachments with a storage path and checksum as archived openable", async () => {
+    const attachmentDir = path.join(path.dirname(testDb.databasePath), "configured-attachments");
+    const attachmentPath = path.join(attachmentDir, "archive", "openable.pdf");
+    process.env.CRAWLER_ATTACHMENT_DIR = attachmentDir;
+    await mkdir(path.dirname(attachmentPath), { recursive: true });
+    await writeFile(attachmentPath, "archived openable notice");
+    testDb.db.insert(bidAttachments)
+      .values({
+        id: "openable_pdf",
+        bidId: "1",
+        name: "Openable.pdf",
+        url: "https://example.gov/files/openable.pdf",
+        originalUrl: "https://example.gov/files/openable.pdf",
+        storagePath: "archive/openable.pdf",
+        contentType: "application/pdf",
+        checksumSha256: "sha256-openable",
+        archiveStatus: "archived",
+        sizeLabel: "24 bytes",
+        sortOrder: 100,
+        createdAt: "2026-05-28T00:00:00.000Z",
+      })
+      .run();
+
+    const attachment = await getBidAttachmentDownload(testDb.db, "1", "openable_pdf");
+
+    expect(attachment).toMatchObject({
+      kind: "local",
+      availability: "archived_openable",
+      downloadKind: "archived_file",
+      checksumSha256: "sha256-openable",
+      storagePath: "archive/openable.pdf",
+      filePath: await realpath(attachmentPath),
+      filename: "Openable.pdf",
+      mimeType: "application/pdf",
+      originalUrl: "https://example.gov/files/openable.pdf",
+      archiveStatus: "archived",
+    });
+  });
+
   it("returns undefined for external URLs and paths outside allowed directories", async () => {
     const attachmentDir = path.join(path.dirname(testDb.databasePath), "attachments");
     const outsidePath = path.join(path.dirname(testDb.databasePath), "secret.pdf");
@@ -187,6 +226,8 @@ describe("bid attachment files", () => {
 
     await expect(getBidAttachmentDownloadFromMysql(mysql, "mysql_bid_1", "sow_pdf")).resolves.toEqual({
       kind: "fallback",
+      availability: "source_download_note",
+      noteKind: "source_download_note",
       filename: "Statement of Work.pdf",
       mimeType: "text/plain; charset=utf-8",
       originalUrl: "https://sam.gov/opp/12345/sow.pdf",

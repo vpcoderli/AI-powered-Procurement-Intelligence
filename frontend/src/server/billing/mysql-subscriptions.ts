@@ -190,6 +190,19 @@ function normalizeSubscriptionSource(value: unknown): SubscriptionSource {
     : "admin_override";
 }
 
+function subscriptionIsExpired(currentPeriodEnd: string | null, now: string) {
+  if (!currentPeriodEnd) return false;
+
+  return new Date(currentPeriodEnd).getTime() <= new Date(now).getTime();
+}
+
+function gracePeriodExpired(currentPeriodEnd: string | null, now: string, graceDays: number) {
+  if (!currentPeriodEnd) return false;
+
+  const graceEndsAt = new Date(currentPeriodEnd).getTime() + graceDays * 24 * 60 * 60 * 1000;
+  return graceEndsAt <= new Date(now).getTime();
+}
+
 function checkoutSessionFromMysqlRow(row: MysqlCheckoutSessionRow): CheckoutSessionView {
   return {
     id: row.id,
@@ -996,14 +1009,135 @@ export async function reconcileMysqlSubscriptionLifecycle(
   pool: Pool,
   options: SubscriptionLifecycleReconcileOptions = {},
 ): Promise<SubscriptionLifecycleReconcileResult> {
-  void options;
-  const rows = await mysqlSelectMany<{ id: string }>(pool, "SELECT id FROM account_subscriptions");
-
-  return {
+  const now = options.now ?? nowIso();
+  const pastDueGraceDays = Math.max(0, options.pastDueGraceDays ?? 7);
+  const rows = await mysqlSelectMany<MysqlSubscriptionRow>(
+    pool,
+    `
+      SELECT
+        id,
+        user_id AS userId,
+        tier,
+        status,
+        source,
+        provider,
+        provider_customer_id AS providerCustomerId,
+        provider_subscription_id AS providerSubscriptionId,
+        current_period_end AS currentPeriodEnd,
+        cancel_at_period_end AS cancelAtPeriodEnd,
+        created_at AS createdAt,
+        updated_at AS updatedAt
+      FROM account_subscriptions
+    `,
+  );
+  const result: SubscriptionLifecycleReconcileResult = {
     checked: rows.length,
     canceledAtPeriodEnd: 0,
     markedPastDue: 0,
     downgradedPastDue: 0,
     expiredTrials: 0,
   };
+
+  for (const row of rows) {
+    const status = normalizeSubscriptionStatus(row.status);
+    const tier = normalizeAccountTier(row.tier);
+
+    if (tier === "free" || status === "none" || status === "canceled") {
+      continue;
+    }
+
+    if (status === "trialing" && subscriptionIsExpired(row.currentPeriodEnd, now)) {
+      await transitionMysqlSubscriptionLifecycle(pool, row, {
+        tier: "free",
+        status: "canceled",
+        eventType: "trial_expired",
+        now,
+      });
+      result.expiredTrials += 1;
+      continue;
+    }
+
+    if (normalizeMysqlBoolean(row.cancelAtPeriodEnd) && subscriptionIsExpired(row.currentPeriodEnd, now)) {
+      await transitionMysqlSubscriptionLifecycle(pool, row, {
+        tier: "free",
+        status: "canceled",
+        eventType: "subscription_canceled_at_period_end",
+        now,
+      });
+      result.canceledAtPeriodEnd += 1;
+      continue;
+    }
+
+    if (status === "past_due" && gracePeriodExpired(row.currentPeriodEnd, now, pastDueGraceDays)) {
+      await transitionMysqlSubscriptionLifecycle(pool, row, {
+        tier: "free",
+        status: "canceled",
+        eventType: "subscription_downgraded_past_due",
+        now,
+        metadata: { pastDueGraceDays },
+      });
+      result.downgradedPastDue += 1;
+      continue;
+    }
+
+    if (status === "active" && subscriptionIsExpired(row.currentPeriodEnd, now)) {
+      await transitionMysqlSubscriptionLifecycle(pool, row, {
+        tier,
+        status: "past_due",
+        eventType: "subscription_marked_past_due",
+        now,
+      });
+      result.markedPastDue += 1;
+    }
+  }
+
+  return result;
+}
+
+async function transitionMysqlSubscriptionLifecycle(
+  pool: Pool,
+  row: MysqlSubscriptionRow,
+  input: {
+    tier: AccountTier;
+    status: SubscriptionStatus;
+    eventType: string;
+    now: string;
+    metadata?: Record<string, unknown>;
+  },
+) {
+  const fromTier = normalizeAccountTier(row.tier);
+  const fromStatus = normalizeSubscriptionStatus(row.status);
+  const source = normalizeSubscriptionSource(row.source);
+
+  await mysqlExecute(
+    pool,
+    `
+      UPDATE account_subscriptions
+      SET tier = ?, status = ?, cancel_at_period_end = 0, updated_at = ?
+      WHERE id = ?
+    `,
+    [input.tier, input.status, input.now, row.id],
+  );
+  await mysqlExecute(pool, "UPDATE users SET account_tier = ?, updated_at = ? WHERE id = ?", [
+    input.tier,
+    input.now,
+    row.userId,
+  ]);
+  await syncOwnedMysqlWorkspaceTier(pool, row.userId, input.tier, input.now);
+  await writeMysqlSubscriptionEvent(pool, {
+    userId: row.userId,
+    subscriptionId: row.id,
+    eventType: input.eventType,
+    fromTier,
+    toTier: input.tier,
+    fromStatus,
+    toStatus: input.status,
+    source,
+    metadata: {
+      providerSubscriptionId: row.providerSubscriptionId,
+      currentPeriodEnd: row.currentPeriodEnd,
+      ...input.metadata,
+    },
+    createdAt: input.now,
+  });
 }

@@ -12,6 +12,7 @@ import {
   KnowledgeValidationError,
   listKnowledgeItems,
 } from "@/server/knowledge/service";
+import { retrieveKnowledgeContext } from "@/server/knowledge/retrieval";
 
 function jsonWithPrincipalCookie(
   body: unknown,
@@ -75,13 +76,29 @@ export function createKnowledgeRouteHandlers(database: AppDatabase) {
       requireFeature(principal, "knowledge_station");
 
       const searchParams = new URL(request.url).searchParams;
+      const q = optionalQueryValue(searchParams.get("q"));
+      const limit = limitQueryValue(searchParams.get("limit"));
+
+      if (searchParams.get("includeRetrievalTrace") === "1" && q) {
+        const result = await retrieveKnowledgeContext(database, {
+          organizationId,
+          query: q,
+          limit,
+        });
+
+        return jsonWithPrincipalCookie({
+          items: result.items,
+          retrievalTrace: result.trace,
+        }, principal);
+      }
+
       const result = await listKnowledgeItems(database, {
         organizationId,
         intentId: optionalQueryValue(searchParams.get("intentId")),
         bidId: optionalQueryValue(searchParams.get("bidId")),
-        q: optionalQueryValue(searchParams.get("q")),
+        q,
         type: optionalQueryValue(searchParams.get("type")),
-        limit: limitQueryValue(searchParams.get("limit")),
+        limit,
       });
 
       return jsonWithPrincipalCookie(result, principal);

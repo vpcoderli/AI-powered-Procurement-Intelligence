@@ -53,6 +53,12 @@ describe("intent service", () => {
       expect(intent.generated.initialChecklist).toContain(
         "Read the full solicitation and all attachments.",
       );
+      expect(intent.generated.aiRun).toMatchObject({
+        provider: "deterministic",
+        promptVersion: "intent-brief-lite@2026-06-10",
+        cost: { currency: "USD", total: 0 },
+        fallbackReason: "no_llm_provider_configured",
+      });
       expect(intent.match.score).toBeGreaterThan(0);
       expect(row?.aiBidBrief).toBe(intent.generated.aiBidBrief);
       expect(JSON.parse(row?.initialChecklistJson ?? "[]")).toHaveLength(7);

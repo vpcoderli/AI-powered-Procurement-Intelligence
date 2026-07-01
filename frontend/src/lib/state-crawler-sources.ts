@@ -56,7 +56,7 @@ const STATE_CRAWLER_SOURCE_DEFINITIONS = [
   { stateCode: "MA", id: "ma_state_procurement", label: "Massachusetts COMMBUYS", baseUrl: "https://www.commbuys.com" },
   { stateCode: "MI", id: "mi_state_procurement", label: "Michigan State Procurement", baseUrl: "https://www.michigan.gov/dtmb/procurement" },
   { stateCode: "MN", id: "mn_state_procurement", label: "Minnesota State Procurement", baseUrl: "https://mn.gov/admin/osp" },
-  { stateCode: "MS", id: "ms_state_procurement", label: "Mississippi State Procurement", baseUrl: "https://www.dfa.ms.gov/procurement" },
+  { stateCode: "MS", id: "ms_state_procurement", label: "Mississippi State Procurement", baseUrl: "https://www.ms.gov/dfa/contract_bid_search/Bid?autoloadGrid=true" },
   { stateCode: "MO", id: "mo_state_procurement", label: "Missouri State Procurement", baseUrl: "https://oa.mo.gov/purchasing" },
   { stateCode: "MT", id: "mt_state_procurement", label: "Montana State Procurement", baseUrl: "https://spb.mt.gov" },
   { stateCode: "NE", id: "ne_state_procurement", label: "Nebraska State Procurement", baseUrl: "https://das.nebraska.gov/materiel/purchasing" },

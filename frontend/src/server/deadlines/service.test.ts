@@ -3,6 +3,7 @@ import { createSupplierArtifact } from "@/server/artifacts/service";
 import { createIntentForBid } from "@/server/intents/service";
 import { createQuoteRequest } from "@/server/quotes/service";
 import { getOrCreateResponseWorkspace, updateResponseWorkspaceItem } from "@/server/response-workspace/service";
+import { createSubmissionConfirmation, getOrCreateSubmissionGuidance } from "@/server/submission/service";
 import { createTestDatabase } from "@/server/db/test-utils";
 import { users } from "@/server/db/schema";
 import {
@@ -83,6 +84,66 @@ describe("deadline notification service", () => {
           dueAt: "2026-06-11",
         }),
       ]));
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("bridges submission checkpoints and confirmation recovery reminders without duplicates", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+
+    try {
+      seedRegisteredUser(testDb);
+      const intent = await createIntentForBid(testDb.db, userId, "1");
+      await getOrCreateSubmissionGuidance(testDb.db, userId, intent.id);
+      await createSubmissionConfirmation(testDb.db, userId, intent.id, {
+        submittedAt: "2026-06-08T12:00:00.000Z",
+        method: "external_portal",
+        confirmationNotes: "Portal accepted the response but did not show a receipt.",
+      });
+
+      const first = await getDeadlineWorkspace(testDb.db, userId, intent.id, {
+        now: "2026-06-08T13:00:00.000Z",
+      });
+      const second = await getDeadlineWorkspace(testDb.db, userId, intent.id, {
+        now: "2026-06-08T13:00:00.000Z",
+      });
+      const checkpoint = first.reminders.find((item) => item.kind === "submission_checkpoint")!;
+      const recovery = first.reminders.find((item) => item.kind === "submission_confirmation_recovery")!;
+
+      expect(first.reminders.filter((item) => item.kind === "submission_checkpoint")).toHaveLength(1);
+      expect(first.reminders.filter((item) => item.kind === "submission_confirmation_recovery")).toHaveLength(1);
+      expect(second.summary.total).toBe(first.summary.total);
+      expect(checkpoint).toEqual(expect.objectContaining({
+        linkedObjectType: "submission_path",
+        title: expect.stringContaining("Submission checkpoint"),
+        status: "active",
+      }));
+      expect(recovery).toEqual(expect.objectContaining({
+        linkedObjectType: "submission_confirmation",
+        title: expect.stringContaining("Recover confirmation"),
+        priority: "high",
+        status: "active",
+      }));
+
+      const acknowledged = await acknowledgeDeadlineReminder(testDb.db, userId, intent.id, {
+        reminderId: checkpoint.id,
+        now: "2026-06-08T14:00:00.000Z",
+      });
+      expect(acknowledged.reminders.find((item) => item.id === checkpoint.id)).toMatchObject({
+        status: "acknowledged",
+        acknowledgedAt: "2026-06-08T14:00:00.000Z",
+      });
+
+      const snoozed = await snoozeDeadlineReminder(testDb.db, userId, intent.id, {
+        reminderId: recovery.id,
+        snoozedUntil: "2026-06-09T09:00:00.000Z",
+        now: "2026-06-08T15:00:00.000Z",
+      });
+      expect(snoozed.reminders.find((item) => item.id === recovery.id)).toMatchObject({
+        status: "snoozed",
+        snoozedUntil: "2026-06-09T09:00:00.000Z",
+      });
     } finally {
       await testDb.cleanup();
     }

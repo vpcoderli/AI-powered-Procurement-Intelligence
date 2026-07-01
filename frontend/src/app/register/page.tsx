@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { FormEvent, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useEffect, useMemo, useState } from "react";
 import { AuthPageShell } from "@/components/auth/AuthPageShell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,11 +15,14 @@ const COPY = {
   en: {
     title: "Create account",
     subtitle: "Start saving bids and searches locally.",
+    demoTitle: "Create a local demo account",
+    demoSubtitle: "Preview the WinBids workflow locally. No external email is sent.",
     displayName: "Display name",
     displayNamePlaceholder: "Buyer One",
     email: "Email",
     password: "Password",
     submit: "Create account",
+    demoSubmit: "Create demo account",
     submitting: "Creating account...",
     hasAccount: "Already have an account?",
     login: "Sign in",
@@ -30,11 +33,14 @@ const COPY = {
   zh: {
     title: "创建账号",
     subtitle: "本地保存标案和搜索。",
+    demoTitle: "创建本地演示账号",
+    demoSubtitle: "本地预览 WinBids 工作流。不会发送外部邮件。",
     displayName: "显示名称",
     displayNamePlaceholder: "采购负责人",
     email: "邮箱",
     password: "密码",
     submit: "创建账号",
+    demoSubmit: "创建演示账号",
     submitting: "正在创建...",
     hasAccount: "已有账号？",
     login: "登录",
@@ -44,16 +50,32 @@ const COPY = {
   },
 };
 
-export default function RegisterPage() {
+function RegisterPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { language } = useLanguage();
   const copy = COPY[language];
+  const isDemoIntent = searchParams.get("intent") === "demo";
+  const leadEventId = searchParams.get("lead") ?? undefined;
   const { register } = useAuth();
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    void fetch("/api/marketing/signup-start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        marketingIntent: isDemoIntent ? "demo" : "start_free",
+        leadEventId,
+        language,
+        sourcePath: "/register",
+      }),
+    }).catch(() => undefined);
+  }, [isDemoIntent, language, leadEventId]);
 
   const canSubmit = useMemo(
     () => email.trim().length > 0 && password.length >= 8 && !isSubmitting,
@@ -90,6 +112,8 @@ export default function RegisterPage() {
         email,
         password,
         displayName: displayName.trim() || undefined,
+        marketingIntent: isDemoIntent ? "demo" : undefined,
+        leadEventId,
       });
       router.push("/");
     } catch (err) {
@@ -100,7 +124,16 @@ export default function RegisterPage() {
   };
 
   return (
-    <AuthPageShell mode="register" title={copy.title} subtitle={copy.subtitle}>
+    <AuthPageShell
+      mode="register"
+      title={isDemoIntent ? copy.demoTitle : copy.title}
+      subtitle={isDemoIntent ? copy.demoSubtitle : copy.subtitle}
+    >
+      {isDemoIntent && (
+        <div className="mb-5 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-sm font-bold leading-6 text-blue-900">
+          {copy.demoSubtitle}
+        </div>
+      )}
       <form className="space-y-5" onSubmit={handleSubmit}>
         <div className="space-y-2">
           <Label htmlFor="displayName" className="text-slate-700">
@@ -155,7 +188,7 @@ export default function RegisterPage() {
           disabled={!canSubmit}
           className="winbids-primary-action h-11 w-full border-0 hover:bg-blue-800"
         >
-          {isSubmitting ? copy.submitting : copy.submit}
+          {isSubmitting ? copy.submitting : isDemoIntent ? copy.demoSubmit : copy.submit}
         </Button>
       </form>
       <p className="mt-5 text-center text-sm text-slate-600">
@@ -165,5 +198,13 @@ export default function RegisterPage() {
         </Link>
       </p>
     </AuthPageShell>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterPageContent />
+    </Suspense>
   );
 }

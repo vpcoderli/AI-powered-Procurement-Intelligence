@@ -18,7 +18,7 @@ describe("search route", () => {
     expect(page).toContain("winbids-workspace");
     expect(page).toContain("winbids-hero-panel");
     expect(page).toContain("winbids-filter-panel");
-    expect(page).toContain("Discovery-first queue");
+    expect(page).toContain('t("dashboard.discoveryFirstQueue")');
   });
 
   it("uses UniversalState for search error and empty states", () => {
@@ -29,5 +29,20 @@ describe("search route", () => {
     expect(page).toContain('code="empty"');
     expect(page).toContain('title={t("dashboard.errorTitle")}');
     expect(page).toContain('title={t("dashboard.noResultsTitle")}');
+  });
+
+  it("shows operational feedback for loading, filters, errors, and anonymous save actions", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("activeFilterLabels");
+    expect(page).toContain("filterStatusLabel");
+    expect(page).toContain("resultStatusTitle");
+    expect(page).toContain('t("dashboard.updatingBidQueue")');
+    expect(page).toContain('t("dashboard.filtersActive")');
+    expect(page).toContain('t("dashboard.noFiltersActive")');
+    expect(page).toContain('t("dashboard.saveBidAuthDescription")');
+    expect(page).toContain("onAuthPrompt={() => setAuthPromptVisible(true)}");
+    expect(page).toContain('href: "/login"');
+    expect(page).toContain('href: "/register"');
   });
 });

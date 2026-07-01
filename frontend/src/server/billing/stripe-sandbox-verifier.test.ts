@@ -42,6 +42,26 @@ describe("Stripe sandbox verifier helpers", () => {
     expect(() => validateStripeSandboxConfig(validEnv, { tier: "enterprise" })).toThrow(/tier must be pro or business/);
   });
 
+  it("rejects placeholder sandbox credentials and price ids", () => {
+    expect(() =>
+      validateStripeSandboxConfig({
+        ...validEnv,
+        STRIPE_SECRET_KEY: "sk_test_REPLACE_ME",
+        STRIPE_WEBHOOK_SECRET: "whsec_REPLACE_ME",
+        STRIPE_PRICE_PRO_MONTHLY: "price_REPLACE_ME",
+      }, { tier: "pro" }),
+    ).toThrow(
+      /STRIPE_SECRET_KEY must not use a placeholder value; STRIPE_WEBHOOK_SECRET must not use a placeholder value; STRIPE_PRICE_PRO_MONTHLY must not use a placeholder value/,
+    );
+  });
+
+  it("rejects malformed origins and timeout arguments", () => {
+    expect(() => validateStripeSandboxConfig(validEnv, { origin: "ftp://example.test" }))
+      .toThrow(/origin must be an http or https URL/);
+    expect(() => validateStripeSandboxConfig(validEnv, { timeoutMs: Number.NaN }))
+      .toThrow(/timeout-ms must be a positive integer/);
+  });
+
   it("parses CLI options with sandbox-safe defaults", () => {
     expect(parseStripeSandboxArgs([])).toEqual({
       tier: "pro",

@@ -52,6 +52,88 @@ export interface QuoteRequest {
   updatedAt: string;
 }
 
+export type QuoteComparisonReviewFlagCode =
+  | "single_quote"
+  | "missing_amount"
+  | "mixed_currency"
+  | "high_variance";
+
+export interface QuoteComparisonReviewFlag {
+  code: QuoteComparisonReviewFlagCode;
+  message: string;
+  requestIds: string[];
+}
+
+export interface QuoteComparisonSummary {
+  quotedCount: number;
+  currency: string | null;
+  lowAmountCents: number | null;
+  medianAmountCents: number | null;
+  highAmountCents: number | null;
+  spreadAmountCents: number | null;
+  variancePercent: number | null;
+  lowestRequestId: string | null;
+  highestRequestId: string | null;
+  recommendedReviewFlags: QuoteComparisonReviewFlag[];
+}
+
+export type QuoteUploadWarningCode =
+  | "empty_upload"
+  | "invalid_json"
+  | "unsupported_format"
+  | "missing_price"
+  | "invalid_price";
+
+export interface QuoteUploadWarning {
+  code: QuoteUploadWarningCode;
+  message: string;
+  rowNumber?: number;
+  field?: string;
+}
+
+export interface QuoteUploadNormalizedRow {
+  rowNumber: number;
+  vendor: string;
+  item: string;
+  quantity: number;
+  unitPriceCents: number | null;
+  totalCents: number | null;
+  currency: string;
+}
+
+export interface QuoteUploadTotals {
+  rowCount: number;
+  pricedRowCount: number;
+  subtotalCents: number;
+  currency: string | null;
+}
+
+export interface QuoteUploadComparableQuote {
+  vendor: string;
+  quotedAmountCents: number;
+  currency: string;
+  lineItemCount: number;
+}
+
+export interface QuoteUploadComparisonSummary {
+  vendorCount: number;
+  lineItemCount: number;
+  comparableQuotes: QuoteUploadComparableQuote[];
+}
+
+export interface QuoteUploadParseInput {
+  text: string;
+  sourceName?: string;
+  contentType?: string;
+}
+
+export interface QuoteUploadParseResult {
+  rows: QuoteUploadNormalizedRow[];
+  totals: QuoteUploadTotals;
+  warnings: QuoteUploadWarning[];
+  comparisonSummary: QuoteUploadComparisonSummary;
+}
+
 export interface QuoteWorkspace {
   intentId: string;
   bidId: string;
@@ -63,6 +145,7 @@ export interface QuoteWorkspace {
     sent: number;
     received: number;
     accepted: number;
+    comparison: QuoteComparisonSummary;
   };
   partners: SourcingPartner[];
   requests: QuoteRequest[];

@@ -1,10 +1,5 @@
 import type { AppDatabase } from "@/server/db/client";
 import type { PublicWorkspace } from "@/server/account/workspace";
-import { ensureUser, ensureUserFromMysql } from "@/server/bids/repository";
-import {
-  createAnonymousUserCookie,
-  resolveAnonymousUser,
-} from "@/server/bids/user";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import {
   featuresForUser,
@@ -15,6 +10,8 @@ import {
 import { getSessionUser } from "./service";
 import { getMysqlSessionUser } from "./mysql-service";
 import { readSessionToken } from "./session";
+
+const ANONYMOUS_PRINCIPAL_USER_ID = "anonymous";
 
 export type RequestPrincipal =
   | {
@@ -56,12 +53,6 @@ export async function resolvePrincipal(
     }
   }
 
-  const anonymousUser = resolveAnonymousUser(request);
-  if (mysql) {
-    await ensureUserFromMysql(mysql, anonymousUser.userId);
-  } else {
-    await ensureUser(db, anonymousUser.userId);
-  }
   const anonymousEntitlements = {
     role: "user" as const,
     tier: "free" as const,
@@ -69,11 +60,8 @@ export async function resolvePrincipal(
 
   return {
     kind: "anonymous",
-    userId: anonymousUser.userId,
+    userId: ANONYMOUS_PRINCIPAL_USER_ID,
     ...anonymousEntitlements,
     features: featuresForUser(anonymousEntitlements),
-    ...(anonymousUser.isNewUser
-      ? { anonymousCookie: createAnonymousUserCookie(anonymousUser.userId) }
-      : {}),
   };
 }

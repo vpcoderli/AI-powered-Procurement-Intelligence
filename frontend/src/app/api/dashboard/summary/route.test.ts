@@ -1,23 +1,52 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import * as principal from "@/server/auth/principal";
 import { createDashboardSummaryGet } from "./route";
 
 vi.mock("@/server/auth/principal", () => ({
-  resolvePrincipal: vi.fn(async () => ({
-    kind: "anonymous",
-    userId: "anon_1",
-    role: "user",
-    tier: "free",
-    features: ["bid_search"],
-    anonymousCookie: "apsi_anon=anon_1; Path=/",
-  })),
+  resolvePrincipal: vi.fn(),
 }));
+
+const resolvePrincipal = vi.mocked(principal.resolvePrincipal);
 
 describe("GET /api/dashboard/summary", () => {
   afterEach(() => {
     vi.clearAllMocks();
   });
 
+  it("requires authentication for the command-center summary", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "anonymous",
+      userId: "anonymous",
+      role: "user",
+      tier: "free",
+      features: ["bid_search"],
+    });
+    const createSummary = vi.fn();
+    const GET = createDashboardSummaryGet({
+      database: {},
+      createSummary,
+      now: () => new Date("2026-06-02T00:00:00.000Z"),
+    });
+
+    const response = await GET(new Request("http://localhost/api/dashboard/summary"));
+    const body = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(body).toEqual({
+      error: { code: "AUTH_REQUIRED", message: "Authentication is required" },
+    });
+    expect(createSummary).not.toHaveBeenCalled();
+  });
+
   it("returns command-center summary for the resolved principal", async () => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "authenticated",
+      userId: "user_1",
+      role: "user",
+      tier: "free",
+      features: ["bid_search"],
+    });
     const createSummary = vi.fn(async () => ({
       generatedAt: "2026-06-02T00:00:00.000Z",
       briefs: {
@@ -46,11 +75,11 @@ describe("GET /api/dashboard/summary", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("set-cookie")).toContain("apsi_anon=anon_1");
+    expect(response.headers.get("set-cookie")).toBeNull();
     expect(body.summary.briefs.newMatches.value).toBe(18);
     expect(createSummary).toHaveBeenCalledWith(
       {},
-      { userId: "anon_1", role: "user", tier: "free" },
+      { userId: "user_1", role: "user", tier: "free" },
       new Date("2026-06-02T00:00:00.000Z"),
     );
   });

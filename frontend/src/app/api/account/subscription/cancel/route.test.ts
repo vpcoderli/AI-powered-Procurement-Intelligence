@@ -60,4 +60,91 @@ describe("POST /api/account/subscription/cancel", () => {
     expect(body.subscription).toMatchObject({ tier: "pro", cancelAtPeriodEnd: true });
     expect(billingService.cancelAccountSubscription).toHaveBeenCalledWith(expect.anything(), "user_1");
   });
+
+  it("schedules provider-backed cancellation for active billing provider subscriptions", async () => {
+    vi.mocked(authService.getSessionUser).mockResolvedValueOnce({
+      id: "user_1",
+      email: "buyer@example.com",
+      displayName: "Buyer",
+      role: "user",
+      tier: "business",
+      features: ["bid_search", "response.workspace.create"],
+    });
+    vi.mocked(billingService.cancelAccountSubscription).mockReturnValueOnce({
+      subscription: {
+        userId: "user_1",
+        tier: "business",
+        status: "active",
+        source: "billing_provider",
+        currentPeriodEnd: "2026-06-28T00:00:00.000Z",
+        cancelAtPeriodEnd: true,
+      },
+      plans: billingService.listSubscriptionPlans(),
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/account/subscription/cancel", {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE_NAME}=sess_valid` },
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.subscription).toMatchObject({
+      tier: "business",
+      source: "billing_provider",
+      cancelAtPeriodEnd: true,
+    });
+  });
+
+  it("rejects cancellation when there is no active subscription", async () => {
+    vi.mocked(authService.getSessionUser).mockResolvedValueOnce({
+      id: "user_1",
+      email: "buyer@example.com",
+      displayName: "Buyer",
+      role: "user",
+      tier: "free",
+      features: ["bid_search"],
+    });
+    vi.mocked(billingService.cancelAccountSubscription).mockImplementationOnce(() => {
+      throw new billingService.InvalidSubscriptionInputError("No active subscription to cancel");
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/account/subscription/cancel", {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE_NAME}=sess_valid` },
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("INVALID_REQUEST");
+    expect(body.error.message).toContain("No active subscription");
+  });
+
+  it("requires authentication", async () => {
+    const response = await POST(new Request("http://localhost/api/account/subscription/cancel", { method: "POST" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(body.error.code).toBe("AUTH_REQUIRED");
+  });
+
+  it("rejects stale session cookies", async () => {
+    vi.mocked(authService.getSessionUser).mockResolvedValueOnce(null);
+
+    const response = await POST(
+      new Request("http://localhost/api/account/subscription/cancel", {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE_NAME}=sess_stale` },
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(body.error.code).toBe("AUTH_REQUIRED");
+    expect(billingService.cancelAccountSubscription).not.toHaveBeenCalled();
+  });
 });

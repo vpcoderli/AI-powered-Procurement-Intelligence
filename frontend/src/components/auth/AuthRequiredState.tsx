@@ -41,12 +41,17 @@ export function AuthRequiredState({
           {description ?? copy.description}
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-3">
-          <Button className="winbids-primary-action h-10 border-0 px-5 hover:bg-blue-800" render={<Link href="/login" />}>
+          <Button
+            className="winbids-primary-action h-10 border-0 px-5 hover:bg-blue-800"
+            nativeButton={false}
+            render={<Link href="/login" />}
+          >
             {copy.login}
           </Button>
           <Button
             variant="outline"
             className="h-10 border-slate-200 bg-white px-5 font-black text-slate-700 hover:bg-slate-100 hover:text-slate-950"
+            nativeButton={false}
             render={<Link href="/register" />}
           >
             {copy.register}

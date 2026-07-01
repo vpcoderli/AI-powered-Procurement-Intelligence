@@ -6,18 +6,31 @@ import type { AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { bidAttachments } from "@/server/db/schema";
 
+export type AttachmentAvailability =
+  | "archived_openable"
+  | "local_openable"
+  | "source_download_note"
+  | "archive_missing"
+  | "archive_failed";
+
 export interface LocalBidAttachment {
   kind: "local";
+  availability: "archived_openable" | "local_openable";
+  downloadKind: "archived_file" | "local_file";
   filePath: string;
   filename: string;
   mimeType: string | null;
   originalUrl: string;
   archiveStatus: string;
   archiveError: string | null;
+  storagePath: string | null;
+  checksumSha256: string | null;
 }
 
 export interface FallbackBidAttachment {
   kind: "fallback";
+  availability: "source_download_note" | "archive_missing" | "archive_failed";
+  noteKind: "source_download_note" | "archive_status_note";
   filename: string;
   mimeType: "text/plain; charset=utf-8";
   originalUrl: string;
@@ -44,6 +57,7 @@ interface MysqlBidAttachmentRow {
   storagePath: string | null;
   contentType: string | null;
   mimeType: string | null;
+  checksumSha256: string | null;
   archiveStatus: string;
   archiveError: string | null;
 }
@@ -136,6 +150,53 @@ async function resolveAllowedLocalPath(value: string) {
   return undefined;
 }
 
+function hasArchivedOpenableMetadata(row: {
+  archiveStatus: string;
+  storagePath: string | null;
+  checksumSha256: string | null;
+}) {
+  return (
+    row.archiveStatus === "archived" &&
+    Boolean(row.storagePath?.trim()) &&
+    Boolean(row.checksumSha256?.trim())
+  );
+}
+
+function localAvailability(row: {
+  archiveStatus: string;
+  storagePath: string | null;
+  checksumSha256: string | null;
+}): LocalBidAttachment["availability"] {
+  return hasArchivedOpenableMetadata(row) ? "archived_openable" : "local_openable";
+}
+
+function localDownloadKind(availability: LocalBidAttachment["availability"]): LocalBidAttachment["downloadKind"] {
+  return availability === "archived_openable" ? "archived_file" : "local_file";
+}
+
+function fallbackAvailability(row: {
+  archiveStatus: string;
+  storagePath: string | null;
+}): FallbackBidAttachment["availability"] {
+  if (row.archiveStatus === "failed") return "archive_failed";
+  if (row.storagePath?.trim()) return "archive_missing";
+  return "source_download_note";
+}
+
+function fallbackReason(availability: FallbackBidAttachment["availability"]) {
+  if (availability === "archive_failed") {
+    return "Attachment archiving failed; no archived local file is available.";
+  }
+  if (availability === "archive_missing") {
+    return "The archived attachment file is not available on disk.";
+  }
+  return "The attachment has not been archived locally yet.";
+}
+
+function fallbackNoteKind(availability: FallbackBidAttachment["availability"]): FallbackBidAttachment["noteKind"] {
+  return availability === "source_download_note" ? "source_download_note" : "archive_status_note";
+}
+
 export async function getLocalBidAttachment(
   db: AppDatabase,
   bidId: string,
@@ -167,27 +228,35 @@ export async function getBidAttachmentDownload(
   const originalUrl = row.originalUrl ?? row.url;
   const filePath = await resolveAllowedLocalPath(row.storagePath ?? row.url);
   if (!filePath) {
+    const availability = fallbackAvailability(row);
+
     return {
       kind: "fallback",
+      availability,
+      noteKind: fallbackNoteKind(availability),
       filename: row.name,
       mimeType: "text/plain; charset=utf-8",
       originalUrl,
       archiveStatus: row.archiveStatus,
       archiveError: row.archiveError,
-      reason: row.storagePath
-        ? "The archived attachment file is not available on disk."
-        : "The attachment has not been archived locally yet.",
+      reason: fallbackReason(availability),
     };
   }
 
+  const availability = localAvailability(row);
+
   return {
     kind: "local",
+    availability,
+    downloadKind: localDownloadKind(availability),
     filePath,
     filename: row.name,
     mimeType: row.mimeType ?? row.contentType,
     originalUrl,
     archiveStatus: row.archiveStatus,
     archiveError: row.archiveError,
+    storagePath: row.storagePath,
+    checksumSha256: row.checksumSha256,
   };
 }
 
@@ -207,6 +276,7 @@ export async function getBidAttachmentDownloadFromMysql(
         storage_path AS storagePath,
         content_type AS contentType,
         mime_type AS mimeType,
+        checksum_sha256 AS checksumSha256,
         archive_status AS archiveStatus,
         archive_error AS archiveError
       FROM bid_attachments
@@ -222,26 +292,34 @@ export async function getBidAttachmentDownloadFromMysql(
   const originalUrl = row.originalUrl ?? row.url;
   const filePath = await resolveAllowedLocalPath(row.storagePath ?? row.url);
   if (!filePath) {
+    const availability = fallbackAvailability(row);
+
     return {
       kind: "fallback",
+      availability,
+      noteKind: fallbackNoteKind(availability),
       filename: row.name,
       mimeType: "text/plain; charset=utf-8",
       originalUrl,
       archiveStatus: row.archiveStatus,
       archiveError: row.archiveError,
-      reason: row.storagePath
-        ? "The archived attachment file is not available on disk."
-        : "The attachment has not been archived locally yet.",
+      reason: fallbackReason(availability),
     };
   }
 
+  const availability = localAvailability(row);
+
   return {
     kind: "local",
+    availability,
+    downloadKind: localDownloadKind(availability),
     filePath,
     filename: row.name,
     mimeType: row.mimeType ?? row.contentType,
     originalUrl,
     archiveStatus: row.archiveStatus,
     archiveError: row.archiveError,
+    storagePath: row.storagePath,
+    checksumSha256: row.checksumSha256,
   };
 }

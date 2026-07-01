@@ -13,11 +13,15 @@ import {
   fetchResponseWorkspaceComments,
   fetchResponsePackageWorkspace,
   createResponsePackageExport,
+  updateResponsePackageExportReview,
   postQualificationQuestion,
   refreshQualificationEvidence,
   createResponsePackageSnapshot,
+  fetchAwardOutcome,
   updateComplianceManifestItem,
+  updateAwardOutcome,
   createResponseWorkspaceComment,
+  replaceSupplierArtifact,
   fetchSubmissionGuidance,
   updateIntentStatus,
   updatePursuitDecision,
@@ -118,7 +122,19 @@ describe("intent API client", () => {
   });
 
   it("fetches submission guidance with an encoded intent id", async () => {
-    const body = { submission: { id: "submission_path_1", method: "external_portal" } };
+    const body = {
+      submission: { id: "submission_path_1", method: "external_portal", status: "draft" },
+      confirmations: [],
+      evidenceLinks: {
+        responsePackageExports: [{
+          id: "response_package_export_1",
+          format: "markdown",
+          downloadUrl: "/api/intents/intent%2Fwith%20space/response-workspace/package/exports/response_package_export_1",
+        }],
+        linkedSupplierArtifacts: [{ id: "supplier_artifact_1", name: "Signed capability statement" }],
+        awardOutcome: { status: "awarded_to_us", awardNoticeUrl: "https://sam.gov/award/notice" },
+      },
+    };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));
 
     const result = await fetchSubmissionGuidance("intent/with space");
@@ -128,7 +144,7 @@ describe("intent API client", () => {
   });
 
   it("patches submission guidance fields", async () => {
-    const payload = { method: "email" as const, requiresRegistration: false };
+    const payload = { method: "email" as const, status: "ready" as const, requiresRegistration: false };
     const body = { submission: { id: "submission_path_1", ...payload } };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));
 
@@ -149,7 +165,20 @@ describe("intent API client", () => {
       confirmationReference: "CONF-123",
       confirmationNotes: "Receipt downloaded.",
     };
-    const body = { confirmation: { id: "submission_confirmation_1", ...payload } };
+    const body = {
+      confirmation: { id: "submission_confirmation_1", ...payload },
+      submission: { id: "submission_path_1", status: "submitted" },
+      confirmations: [{ id: "submission_confirmation_1", ...payload }],
+      evidenceLinks: {
+        responsePackageExports: [{
+          id: "response_package_export_1",
+          format: "zip",
+          downloadUrl: "/api/intents/intent%2Fwith%20space/response-workspace/package/exports/response_package_export_1",
+        }],
+        linkedSupplierArtifacts: [{ id: "supplier_artifact_1", name: "Signed capability statement" }],
+        awardOutcome: { status: "awarded_to_us", awardNoticeUrl: "https://sam.gov/award/notice" },
+      },
+    };
     mockFetch.mockResolvedValueOnce(jsonResponse(body, { status: 201 }));
 
     const result = await confirmSubmission("intent/with space", payload);
@@ -157,6 +186,42 @@ describe("intent API client", () => {
     expect(result).toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/submission/confirm", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  });
+
+  it("fetches award outcome with an encoded intent id", async () => {
+    const body = {
+      outcome: {
+        intentId: "intent/with space",
+        status: "awaiting_award",
+        lossReason: "unknown",
+        nextAction: "capture_tabulation",
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await fetchAwardOutcome("intent/with space");
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/award");
+  });
+
+  it("patches award outcome fields", async () => {
+    const payload = {
+      status: "awarded_to_competitor" as const,
+      lossReason: "price_uncompetitive" as const,
+      winnerName: "Delta Integrators",
+    };
+    const body = { outcome: { id: "award_outcome_1", ...payload } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await updateAwardOutcome("intent/with space", payload);
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/intents/intent%2Fwith%20space/award", {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
@@ -306,6 +371,40 @@ describe("intent API client", () => {
     );
   });
 
+  it("replaces a supplier artifact with an encoded intent and artifact id", async () => {
+    const body = {
+      vault: {
+        intentId: "intent/with space",
+        artifacts: [{
+          id: "artifact/with space",
+          fileName: "capability-v2.pdf",
+          versions: [{ versionNumber: 1 }, { versionNumber: 2 }],
+        }],
+      },
+    };
+    const file = new File(["new capability"], "capability-v2.pdf", { type: "application/pdf" });
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await replaceSupplierArtifact("intent/with space", "artifact/with space", {
+      file,
+      replacementReason: "Updated past performance.",
+      notes: "Ready.",
+    });
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/intents/intent%2Fwith%20space/artifacts/artifact%2Fwith%20space",
+      expect.objectContaining({
+        method: "PUT",
+        body: expect.any(FormData),
+      }),
+    );
+    const form = (mockFetch.mock.calls.at(-1)?.[1] as RequestInit).body as FormData;
+    expect(form.get("file")).toBe(file);
+    expect(form.get("replacementReason")).toBe("Updated past performance.");
+    expect(form.get("notes")).toBe("Ready.");
+  });
+
   it("fetches response package workspace with an encoded intent id", async () => {
     const body = {
       packageWorkspace: {
@@ -355,6 +454,7 @@ describe("intent API client", () => {
 
     const result = await createResponsePackageExport("intent/with space", {
       snapshotId: "response_package_snapshot_1",
+      format: "docx",
     });
 
     expect(result).toEqual(body);
@@ -363,7 +463,37 @@ describe("intent API client", () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ snapshotId: "response_package_snapshot_1" }),
+        body: JSON.stringify({ snapshotId: "response_package_snapshot_1", format: "docx" }),
+      },
+    );
+  });
+
+  it("updates a response package export review with encoded ids", async () => {
+    const body = {
+      exportRecord: {
+        id: "response_package_export_1",
+        reviewStatus: "needs_changes",
+        reviewNotes: "Missing price volume.",
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await updateResponsePackageExportReview(
+      "intent/with space",
+      "response_package_export/with space",
+      {
+        reviewStatus: "needs_changes",
+        reviewNotes: "Missing price volume.",
+      },
+    );
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/intents/intent%2Fwith%20space/response-workspace/package/exports/response_package_export%2Fwith%20space",
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewStatus: "needs_changes", reviewNotes: "Missing price volume." }),
       },
     );
   });

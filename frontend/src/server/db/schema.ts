@@ -592,6 +592,7 @@ export const submissionPaths = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     method: text("method").notNull().default("unknown"),
+    status: text("status").notNull().default("draft"),
     portalUrl: text("portal_url").notNull().default(""),
     contactEmail: text("contact_email").notNull().default(""),
     requiresRegistration: integer("requires_registration").notNull().default(0),
@@ -625,12 +626,54 @@ export const submissionConfirmations = sqliteTable(
     method: text("method").notNull(),
     confirmationReference: text("confirmation_reference").notNull().default(""),
     confirmationNotes: text("confirmation_notes").notNull().default(""),
+    evidenceSnapshotJson: text("evidence_snapshot_json").notNull().default("{}"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
   (table) => ({
     intentIdx: index("idx_submission_confirmations_intent_id").on(table.intentId),
     userIdx: index("idx_submission_confirmations_user_id").on(table.userId),
+  }),
+);
+
+export const awardOutcomes = sqliteTable(
+  "award_outcomes",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intentToBid.id, { onDelete: "cascade" }),
+    bidId: text("bid_id")
+      .notNull()
+      .references(() => bids.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("awaiting_award"),
+    awardNoticeUrl: text("award_notice_url").notNull().default(""),
+    tabulationArtifactId: text("tabulation_artifact_id").references(() => supplierArtifacts.id, { onDelete: "set null" }),
+    tabulationArtifactUrl: text("tabulation_artifact_url").notNull().default(""),
+    winnerName: text("winner_name").notNull().default(""),
+    awardAmountCents: integer("award_amount_cents"),
+    currency: text("currency").notNull().default("USD"),
+    lossReason: text("loss_reason").notNull().default("unknown"),
+    lossReasonNotes: text("loss_reason_notes").notNull().default(""),
+    nextAction: text("next_action").notNull().default("capture_tabulation"),
+    nextActionDueAt: text("next_action_due_at"),
+    notes: text("notes").notNull().default(""),
+    decidedAt: text("decided_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => ({
+    intentIdx: uniqueIndex("idx_award_outcomes_intent_id").on(table.intentId),
+    organizationIdx: index("idx_award_outcomes_organization_id").on(table.organizationId),
+    userIdx: index("idx_award_outcomes_user_id").on(table.userId),
+    statusIdx: index("idx_award_outcomes_status").on(table.status),
+    nextActionDueAtIdx: index("idx_award_outcomes_next_action_due_at").on(table.nextActionDueAt),
   }),
 );
 
@@ -819,6 +862,7 @@ export const responsePackageExports = sqliteTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     status: text("status").notNull().default("ready"),
+    format: text("format").notNull().default("markdown"),
     fileName: text("file_name").notNull(),
     contentType: text("content_type").notNull(),
     byteSize: integer("byte_size").notNull(),
@@ -828,11 +872,51 @@ export const responsePackageExports = sqliteTable(
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
     downloadedAt: text("downloaded_at"),
+    reviewStatus: text("review_status").notNull().default("pending_review"),
+    reviewedAt: text("reviewed_at"),
+    reviewedByUserId: text("reviewed_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    reviewNotes: text("review_notes").notNull().default(""),
   },
   (table) => ({
     intentIdx: index("idx_response_package_exports_intent_id").on(table.intentId),
     snapshotIdx: index("idx_response_package_exports_snapshot_id").on(table.snapshotId),
     userIdx: index("idx_response_package_exports_user_id").on(table.userId),
+  }),
+);
+
+export const responsePackageExportReviewEvents = sqliteTable(
+  "response_package_export_review_events",
+  {
+    id: text("id").primaryKey(),
+    exportId: text("export_id")
+      .notNull()
+      .references(() => responsePackageExports.id, { onDelete: "cascade" }),
+    snapshotId: text("snapshot_id")
+      .notNull()
+      .references(() => responsePackageSnapshots.id, { onDelete: "cascade" }),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intentToBid.id, { onDelete: "cascade" }),
+    bidId: text("bid_id")
+      .notNull()
+      .references(() => bids.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    fromReviewStatus: text("from_review_status").notNull(),
+    toReviewStatus: text("to_review_status").notNull(),
+    reviewNotes: text("review_notes").notNull().default(""),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    exportIdx: index("idx_response_package_export_review_events_export_id").on(table.exportId),
+    intentIdx: index("idx_response_package_export_review_events_intent_id").on(table.intentId),
+    userIdx: index("idx_response_package_export_review_events_user_id").on(table.userId),
+    actorIdx: index("idx_response_package_export_review_events_actor_user_id").on(table.actorUserId),
+    createdIdx: index("idx_response_package_export_review_events_created_at").on(table.createdAt),
   }),
 );
 
@@ -860,6 +944,8 @@ export const supplierArtifacts = sqliteTable(
     expiresAt: text("expires_at"),
     reviewStatus: text("review_status").notNull().default("pending_review"),
     notes: text("notes").notNull().default(""),
+    deletedAt: text("deleted_at"),
+    deletedByUserId: text("deleted_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -868,6 +954,47 @@ export const supplierArtifacts = sqliteTable(
     userIdx: index("idx_supplier_artifacts_user_id").on(table.userId),
     bidIdx: index("idx_supplier_artifacts_bid_id").on(table.bidId),
     reviewIdx: index("idx_supplier_artifacts_review_status").on(table.reviewStatus),
+  }),
+);
+
+export const artifactVersions = sqliteTable(
+  "artifact_versions",
+  {
+    id: text("id").primaryKey(),
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => supplierArtifacts.id, { onDelete: "cascade" }),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intentToBid.id, { onDelete: "cascade" }),
+    bidId: text("bid_id")
+      .notNull()
+      .references(() => bids.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    versionNumber: integer("version_number").notNull(),
+    title: text("title").notNull(),
+    fileName: text("file_name").notNull(),
+    contentType: text("content_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    storagePath: text("storage_path").notNull(),
+    storageProvider: text("storage_provider").notNull().default("local"),
+    checksumSha256: text("checksum_sha256").notNull(),
+    securityScanStatus: text("security_scan_status").notNull().default("clean"),
+    retentionPolicy: text("retention_policy").notNull().default("standard_business_record"),
+    replacementReason: text("replacement_reason").notNull().default(""),
+    createdByUserId: text("created_by_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    artifactIdx: index("idx_artifact_versions_artifact_id").on(table.artifactId),
+    intentIdx: index("idx_artifact_versions_intent_id").on(table.intentId),
+    userIdx: index("idx_artifact_versions_user_id").on(table.userId),
+    createdIdx: index("idx_artifact_versions_created_at").on(table.createdAt),
+    artifactVersionIdx: uniqueIndex("idx_artifact_versions_artifact_version").on(table.artifactId, table.versionNumber),
   }),
 );
 
@@ -1182,6 +1309,11 @@ export const dataSources = sqliteTable("data_sources", {
   sourceOwner: text("source_owner"),
   approvalNotes: text("approval_notes"),
   lastApprovalReviewedAt: text("last_approval_reviewed_at"),
+  liveHealthOwner: text("live_health_owner"),
+  liveHealthDisposition: text("live_health_disposition"),
+  liveHealthNextReviewAt: text("live_health_next_review_at"),
+  liveHealthNotes: text("live_health_notes"),
+  liveHealthReviewedAt: text("live_health_reviewed_at"),
   lastSuccessAt: text("last_success_at"),
   lastFailureAt: text("last_failure_at"),
   consecutiveFailures: integer("consecutive_failures").notNull().default(0),

@@ -51,6 +51,59 @@ export interface ListKnowledgeItemsInput {
 
 export interface KnowledgeListResponse {
   items: KnowledgeItem[];
+  retrievalTrace?: KnowledgeRetrievalTrace;
+}
+
+export type KnowledgeRetrievalProvider = "lexical";
+export type KnowledgeRetrievalMode = "lexical_mock_rag";
+export type KnowledgeRetrievalMatchedField = "title" | "body" | "tags" | "sourceKind" | "sourceUrl" | "metadata";
+
+export interface KnowledgeRetrievalEmbeddingStatus {
+  status: "mock_unavailable";
+  provider: null;
+  vectorStore: "none";
+  reason: "embedding_provider_out_of_scope_for_lite_phase";
+}
+
+export interface KnowledgeRetrievalChunk {
+  itemId: string;
+  title: string;
+  sourceRefs: {
+    sourceKind: KnowledgeSourceKind;
+    sourceIntentId: string | null;
+    sourceBidId: string | null;
+    sourceUrl: string | null;
+  };
+  score: number;
+  matchedReason: string;
+  textExcerpt: string;
+}
+
+export interface KnowledgeRetrievalTrace {
+  provider: KnowledgeRetrievalProvider;
+  retrievalMode: KnowledgeRetrievalMode;
+  query: string;
+  queryTokens: string[];
+  matchedFields: Array<{
+    itemId: string;
+    field: KnowledgeRetrievalMatchedField;
+    tokenHits: string[];
+    score: number;
+  }>;
+  selectedItemIds: string[];
+  embeddingStatus: KnowledgeRetrievalEmbeddingStatus;
+  chunks: KnowledgeRetrievalChunk[];
+  futureEmbeddingStatus: {
+    status: "not_configured";
+    provider: null;
+    vectorStore: "none";
+    reason: "embedding_provider_out_of_scope_for_lite_phase";
+  };
+}
+
+export interface KnowledgeRetrievalResponse {
+  items: KnowledgeItem[];
+  trace: KnowledgeRetrievalTrace;
 }
 
 export interface WorkflowCoachCard {

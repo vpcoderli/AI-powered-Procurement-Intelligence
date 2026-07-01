@@ -26,6 +26,7 @@ import {
 } from "./users-repository";
 
 const NOW = "2026-05-28T00:00:00.000Z";
+const FUTURE_OVERRIDE_EXPIRES_AT = "2099-06-28T00:00:00.000Z";
 
 describe("admin users repository", () => {
   it("lists users with role, tier, and disabled state", async () => {
@@ -197,7 +198,7 @@ describe("admin users repository", () => {
           featureKey: "compliance_manifest",
           isEnabled: true,
           reason: "Pilot customer",
-          expiresAt: "2026-06-28T00:00:00.000Z",
+          expiresAt: FUTURE_OVERRIDE_EXPIRES_AT,
         },
         { actorKind: "admin", actorUserId: "admin_1" },
       );
@@ -209,7 +210,7 @@ describe("admin users repository", () => {
           featureKey: "compliance_manifest",
           isEnabled: true,
           reason: "Pilot customer",
-          expiresAt: "2026-06-28T00:00:00.000Z",
+          expiresAt: FUTURE_OVERRIDE_EXPIRES_AT,
           isExpired: false,
         }],
       });
@@ -219,7 +220,7 @@ describe("admin users repository", () => {
           featureKey: "compliance_manifest",
           isEnabled: 1,
           reason: "Pilot customer",
-          expiresAt: "2026-06-28T00:00:00.000Z",
+          expiresAt: FUTURE_OVERRIDE_EXPIRES_AT,
           createdByUserId: "admin_1",
         }),
       ]);
@@ -289,6 +290,21 @@ describe("admin users repository", () => {
       const row = testDb.db.select().from(users).where(eq(users.id, result.user.id)).limit(1).get();
       expect(row?.passwordHash).toBeTruthy();
       expect(await verifyPassword(result.temporaryPassword, row?.passwordHash ?? "")).toBe(true);
+      const membership = testDb.db
+        .select()
+        .from(organizationMemberships)
+        .where(eq(organizationMemberships.userId, result.user.id))
+        .limit(1)
+        .get();
+      expect(membership).toEqual(expect.objectContaining({
+        role: "owner",
+        status: "active",
+      }));
+      expect(testDb.db.select().from(organizations).where(eq(organizations.id, membership?.organizationId ?? "")).get())
+        .toEqual(expect.objectContaining({
+          name: "New Buyer's Workspace",
+          accountTier: "pro",
+        }));
 
       const auditLogs = listAdminUserAuditLogs(testDb.db, { limit: 5 });
       expect(auditLogs.logs[0]).toEqual(expect.objectContaining({
@@ -537,6 +553,27 @@ describe("admin users repository", () => {
           });
         }
 
+        if (sql.includes("INSERT INTO organizations")) {
+          organizationsRows.set(values[0] as string, {
+            id: values[0],
+            name: values[1],
+            accountTier: values[2],
+            createdAt: values[3],
+            updatedAt: values[4],
+          });
+        }
+
+        if (sql.includes("INSERT INTO organization_memberships")) {
+          memberships.set(`${values[0]}:${values[1]}`, {
+            organizationId: values[0],
+            userId: values[1],
+            role: values[2],
+            status: values[3],
+            createdAt: values[4],
+            updatedAt: values[5],
+          });
+        }
+
         if (sql.includes("UPDATE users SET")) {
           const user = userRows.get(values.at(-1) as string);
           if (user) {
@@ -646,6 +683,15 @@ describe("admin users repository", () => {
       tier: "pro",
     }, { actorKind: "admin", actorUserId: "admin_1" });
     expect(invited.user.email).toBe("newbuyer@example.com");
+    const invitedMembership = [...memberships.values()].find((row) => row.userId === invited.user.id);
+    expect(invitedMembership).toEqual(expect.objectContaining({
+      role: "owner",
+      status: "active",
+    }));
+    expect(organizationsRows.get(invitedMembership?.organizationId as string)).toEqual(expect.objectContaining({
+      name: "New Buyer's Workspace",
+      accountTier: "pro",
+    }));
 
     const updated = await updateAdminUserFromMysql(mysql, "user_1", {
       role: "admin",
@@ -659,7 +705,7 @@ describe("admin users repository", () => {
       featureKey: "compliance_manifest",
       isEnabled: true,
       reason: "Pilot",
-      expiresAt: "2026-06-28T00:00:00.000Z",
+      expiresAt: FUTURE_OVERRIDE_EXPIRES_AT,
     }, { actorKind: "admin", actorUserId: "admin_1" });
     expect(enabled.overrides).toEqual([
       expect.objectContaining({ featureKey: "compliance_manifest", isEnabled: true, reason: "Pilot" }),

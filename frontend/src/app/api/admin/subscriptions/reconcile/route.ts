@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { AdminAuthError, requireAdmin } from "@/server/admin/auth";
+import { reconcileMysqlSubscriptionLifecycle } from "@/server/billing/mysql-subscriptions";
 import {
   reconcileSubscriptionLifecycle,
   type SubscriptionLifecycleReconcileOptions,
 } from "@/server/billing/subscriptions";
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -15,11 +17,13 @@ function routeError(error: unknown) {
     return errorResponse(error.code, error.message, error.status);
   }
 
+  console.error("[admin/subscriptions/reconcile] failed", error);
   return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
 }
 
 async function resolveDatabase(database?: AppDatabase) {
   if (database) return database;
+  if (isMysqlDatabaseUrlConfigured()) return {} as AppDatabase;
 
   const client = await import("@/server/db/client");
   return client.db;
@@ -47,7 +51,11 @@ export function createAdminSubscriptionsReconcilePost(database?: AppDatabase) {
         pastDueGraceDays: positiveInteger((body as { pastDueGraceDays?: unknown }).pastDueGraceDays),
       };
 
-      return NextResponse.json(reconcileSubscriptionLifecycle(resolvedDb, options));
+      return NextResponse.json(
+        isMysqlDatabaseUrlConfigured()
+          ? await reconcileMysqlSubscriptionLifecycle(resolveMysqlPool(), options)
+          : reconcileSubscriptionLifecycle(resolvedDb, options),
+      );
     } catch (error) {
       return routeError(error);
     }

@@ -4,10 +4,35 @@ import { runMigrations } from "../src/server/db/migrate";
 import { parseStateCrawlerLimit, runConfiguredCrawlerSourcesOnce } from "../src/server/crawler/configured-runner";
 
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
-type WorkerEnv = Record<string, string | undefined>;
+const PRODUCTION_LIKE_ENV_VALUES = new Set(["production", "prod", "staging"]);
+type WorkerEnv = NonNullable<Parameters<typeof isMysqlDatabaseUrlConfigured>[0]>;
 
 function workerArgs() {
   return new Set(process.argv.slice(2));
+}
+
+function envValue(env: WorkerEnv, name: string) {
+  return env[name]?.trim() ?? "";
+}
+
+function isProductionLikeWorkerRuntime(env: WorkerEnv) {
+  return [
+    envValue(env, "NODE_ENV"),
+    envValue(env, "APP_ENV"),
+    envValue(env, "DEPLOY_ENV"),
+    envValue(env, "VERCEL_ENV"),
+    envValue(env, "RUNTIME_ENV"),
+  ].some((value) => PRODUCTION_LIKE_ENV_VALUES.has(value.toLowerCase()));
+}
+
+function sqliteResolutionMessage(env: WorkerEnv) {
+  if (envValue(env, "DATABASE_URL") && !/^mysql2?:\/\//.test(envValue(env, "DATABASE_URL"))) {
+    return "DATABASE_URL resolves to SQLite; production and staging worker runtimes must use DATABASE_URL or MYSQL_DATABASE_URL with mysql:// or mysql2://";
+  }
+  if (envValue(env, "MYSQL_DATABASE_URL") && !/^mysql2?:\/\//.test(envValue(env, "MYSQL_DATABASE_URL"))) {
+    return "MYSQL_DATABASE_URL resolves to SQLite; production and staging worker runtimes must use DATABASE_URL or MYSQL_DATABASE_URL with mysql:// or mysql2://";
+  }
+  return "DATABASE_URL or MYSQL_DATABASE_URL must use mysql:// or mysql2:// for production and staging worker runtimes";
 }
 
 function positiveIntegerEnv(name: string, env: WorkerEnv = process.env) {
@@ -30,6 +55,7 @@ function sleep(ms: number) {
 function validateCrawlerWorkerEnvironment(env: WorkerEnv = process.env) {
   const errors: string[] = [];
   const warnings: string[] = [];
+  const strictMode = isProductionLikeWorkerRuntime(env);
 
   for (const name of ["CRAWLER_WORKER_INTERVAL_MS", "STATE_CRAWLER_LIMIT"]) {
     if (env[name]?.trim() && !positiveIntegerEnv(name, env)) {
@@ -37,16 +63,9 @@ function validateCrawlerWorkerEnvironment(env: WorkerEnv = process.env) {
     }
   }
 
-  const mysqlConfigured = Boolean(
-    env.DATABASE_URL?.trim()?.match(/^mysql2?:\/\//) ||
-      env.MYSQL_DATABASE_URL?.trim()?.match(/^mysql2?:\/\//),
-  );
-  if (env.NODE_ENV === "production" && !mysqlConfigured && !env.DATABASE_PATH?.trim()) {
-    warnings.push("DATABASE_PATH is not set; crawler worker will use ./data/apsi.sqlite relative to the process working directory.");
-  }
-
-  if (env.NODE_ENV === "production" && !mysqlConfigured) {
-    warnings.push("NODE_ENV=production is not using MySQL; set DATABASE_URL or MYSQL_DATABASE_URL for production crawler deployment.");
+  const mysqlConfigured = isMysqlDatabaseUrlConfigured(env);
+  if (strictMode && !mysqlConfigured) {
+    errors.push(sqliteResolutionMessage(env));
   }
 
   if (errors.length > 0) {
@@ -56,6 +75,7 @@ function validateCrawlerWorkerEnvironment(env: WorkerEnv = process.env) {
   return {
     ok: true,
     database: mysqlConfigured ? "mysql" : "sqlite",
+    strictMode,
     owner: env.CRAWLER_OWNER?.trim() || `crawler-worker:<pid>`,
     intervalMs: env.CRAWLER_WORKER_INTERVAL_MS?.trim() || String(DEFAULT_INTERVAL_MS),
     stateLimit: env.STATE_CRAWLER_LIMIT?.trim() || "default",

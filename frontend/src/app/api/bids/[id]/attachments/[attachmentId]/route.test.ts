@@ -28,6 +28,10 @@ describe("GET /api/bids/[id]/attachments/[attachmentId]", () => {
       originalUrl: "https://example.gov/notice.pdf",
       archiveStatus: "archived",
       archiveError: null,
+      availability: "archived_openable",
+      downloadKind: "archived_file",
+      storagePath: "archive/notice.pdf",
+      checksumSha256: "sha256-notice",
     });
     mockedReadFile.mockResolvedValueOnce(Buffer.from("contract notice"));
 
@@ -39,6 +43,8 @@ describe("GET /api/bids/[id]/attachments/[attachmentId]", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toBe("application/pdf");
     expect(response.headers.get("Content-Disposition")).toBe('attachment; filename="Notice.pdf"');
+    expect(response.headers.get("X-WinBids-Attachment-Availability")).toBe("archived_openable");
+    expect(response.headers.get("X-WinBids-Download-Kind")).toBe("archived_file");
     expect(await response.text()).toBe("contract notice");
     expect(getBidAttachmentDownload).toHaveBeenCalledWith(expect.anything(), "1", "notice_pdf");
   });
@@ -52,8 +58,12 @@ describe("GET /api/bids/[id]/attachments/[attachmentId]", () => {
     );
 
     expect(response.status).toBe(404);
+    expect(response.headers.get("X-WinBids-Attachment-Availability")).toBe("missing");
     expect(await response.json()).toEqual({
-      error: { code: "ATTACHMENT_NOT_FOUND", message: "Attachment not found" },
+      error: {
+        code: "ATTACHMENT_NOT_FOUND",
+        message: "Attachment record not found; no archived file or source download note is available.",
+      },
     });
     expect(mockedReadFile).not.toHaveBeenCalled();
   });
@@ -67,6 +77,10 @@ describe("GET /api/bids/[id]/attachments/[attachmentId]", () => {
       originalUrl: "https://agency.example.gov/missing.pdf",
       archiveStatus: "archived",
       archiveError: null,
+      availability: "archived_openable",
+      downloadKind: "archived_file",
+      storagePath: "archive/missing.pdf",
+      checksumSha256: "sha256-missing",
     });
     mockedReadFile.mockRejectedValueOnce(Object.assign(new Error("missing"), { code: "ENOENT" }));
 
@@ -77,12 +91,18 @@ describe("GET /api/bids/[id]/attachments/[attachmentId]", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("Content-Type")).toContain("text/plain");
-    expect(await response.text()).toContain("Original URL: https://agency.example.gov/missing.pdf");
+    expect(response.headers.get("X-WinBids-Attachment-Availability")).toBe("archive_missing");
+    expect(response.headers.get("X-WinBids-Download-Kind")).toBe("archive_status_note");
+    const text = await response.text();
+    expect(text).toContain("Archived file unavailable");
+    expect(text).toContain("Original URL: https://agency.example.gov/missing.pdf");
   });
 
-  it("returns a non-empty download note for unarchived external attachments", async () => {
+  it("returns a source download note for unarchived external attachments without calling it a local file", async () => {
     getBidAttachmentDownload.mockResolvedValueOnce({
       kind: "fallback",
+      availability: "source_download_note",
+      noteKind: "source_download_note",
       filename: "Statement_of_Work_v2.pdf",
       mimeType: "text/plain; charset=utf-8",
       originalUrl: "https://sam.gov/opp/12345/sow.pdf",
@@ -100,6 +120,13 @@ describe("GET /api/bids/[id]/attachments/[attachmentId]", () => {
     expect(response.headers.get("Content-Disposition")).toBe(
       'attachment; filename="Statement_of_Work_v2-download-note.txt"',
     );
-    expect(await response.text()).toContain("Original URL: https://sam.gov/opp/12345/sow.pdf");
+    expect(response.headers.get("X-WinBids-Attachment-Availability")).toBe("source_download_note");
+    expect(response.headers.get("X-WinBids-Download-Kind")).toBe("source_download_note");
+    const text = await response.text();
+    expect(text).toContain("WinBids source attachment download note");
+    expect(text).toContain("This is a source download note, not an archived local file.");
+    expect(text).toContain("External source availability is not guaranteed.");
+    expect(text).toContain("Original URL: https://sam.gov/opp/12345/sow.pdf");
+    expect(text).not.toContain("Archived locally");
   });
 });

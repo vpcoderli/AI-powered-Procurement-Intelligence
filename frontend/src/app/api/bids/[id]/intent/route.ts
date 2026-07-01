@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
+import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { UsageLimitError, enforceMysqlIntentUsageLimit, enforceUsageLimit } from "@/server/auth/usage-limits";
 import { db } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
@@ -59,6 +60,10 @@ function usageLimitError(error: UsageLimitError, principal: RequestPrincipal) {
 
 export async function POST(request: Request, context: RouteContext) {
   const principal = await resolvePrincipal(db, request);
+
+  if (!isAuthenticatedPrincipal(principal)) {
+    return authRequiredResponse();
+  }
 
   try {
     const { id } = await context.params;

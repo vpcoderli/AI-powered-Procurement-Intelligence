@@ -23,6 +23,16 @@ describe("settings page", () => {
     expect(page).toContain('code="plan_limit"');
   });
 
+  it("uses the shared upgrade lock message for premium settings features", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("const deadlineReminderLockedMessage = lockedFeatureMessage(\"deadline_notifications\")");
+    expect(page).toContain("message={deadlineReminderLockedMessage}");
+    expect(page).toContain("return deadlineReminderLockedMessage;");
+    expect(page).not.toContain('message={t("settings.reminderCenterLockedMessage")}');
+    expect(page).not.toContain('? t("settings.reminderCenterLockedMessage")');
+  });
+
   it("shows the current account tier and feature access states", () => {
     const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
 
@@ -157,5 +167,12 @@ describe("settings page", () => {
     expect(page).toContain("AuthRequiredState");
     expect(page).toContain("if (!user)");
     expect(page).toContain("settings.accountRequiresLogin");
+  });
+
+  it("navigates to hosted checkout URLs with real browser navigation", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("window.location.assign(result.checkoutSession.checkoutUrl)");
+    expect(page).not.toContain("window.history.replaceState(null, \"\", result.checkoutSession.checkoutUrl)");
   });
 });
