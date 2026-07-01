@@ -1,0 +1,48 @@
+# Local / demo docker-compose for APSi.
+#
+# Scope: this brings up the Next.js web app (frontend/Dockerfile) against
+# the default local SQLite database, for local parity and demos only. It is
+# NOT the documented production topology — see
+# docs/operations/aws-deployment-runbook.md for the real target shape
+# (App Runner or ECS/Fargate + RDS MySQL + S3 + Secrets Manager). In
+# particular this file intentionally does not attempt to reproduce RDS,
+# EventBridge-scheduled workers, or S3 here.
+#
+# Usage:
+#   docker compose up --build
+#   docker compose exec app npm run db:seed   # optional: seed demo data
+#
+# frontend/.env.local (if present) is loaded for runtime environment
+# variables (Stripe test keys, notification provider, etc.) but is optional;
+# the app has zero-config SQLite defaults.
+
+services:
+  app:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: apsi-frontend:local
+    ports:
+      - "3000:3000"
+    env_file:
+      # Optional. docker compose does not error if this file is missing.
+      - path: ./frontend/.env.local
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      # Local/demo defaults. Override via frontend/.env.local as needed.
+      BILLING_PROVIDER: local
+      NOTIFICATION_PROVIDER: file
+      ADMIN_UI_LOCAL_BYPASS: "true"
+    volumes:
+      # Persists the SQLite database and local attachment/object-storage
+      # state across container restarts. Matches frontend/data/.gitkeep
+      # convention used in local dev.
+      - apsi-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  apsi-data:
+    driver: local
