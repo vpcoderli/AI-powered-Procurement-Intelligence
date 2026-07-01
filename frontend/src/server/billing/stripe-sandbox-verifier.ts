@@ -41,6 +41,11 @@ type StripeSandboxEnv = Record<string, string | undefined>;
 const paidReadyStatuses = new Set(["active", "trialing", "past_due"]);
 const sessionCookieName = "apsi_session";
 
+function isPlaceholderValue(raw: string) {
+  const value = raw.toLowerCase();
+  return value.includes("replace_me") || value.includes("placeholder") || value.endsWith("_...");
+}
+
 export function parseStripeSandboxArgs(argv: string[]): StripeSandboxArgs {
   const args: StripeSandboxArgs = {
     tier: "pro",
@@ -89,14 +94,23 @@ export function validateStripeSandboxConfig(
   if (env.STRIPE_SECRET_KEY && !env.STRIPE_SECRET_KEY.startsWith("sk_test_")) {
     errors.push("STRIPE_SECRET_KEY must be a Stripe test mode secret key");
   }
+  if (env.STRIPE_SECRET_KEY && isPlaceholderValue(env.STRIPE_SECRET_KEY)) {
+    errors.push("STRIPE_SECRET_KEY must not use a placeholder value");
+  }
 
   if (env.STRIPE_WEBHOOK_SECRET && !env.STRIPE_WEBHOOK_SECRET.startsWith("whsec_")) {
     errors.push("STRIPE_WEBHOOK_SECRET must start with whsec_");
+  }
+  if (env.STRIPE_WEBHOOK_SECRET && isPlaceholderValue(env.STRIPE_WEBHOOK_SECRET)) {
+    errors.push("STRIPE_WEBHOOK_SECRET must not use a placeholder value");
   }
 
   for (const key of ["STRIPE_PRICE_PRO_MONTHLY", "STRIPE_PRICE_BUSINESS_MONTHLY"]) {
     if (env[key] && !env[key].startsWith("price_")) {
       errors.push(`${key} must be a Stripe price id`);
+    }
+    if (env[key] && isPlaceholderValue(env[key])) {
+      errors.push(`${key} must not use a placeholder value`);
     }
   }
 

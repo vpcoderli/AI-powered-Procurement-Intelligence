@@ -7,6 +7,7 @@ import {
   deliverAdminNotifications,
   getAdminRiskChecklist,
   getAdminBidQaCorrections,
+  getAdminMarketingFunnel,
   listAdminUserFeatureOverrides,
   listAdminNotifications,
   listAdminCrawlerLogs,
@@ -69,6 +70,26 @@ describe("admin API client", () => {
 
     await expect(getAdminRiskChecklist()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/admin/risk-check");
+  });
+
+  it("gets admin marketing funnel metrics", async () => {
+    const body = {
+      summary: {
+        counts: {
+          requestDemoSubmitted: 1,
+          startSignup: 0,
+          completeSignup: 1,
+          startSupplierProfile: 1,
+          completeSupplierProfile: 1,
+          firstMatchedBidViewed: 0,
+        },
+        latestRequestDemoLeads: [{ eventId: "event_1", email: "buyer@example.com" }],
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(getAdminMarketingFunnel()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/marketing/funnel");
   });
 
   it("lists admin users", async () => {
@@ -299,6 +320,39 @@ describe("admin API client", () => {
         approvedForIngestion: true,
         legalReviewStatus: "approved_public",
         approvalNotes: "Approved after live source review.",
+      }),
+    });
+  });
+
+  it("updates data source live health triage fields", async () => {
+    const body = {
+      source: {
+        id: "ca source",
+        liveHealthOwner: "ops@example.com",
+        liveHealthDisposition: "vendor_account",
+        liveHealthNextReviewAt: null,
+        liveHealthNotes: "Admin triage.",
+        liveHealthReviewedAt: "2026-06-12T00:00:00.000Z",
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(updateAdminDataSource("ca source", {
+      liveHealthOwner: "ops@example.com",
+      liveHealthDisposition: "vendor_account",
+      liveHealthNextReviewAt: null,
+      liveHealthNotes: "Admin triage.",
+      liveHealthReviewedAt: "2026-06-12T00:00:00.000Z",
+    })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources/ca%20source", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        liveHealthOwner: "ops@example.com",
+        liveHealthDisposition: "vendor_account",
+        liveHealthNextReviewAt: null,
+        liveHealthNotes: "Admin triage.",
+        liveHealthReviewedAt: "2026-06-12T00:00:00.000Z",
       }),
     });
   });

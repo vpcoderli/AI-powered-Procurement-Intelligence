@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { AdminAuthError, requireAdminAccess } from "@/server/admin/auth";
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured } from "@/server/db/mysql";
 import { deliverPendingNotifications } from "@/server/notifications/delivery";
 
 function errorResponse(code: string, message: string, status: number) {
@@ -17,6 +18,7 @@ function routeError(error: unknown) {
 
 async function resolveDatabase(database?: AppDatabase) {
   if (database) return database;
+  if (isMysqlDatabaseUrlConfigured()) return {} as AppDatabase;
 
   const client = await import("@/server/db/client");
   return client.db;

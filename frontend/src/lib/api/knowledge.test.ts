@@ -42,6 +42,34 @@ describe("knowledge API client", () => {
     );
   });
 
+  it("requests retrieval trace when asked", async () => {
+    const body = {
+      items: [],
+      retrievalTrace: {
+        provider: "lexical",
+        retrievalMode: "lexical_mock_rag",
+        embeddingStatus: {
+          status: "mock_unavailable",
+          provider: null,
+          vectorStore: "none",
+          reason: "embedding_provider_out_of_scope_for_lite_phase",
+        },
+        chunks: [],
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await fetchKnowledgeItems({
+      q: "cloud security",
+      includeRetrievalTrace: true,
+    });
+
+    expect(result).toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/knowledge?q=cloud+security&includeRetrievalTrace=1",
+    );
+  });
+
   it("creates knowledge items", async () => {
     const input = {
       title: "Snippet",

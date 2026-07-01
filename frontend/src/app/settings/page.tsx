@@ -225,6 +225,7 @@ export default function SettingsPage() {
   const usageLimitedItems = usageData?.items.filter((item) => item.isLimited) ?? [];
   const canManageWorkspace = workspaceData?.currentUserRole === "owner";
   const canUseDeadlineReminderCenter = user ? canUseFeature(user, "deadline_notifications") : false;
+  const deadlineReminderLockedMessage = lockedFeatureMessage("deadline_notifications");
 
   useEffect(() => {
     if (!user) return;
@@ -276,7 +277,7 @@ export default function SettingsPage() {
         if (isCancelled) return;
         setDeadlineReminderError(
           error instanceof AuthApiError && error.code === "FEATURE_NOT_AVAILABLE"
-            ? t("settings.reminderCenterLockedMessage")
+            ? deadlineReminderLockedMessage
             : error instanceof Error ? error.message : t("settings.reminderCenterLoadError"),
         );
       });
@@ -295,7 +296,7 @@ export default function SettingsPage() {
     return () => {
       isCancelled = true;
     };
-  }, [t, user]);
+  }, [deadlineReminderLockedMessage, t, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -509,7 +510,7 @@ export default function SettingsPage() {
 
   function reminderCenterErrorMessage(error: unknown) {
     if (error instanceof AuthApiError && error.code === "FEATURE_NOT_AVAILABLE") {
-      return t("settings.reminderCenterLockedMessage");
+      return deadlineReminderLockedMessage;
     }
 
     return error instanceof Error ? error.message : t("settings.reminderCenterSaveError");
@@ -548,12 +549,6 @@ export default function SettingsPage() {
     return error instanceof Error ? error.message : t("settings.searchAlertSaveError");
   }
 
-  async function refreshSubscription() {
-    const data = await fetchAccountSubscription();
-    setSubscriptionData(data);
-    return data;
-  }
-
   async function handleStartCheckout(tier: AccountTier) {
     setBillingMessage("");
     setSubscriptionError("");
@@ -562,8 +557,7 @@ export default function SettingsPage() {
     try {
       const result = await createCheckoutSession({ tier });
       setBillingMessage(t("settings.checkoutStarted"));
-      window.history.replaceState(null, "", result.checkoutSession.checkoutUrl);
-      await refreshSubscription();
+      window.location.assign(result.checkoutSession.checkoutUrl);
     } catch (error) {
       setSubscriptionError(error instanceof Error ? error.message : t("settings.checkoutError"));
     } finally {
@@ -1517,7 +1511,7 @@ export default function SettingsPage() {
                 {!canUseDeadlineReminderCenter && (
                   <SettingsInlineState
                     code="plan_limit"
-                    message={t("settings.reminderCenterLockedMessage")}
+                    message={deadlineReminderLockedMessage}
                     title={t("settings.reminderCenterLockedTitle")}
                   />
                 )}

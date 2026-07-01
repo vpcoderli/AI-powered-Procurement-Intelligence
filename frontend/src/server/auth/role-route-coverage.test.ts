@@ -28,6 +28,8 @@ const consoleReadRoutes = [
   "../../app/api/admin/bids/qa/route.ts",
   "../../app/api/admin/crawler-logs/route.ts",
   "../../app/api/admin/data-sources/route.ts",
+  "../../app/api/admin/marketing/funnel/route.ts",
+  "../../app/api/admin/marketing/leads/export/route.ts",
   "../../app/api/admin/notifications/route.ts",
   "../../app/api/admin/risk-check/route.ts",
 ] as const;

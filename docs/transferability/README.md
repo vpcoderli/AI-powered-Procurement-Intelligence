@@ -14,6 +14,7 @@ This pack is the handoff index for running, deploying, operating, and transferri
 6. [Known Limitations](./known-limitations.md) - current product and production gaps.
 7. [AWS Service Map](./aws-service-map.md) - target AWS service ownership map.
 8. [Secrets and Access](./secrets-and-access.md) - secret handling and access boundaries.
+9. [AWS Deployment Runbook](../operations/aws-deployment-runbook.md) - AWS web, RDS, secrets, worker, billing, smoke, backup, and rollback operation guide.
 
 ## Local Boundary
 
@@ -41,6 +42,8 @@ npm run risk:check
 ## Production Boundary
 
 Production must use environment-scoped secrets, a persistent database path or managed database, separate web and worker processes, explicit backup/restore procedures, and monitored deploy/rollback ownership. Do not copy production secrets into `.env.local`, screenshots, tickets, logs, or this documentation.
+
+For AWS deployment, start with [AWS Deployment Runbook](../operations/aws-deployment-runbook.md). The recommended first web release is App Runner + RDS MySQL + Secrets Manager/SSM + CloudWatch; full production needs scheduled worker execution through ECS/Fargate or an equivalent task runtime.
 
 ## Transfer Checklist
 

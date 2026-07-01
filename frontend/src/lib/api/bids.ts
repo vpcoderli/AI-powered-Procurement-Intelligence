@@ -47,6 +47,7 @@ function isApiErrorResponse(body: unknown): body is ApiErrorResponse {
 
   return (
     (code === "BID_NOT_FOUND" ||
+      code === "AUTH_REQUIRED" ||
       code === "INVALID_REQUEST" ||
       code === "INTERNAL_ERROR" ||
       code === "USAGE_LIMIT_REACHED") &&

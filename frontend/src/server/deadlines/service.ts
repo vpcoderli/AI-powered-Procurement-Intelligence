@@ -1,21 +1,38 @@
 import crypto from "node:crypto";
+import { ensureMysqlUserWorkspace } from "@/server/account/mysql-workspace";
 import { ensureUserWorkspace } from "@/server/account/workspace";
+import { listSupplierArtifactRowsFromMysql } from "@/server/artifacts/repository";
 import type { AppDatabase } from "@/server/db/client";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { getUserIntent } from "@/server/intents/service";
 import { IntentNotFoundError } from "@/server/intents/types";
+import { listQuoteRequestRowsFromMysql } from "@/server/quotes/repository";
+import { listResponseWorkspaceItemRowsFromMysql } from "@/server/response-workspace/repository";
 import {
   createDeadlineReminderRow,
+  createDeadlineReminderRowFromMysql,
   findDeadlineReminderRow,
+  findDeadlineReminderRowFromMysql,
   findOrganizationDeadlineReminderRow,
+  findOrganizationDeadlineReminderRowFromMysql,
   listDeadlineReminderRows,
+  listDeadlineReminderRowsFromMysql,
   listOrganizationDeadlineReminderRows,
+  listOrganizationDeadlineReminderRowsFromMysql,
   listQuoteRequestDeadlineRows,
   listResponseWorkspaceDeadlineRows,
+  listSubmissionConfirmationDeadlineRows,
+  listSubmissionConfirmationDeadlineRowsFromMysql,
+  listSubmissionPathDeadlineRows,
+  listSubmissionPathDeadlineRowsFromMysql,
   listSupplierArtifactDeadlineRows,
   updateDeadlineReminderRow,
+  updateDeadlineReminderRowFromMysql,
   updateOrganizationDeadlineReminderRow,
+  updateOrganizationDeadlineReminderRowFromMysql,
   type DeadlineReminderRow,
   type NewDeadlineReminderRow,
+  type MysqlDeadlineReminderRepository,
 } from "./repository";
 import {
   isDeadlineReminderKind,
@@ -42,6 +59,8 @@ interface DeadlineWorkspaceOptions {
   now?: string;
 }
 
+type UserIntent = NonNullable<Awaited<ReturnType<typeof getUserIntent>>>;
+
 interface ReminderCandidate {
   kind: DeadlineReminderKind;
   linkedObjectType: string;
@@ -54,6 +73,15 @@ interface ReminderCandidate {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+async function workspaceForUser(db: AppDatabase, userId: string) {
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  const workspace = mysql
+    ? await ensureMysqlUserWorkspace(mysql, userId)
+    : ensureUserWorkspace(db, userId);
+
+  return { mysql, workspace };
 }
 
 function normalizeDateOnly(value: string | null | undefined) {
@@ -194,10 +222,13 @@ function generatedRow(input: {
   };
 }
 
-async function reminderCandidates(db: AppDatabase, userId: string, intentId: string): Promise<ReminderCandidate[]> {
-  const intent = await getUserIntent(db, userId, intentId);
-  if (!intent) throw new IntentNotFoundError();
-
+async function reminderCandidates(
+  db: AppDatabase,
+  mysql: MysqlDeadlineReminderRepository | null,
+  userId: string,
+  organizationId: string,
+  intent: UserIntent,
+): Promise<ReminderCandidate[]> {
   const candidates: ReminderCandidate[] = [];
   const bidDeadline = normalizeDateOnly(intent.bid.deadlineDate);
   if (bidDeadline) {
@@ -212,7 +243,50 @@ async function reminderCandidates(db: AppDatabase, userId: string, intentId: str
     });
   }
 
-  for (const item of listResponseWorkspaceDeadlineRows(db, intent.id)) {
+  const submissionPathRows = mysql
+    ? await listSubmissionPathDeadlineRowsFromMysql(mysql, userId, intent.id)
+    : listSubmissionPathDeadlineRows(db, userId, intent.id);
+  for (const submissionPath of submissionPathRows) {
+    if (!bidDeadline || submissionPath.status === "submitted") continue;
+    candidates.push({
+      kind: "submission_checkpoint",
+      linkedObjectType: "submission_path",
+      linkedObjectId: submissionPath.id,
+      title: `Submission checkpoint: ${intent.bid.title}`,
+      dueAt: bidDeadline,
+      priority: submissionPath.status === "needs_recovery" ? "high" : "medium",
+      metadata: {
+        method: submissionPath.method,
+        status: submissionPath.status,
+      },
+    });
+  }
+
+  const submissionConfirmationRows = mysql
+    ? await listSubmissionConfirmationDeadlineRowsFromMysql(mysql, userId, intent.id)
+    : listSubmissionConfirmationDeadlineRows(db, userId, intent.id);
+  for (const confirmation of submissionConfirmationRows) {
+    if (confirmation.confirmationReference.trim()) continue;
+    const dueAt = normalizeDateOnly(confirmation.submittedAt) ?? normalizeDateOnly(confirmation.createdAt);
+    if (!dueAt) continue;
+    candidates.push({
+      kind: "submission_confirmation_recovery",
+      linkedObjectType: "submission_confirmation",
+      linkedObjectId: confirmation.id,
+      title: `Recover confirmation: ${intent.bid.title}`,
+      dueAt,
+      priority: "high",
+      metadata: {
+        method: confirmation.method,
+        submittedAt: confirmation.submittedAt,
+      },
+    });
+  }
+
+  const responseRows = mysql
+    ? await listResponseWorkspaceItemRowsFromMysql(mysql, userId, intent.id)
+    : listResponseWorkspaceDeadlineRows(db, intent.id);
+  for (const item of responseRows) {
     const dueAt = normalizeDateOnly(item.dueAt);
     if (!dueAt || item.status === "done") continue;
     candidates.push({
@@ -226,7 +300,10 @@ async function reminderCandidates(db: AppDatabase, userId: string, intentId: str
     });
   }
 
-  for (const quote of listQuoteRequestDeadlineRows(db, intent.id)) {
+  const quoteRows = mysql
+    ? await listQuoteRequestRowsFromMysql(mysql, organizationId, intent.id)
+    : listQuoteRequestDeadlineRows(db, intent.id);
+  for (const quote of quoteRows) {
     const dueAt = normalizeDateOnly(quote.requestedDueAt);
     if (!dueAt || quote.status === "accepted" || quote.status === "declined") continue;
     candidates.push({
@@ -240,7 +317,10 @@ async function reminderCandidates(db: AppDatabase, userId: string, intentId: str
     });
   }
 
-  for (const artifact of listSupplierArtifactDeadlineRows(db, intent.id)) {
+  const artifactRows = mysql
+    ? await listSupplierArtifactRowsFromMysql(mysql, userId, intent.id)
+    : listSupplierArtifactDeadlineRows(db, intent.id);
+  for (const artifact of artifactRows) {
     const dueAt = normalizeDateOnly(artifact.expiresAt);
     if (!dueAt) continue;
     candidates.push({
@@ -262,22 +342,27 @@ async function reminderCandidates(db: AppDatabase, userId: string, intentId: str
 }
 
 async function generateReminders(db: AppDatabase, userId: string, intentId: string, timestamp: string) {
-  const workspace = ensureUserWorkspace(db, userId);
+  const { mysql, workspace } = await workspaceForUser(db, userId);
   const intent = await getUserIntent(db, userId, intentId);
   if (!intent) throw new IntentNotFoundError();
 
-  for (const candidate of await reminderCandidates(db, userId, intent.id)) {
-    createDeadlineReminderRow(db, generatedRow({
+  for (const candidate of await reminderCandidates(db, mysql, userId, workspace.organizationId, intent)) {
+    const row = generatedRow({
       organizationId: workspace.organizationId,
       userId,
       intentId: intent.id,
       bidId: intent.bid.id,
       timestamp,
       candidate,
-    }));
+    });
+    if (mysql) {
+      await createDeadlineReminderRowFromMysql(mysql, row);
+    } else {
+      createDeadlineReminderRow(db, row);
+    }
   }
 
-  return { organizationId: workspace.organizationId, intent };
+  return { mysql, organizationId: workspace.organizationId, intent };
 }
 
 export async function getDeadlineWorkspace(
@@ -287,8 +372,11 @@ export async function getDeadlineWorkspace(
   options: DeadlineWorkspaceOptions = {},
 ): Promise<DeadlineWorkspace> {
   const timestamp = options.now ?? nowIso();
-  const { organizationId, intent } = await generateReminders(db, userId, intentId, timestamp);
-  const reminders = listDeadlineReminderRows(db, organizationId, intent.id).map(hydrateReminder);
+  const { mysql, organizationId, intent } = await generateReminders(db, userId, intentId, timestamp);
+  const rows = mysql
+    ? await listDeadlineReminderRowsFromMysql(mysql, organizationId, intent.id)
+    : listDeadlineReminderRows(db, organizationId, intent.id);
+  const reminders = rows.map(hydrateReminder);
 
   return {
     intentId: intent.id,
@@ -299,13 +387,16 @@ export async function getDeadlineWorkspace(
   };
 }
 
-function requireReminder(
+async function requireReminder(
   db: AppDatabase,
+  mysql: MysqlDeadlineReminderRepository | null,
   organizationId: string,
   intentId: string,
   reminderId: string,
 ) {
-  const row = findDeadlineReminderRow(db, organizationId, intentId, reminderId);
+  const row = mysql
+    ? await findDeadlineReminderRowFromMysql(mysql, organizationId, intentId, reminderId)
+    : findDeadlineReminderRow(db, organizationId, intentId, reminderId);
   if (!row) {
     throw new DeadlineReminderValidationError("Reminder is not available.");
   }
@@ -321,14 +412,20 @@ export async function acknowledgeDeadlineReminder(
 ): Promise<DeadlineWorkspace> {
   const timestamp = input.now ?? nowIso();
   const workspace = await getDeadlineWorkspace(db, userId, intentId, { now: timestamp });
-  requireReminder(db, workspace.organizationId, workspace.intentId, input.reminderId);
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  await requireReminder(db, mysql, workspace.organizationId, workspace.intentId, input.reminderId);
 
-  updateDeadlineReminderRow(db, workspace.organizationId, workspace.intentId, input.reminderId, {
+  const values = {
     status: "acknowledged",
     acknowledgedAt: timestamp,
     snoozedUntil: null,
     updatedAt: timestamp,
-  });
+  };
+  if (mysql) {
+    await updateDeadlineReminderRowFromMysql(mysql, workspace.organizationId, workspace.intentId, input.reminderId, values);
+  } else {
+    updateDeadlineReminderRow(db, workspace.organizationId, workspace.intentId, input.reminderId, values);
+  }
 
   return getDeadlineWorkspace(db, userId, intentId, { now: timestamp });
 }
@@ -345,14 +442,20 @@ export async function snoozeDeadlineReminder(
   }
 
   const workspace = await getDeadlineWorkspace(db, userId, intentId, { now: timestamp });
-  requireReminder(db, workspace.organizationId, workspace.intentId, input.reminderId);
+  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+  await requireReminder(db, mysql, workspace.organizationId, workspace.intentId, input.reminderId);
 
-  updateDeadlineReminderRow(db, workspace.organizationId, workspace.intentId, input.reminderId, {
+  const values = {
     status: "snoozed",
     acknowledgedAt: null,
     snoozedUntil: input.snoozedUntil,
     updatedAt: timestamp,
-  });
+  };
+  if (mysql) {
+    await updateDeadlineReminderRowFromMysql(mysql, workspace.organizationId, workspace.intentId, input.reminderId, values);
+  } else {
+    updateDeadlineReminderRow(db, workspace.organizationId, workspace.intentId, input.reminderId, values);
+  }
 
   return getDeadlineWorkspace(db, userId, intentId, { now: timestamp });
 }
@@ -363,8 +466,11 @@ export async function getAccountDeadlineReminderCenter(
   options: DeadlineWorkspaceOptions = {},
 ): Promise<AccountDeadlineReminderCenter> {
   const timestamp = options.now ?? nowIso();
-  const workspace = ensureUserWorkspace(db, userId);
-  const reminders = listOrganizationDeadlineReminderRows(db, workspace.organizationId).map(hydrateReminder);
+  const { mysql, workspace } = await workspaceForUser(db, userId);
+  const rows = mysql
+    ? await listOrganizationDeadlineReminderRowsFromMysql(mysql, workspace.organizationId)
+    : listOrganizationDeadlineReminderRows(db, workspace.organizationId);
+  const reminders = rows.map(hydrateReminder);
 
   return {
     organizationId: workspace.organizationId,
@@ -373,8 +479,15 @@ export async function getAccountDeadlineReminderCenter(
   };
 }
 
-function requireAccountReminder(db: AppDatabase, organizationId: string, reminderId: string) {
-  const row = findOrganizationDeadlineReminderRow(db, organizationId, reminderId);
+async function requireAccountReminder(
+  db: AppDatabase,
+  mysql: MysqlDeadlineReminderRepository | null,
+  organizationId: string,
+  reminderId: string,
+) {
+  const row = mysql
+    ? await findOrganizationDeadlineReminderRowFromMysql(mysql, organizationId, reminderId)
+    : findOrganizationDeadlineReminderRow(db, organizationId, reminderId);
   if (!row) {
     throw new DeadlineReminderValidationError("Reminder is not available.");
   }
@@ -388,15 +501,20 @@ export async function acknowledgeAccountDeadlineReminder(
   input: UpdateDeadlineReminderInput,
 ): Promise<AccountDeadlineReminderCenter> {
   const timestamp = input.now ?? nowIso();
-  const workspace = ensureUserWorkspace(db, userId);
-  requireAccountReminder(db, workspace.organizationId, input.reminderId);
+  const { mysql, workspace } = await workspaceForUser(db, userId);
+  await requireAccountReminder(db, mysql, workspace.organizationId, input.reminderId);
 
-  updateOrganizationDeadlineReminderRow(db, workspace.organizationId, input.reminderId, {
+  const values = {
     status: "acknowledged",
     acknowledgedAt: timestamp,
     snoozedUntil: null,
     updatedAt: timestamp,
-  });
+  };
+  if (mysql) {
+    await updateOrganizationDeadlineReminderRowFromMysql(mysql, workspace.organizationId, input.reminderId, values);
+  } else {
+    updateOrganizationDeadlineReminderRow(db, workspace.organizationId, input.reminderId, values);
+  }
 
   return getAccountDeadlineReminderCenter(db, userId, { now: timestamp });
 }
@@ -411,15 +529,20 @@ export async function snoozeAccountDeadlineReminder(
     throw new DeadlineReminderValidationError("Snooze time is invalid.");
   }
 
-  const workspace = ensureUserWorkspace(db, userId);
-  requireAccountReminder(db, workspace.organizationId, input.reminderId);
+  const { mysql, workspace } = await workspaceForUser(db, userId);
+  await requireAccountReminder(db, mysql, workspace.organizationId, input.reminderId);
 
-  updateOrganizationDeadlineReminderRow(db, workspace.organizationId, input.reminderId, {
+  const values = {
     status: "snoozed",
     acknowledgedAt: null,
     snoozedUntil: input.snoozedUntil,
     updatedAt: timestamp,
-  });
+  };
+  if (mysql) {
+    await updateOrganizationDeadlineReminderRowFromMysql(mysql, workspace.organizationId, input.reminderId, values);
+  } else {
+    updateOrganizationDeadlineReminderRow(db, workspace.organizationId, input.reminderId, values);
+  }
 
   return getAccountDeadlineReminderCenter(db, userId, { now: timestamp });
 }

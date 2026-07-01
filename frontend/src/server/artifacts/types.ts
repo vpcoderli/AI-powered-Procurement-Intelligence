@@ -25,10 +25,22 @@ export const ARTIFACT_REVIEW_STATUSES = [
   "needs_update",
 ] as const;
 
+export const ARTIFACT_SECURITY_SCAN_STATUSES = [
+  "clean",
+  "blocked",
+  "pending",
+] as const;
+
+export const ARTIFACT_RETENTION_POLICIES = [
+  "standard_business_record",
+] as const;
+
 export type ArtifactType = (typeof ARTIFACT_TYPES)[number];
 export type ArtifactPurpose = (typeof ARTIFACT_PURPOSES)[number];
 export type ArtifactReviewStatus = (typeof ARTIFACT_REVIEW_STATUSES)[number];
 export type ArtifactComputedStatus = "active" | "expired";
+export type ArtifactSecurityScanStatus = (typeof ARTIFACT_SECURITY_SCAN_STATUSES)[number];
+export type ArtifactRetentionPolicy = (typeof ARTIFACT_RETENTION_POLICIES)[number];
 
 export interface SupplierArtifact {
   id: string;
@@ -46,10 +58,31 @@ export interface SupplierArtifact {
   expiresAt: string | null;
   reviewStatus: ArtifactReviewStatus;
   computedStatus: ArtifactComputedStatus;
+  securityScanStatus?: ArtifactSecurityScanStatus;
+  retentionPolicy?: ArtifactRetentionPolicy;
   notes: string;
   createdAt: string;
   updatedAt: string;
   downloadUrl: string;
+  versions: SupplierArtifactVersion[];
+}
+
+export interface SupplierArtifactVersion {
+  id: string;
+  artifactId: string;
+  versionNumber: number;
+  title: string;
+  fileName: string;
+  contentType: string;
+  byteSize: number;
+  storagePath: string;
+  storageProvider: string;
+  checksumSha256: string;
+  securityScanStatus: ArtifactSecurityScanStatus;
+  retentionPolicy: ArtifactRetentionPolicy;
+  replacementReason: string;
+  createdByUserId: string;
+  createdAt: string;
 }
 
 export interface ArtifactVault {
@@ -74,6 +107,14 @@ export interface CreateSupplierArtifactInput {
   artifactType: ArtifactType;
   purpose: ArtifactPurpose;
   file: File;
+  expiresAt?: string | null;
+  notes?: string;
+}
+
+export interface ReplaceSupplierArtifactInput {
+  file: File;
+  replacementReason?: string;
+  title?: string;
   expiresAt?: string | null;
   notes?: string;
 }

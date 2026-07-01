@@ -12,12 +12,15 @@ import {
   UserRound,
   Route,
   BookOpen,
+  Database,
   LogOut,
   LogIn,
+  ServerCog,
   UserPlus,
 } from "lucide-react"
 import { useLanguage } from "@/lib/i18n/LanguageContext"
 import { useAuth } from "@/context/AuthContext"
+import { ADMIN_CONSOLE_ROLES } from "@/server/auth/entitlements"
 import {
   Sidebar,
   SidebarContent,
@@ -31,13 +34,12 @@ import {
   SidebarHeader,
 } from "@/components/ui/sidebar"
 
-const adminConsoleRoles = ["admin", "operator", "support"];
-
 export function AppSidebar() {
   const { t } = useLanguage();
   const { user, logout } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
+  const isAdminUser = user ? ADMIN_CONSOLE_ROLES.includes(user.role as (typeof ADMIN_CONSOLE_ROLES)[number]) : false;
 
   const handleLogout = async () => {
     await logout();
@@ -58,7 +60,7 @@ export function AppSidebar() {
     },
   ];
 
-  const authenticatedItems = [
+  const ordinaryItems = [
     ...anonymousItems,
     {
       title: t('common.saved'),
@@ -94,16 +96,28 @@ export function AppSidebar() {
       url: "/settings",
       icon: Settings,
     },
-    ...(user && adminConsoleRoles.includes(user.role)
-      ? [
-          {
-            title: t('common.admin'),
-            url: "/admin",
-            icon: ShieldCheck,
-          },
-        ]
-      : []),
   ];
+
+  const adminItems = [
+    ...ordinaryItems,
+    {
+      title: t("admin.title"),
+      url: "/admin",
+      icon: ShieldCheck,
+    },
+    {
+      title: t("admin.sources"),
+      url: "/admin#data-sources",
+      icon: Database,
+    },
+    {
+      title: t("admin.config"),
+      url: "/admin#configuration",
+      icon: ServerCog,
+    },
+  ];
+
+  const authenticatedItems = isAdminUser ? adminItems : ordinaryItems;
   const items = user ? authenticatedItems : anonymousItems;
 
   return (
@@ -125,7 +139,8 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {items.map((item) => {
-                const active = item.url === "/" ? pathname === "/" : pathname.startsWith(item.url);
+                const itemPath = item.url.split(/[?#]/)[0];
+                const active = itemPath === "/" ? pathname === "/" : pathname.startsWith(itemPath);
                 return (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton

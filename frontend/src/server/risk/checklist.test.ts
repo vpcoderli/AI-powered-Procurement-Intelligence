@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
-import { bids, dataSources } from "@/server/db/schema";
+import { bidAttachments, bids, dataSources } from "@/server/db/schema";
 import type { AppDatabase } from "@/server/db/client";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { createRiskChecklistReport, formatRiskChecklistReport } from "./checklist";
@@ -83,6 +83,7 @@ describe("risk checklist", () => {
       "state-content",
       "bid-detail-routes",
       "attachment-downloads",
+      "state-data-quality-gate",
       "account-tier-separation",
       "source-ingestion-governance",
       "source-validity-metadata",
@@ -148,6 +149,31 @@ describe("risk checklist", () => {
       ok: false,
     });
     expect(formatRiskChecklistReport(report)).toContain("1: sourceUrl placeholder_url");
+  });
+
+  it("reuses state data quality reason codes for archived attachment blockers", async () => {
+    const db = await seededDatabase();
+    db.insert(bidAttachments)
+      .values({
+        id: "ca_invalid_archive",
+        bidId: "ca_caleprocure:risk-check-seed",
+        name: "Invalid archived attachment",
+        url: "https://caleprocure.ca.gov/event/CA-2026-1/attachments/missing.pdf",
+        originalUrl: "https://caleprocure.ca.gov/event/CA-2026-1/attachments/missing.pdf",
+        archiveStatus: "archived",
+        storagePath: "ca/missing.pdf",
+        checksumSha256: null,
+        createdAt: "2026-05-31T00:00:00.000Z",
+      })
+      .run();
+
+    const report = await createRiskChecklistReport(db, new Date("2026-05-31T00:00:00.000Z"));
+
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((check) => check.id === "state-data-quality-gate")).toMatchObject({
+      ok: false,
+    });
+    expect(formatRiskChecklistReport(report)).toContain("attachment_archive_invalid");
   });
 
   it("fails when an enabled source is blocked by ingestion governance", async () => {

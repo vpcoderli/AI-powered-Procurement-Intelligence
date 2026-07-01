@@ -5,14 +5,24 @@ import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal
 import { db } from "@/server/db/client";
 import { IntentNotFoundError } from "@/server/intents/types";
 import {
+  getSubmissionEvidenceLinks,
   getOrCreateSubmissionGuidance,
+  listSubmissionConfirmations,
+  SubmissionValidationError,
   updateSubmissionGuidance,
 } from "@/server/submission/service";
-import { isSubmissionMethod, type UpdateSubmissionGuidanceInput } from "@/server/submission/types";
+import {
+  isSubmissionMethod,
+  isSubmissionStatus,
+  type SubmissionStatus,
+  type UpdateSubmissionGuidanceInput,
+} from "@/server/submission/types";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
 }
+
+const MANUAL_SUBMISSION_STATUSES = new Set<SubmissionStatus>(["draft", "ready"]);
 
 function jsonWithPrincipalCookie(
   body: unknown,
@@ -50,6 +60,12 @@ function parseUpdate(body: unknown): UpdateSubmissionGuidanceInput | null {
     input.method = source.method;
   }
 
+  if ("status" in source) {
+    if (!isSubmissionStatus(source.status)) return null;
+    if (!MANUAL_SUBMISSION_STATUSES.has(source.status)) return null;
+    input.status = source.status;
+  }
+
   for (const key of ["portalUrl", "contactEmail"] as const) {
     if (key in source) {
       if (typeof source[key] !== "string") return null;
@@ -82,8 +98,10 @@ export async function GET(request: Request, context: RouteContext) {
     requireFeature(principal, "submission_guidance");
     const { id } = await context.params;
     const submission = await getOrCreateSubmissionGuidance(db, principal.userId, id);
+    const confirmations = await listSubmissionConfirmations(db, principal.userId, id);
+    const evidenceLinks = await getSubmissionEvidenceLinks(db, principal.userId, id);
 
-    return jsonWithPrincipalCookie({ submission }, principal);
+    return jsonWithPrincipalCookie({ submission, confirmations, evidenceLinks }, principal);
   } catch (error) {
     if (error instanceof FeatureAccessError) {
       return errorResponse(error.code, error.message, error.status, principal);
@@ -91,6 +109,10 @@ export async function GET(request: Request, context: RouteContext) {
 
     if (error instanceof IntentNotFoundError) {
       return errorResponse("INTENT_NOT_FOUND", "Intent not found", 404, principal);
+    }
+
+    if (error instanceof SubmissionValidationError) {
+      return errorResponse("INVALID_REQUEST", error.message, 400, principal);
     }
 
     return errorResponse("INTERNAL_ERROR", "Internal server error", 500, principal);
@@ -114,8 +136,10 @@ export async function PATCH(request: Request, context: RouteContext) {
     requireFeature(principal, "submission_guidance");
     const { id } = await context.params;
     const submission = await updateSubmissionGuidance(db, principal.userId, id, input);
+    const confirmations = await listSubmissionConfirmations(db, principal.userId, id);
+    const evidenceLinks = await getSubmissionEvidenceLinks(db, principal.userId, id);
 
-    return jsonWithPrincipalCookie({ submission }, principal);
+    return jsonWithPrincipalCookie({ submission, confirmations, evidenceLinks }, principal);
   } catch (error) {
     if (error instanceof FeatureAccessError) {
       return errorResponse(error.code, error.message, error.status, principal);
@@ -123,6 +147,10 @@ export async function PATCH(request: Request, context: RouteContext) {
 
     if (error instanceof IntentNotFoundError) {
       return errorResponse("INTENT_NOT_FOUND", "Intent not found", 404, principal);
+    }
+
+    if (error instanceof SubmissionValidationError) {
+      return errorResponse("INVALID_REQUEST", error.message, 400, principal);
     }
 
     return errorResponse("INTERNAL_ERROR", "Internal server error", 500, principal);

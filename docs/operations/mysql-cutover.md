@@ -1,17 +1,18 @@
 # MySQL Cutover Runbook
 
-Updated: 2026-06-01
+Updated: 2026-06-03
 
-This runbook tracks the migration from local SQLite to MySQL. The current implementation provides a MySQL runtime for the main local user, admin, billing, crawler, and workflow paths while preserving SQLite as the default no-URL local runtime and fast test utility.
+This runbook tracks the migration from local SQLite to MySQL. The current implementation provides a MySQL runtime for the main local user, admin, billing, crawler, knowledge, dashboard, and workflow paths while preserving SQLite as the default no-URL local runtime and fast test utility.
 
 ## Current State
 
-- SQLite remains available for fast unit tests and unmigrated modules through `frontend/src/server/db/client.ts`.
+- SQLite remains available for fast unit tests and explicit data import/rollback tasks. When a MySQL URL is configured, the runtime `db` singleton in `frontend/src/server/db/client.ts` is a throwing guard so unmigrated paths cannot silently write to `frontend/data/apsi.sqlite`.
 - MySQL dependency and migration tooling are available through `mysql2`.
 - `npm run db:mysql:migrate` creates the MySQL schema from the existing SQLite migration source with compatibility conversion.
-- The compatibility migration has been smoke-tested against a disposable MySQL 8 container: a fresh schema created 37 tables, recorded `sqlite-ddl-compat-v1`, and accepted a bid row with a 5,000-character `description`.
-- MySQL-aware runtime paths now cover: auth register/login/session/logout/password reset, account profile/password/delete/export/usage/notification preferences, workspace read/update/invitations/member management/ownership transfer, admin auth gate, admin users/feature overrides/audit logs, admin config registry list/upsert/patch with audit events, event outbox delivery worker, admin data source list/update, admin bid QA list/review/display/correction/batch writes, billing subscription/checkout/portal/cancel/webhook/invoices/dunning scheduling, supplier profile, bid search/detail/saved-bids/attachment metadata, search alerts CRUD/quota/digest history, notification outbox/admin recent/delivery, intent create/list/detail/status, compliance manifest, submission guidance/confirmation, response workspace, pursuit decision, qualification citations/freshness/Q&A, crawler health/admin crawler logs, crawler locks/source enablement orchestration, direct JSON crawler result import/upsert into MySQL, crawler search-alert matching plus digest notification after successful crawler runs, and repeatable SQLite-to-MySQL data import.
-- The repeatable smoke verifier now inserts crawler/bid rows and confirms scraper-health, admin crawler-log, bid search/detail, attachment metadata fallback, saved bid lifecycle, supplier profile lifecycle, intent lifecycle, compliance manifest lifecycle, submission guidance/confirmation lifecycle, response workspace lifecycle, pursuit decision lifecycle, qualification citations/freshness/Q&A lifecycle, admin users/feature overrides/audit logs lifecycle, admin config registry lifecycle, event outbox delivery lifecycle, admin bid QA lifecycle, crawler import/upsert lifecycle, crawler control lifecycle, crawler search-alert matching/digest lifecycle, billing lifecycle, billing dunning lifecycle, workspace lifecycle, workspace member lifecycle, account usage/export/preferences lifecycle, search alert lifecycle, notification outbox delivery with digest history, password reset lifecycle, and auth session lifecycle on MySQL.
+- The compatibility migration has been smoke-tested against a disposable MySQL 8 container: the local schema currently exposes 50 tables, records `sqlite-ddl-compat-v1`, and accepts a bid row with a 5,000-character `description`.
+- MySQL-aware runtime paths now cover: auth register/login/session/logout/password reset, local admin password reset, account profile/password/delete/export/usage/notification preferences, workspace read/update/invitations/member management/ownership transfer, admin auth gate, admin users/feature overrides/audit logs, admin config registry list/upsert/patch with audit events, event outbox delivery worker, admin data source list/update, admin bid QA list/review/display/correction/batch writes, billing subscription/checkout/portal/cancel/webhook/invoices/dunning scheduling, supplier profile, bid search/detail/saved-bids/attachment metadata, search alerts CRUD/quota/digest history, notification outbox/admin recent/delivery, intent create/list/detail/status, deadline reminders, compliance manifest, submission guidance/confirmation, response workspace, pursuit decision, qualification citations/freshness/Q&A, crawler health/admin crawler logs, crawler locks/source enablement orchestration, direct JSON crawler result import/upsert into MySQL, crawler search-alert matching plus digest notification after successful crawler runs, and repeatable SQLite-to-MySQL data import.
+- The repeatable smoke verifier now inserts crawler/bid rows and confirms scraper-health, admin crawler-log, bid search/detail, attachment metadata fallback, saved bid lifecycle, supplier profile lifecycle, intent lifecycle, deadline reminder lifecycle, compliance manifest lifecycle, submission guidance/confirmation lifecycle, response workspace lifecycle, pursuit decision lifecycle, qualification citations/freshness/Q&A lifecycle, admin users/feature overrides/audit logs lifecycle, admin config registry lifecycle, event outbox delivery lifecycle, admin bid QA lifecycle, crawler import/upsert lifecycle, crawler control lifecycle, crawler search-alert matching/digest lifecycle, billing lifecycle, billing dunning lifecycle, billing subscription reconcile, workspace lifecycle, workspace member lifecycle, account usage/export/preferences lifecycle, search alert lifecycle, Knowledge Station lifecycle, notification outbox delivery with digest history, password reset lifecycle, and auth session lifecycle on MySQL.
+- Route-level MySQL guard coverage now scans API route imports, and the local browser/API smoke covers admin versus ordinary-user separation, paid-feature locked states, dashboard summary, admin source governance, `/search`, bid detail, and safe attachment downloads.
 - Full production signoff is still blocked by running the operator-assisted Stripe sandbox verifier with real test credentials against MySQL and executing the production webhook/low-risk live checkout runbook. Worker deployment preflight is scriptable through `npm run workers:check`; production billing credential preflight is scriptable through `npm run billing:production:check`.
 
 ## Environment
@@ -70,14 +71,14 @@ Expected result:
 
 ```text
 MySQL smoke target: mysql://winbids:***@127.0.0.1:3306/winbids
-MySQL smoke passed: 37 tables, bids.description=longtext, bids.source=varchar(191), long content length=5000, scraper health sources=1, admin crawler logs=1, bid search results=1, ...
+MySQL smoke passed: 50 tables, bids.description=longtext, bids.source=varchar(191), long content length=5000, scraper health sources=1, admin crawler logs=1, bid search results=1, ...
 Migration check: <n> statements applied, <m> statements skipped.
 ```
 
 Current expanded smoke output includes:
 
 ```text
-bid detail verified=true, attachment verified=true, saved bid verified=true, profile verified=true, intent verified=true, compliance verified=true, submission verified=true, response workspace verified=true, pursuit decision verified=true, qualification verified=true, billing verified=true, billing dunning verified=true, workspace verified=true, workspace member verified=true, admin users verified=true, admin config verified=true, event outbox verified=true, admin bid QA verified=true, crawler import verified=true, crawler control verified=true, crawler alert matching verified=true, account usage verified=true, notification preferences verified=true, account export verified=true, notification outbox verified=true, search alert verified=true, password reset verified=true, auth session verified=true
+bid detail verified=true, attachment verified=true, saved bid verified=true, profile verified=true, intent verified=true, deadline reminder verified=true, compliance verified=true, submission verified=true, response workspace verified=true, pursuit decision verified=true, qualification verified=true, billing verified=true, billing dunning verified=true, billing reconcile verified=true, workspace verified=true, workspace member verified=true, admin users verified=true, admin config verified=true, event outbox verified=true, admin bid QA verified=true, crawler import verified=true, crawler control verified=true, crawler alert matching verified=true, knowledge station verified=true, account usage verified=true, notification preferences verified=true, account export verified=true, notification outbox verified=true, search alert verified=true, password reset verified=true, auth session verified=true
 ```
 
 The migration is safe to re-run. Existing indexes are skipped on duplicate-name errors while `CREATE TABLE IF NOT EXISTS` statements remain no-op table checks.
@@ -99,12 +100,24 @@ SELECT * FROM mysql_migrations;
 
 The migration entry point alone does not switch the app runtime. Complete these before declaring MySQL as the active database:
 
-1. Run Stripe sandbox verification in MySQL mode with real Stripe test credentials before production billing signoff.
-2. Replace any remaining SQLite raw SQL and `PRAGMA` usage in MySQL-mode tests/scripts as they are promoted to production gates.
-3. Run full tests against MySQL, not only static migration tests, before production cutover.
-4. Export SQLite data, import into MySQL, and run `npm run risk:check` against the MySQL runtime.
-5. Execute `npm run workers:check` plus one-shot worker dry runs for crawler, notifications/dunning, and event outbox in staging/production-like environments.
-6. Execute `NODE_ENV=production npm run billing:production:check` in the production deployment environment before live webhook rotation or launch.
+0. Before import or browser smoke, create a timestamped SQLite backup in `frontend/data/backups/` and keep `frontend/data/apsi.sqlite*` until MySQL browser smoke, `npm run db:mysql:smoke`, and `npm run risk:check` have passed.
+1. Local cutover verification has passed: SQLite backup, MySQL migration/import, admin reset, MySQL smoke, `risk:check`, `workers:check`, full regression tests, browser smoke, admin/user role separation, and 50-state detail/download HTTP checks.
+2. Run Stripe sandbox verification in MySQL mode with real Stripe test credentials before production billing signoff.
+3. Execute `npm run workers:check` plus one-shot worker dry runs for crawler, notifications/dunning, and event outbox in staging/production-like environments.
+4. Execute `NODE_ENV=production npm run billing:production:check` in the production deployment environment before live webhook rotation or launch.
+5. Preserve a MySQL dump after each cutover rehearsal. The local post-cutover dump is `frontend/data/backups/winbids-mysql-post-cutover-20260603.sql`.
+6. Replace any remaining SQLite raw SQL and `PRAGMA` usage in MySQL-mode tests/scripts only as those paths are promoted to production gates.
+
+Rollback to the preserved local SQLite runtime:
+
+```bash
+unset DATABASE_URL
+unset MYSQL_DATABASE_URL
+cd frontend
+npm run dev
+```
+
+Keep `frontend/data/apsi.sqlite` and `frontend/data/backups/` until the production MySQL environment has its own verified backup/restore process.
 
 ## Known Compatibility Notes
 

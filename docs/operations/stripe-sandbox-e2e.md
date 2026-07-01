@@ -12,6 +12,7 @@
 4. 确认使用的是 test mode secret key，格式应为 `sk_test_...`。
 
 不要把 test key 或 webhook secret 提交到仓库。
+Verifier 会拒绝 `REPLACE_ME`、`placeholder`、`sk_live_...` 或格式错误的变量；占位符只能留在文档中，不能作为实际运行配置。
 
 ## 2. Local Environment
 

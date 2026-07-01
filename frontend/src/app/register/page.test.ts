@@ -13,4 +13,19 @@ describe("register page", () => {
     expect(shell).toContain("winbids-hero-panel");
     expect(shell).toContain("winbids-metric-card");
   });
+
+  it("turns register?intent=demo into an explicit local demo account path", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("useSearchParams");
+    expect(page).toContain('searchParams.get("intent") === "demo"');
+    expect(page).toContain("demoTitle");
+    expect(page).toContain("demoSubtitle");
+    expect(page).toContain("demoSubmit");
+    expect(page).toContain("No external email is sent");
+    expect(page).toContain('fetch("/api/marketing/signup-start"');
+    expect(page).toContain("leadEventId");
+    expect(page).toContain("marketingIntent");
+    expect(page).not.toMatch(/automatically submit|guarantee.*win|guaranteed.*award/i);
+  });
 });

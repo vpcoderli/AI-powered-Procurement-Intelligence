@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { FeatureAccessError, requireFeature } from "@/server/auth/feature-gate";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
+import { recordPremiumActionUsageDryRun } from "@/server/billing/credit-ledger";
 import { db } from "@/server/db/client";
 import { IntentNotFoundError } from "@/server/intents/types";
 import { answerQualificationQuestion } from "@/server/qualification/qa";
@@ -65,8 +66,19 @@ export async function POST(request: Request, context: RouteContext) {
     requireFeature(principal, "bid.brief.full.generate");
     const { id } = await context.params;
     const answer = await answerQualificationQuestion(db, principal.userId, id, input);
+    const creditUsage = await recordPremiumActionUsageDryRun(db, {
+      organizationId: principal.workspace?.organizationId ?? null,
+      userId: principal.userId,
+      featureKey: "bid.brief.full.generate",
+      actionId: `qualification_qa:${id}`,
+      aiRunId: answer.aiRun.id,
+      metadata: {
+        provider: answer.aiRun.provider,
+        promptVersion: answer.aiRun.promptVersion,
+      },
+    });
 
-    return jsonWithPrincipalCookie(answer, principal);
+    return jsonWithPrincipalCookie({ ...answer, creditUsage }, principal);
   } catch (error) {
     if (error instanceof FeatureAccessError) {
       return errorResponse(error.code, error.message, error.status, principal);

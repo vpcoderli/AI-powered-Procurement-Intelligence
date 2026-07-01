@@ -371,6 +371,7 @@ export function runMigrations(db: AppDatabase) {
       bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       method TEXT NOT NULL DEFAULT 'unknown',
+      status TEXT NOT NULL DEFAULT 'draft',
       portal_url TEXT NOT NULL DEFAULT '',
       contact_email TEXT NOT NULL DEFAULT '',
       requires_registration INTEGER NOT NULL DEFAULT 0,
@@ -392,6 +393,30 @@ export function runMigrations(db: AppDatabase) {
       method TEXT NOT NULL,
       confirmation_reference TEXT NOT NULL DEFAULT '',
       confirmation_notes TEXT NOT NULL DEFAULT '',
+      evidence_snapshot_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS award_outcomes (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
+      bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'awaiting_award',
+      award_notice_url TEXT NOT NULL DEFAULT '',
+      tabulation_artifact_id TEXT REFERENCES supplier_artifacts(id) ON DELETE SET NULL,
+      tabulation_artifact_url TEXT NOT NULL DEFAULT '',
+      winner_name TEXT NOT NULL DEFAULT '',
+      award_amount_cents INTEGER,
+      currency TEXT NOT NULL DEFAULT 'USD',
+      loss_reason TEXT NOT NULL DEFAULT 'unknown',
+      loss_reason_notes TEXT NOT NULL DEFAULT '',
+      next_action TEXT NOT NULL DEFAULT 'capture_tabulation',
+      next_action_due_at TEXT,
+      notes TEXT NOT NULL DEFAULT '',
+      decided_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -481,6 +506,7 @@ export function runMigrations(db: AppDatabase) {
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       requested_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       status TEXT NOT NULL DEFAULT 'ready',
+      format TEXT NOT NULL DEFAULT 'markdown',
       file_name TEXT NOT NULL,
       content_type TEXT NOT NULL,
       byte_size INTEGER NOT NULL,
@@ -489,7 +515,25 @@ export function runMigrations(db: AppDatabase) {
       readiness_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
-      downloaded_at TEXT
+      downloaded_at TEXT,
+      review_status TEXT NOT NULL DEFAULT 'pending_review',
+      reviewed_at TEXT,
+      reviewed_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      review_notes TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS response_package_export_review_events (
+      id TEXT PRIMARY KEY,
+      export_id TEXT NOT NULL REFERENCES response_package_exports(id) ON DELETE CASCADE,
+      snapshot_id TEXT NOT NULL REFERENCES response_package_snapshots(id) ON DELETE CASCADE,
+      intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
+      bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      from_review_status TEXT NOT NULL,
+      to_review_status TEXT NOT NULL,
+      review_notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS supplier_artifacts (
@@ -508,8 +552,31 @@ export function runMigrations(db: AppDatabase) {
       expires_at TEXT,
       review_status TEXT NOT NULL DEFAULT 'pending_review',
       notes TEXT NOT NULL DEFAULT '',
+      deleted_at TEXT,
+      deleted_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS artifact_versions (
+      id TEXT PRIMARY KEY,
+      artifact_id TEXT NOT NULL REFERENCES supplier_artifacts(id) ON DELETE CASCADE,
+      intent_id TEXT NOT NULL REFERENCES intent_to_bid(id) ON DELETE CASCADE,
+      bid_id TEXT NOT NULL REFERENCES bids(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      version_number INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      content_type TEXT NOT NULL,
+      byte_size INTEGER NOT NULL,
+      storage_path TEXT NOT NULL,
+      storage_provider TEXT NOT NULL DEFAULT 'local',
+      checksum_sha256 TEXT NOT NULL,
+      security_scan_status TEXT NOT NULL DEFAULT 'clean',
+      retention_policy TEXT NOT NULL DEFAULT 'standard_business_record',
+      replacement_reason TEXT NOT NULL DEFAULT '',
+      created_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS response_workspace_item_artifacts (
@@ -707,6 +774,11 @@ export function runMigrations(db: AppDatabase) {
       source_owner TEXT,
       approval_notes TEXT,
       last_approval_reviewed_at TEXT,
+      live_health_owner TEXT,
+      live_health_disposition TEXT,
+      live_health_next_review_at TEXT,
+      live_health_notes TEXT,
+      live_health_reviewed_at TEXT,
       last_success_at TEXT,
       last_failure_at TEXT,
       consecutive_failures INTEGER NOT NULL DEFAULT 0,
@@ -793,6 +865,11 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_submission_paths_bid_id ON submission_paths(bid_id);
     CREATE INDEX IF NOT EXISTS idx_submission_confirmations_intent_id ON submission_confirmations(intent_id);
     CREATE INDEX IF NOT EXISTS idx_submission_confirmations_user_id ON submission_confirmations(user_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_award_outcomes_intent_id ON award_outcomes(intent_id);
+    CREATE INDEX IF NOT EXISTS idx_award_outcomes_organization_id ON award_outcomes(organization_id);
+    CREATE INDEX IF NOT EXISTS idx_award_outcomes_user_id ON award_outcomes(user_id);
+    CREATE INDEX IF NOT EXISTS idx_award_outcomes_status ON award_outcomes(status);
+    CREATE INDEX IF NOT EXISTS idx_award_outcomes_next_action_due_at ON award_outcomes(next_action_due_at);
     CREATE INDEX IF NOT EXISTS idx_compliance_manifest_items_intent_id ON compliance_manifest_items(intent_id);
     CREATE INDEX IF NOT EXISTS idx_compliance_manifest_items_user_id ON compliance_manifest_items(user_id);
     CREATE INDEX IF NOT EXISTS idx_compliance_manifest_items_status ON compliance_manifest_items(status);
@@ -814,10 +891,20 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_response_package_exports_intent_id ON response_package_exports(intent_id);
     CREATE INDEX IF NOT EXISTS idx_response_package_exports_snapshot_id ON response_package_exports(snapshot_id);
     CREATE INDEX IF NOT EXISTS idx_response_package_exports_user_id ON response_package_exports(user_id);
+    CREATE INDEX IF NOT EXISTS idx_response_package_export_review_events_export_id ON response_package_export_review_events(export_id);
+    CREATE INDEX IF NOT EXISTS idx_response_package_export_review_events_intent_id ON response_package_export_review_events(intent_id);
+    CREATE INDEX IF NOT EXISTS idx_response_package_export_review_events_user_id ON response_package_export_review_events(user_id);
+    CREATE INDEX IF NOT EXISTS idx_response_package_export_review_events_actor_user_id ON response_package_export_review_events(actor_user_id);
+    CREATE INDEX IF NOT EXISTS idx_response_package_export_review_events_created_at ON response_package_export_review_events(created_at);
     CREATE INDEX IF NOT EXISTS idx_supplier_artifacts_intent_id ON supplier_artifacts(intent_id);
     CREATE INDEX IF NOT EXISTS idx_supplier_artifacts_user_id ON supplier_artifacts(user_id);
     CREATE INDEX IF NOT EXISTS idx_supplier_artifacts_bid_id ON supplier_artifacts(bid_id);
     CREATE INDEX IF NOT EXISTS idx_supplier_artifacts_review_status ON supplier_artifacts(review_status);
+    CREATE INDEX IF NOT EXISTS idx_artifact_versions_artifact_id ON artifact_versions(artifact_id);
+    CREATE INDEX IF NOT EXISTS idx_artifact_versions_intent_id ON artifact_versions(intent_id);
+    CREATE INDEX IF NOT EXISTS idx_artifact_versions_user_id ON artifact_versions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_artifact_versions_created_at ON artifact_versions(created_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_artifact_versions_artifact_version ON artifact_versions(artifact_id, version_number);
     CREATE INDEX IF NOT EXISTS idx_response_workspace_item_artifacts_artifact_id ON response_workspace_item_artifacts(artifact_id);
     CREATE INDEX IF NOT EXISTS idx_sourcing_partners_organization_id ON sourcing_partners(organization_id);
     CREATE INDEX IF NOT EXISTS idx_sourcing_partners_created_by_user_id ON sourcing_partners(created_by_user_id);
@@ -998,6 +1085,28 @@ export function runMigrations(db: AppDatabase) {
     sqlite.exec("ALTER TABLE intent_to_bid ADD COLUMN evidence_citations_json TEXT NOT NULL DEFAULT '[]'");
   }
 
+  const submissionPathColumns = new Set(
+    sqlite
+      .prepare("PRAGMA table_info(submission_paths)")
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+
+  if (!submissionPathColumns.has("status")) {
+    sqlite.exec("ALTER TABLE submission_paths ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'");
+  }
+
+  const submissionConfirmationColumns = new Set(
+    sqlite
+      .prepare("PRAGMA table_info(submission_confirmations)")
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+
+  if (!submissionConfirmationColumns.has("evidence_snapshot_json")) {
+    sqlite.exec("ALTER TABLE submission_confirmations ADD COLUMN evidence_snapshot_json TEXT NOT NULL DEFAULT '{}'");
+  }
+
   const responseWorkspaceItemColumns = new Set(
     sqlite
       .prepare("PRAGMA table_info(response_workspace_items)")
@@ -1009,6 +1118,41 @@ export function runMigrations(db: AppDatabase) {
     sqlite.exec("ALTER TABLE response_workspace_items ADD COLUMN assigned_user_id TEXT REFERENCES users(id) ON DELETE SET NULL");
   }
   sqlite.exec("CREATE INDEX IF NOT EXISTS idx_response_workspace_items_assigned_user_id ON response_workspace_items(assigned_user_id)");
+
+  const responsePackageExportColumns = new Set(
+    sqlite
+      .prepare("PRAGMA table_info(response_package_exports)")
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+
+  const addResponsePackageExportColumn = (name: string, definition: string) => {
+    if (!responsePackageExportColumns.has(name)) {
+      sqlite.exec(`ALTER TABLE response_package_exports ADD COLUMN ${name} ${definition}`);
+    }
+  };
+
+  addResponsePackageExportColumn("format", "TEXT NOT NULL DEFAULT 'markdown'");
+  addResponsePackageExportColumn("review_status", "TEXT NOT NULL DEFAULT 'pending_review'");
+  addResponsePackageExportColumn("reviewed_at", "TEXT");
+  addResponsePackageExportColumn("reviewed_by_user_id", "TEXT REFERENCES users(id) ON DELETE SET NULL");
+  addResponsePackageExportColumn("review_notes", "TEXT NOT NULL DEFAULT ''");
+
+  const supplierArtifactColumns = new Set(
+    sqlite
+      .prepare("PRAGMA table_info(supplier_artifacts)")
+      .all()
+      .map((row) => (row as { name: string }).name),
+  );
+
+  const addSupplierArtifactColumn = (name: string, definition: string) => {
+    if (!supplierArtifactColumns.has(name)) {
+      sqlite.exec(`ALTER TABLE supplier_artifacts ADD COLUMN ${name} ${definition}`);
+    }
+  };
+
+  addSupplierArtifactColumn("deleted_at", "TEXT");
+  addSupplierArtifactColumn("deleted_by_user_id", "TEXT REFERENCES users(id) ON DELETE SET NULL");
 
   const dataSourceColumns = new Set(
     sqlite
@@ -1043,4 +1187,9 @@ export function runMigrations(db: AppDatabase) {
   addDataSourceColumn("source_owner", "TEXT");
   addDataSourceColumn("approval_notes", "TEXT");
   addDataSourceColumn("last_approval_reviewed_at", "TEXT");
+  addDataSourceColumn("live_health_owner", "TEXT");
+  addDataSourceColumn("live_health_disposition", "TEXT");
+  addDataSourceColumn("live_health_next_review_at", "TEXT");
+  addDataSourceColumn("live_health_notes", "TEXT");
+  addDataSourceColumn("live_health_reviewed_at", "TEXT");
 }

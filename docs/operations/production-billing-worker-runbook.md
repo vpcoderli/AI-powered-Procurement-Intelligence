@@ -1,6 +1,6 @@
 # Production Billing and Worker Deployment Runbook
 
-Updated: 2026-05-30
+Updated: 2026-06-03
 
 This runbook covers the production handoff for Stripe billing, webhook rotation, scheduled workers, and billing dunning notification operations. It assumes the application is deployed from `frontend` and that production and test environments have separate secrets, databases, and worker processes.
 
@@ -37,6 +37,15 @@ STRIPE_PRICE_PRO_MONTHLY=price_REPLACE_ME
 STRIPE_PRICE_BUSINESS_MONTHLY=price_REPLACE_ME
 ```
 
+Required production handoff ownership variables for the preflight:
+
+```bash
+PRODUCTION_OWNER_BILLING=finance-or-billing-owner@example.com
+PRODUCTION_OWNER_WORKERS=operations-owner@example.com
+PRODUCTION_OWNER_BACKUPS=infra-or-database-owner@example.com
+PRODUCTION_BACKUP_RUNBOOK_URL=https://internal.example.com/winbids-backup-runbook
+```
+
 The current code still uses `pro` and `business` compatibility tiers. Product language may later migrate to Pursuit Starter, Response Builder, Growth, and Enterprise; until that migration lands, keep Stripe product names mapped to the current compatibility price variables.
 
 Production guardrails:
@@ -44,6 +53,8 @@ Production guardrails:
 - Local sandbox verification intentionally rejects non-`sk_test_...` keys.
 - Production must not run `npm run billing:stripe:sandbox`.
 - Production must pass `npm run billing:production:check` before launch or webhook rotation.
+- Production handoff must pass `npm run ops:production:check` before launch, webhook rotation, or worker deployment signoff.
+- Production and staging worker preflight must fail closed on SQLite runtime resolution and `file`/`console` notification providers. Treat these as launch blockers, not signable warnings.
 - Do not reuse test webhook secrets with production endpoints.
 - Keep live price IDs and test price IDs in separate secret stores.
 - Rotate keys through the deployment platform secret manager, not source control.
@@ -56,6 +67,21 @@ NODE_ENV=production npm run billing:production:check
 ```
 
 The command does not call Stripe and does not print secret values. It verifies live-mode Stripe key shape, webhook secret shape, production price variables, and MySQL runtime configuration.
+
+Run the full production operations handoff preflight in the same environment:
+
+```bash
+cd frontend
+NODE_ENV=production npm run ops:production:check
+```
+
+This wraps billing preflight and additionally requires explicit billing, worker, backup, and backup-runbook owners. It does not call Stripe, does not connect to the notification provider, and does not print secret values.
+
+Interpretation:
+
+- Exit code `0` with `warnings=0` is the launch-signoff target.
+- Exit code `0` with warnings means the command is usable as a diagnostic, but the warning owner must record and clear or explicitly accept the risk before signoff.
+- Any non-zero exit is a blocker. In production or staging, `DATABASE_URL` resolving to SQLite and `NOTIFICATION_PROVIDER=file` or `NOTIFICATION_PROVIDER=console` are blockers even if the app would still run locally.
 
 ## Stripe Webhook Endpoint Setup
 
@@ -106,10 +132,20 @@ Before starting or scheduling worker processes, run the aggregate preflight in t
 
 ```bash
 cd frontend
-npm run workers:check
+NODE_ENV=production npm run workers:check
 ```
 
 This runs crawler, event outbox, notification, and dunning-related environment checks without processing jobs.
+
+Deployment signoff table:
+
+| Process | Command | Schedule / mode | Owner variable | Singleton expectation | Dry-run command |
+|---|---|---|---|---|---|
+| Web app | `npm run start` after `npm run build` | Continuous | `PRODUCTION_OWNER_BILLING` for billing endpoints, platform owner for app runtime | One active production deployment per environment | `NODE_ENV=production npm run ops:production:check` |
+| Crawler worker | `npm run worker:crawler` or scheduled `npm run crawler:once` | Continuous or every 15 minutes | `PRODUCTION_OWNER_WORKERS` | One active continuous worker unless locks are externally enforced | `NODE_ENV=production npm run worker:crawler:check` |
+| Event outbox worker | `npm run worker:events` | Continuous or scheduled one-shot with `EVENT_WORKER_RUN_ONCE=1` | `PRODUCTION_OWNER_WORKERS` | One active continuous worker | `NODE_ENV=production npm run worker:events:check` |
+| Notification/dunning worker | `npm run worker:notifications` | Continuous or every 15 minutes with `NOTIFICATION_WORKER_RUN_ONCE=1` | `PRODUCTION_OWNER_WORKERS` | One active continuous worker | `NODE_ENV=production npm run worker:notifications:check` |
+| Database backup/restore | Platform backup job | Platform schedule | `PRODUCTION_OWNER_BACKUPS` | One authoritative backup policy per production DB | Follow `PRODUCTION_BACKUP_RUNBOOK_URL` restore drill |
 
 ### Notification and Dunning Worker
 
@@ -117,7 +153,7 @@ Preferred continuous process:
 
 ```bash
 cd frontend
-npm run worker:notifications:check
+NODE_ENV=production npm run worker:notifications:check
 npm run worker:notifications
 ```
 
@@ -133,7 +169,8 @@ Schedule the one-shot command every 15 minutes. The worker is idempotent for dun
 Production worker variables:
 
 ```bash
-DATABASE_PATH=/var/lib/winbids/apsi.sqlite
+NODE_ENV=production
+DATABASE_URL=mysql://winbids:REPLACE_ME@<rds-endpoint>:3306/winbids
 NOTIFICATION_WORKER_INTERVAL_MS=900000
 NOTIFICATION_WORKER_DUNNING_LIMIT=100
 NOTIFICATION_WORKER_DELIVERY_LIMIT=25
@@ -143,7 +180,7 @@ NOTIFICATION_HTTP_ENDPOINT=https://notifications.example.com/send
 NOTIFICATION_HTTP_TOKEN=REPLACE_ME
 ```
 
-Use `NOTIFICATION_PROVIDER=file` only for local development or staging smoke tests where file output is expected. Use `NOTIFICATION_PROVIDER=console` only for diagnostics.
+Use `NOTIFICATION_PROVIDER=file` only for local development. Use `NOTIFICATION_PROVIDER=console` only for local diagnostics. Staging launch rehearsal should use `NOTIFICATION_PROVIDER=http` with a staging-safe endpoint or provider stub.
 
 ### Crawler Worker
 
@@ -151,7 +188,7 @@ If scheduled source ingestion is part of the deployment, run the crawler worker 
 
 ```bash
 cd frontend
-npm run worker:crawler:check
+NODE_ENV=production npm run worker:crawler:check
 npm run worker:crawler
 ```
 
@@ -188,19 +225,26 @@ Manual preflight:
 
 ```bash
 cd frontend
-npm run workers:check
+NODE_ENV=production npm run workers:check
 ```
 
-Expected output:
+Expected notification worker key fields:
 
 ```json
 {
   "ok": true,
   "provider": "http",
-  "databasePath": "/var/lib/winbids/apsi.sqlite",
+  "database": "mysql",
+  "strictMode": true,
   "warnings": []
 }
 ```
+
+Worker preflight interpretation:
+
+- `warnings` are advisory only when the command exits `0`; examples include an unauthenticated HTTP notification provider token during a controlled staging dry run.
+- `DATABASE_URL resolves to SQLite` is a blocker for production and staging because worker runtime resolution checks `DATABASE_URL` before `MYSQL_DATABASE_URL`.
+- `NOTIFICATION_PROVIDER=file` and `NOTIFICATION_PROVIDER=console` are blockers for production and staging. They are acceptable only for explicit local/dev runs such as `NODE_ENV=development npm run worker:notifications:check`.
 
 Manual one-cycle run:
 
@@ -235,7 +279,9 @@ Triage:
 | Symptom | Action |
 |---|---|
 | `NOTIFICATION_PROVIDER must be file, console, or http` | Fix the deployment variable and rerun `npm run worker:notifications:check`. |
-| `NOTIFICATION_HTTP_ENDPOINT is required` | Add the provider endpoint or switch to `file`/`console` for non-production verification. |
+| `NOTIFICATION_PROVIDER=<provider> is a local/dev fallback` | Set `NOTIFICATION_PROVIDER=http` and configure `NOTIFICATION_HTTP_ENDPOINT`; do not sign off production or staging with file or console delivery. |
+| `NOTIFICATION_HTTP_ENDPOINT is required` | Add the provider endpoint or switch to `file`/`console` only for explicit local/dev verification. |
+| `DATABASE_URL resolves to SQLite` | Remove the SQLite `DATABASE_URL` value from production/staging and set `DATABASE_URL` itself to the MySQL URL; `MYSQL_DATABASE_URL` does not override a SQLite `DATABASE_URL`. |
 | `failed` delivery count increases | Check provider logs, HTTP status, token validity, and whether the provider accepts the current payload schema. |
 | `skippedNoRecipient` increases | Confirm affected users have emails and that billing invoice rows are attached to the intended user. |
 | Dunning reminders do not queue | Confirm Stripe sent `invoice.payment_failed`, the invoice status is still `payment_failed`, and the failed invoice is older than the configured stage delay. |

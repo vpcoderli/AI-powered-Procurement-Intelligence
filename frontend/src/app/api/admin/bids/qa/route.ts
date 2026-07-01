@@ -36,6 +36,7 @@ function stringParam(params: URLSearchParams, key: string) {
 
 async function resolveDatabase(database?: AppDatabase) {
   if (database) return database;
+  if (isMysqlDatabaseUrlConfigured()) return {} as AppDatabase;
 
   const client = await import("@/server/db/client");
   return client.db;

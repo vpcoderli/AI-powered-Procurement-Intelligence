@@ -44,7 +44,7 @@ export interface SavedBidsResponse {
 
 export interface ApiErrorResponse {
   error: {
-    code: "BID_NOT_FOUND" | "INVALID_REQUEST" | "INTERNAL_ERROR" | "USAGE_LIMIT_REACHED";
+    code: "BID_NOT_FOUND" | "AUTH_REQUIRED" | "INVALID_REQUEST" | "INTERNAL_ERROR" | "USAGE_LIMIT_REACHED";
     message: string;
     feature?: string;
     limit?: number;

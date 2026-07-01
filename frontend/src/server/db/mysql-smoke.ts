@@ -55,6 +55,7 @@ import {
   createMysqlCheckoutSession,
   createMysqlCustomerPortalSession,
   getMysqlAccountSubscription,
+  reconcileMysqlSubscriptionLifecycle,
 } from "@/server/billing/mysql-subscriptions";
 import { scheduleDunningRemindersFromMysql } from "@/server/billing/dunning";
 import {
@@ -72,9 +73,19 @@ import {
   releaseCrawlerLockFromMysql,
 } from "@/server/crawler/lock-repository";
 import { importCrawlerSqliteRunIntoMysql } from "@/server/crawler/mysql-importer";
+import {
+  acknowledgeAccountDeadlineReminder,
+  getAccountDeadlineReminderCenter,
+  getDeadlineWorkspace,
+  snoozeAccountDeadlineReminder,
+} from "@/server/deadlines/service";
 import { deliverPendingEventOutboxRowsFromMysql, writeAuditEventFromMysql } from "@/server/events/event-log";
 import { createIntentForBid, listUserIntents, updateIntentStatus } from "@/server/intents/service";
 import { deliverPendingNotificationsFromMysql } from "@/server/notifications/delivery";
+import {
+  createKnowledgeItemFromMysql,
+  listKnowledgeItemsFromMysql,
+} from "@/server/knowledge/service";
 import {
   enqueueNotificationFromMysql,
   listRecentNotificationsFromMysql,
@@ -143,6 +154,7 @@ export interface MysqlSmokeInspection {
   savedBidVerified: boolean;
   profileVerified: boolean;
   intentVerified: boolean;
+  deadlineReminderVerified?: boolean;
   complianceVerified?: boolean;
   submissionVerified?: boolean;
   responseWorkspaceVerified?: boolean;
@@ -150,7 +162,9 @@ export interface MysqlSmokeInspection {
   pursuitDecisionVerified?: boolean;
   qualificationVerified?: boolean;
   billingVerified: boolean;
+  billingReconcileVerified?: boolean;
   billingDunningVerified?: boolean;
+  knowledgeStationVerified?: boolean;
   workspaceVerified: boolean;
   workspaceMemberVerified: boolean;
   adminUsersVerified?: boolean;
@@ -215,6 +229,17 @@ function buildMysqlCrawlerImportBid(now: string): MysqlSmokeBid {
     sourceUrl: `${MYSQL_SMOKE_SOURCE_URL}&keyword=crawler`,
     createdAt: now,
   };
+}
+
+function addDaysIso(value: string, days: number) {
+  const date = new Date(value);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString();
+}
+
+async function cleanupPreviousMysqlSmokeBillingRows(pool: Pool) {
+  await pool.execute("DELETE FROM notification_outbox WHERE dedupe_key LIKE 'billing:dunning:%mysql_smoke_%_invoice_failed'");
+  await pool.execute("DELETE FROM billing_invoices WHERE provider_invoice_id LIKE 'mysql_smoke_%_invoice_failed'");
 }
 
 async function runMysqlCrawlerImportSmoke(pool: Pool, now: string) {
@@ -387,6 +412,9 @@ export function validateMysqlSmokeInspection(inspection: MysqlSmokeInspection) {
     !inspection.intentVerified
       ? "expected MySQL intent lifecycle to verify"
       : null,
+    inspection.deadlineReminderVerified === false
+      ? "expected MySQL deadline reminder lifecycle to verify"
+      : null,
     !inspection.complianceVerified
       ? "expected MySQL compliance manifest lifecycle to verify"
       : null,
@@ -408,8 +436,14 @@ export function validateMysqlSmokeInspection(inspection: MysqlSmokeInspection) {
     !inspection.billingVerified
       ? "expected MySQL billing lifecycle to verify"
       : null,
+    !inspection.billingReconcileVerified
+      ? "expected MySQL billing reconcile lifecycle to verify"
+      : null,
     !inspection.billingDunningVerified
       ? "expected MySQL billing dunning lifecycle to verify"
+      : null,
+    !inspection.knowledgeStationVerified
+      ? "expected MySQL knowledge station lifecycle to verify"
       : null,
     !inspection.workspaceVerified
       ? "expected MySQL workspace lifecycle to verify"
@@ -486,6 +520,8 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
   let artifactStorageRoot: string | null = null;
 
   try {
+    await cleanupPreviousMysqlSmokeBillingRows(pool);
+
     await pool.execute(
       `
         INSERT INTO bids (
@@ -495,6 +531,7 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
           title,
           description,
           currency,
+          deadline_date,
           issuer_name,
           issuer_type,
           state_code,
@@ -504,7 +541,7 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
           created_at,
           updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       [
         bid.id,
@@ -513,6 +550,7 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
         bid.title,
         bid.description,
         bid.currency,
+        "2026-08-01",
         bid.issuerName,
         bid.issuerType,
         bid.stateCode,
@@ -639,6 +677,26 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
     const intent = await createIntentForBid(dummyDb, registered.user.id, bid.id);
     const updatedIntent = await updateIntentStatus(dummyDb, registered.user.id, intent.id, "needs_review");
     const intents = await listUserIntents(dummyDb, registered.user.id);
+    const deadlineWorkspace = await getDeadlineWorkspace(dummyDb, registered.user.id, intent.id, {
+      now: "2026-07-30T00:00:00.000Z",
+    });
+    const deadlineReminder = deadlineWorkspace.reminders.find((reminder) => reminder.kind === "bid_deadline");
+    const acknowledgedDeadlineCenter = deadlineReminder
+      ? await acknowledgeAccountDeadlineReminder(dummyDb, registered.user.id, {
+        reminderId: deadlineReminder.id,
+        now: "2026-07-30T01:00:00.000Z",
+      })
+      : null;
+    const snoozedDeadlineCenter = deadlineReminder
+      ? await snoozeAccountDeadlineReminder(dummyDb, registered.user.id, {
+        reminderId: deadlineReminder.id,
+        snoozedUntil: "2026-07-31T09:00:00.000Z",
+        now: "2026-07-30T02:00:00.000Z",
+      })
+      : null;
+    const accountDeadlineCenter = await getAccountDeadlineReminderCenter(dummyDb, registered.user.id, {
+      now: "2026-07-30T02:00:00.000Z",
+    });
     const compliance = await getOrCreateComplianceManifest(dummyDb, registered.user.id, intent.id);
     const updatedCompliance = compliance.items[0]
       ? await updateComplianceManifestItem(dummyDb, registered.user.id, intent.id, {
@@ -702,6 +760,22 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
     const workspaceAfter = await updateMysqlOrganizationName(pool, registered.user.id, {
       name: "MySQL Smoke Workspace",
     });
+    const knowledgeItem = await createKnowledgeItemFromMysql(pool, {
+      organizationId: workspaceAfter.organization.id,
+      userId: registered.user.id,
+      title: "MySQL smoke knowledge",
+      body: "Reusable smoke proposal note.",
+      type: "template_snippet",
+      tags: ["smoke", "mysql"],
+      sourceKind: "bid",
+      sourceBidId: bid.id,
+    });
+    const knowledgeList = await listKnowledgeItemsFromMysql(pool, {
+      organizationId: workspaceAfter.organization.id,
+      q: "smoke",
+      type: "template_snippet",
+      limit: 5,
+    });
     const checkout = await createMysqlCheckoutSession(pool, registered.user.id, {
       tier: "pro",
       providerAdapter: null,
@@ -723,6 +797,10 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
       providerAdapter: null,
     });
     const accountSubscription = await getMysqlAccountSubscription(pool, registered.user.id);
+    const billingReconcile = await reconcileMysqlSubscriptionLifecycle(pool, {
+      now: "2026-06-01T00:02:00.000Z",
+      pastDueGraceDays: 7,
+    });
     await applyMysqlBillingProviderEvent(pool, {
       id: `${bid.id}_invoice_failed`,
       type: "invoice.payment_failed",
@@ -738,13 +816,14 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
       currency: "USD",
       dueAt: "2026-06-02T00:00:00.000Z",
     });
+    const dunningNow = addDaysIso(bid.createdAt, 3);
     const billingDunning = await scheduleDunningRemindersFromMysql(pool, {
-      now: "2026-06-04T00:00:00.000Z",
-      limit: 20,
+      now: dunningNow,
+      limit: 500,
     });
     const billingDunningDuplicate = await scheduleDunningRemindersFromMysql(pool, {
-      now: "2026-06-04T00:00:00.000Z",
-      limit: 20,
+      now: dunningNow,
+      limit: 500,
     });
     const invitedMember = await inviteMysqlWorkspaceMember(pool, registered.user.id, {
       email: `${bid.id}.member@example.com`.toLowerCase(),
@@ -841,7 +920,7 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
     const eventOutboxDelivery = await deliverPendingEventOutboxRowsFromMysql(
       pool,
       async (row) => row.destination === "ops-alerts" ? { ok: true } : { ok: false, error: "unknown destination" },
-      { now: "2026-06-01T00:03:30.000Z" },
+      { now: "2026-06-01T00:03:30.000Z", destinations: ["ops-alerts"] },
     );
     const bidQaBefore = await listAdminBidQaItemsFromMysql(pool, {
       q: "Smoke",
@@ -861,7 +940,7 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
     const bidQaCorrected = await updateAdminBidQaCorrectionFromMysql(pool, bid.id, {
       corrections: {
         title: "MySQL Smoke Bid QA Corrected",
-        deadlineDate: "2026-08-01",
+        deadlineDate: "2026-08-02",
       },
       note: "MySQL smoke QA correction.",
       reviewerId: registered.user.id,
@@ -997,6 +1076,27 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
         intent.bid.id === bid.id &&
         updatedIntent.status === "needs_review" &&
         intents.some((item) => item.id === intent.id),
+      deadlineReminderVerified:
+        deadlineWorkspace.reminders.some((reminder) =>
+          reminder.kind === "bid_deadline" &&
+          reminder.dueAt === "2026-08-01" &&
+          reminder.status === "active"
+        ) &&
+        Boolean(deadlineReminder) &&
+        acknowledgedDeadlineCenter?.reminders.some((reminder) =>
+          reminder.id === deadlineReminder?.id &&
+          reminder.status === "acknowledged" &&
+          reminder.acknowledgedAt === "2026-07-30T01:00:00.000Z"
+        ) === true &&
+        snoozedDeadlineCenter?.reminders.some((reminder) =>
+          reminder.id === deadlineReminder?.id &&
+          reminder.status === "snoozed" &&
+          reminder.snoozedUntil === "2026-07-31T09:00:00.000Z"
+        ) === true &&
+        accountDeadlineCenter.reminders.some((reminder) =>
+          reminder.id === deadlineReminder?.id &&
+          reminder.status === "snoozed"
+        ),
       complianceVerified:
         compliance.items.length > 0 &&
         updatedCompliance.summary.completed >= 1 &&
@@ -1007,7 +1107,11 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
         updatedSubmission.method === "email" &&
         updatedSubmission.contactEmail === "submit@example.com" &&
         !updatedSubmission.requiresRegistration &&
-        submissionConfirmation.confirmationReference === `${bid.id}_confirmation`,
+        submissionConfirmation.confirmation.confirmationReference === `${bid.id}_confirmation` &&
+        ["submitted", "needs_recovery"].includes(submissionConfirmation.submission.status) &&
+        submissionConfirmation.confirmations.some((confirmation) =>
+          confirmation.confirmationReference === `${bid.id}_confirmation`
+        ),
       responseWorkspaceVerified:
         responseWorkspace.items.length > 0 &&
         updatedResponseWorkspace.summary.done >= 1 &&
@@ -1040,11 +1144,17 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
         subscription.subscription.tier === "pro" &&
         accountSubscription.subscription.status === "active" &&
         portal.portalSession.portalUrl.includes("billingPortal=local"),
+      billingReconcileVerified:
+        billingReconcile.checked >= 1 &&
+        billingReconcile.canceledAtPeriodEnd >= 0 &&
+        billingReconcile.markedPastDue >= 0 &&
+        billingReconcile.downgradedPastDue >= 0 &&
+        billingReconcile.expiredTrials >= 0,
       billingDunningVerified:
         billingDunning.checkedInvoices >= 1 &&
-        billingDunning.queued === 1 &&
+        billingDunning.queued >= 1 &&
         billingDunning.skippedNotDue >= 1 &&
-        billingDunningDuplicate.skippedAlreadyQueued >= 1 &&
+        billingDunningDuplicate.skippedAlreadyQueued >= billingDunning.queued &&
         recentNotifications.some((notification) =>
           notification.dedupeKey === `billing:dunning:day2:${bid.id}_invoice_failed` &&
           notification.status === "sent"
@@ -1052,6 +1162,13 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
       workspaceVerified:
         workspaceBefore.organization.id.length > 0 &&
         workspaceAfter.organization.name === "MySQL Smoke Workspace",
+      knowledgeStationVerified:
+        knowledgeItem.organizationId === workspaceAfter.organization.id &&
+        knowledgeItem.sourceBidId === bid.id &&
+        knowledgeList.items.some((item) =>
+          item.id === knowledgeItem.id &&
+          item.tags.includes("smoke")
+        ),
       workspaceMemberVerified:
         invitedMember.member.status === "invited" &&
         resentInvite.inviteToken !== invitedMember.inviteToken &&
@@ -1095,7 +1212,7 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
         bidQaReviewed.adminReviewNote === "MySQL smoke QA reviewed." &&
         bidQaSuppressed.displayStatus === "suppressed" &&
         bidQaCorrected.title === "MySQL Smoke Bid QA Corrected" &&
-        bidQaCorrected.deadlineDate === "2026-08-01" &&
+        bidQaCorrected.deadlineDate === "2026-08-02" &&
         bidQaCorrected.correctionCount >= 2 &&
         bidQaCorrections.length >= 2 &&
         bidQaBatch.updatedCount === 1 &&
@@ -1175,6 +1292,13 @@ export async function runMysqlSmokeVerification(pool: Pool = createMysqlPool()) 
       smokeBidId: bid.id,
     };
   } finally {
+    await pool.execute("DELETE FROM notification_outbox WHERE dedupe_key = ?", [
+      `billing:dunning:day2:${bid.id}_invoice_failed`,
+    ]);
+    await pool.execute("DELETE FROM notification_outbox WHERE dedupe_key = ?", [
+      `billing:dunning:day5:${bid.id}_invoice_failed`,
+    ]);
+    await pool.execute("DELETE FROM billing_invoices WHERE provider_invoice_id = ?", [`${bid.id}_invoice_failed`]);
     await pool.execute("DELETE FROM bid_attachments WHERE id = ?", [`${bid.id}_attachment`]);
     await pool.execute("DELETE FROM bid_attachments WHERE bid_id LIKE 'mysql_crawler_import_%'");
     await pool.execute("DELETE FROM crawler_locks WHERE source = ?", [`${bid.id}_source`]);

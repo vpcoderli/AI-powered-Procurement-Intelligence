@@ -29,6 +29,17 @@ describe("intent brief generator", () => {
     expect(result.initialChecklist).toHaveLength(7);
     expect(result.keyDates.deadlineDate).toBe(MOCK_BIDS[0].deadlineDate);
     expect(result.riskFlags.length).toBeGreaterThan(0);
+    expect(result.aiRun).toMatchObject({
+      provider: "deterministic",
+      model: "rules://winbids/deterministic-ai-enterprise-depth-lite",
+      rulesVersion: "ai-enterprise-depth-lite-rules@2026-06-10",
+      promptVersion: "intent-brief-lite@2026-06-10",
+      confidence: "medium",
+      cost: { currency: "USD", total: 0, estimatedUsd: 0 },
+      credits: { estimated: 1, charged: 0, mode: "dry_run" },
+      fallback: { used: false, reason: "no_llm_provider_configured" },
+      fallbackReason: "no_llm_provider_configured",
+    });
   });
 
   it("labels short published-to-deadline windows as response-window risk", () => {

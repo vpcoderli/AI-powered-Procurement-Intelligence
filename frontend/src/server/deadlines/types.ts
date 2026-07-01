@@ -3,6 +3,8 @@ export const DEADLINE_REMINDER_KINDS = [
   "response_task",
   "quote_due",
   "artifact_expiry",
+  "submission_checkpoint",
+  "submission_confirmation_recovery",
 ] as const;
 
 export const DEADLINE_REMINDER_STATUSES = [

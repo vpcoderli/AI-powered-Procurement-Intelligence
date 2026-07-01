@@ -2,7 +2,8 @@ import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
 import type { AppDatabase } from "@/server/db/client";
 import type { AccountTier, UserRole } from "@/server/auth/entitlements";
 import type { BidQuery, BidQueryOptions, BidListResponse, SavedBidsResponse } from "@/server/bids/types";
-import { getSavedBids, queryBidsFromDatabase } from "@/server/bids/service";
+import { getSavedBids, queryBids as queryBidsForRuntime, queryBidsFromDatabase } from "@/server/bids/service";
+import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import {
   listDashboardNotificationInsightsForRuntime,
   type DashboardNotificationInsights,
@@ -13,7 +14,11 @@ import {
 } from "@/server/dashboard/pipeline";
 import { listUserIntents } from "@/server/intents/service";
 import type { IntentSummary } from "@/server/intents/types";
-import { createRiskChecklistReport, type RiskChecklistReport } from "@/server/risk/checklist";
+import {
+  createRiskChecklistReport,
+  createRiskChecklistReportFromMysql,
+  type RiskChecklistReport,
+} from "@/server/risk/checklist";
 
 export type DashboardNotificationLevel = "critical" | "warning" | "info";
 export type DashboardNotificationTitleKey =
@@ -209,10 +214,18 @@ export async function createDashboardSummary(
   dependencies: DashboardSummaryDependencies = {},
 ): Promise<DashboardSummary> {
   const appDb = database as AppDatabase;
-  const queryBids = dependencies.queryBids ?? ((query, options) => queryBidsFromDatabase(appDb, query, options));
+  const queryBids = dependencies.queryBids ?? (
+    isMysqlDatabaseUrlConfigured()
+      ? queryBidsForRuntime
+      : ((query, options) => queryBidsFromDatabase(appDb, query, options))
+  );
   const listIntents = dependencies.listIntents ?? (() => listUserIntents(appDb, subject.userId));
   const savedBids = dependencies.getSavedBids ?? (() => getSavedBids(subject.userId));
-  const createRiskReport = dependencies.createRiskReport ?? (() => createRiskChecklistReport(appDb, now));
+  const createRiskReport = dependencies.createRiskReport ?? (
+    () => isMysqlDatabaseUrlConfigured()
+      ? createRiskChecklistReportFromMysql(resolveMysqlPool(), now)
+      : createRiskChecklistReport(appDb, now)
+  );
   const listNotificationInsights = dependencies.listNotificationInsights
     ?? (() => listDashboardNotificationInsightsForRuntime(appDb, subject.userId));
   const listPipelineInsights = dependencies.listPipelineInsights

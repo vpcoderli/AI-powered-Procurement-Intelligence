@@ -179,6 +179,105 @@ export function mysqlMigrationStatements(sqliteMigrationSql = extractSqliteMigra
     });
 }
 
+interface MysqlColumnMigration {
+  tableName: string;
+  columnName: string;
+  definition: string;
+}
+
+const mysqlColumnMigrations: MysqlColumnMigration[] = [
+  {
+    tableName: "submission_paths",
+    columnName: "status",
+    definition: "LONGTEXT NOT NULL DEFAULT ('draft')",
+  },
+  {
+    tableName: "submission_confirmations",
+    columnName: "evidence_snapshot_json",
+    definition: "LONGTEXT NOT NULL DEFAULT ('{}')",
+  },
+  {
+    tableName: "response_package_exports",
+    columnName: "format",
+    definition: "VARCHAR(32) NOT NULL DEFAULT 'markdown'",
+  },
+  {
+    tableName: "response_package_exports",
+    columnName: "review_status",
+    definition: "LONGTEXT NOT NULL DEFAULT ('pending_review')",
+  },
+  {
+    tableName: "response_package_exports",
+    columnName: "reviewed_at",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "response_package_exports",
+    columnName: "reviewed_by_user_id",
+    definition: "VARCHAR(191)",
+  },
+  {
+    tableName: "response_package_exports",
+    columnName: "review_notes",
+    definition: "LONGTEXT NOT NULL DEFAULT ('')",
+  },
+  {
+    tableName: "supplier_artifacts",
+    columnName: "deleted_at",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "supplier_artifacts",
+    columnName: "deleted_by_user_id",
+    definition: "VARCHAR(191)",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "live_health_owner",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "live_health_disposition",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "live_health_next_review_at",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "live_health_notes",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "live_health_reviewed_at",
+    definition: "LONGTEXT",
+  },
+];
+
+function assertMysqlIdentifier(value: string) {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    throw new Error(`Invalid MySQL identifier: ${value}`);
+  }
+}
+
+async function addMysqlColumnIfMissing(pool: Pool, migration: MysqlColumnMigration) {
+  assertMysqlIdentifier(migration.tableName);
+  assertMysqlIdentifier(migration.columnName);
+
+  const [rows] = await pool.query(
+    `SHOW COLUMNS FROM ${migration.tableName} LIKE ?`,
+    [migration.columnName],
+  );
+  if (Array.isArray(rows) && rows.length > 0) return false;
+
+  await pool.query(`ALTER TABLE ${migration.tableName} ADD COLUMN ${migration.columnName} ${migration.definition}`);
+  return true;
+}
+
 export async function runMysqlMigrations(pool: Pool = createMysqlPool()): Promise<MysqlMigrationResult> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS mysql_migrations (
@@ -206,6 +305,15 @@ export async function runMysqlMigrations(pool: Pool = createMysqlPool()): Promis
       }
 
       throw error;
+    }
+  }
+
+  for (const columnMigration of mysqlColumnMigrations) {
+    const applied = await addMysqlColumnIfMissing(pool, columnMigration);
+    if (applied) {
+      appliedStatements += 1;
+    } else {
+      skippedStatements += 1;
     }
   }
 

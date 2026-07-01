@@ -11,6 +11,7 @@ import { createSessionCookie } from "@/server/auth/session";
 import { mergeSavedBidIds, mergeSavedBidIdsFromMysql } from "@/server/bids/repository";
 import { clearAnonymousUserCookie, resolveAnonymousUser } from "@/server/bids/user";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { recordMarketingFunnelEvent, recordMarketingFunnelEventFromMysql } from "@/server/marketing/funnel";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -32,7 +33,9 @@ export async function POST(request: Request) {
     body === null ||
     typeof body.email !== "string" ||
     typeof body.password !== "string" ||
-    ("displayName" in body && typeof body.displayName !== "string")
+    ("displayName" in body && typeof body.displayName !== "string") ||
+    ("marketingIntent" in body && body.marketingIntent !== undefined && body.marketingIntent !== "demo") ||
+    ("leadEventId" in body && body.leadEventId !== undefined && typeof body.leadEventId !== "string")
   ) {
     return errorResponse("INVALID_REQUEST", "Request body must include email and password", 400);
   }
@@ -51,10 +54,10 @@ export async function POST(request: Request) {
           displayName: body.displayName,
         })
       : await registerUser(db, {
-      email: body.email,
-      password: body.password,
-      displayName: body.displayName,
-    });
+          email: body.email,
+          password: body.password,
+          displayName: body.displayName,
+        });
     const anonymousUser = resolveAnonymousUser(request);
 
     if (!anonymousUser.isNewUser) {
@@ -70,6 +73,25 @@ export async function POST(request: Request) {
 
     if (!anonymousUser.isNewUser) {
       response.headers.append("Set-Cookie", clearAnonymousUserCookie());
+    }
+
+    if (body.marketingIntent === "demo") {
+      const funnelEvent = {
+        eventName: "marketing.complete_signup" as const,
+        actorId: result.user.id,
+        targetId: body.leadEventId ?? result.user.id,
+        metadata: {
+          email: result.user.email,
+          marketingIntent: "demo",
+          leadEventId: body.leadEventId ?? null,
+        },
+      };
+
+      if (mysql) {
+        await recordMarketingFunnelEventFromMysql(mysql, funnelEvent);
+      } else {
+        recordMarketingFunnelEvent(db, funnelEvent);
+      }
     }
 
     return response;

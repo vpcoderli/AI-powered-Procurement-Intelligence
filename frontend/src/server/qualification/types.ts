@@ -1,3 +1,6 @@
+import type { AiRunMetadata } from "@/server/ai/run-metadata";
+import type { CreditLedgerDryRunResult } from "@/server/billing/credit-ledger";
+
 export type QualificationCitationSection = "brief" | "key_dates" | "submission" | "compliance" | "decision";
 export type QualificationCitationSourceType = "bid_field" | "detail_archive" | "attachment" | "generated_output";
 export type QualificationFreshnessStatus = "current" | "stale" | "not_refreshed";
@@ -65,6 +68,17 @@ export interface QualificationQuestionInput {
   question: string;
 }
 
+export type QualificationGroundingStatus = "grounded" | "partially_grounded" | "insufficient_evidence";
+export type QualificationEvidenceCoverageStatus = "direct" | "partial" | "insufficient";
+
+export interface QualificationEvidenceCoverage {
+  status: QualificationEvidenceCoverageStatus;
+  matchedCitationCount: number;
+  selectedCitationCount: number;
+  totalCitationCount: number;
+  coveredSections: QualificationCitationSection[];
+}
+
 export interface QualificationQuestionResponse {
   intentId: string;
   bidId: string;
@@ -72,5 +86,10 @@ export interface QualificationQuestionResponse {
   answer: string;
   citations: QualificationCitation[];
   grounded: true;
+  groundingStatus: QualificationGroundingStatus;
+  evidenceCoverage: QualificationEvidenceCoverage;
+  limitations: string[];
+  aiRun: AiRunMetadata;
+  creditUsage?: CreditLedgerDryRunResult;
   generatedAt: string;
 }

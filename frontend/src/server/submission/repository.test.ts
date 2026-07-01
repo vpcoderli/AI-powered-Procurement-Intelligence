@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createSubmissionConfirmationRowFromMysql,
   createSubmissionPathRowFromMysql,
+  findSubmissionEvidenceAwardOutcomeRowFromMysql,
   findSubmissionPathByIntentFromMysql,
+  listSubmissionEvidenceLinkedSupplierArtifactRowsFromMysql,
+  listSubmissionEvidenceResponsePackageExportRowsFromMysql,
   listSubmissionConfirmationRowsFromMysql,
   updateSubmissionPathRowFromMysql,
 } from "./repository";
@@ -20,26 +23,30 @@ describe("submission repository MySQL runtime", () => {
             bidId: values[2],
             userId: values[3],
             method: values[4],
-            portalUrl: values[5],
-            contactEmail: values[6],
-            requiresRegistration: values[7],
-            requiresPhysicalDelivery: values[8],
-            requiresAddendaAcknowledgement: values[9],
-            complexityScore: values[10],
-            guidanceText: values[11],
-            readinessChecklistJson: values[12],
-            riskFlagsJson: values[13],
-            createdAt: values[14],
-            updatedAt: values[15],
+            status: values[5],
+            portalUrl: values[6],
+            contactEmail: values[7],
+            requiresRegistration: values[8],
+            requiresPhysicalDelivery: values[9],
+            requiresAddendaAcknowledgement: values[10],
+            complexityScore: values[11],
+            guidanceText: values[12],
+            readinessChecklistJson: values[13],
+            riskFlagsJson: values[14],
+            createdAt: values[15],
+            updatedAt: values[16],
           });
         }
 
         if (sql.includes("UPDATE submission_paths")) {
-          const row = paths.get(values[4] as string);
+          const row = paths.get(values.at(-1) as string);
           if (row) {
-            row.method = values[0];
-            row.portalUrl = values[1];
-            row.updatedAt = values[2];
+            for (let index = 0; index < values.length - 2; index += 1) {
+              if (sql.includes("method = ?") && index === 0) row.method = values[index];
+              if (sql.includes("portal_url = ?") && values[index] === "") row.portalUrl = values[index];
+              if (sql.includes("status = ?") && values[index] === "ready") row.status = values[index];
+            }
+            row.updatedAt = values.at(-3);
           }
         }
 
@@ -98,14 +105,16 @@ describe("submission repository MySQL runtime", () => {
       },
     });
 
-    expect(created).toMatchObject({ id: "path_1", requiresRegistration: 1 });
+    expect(created).toMatchObject({ id: "path_1", requiresRegistration: 1, status: "draft" });
     await expect(findSubmissionPathByIntentFromMysql(mysql, "user_1", "intent_1")).resolves.toMatchObject({
       portalUrl: "https://example.com/submit",
+      status: "draft",
     });
     await expect(updateSubmissionPathRowFromMysql(mysql, "user_1", "intent_1", {
       method: "email",
       portalUrl: "",
-    }, "2026-06-01T00:01:00.000Z")).resolves.toMatchObject({ method: "email", portalUrl: "" });
+      status: "ready",
+    }, "2026-06-01T00:01:00.000Z")).resolves.toMatchObject({ method: "email", portalUrl: "", status: "ready" });
 
     const confirmation = await createSubmissionConfirmationRowFromMysql(mysql, {
       id: "confirmation_1",
@@ -120,5 +129,69 @@ describe("submission repository MySQL runtime", () => {
 
     expect(confirmation).toMatchObject({ id: "confirmation_1", confirmationReference: "REF-1" });
     await expect(listSubmissionConfirmationRowsFromMysql(mysql, "user_1", "intent_1")).resolves.toHaveLength(1);
+  });
+
+  it("lists MySQL submission evidence read model rows by user and intent", async () => {
+    const mysql = {
+      execute: vi.fn(),
+      query: vi.fn(async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("FROM response_package_exports")) {
+          expect(values).toEqual(["user_1", "intent_1"]);
+          return [[{
+            id: "response_package_export_1",
+            intentId: "intent_1",
+            format: "zip",
+          }], undefined];
+        }
+
+        if (sql.includes("FROM response_workspace_item_artifacts")) {
+          expect(sql).toContain("supplier_artifacts.user_id = ?");
+          expect(sql).toContain("supplier_artifacts.intent_id = ?");
+          expect(values).toEqual(["user_1", "intent_1", "user_1", "intent_1"]);
+          return [[{
+            id: "supplier_artifact_1",
+            title: "Signed capability statement",
+            fileName: "capability.pdf",
+          }], undefined];
+        }
+
+        if (sql.includes("FROM award_outcomes")) {
+          expect(values).toEqual(["user_1", "intent_1"]);
+          return [[{
+            status: "awarded_to_us",
+            awardNoticeUrl: "https://sam.gov/award/notice",
+          }], undefined];
+        }
+
+        return [[], undefined];
+      }),
+    };
+
+    await expect(listSubmissionEvidenceResponsePackageExportRowsFromMysql(
+      mysql,
+      "user_1",
+      "intent_1",
+    )).resolves.toEqual([{
+      id: "response_package_export_1",
+      intentId: "intent_1",
+      format: "zip",
+    }]);
+    await expect(listSubmissionEvidenceLinkedSupplierArtifactRowsFromMysql(
+      mysql,
+      "user_1",
+      "intent_1",
+    )).resolves.toEqual([{
+      id: "supplier_artifact_1",
+      title: "Signed capability statement",
+      fileName: "capability.pdf",
+    }]);
+    await expect(findSubmissionEvidenceAwardOutcomeRowFromMysql(
+      mysql,
+      "user_1",
+      "intent_1",
+    )).resolves.toEqual({
+      status: "awarded_to_us",
+      awardNoticeUrl: "https://sam.gov/award/notice",
+    });
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -38,6 +38,7 @@ import {
   checkAdminDataSourceHealth,
   createAdminUser,
   deliverAdminNotifications,
+  getAdminMarketingFunnel,
   getAdminRiskChecklist,
   getAdminBidQaCorrections,
   listAdminConfigEntries,
@@ -66,33 +67,59 @@ import {
   type AdminDataSourcesResponse,
   type AdminUserFeatureOverridesResponse,
   type AdminNotificationsResponse,
+  type AdminMarketingFunnelResponse,
   type AdminRiskChecklistResponse,
   type AdminUserAuditLog,
   type AdminUserAuditAction,
   type AdminUserAuditActorKind,
   type AdminUserFilterStatus,
   type AdminUser,
+  type StateDataQualityReasonCode,
+  type StateDataQualityReport,
+  type StateDataQualityRiskLevel,
+  type StateDataQualityRow,
+  type UpdateAdminDataSourceInput,
   type UpdateAdminUserInput,
 } from "@/lib/api/admin";
 import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlements";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { stateCrawlerSourceIdForAdminSource } from "@/lib/state-crawler-sources";
 
-type LoadState =
-  | { status: "loading" }
-  | { status: "error" }
-  | {
-      status: "ready";
-      data: AdminDataSourcesResponse;
-      logs: AdminCrawlerLog[];
-      bidQa: AdminBidQaResponse;
-      riskReport: AdminRiskChecklistResponse["report"];
-      riskHistory: AdminRiskChecklistResponse["history"];
-      riskTrend: AdminRiskChecklistResponse["trend"];
-      users: AdminUser[];
-      userAuditLogs: AdminUserAuditLog[];
-      notifications: AdminNotificationsResponse["notifications"];
-    };
+type SectionLoadStatus = "loading" | "error" | "ready";
+
+export type AdminSectionState<T> = {
+  status: SectionLoadStatus;
+  data: T;
+};
+
+type AdminRiskSectionData = {
+  report: AdminRiskChecklistResponse["report"];
+  history: AdminRiskChecklistResponse["history"];
+  trend: AdminRiskChecklistResponse["trend"];
+  stateDataQuality: AdminRiskChecklistResponse["stateDataQuality"];
+};
+
+export type AdminDashboardSections = {
+  dataSources: AdminSectionState<AdminDataSourcesResponse | null>;
+  risk: AdminSectionState<AdminRiskSectionData | null>;
+  crawlerLogs: AdminSectionState<AdminCrawlerLog[]>;
+  bidQa: AdminSectionState<AdminBidQaResponse | null>;
+  users: AdminSectionState<AdminUser[]>;
+  userAuditLogs: AdminSectionState<AdminUserAuditLog[]>;
+  notifications: AdminSectionState<AdminNotificationsResponse["notifications"]>;
+  marketingFunnel: AdminSectionState<AdminMarketingFunnelResponse["summary"] | null>;
+};
+
+export type AdminDashboardLoaders = {
+  dataSources: () => Promise<AdminDataSourcesResponse>;
+  risk: () => Promise<AdminRiskChecklistResponse>;
+  crawlerLogs: () => Promise<{ logs: AdminCrawlerLog[] }>;
+  bidQa: () => Promise<AdminBidQaResponse>;
+  users: () => Promise<{ users: AdminUser[] }>;
+  userAuditLogs: () => Promise<{ logs: AdminUserAuditLog[] }>;
+  notifications: () => Promise<AdminNotificationsResponse>;
+  marketingFunnel: () => Promise<AdminMarketingFunnelResponse>;
+};
 
 type ConfigRegistryStatus =
   | { status: "loading"; configEntries: AdminConfigRegistryEntry[] }
@@ -138,6 +165,44 @@ type BidQaFilters = {
   reviewedTo: string;
 };
 
+export type SourceHealthClassificationFilter =
+  | "all"
+  | "ok"
+  | "forbidden"
+  | "timeout"
+  | "bot_check"
+  | "login_required"
+  | "empty_or_placeholder"
+  | "tls_or_network_error"
+  | "http_error"
+  | "unknown";
+
+export type SourceHealthTriageStatus = "unassigned" | "overdue" | "scheduled" | "reviewed";
+export type SourceHealthTriageStatusFilter = "all" | SourceHealthTriageStatus;
+export type SourceHealthTriageAction = "assign" | "accepted_fallback" | "manual" | "vendor_account" | "clear";
+export type RecommendedActionFilter = "all" | string;
+export type StateDataQualityRiskFilter = "all" | Extract<StateDataQualityRiskLevel, "P0" | "P1" | "P2">;
+export type StateDataQualityReasonFilter = "all" | StateDataQualityReasonCode | string;
+
+type StateDataQualityFilters = {
+  riskLevel: StateDataQualityRiskFilter | string;
+  reasonCode: StateDataQualityReasonFilter;
+};
+
+type SourceHealthTriageFields = {
+  liveHealthOwner?: string | null;
+  liveHealthDisposition?: string | null;
+  liveHealthNextReviewAt?: string | null;
+  liveHealthNotes?: string | null;
+  liveHealthReviewedAt?: string | null;
+};
+
+type SourceOpsFilters = {
+  classification: SourceHealthClassificationFilter;
+  triageStatus: SourceHealthTriageStatusFilter;
+  recommendedAction: RecommendedActionFilter;
+};
+
 type ConfigEditDraft = {
   configValueJson: string;
   status: AdminConfigRegistryEntry["status"];
@@ -169,12 +234,139 @@ const OVERRIDABLE_FEATURES: FeatureKey[] = [
   "quote_workflow",
   "knowledge_station",
 ];
+export const SOURCE_HEALTH_CLASSIFICATION_FILTERS: SourceHealthClassificationFilter[] = [
+  "all",
+  "ok",
+  "forbidden",
+  "timeout",
+  "bot_check",
+  "login_required",
+  "empty_or_placeholder",
+  "tls_or_network_error",
+  "http_error",
+  "unknown",
+];
+export const SOURCE_HEALTH_TRIAGE_STATUS_FILTERS: SourceHealthTriageStatusFilter[] = [
+  "all",
+  "unassigned",
+  "overdue",
+  "scheduled",
+  "reviewed",
+];
+export const STATE_DATA_QUALITY_RISK_FILTERS: StateDataQualityRiskFilter[] = ["all", "P0", "P1", "P2"];
+const STATE_DATA_QUALITY_P0_BLOCKER_STATES = ["CA", "FL", "IL", "NY", "TX"] as const;
+const STATE_DATA_QUALITY_P0_BLOCKER_COPY =
+  "CA/FL/IL/NY/TX P0 blockers are state data quality blockers";
+const MARKETING_CONTENT_CONFIG_MODULE = "ux_state";
+const MARKETING_CONTENT_CONFIG_KEY = "copy_library";
+const MARKETING_CONTENT_CONFIG_ID = "ux_state.copy_library";
+const MARKETING_CONTENT_SAFE_VALIDATION_COPY =
+  "Unsafe outcome, compliance, or submission claims are rejected before publish and the site falls back to default marketing copy.";
 const DEFAULT_INVITATION_DRAFT: InvitationDraft = {
   email: "",
   displayName: "",
   role: "user",
   tier: "free",
 };
+
+function sectionLoading<T>(data: T): AdminSectionState<T> {
+  return { status: "loading", data };
+}
+
+function sectionReady<T>(data: T): AdminSectionState<T> {
+  return { status: "ready", data };
+}
+
+function sectionError<T>(data: T): AdminSectionState<T> {
+  return { status: "error", data };
+}
+
+export function createInitialAdminSectionState(): AdminDashboardSections {
+  return {
+    dataSources: sectionLoading(null),
+    risk: sectionLoading(null),
+    crawlerLogs: sectionLoading([]),
+    bidQa: sectionLoading(null),
+    users: sectionLoading([]),
+    userAuditLogs: sectionLoading([]),
+    notifications: sectionLoading([]),
+    marketingFunnel: sectionLoading(null),
+  };
+}
+
+function createRefreshingAdminSectionState(current: AdminDashboardSections): AdminDashboardSections {
+  return {
+    dataSources: sectionLoading(current.dataSources.data),
+    risk: sectionLoading(current.risk.data),
+    crawlerLogs: sectionLoading(current.crawlerLogs.data),
+    bidQa: sectionLoading(current.bidQa.data),
+    users: sectionLoading(current.users.data),
+    userAuditLogs: sectionLoading(current.userAuditLogs.data),
+    notifications: sectionLoading(current.notifications.data),
+    marketingFunnel: sectionLoading(current.marketingFunnel.data),
+  };
+}
+
+function sectionFromSettled<TInput, TData>(
+  result: PromiseSettledResult<TInput>,
+  fallbackData: TData,
+  mapData: (value: TInput) => TData,
+): AdminSectionState<TData> {
+  if (result.status === "fulfilled") {
+    return sectionReady(mapData(result.value));
+  }
+
+  return sectionError(fallbackData);
+}
+
+export async function loadAdminDashboardSections(
+  loaders: AdminDashboardLoaders,
+  current: AdminDashboardSections,
+): Promise<AdminDashboardSections> {
+  const [
+    dataSources,
+    risk,
+    crawlerLogs,
+    bidQa,
+    users,
+    userAuditLogs,
+    notifications,
+    marketingFunnel,
+  ] = await Promise.allSettled([
+    loaders.dataSources(),
+    loaders.risk(),
+    loaders.crawlerLogs(),
+    loaders.bidQa(),
+    loaders.users(),
+    loaders.userAuditLogs(),
+    loaders.notifications(),
+    loaders.marketingFunnel(),
+  ]);
+
+  return {
+    dataSources: sectionFromSettled(dataSources, current.dataSources.data, (value) => value),
+    risk: sectionFromSettled(risk, current.risk.data, (value) => ({
+      report: value.report,
+      history: value.history,
+      trend: value.trend,
+      stateDataQuality: value.stateDataQuality ?? null,
+    })),
+    crawlerLogs: sectionFromSettled(crawlerLogs, current.crawlerLogs.data, (value) => value.logs),
+    bidQa: sectionFromSettled(bidQa, current.bidQa.data, (value) => value),
+    users: sectionFromSettled(users, current.users.data, (value) => value.users),
+    userAuditLogs: sectionFromSettled(userAuditLogs, current.userAuditLogs.data, (value) => value.logs),
+    notifications: sectionFromSettled(notifications, current.notifications.data, (value) => value.notifications),
+    marketingFunnel: sectionFromSettled(marketingFunnel, current.marketingFunnel.data, (value) => value.summary),
+  };
+}
+
+function isAdminDashboardLoading(sections: AdminDashboardSections) {
+  return Object.values(sections).some((section) => section.status === "loading");
+}
+
+export function isAdminDashboardFullyFailed(sections: AdminDashboardSections) {
+  return Object.values(sections).every((section) => section.status === "error");
+}
 
 function reviewStatusLabel(t: (key: string) => string, status: AdminBidQaReviewStatus) {
   return t(`admin.reviewStatus_${status}`);
@@ -276,6 +468,197 @@ function liveSourceHealthLabel(t: (key: string) => string, status: string | null
   return t("admin.liveSourceHealthNoCheck");
 }
 
+function sourceHealthClassificationFor(source: {
+  latestLiveHealth?: { classification?: string | null } | null;
+}) {
+  return source.latestLiveHealth?.classification ?? "unknown";
+}
+
+export function filterAdminDataSourcesByHealthClassification<
+  TSource extends { latestLiveHealth?: { classification?: string | null } | null },
+>(sources: TSource[], filter: SourceHealthClassificationFilter) {
+  if (filter === "all") return sources;
+
+  return sources.filter((source) => sourceHealthClassificationFor(source) === filter);
+}
+
+function recommendedActionFor(source: {
+  latestLiveHealth?: { recommendedAction?: string | null } | null;
+}) {
+  return source.latestLiveHealth?.recommendedAction ?? "none";
+}
+
+export function filterAdminDataSourcesBySourceOps<
+  TSource extends SourceHealthTriageFields & {
+    latestLiveHealth?: { classification?: string | null; recommendedAction?: string | null } | null;
+  },
+>(sources: TSource[], filters: SourceOpsFilters, now: Date = new Date()) {
+  return filterAdminDataSourcesByHealthClassification(sources, filters.classification).filter((source) => {
+    const matchesTriage =
+      filters.triageStatus === "all" || sourceHealthTriageStatus(source, now) === filters.triageStatus;
+    const matchesRecommendedAction =
+      filters.recommendedAction === "all" || recommendedActionFor(source) === filters.recommendedAction;
+
+    return matchesTriage && matchesRecommendedAction;
+  });
+}
+
+export function sourceRecommendedActionOptions<
+  TSource extends { latestLiveHealth?: { recommendedAction?: string | null } | null },
+>(sources: TSource[]) {
+  return ["all", ...[...new Set(sources.map((source) => recommendedActionFor(source)))].sort()];
+}
+
+export function sourceHealthClassificationLabel(
+  t: (key: string) => string,
+  classification: SourceHealthClassificationFilter | string | null | undefined,
+) {
+  if (classification === "ok") return t("admin.sourceHealthClassification_ok");
+  if (classification === "forbidden") return t("admin.sourceHealthClassification_forbidden");
+  if (classification === "timeout") return t("admin.sourceHealthClassification_timeout");
+  if (classification === "bot_check") return t("admin.sourceHealthClassification_bot_check");
+  if (classification === "login_required") return t("admin.sourceHealthClassification_login_required");
+  if (classification === "empty_or_placeholder") return t("admin.sourceHealthClassification_empty_or_placeholder");
+  if (classification === "tls_or_network_error") return t("admin.sourceHealthClassification_tls_or_network_error");
+  if (classification === "http_error") return t("admin.sourceHealthClassification_http_error");
+  if (classification === "all") return t("admin.sourceHealthClassification_all");
+  return t("admin.sourceHealthClassification_unknown");
+}
+
+export function filterStateDataQualityRows<
+  TRow extends { riskLevel: string; reasons: Array<{ code: string }> },
+>(rows: TRow[], filters: StateDataQualityFilters) {
+  return rows.filter((row) => {
+    const matchesRisk = filters.riskLevel === "all" || row.riskLevel === filters.riskLevel;
+    const matchesReason =
+      filters.reasonCode === "all" || row.reasons.some((reason) => reason.code === filters.reasonCode);
+
+    return matchesRisk && matchesReason;
+  });
+}
+
+export function stateDataQualityReasonOptions<
+  TRow extends { reasons: Array<{ code: string }> },
+>(rows: TRow[]) {
+  return ["all", ...[...new Set(rows.flatMap((row) => row.reasons.map((reason) => reason.code)))].sort()];
+}
+
+export function filterStateDataQualityActionsByRecommendedAction<
+  TAction extends { recommendedAction: string },
+>(actions: TAction[], recommendedAction: RecommendedActionFilter) {
+  if (recommendedAction === "all") return actions;
+
+  return actions.filter((action) => action.recommendedAction === recommendedAction);
+}
+
+export function stateDataQualityActionRecommendedActionOptions<
+  TAction extends { recommendedAction: string },
+>(actions: TAction[]) {
+  return ["all", ...[...new Set(actions.map((action) => action.recommendedAction))].sort()];
+}
+
+export function stateAttachmentRealRatio(row: Pick<StateDataQualityRow, "attachmentSummary">) {
+  const real = row.attachmentSummary.realFileOpenable;
+  const total = row.attachmentSummary.total;
+  const percent = total > 0 ? Math.round((real / total) * 100) : 0;
+
+  return `${real}/${total} (${percent}%)`;
+}
+
+export function stateDataQualityP0BlockerNotice(rows: Array<{ stateCode: string; riskLevel: string }>) {
+  const blockerStates = STATE_DATA_QUALITY_P0_BLOCKER_STATES.filter((stateCode) =>
+    rows.some((row) => row.stateCode === stateCode && row.riskLevel === "P0"),
+  );
+
+  if (blockerStates.length === 0) return null;
+
+  return `${STATE_DATA_QUALITY_P0_BLOCKER_COPY}; currently blocked: ${blockerStates.join(
+    "/",
+  )}. These are not live source-health failures.`;
+}
+
+export function sourceHealthTriageStatus(
+  source: SourceHealthTriageFields,
+  now: Date = new Date(),
+): SourceHealthTriageStatus {
+  if (source.liveHealthReviewedAt || source.liveHealthDisposition) return "reviewed";
+  if (!source.liveHealthOwner) return "unassigned";
+  if (!source.liveHealthNextReviewAt) return "unassigned";
+
+  const nextReviewAt = new Date(source.liveHealthNextReviewAt);
+  if (!Number.isFinite(nextReviewAt.getTime())) return "unassigned";
+
+  return nextReviewAt.getTime() < now.getTime() ? "overdue" : "scheduled";
+}
+
+function sourceHealthTriageTone(status: SourceHealthTriageStatus) {
+  if (status === "overdue") return "border-rose-200 bg-rose-50 text-rose-700";
+  if (status === "scheduled") return "border-sky-200 bg-sky-50 text-sky-700";
+  if (status === "reviewed") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  return "border-amber-200 bg-amber-50 text-amber-700";
+}
+
+function sourceHealthTriageLabel(t: (key: string) => string, status: SourceHealthTriageStatus) {
+  if (status === "overdue") return t("admin.sourceHealthTriage_overdue");
+  if (status === "scheduled") return t("admin.sourceHealthTriage_scheduled");
+  if (status === "reviewed") return t("admin.sourceHealthTriage_reviewed");
+  return t("admin.sourceHealthTriage_unassigned");
+}
+
+function sourceHealthTriageFilterLabel(t: (key: string) => string, status: SourceHealthTriageStatusFilter) {
+  if (status === "all") return "All triage";
+
+  return sourceHealthTriageLabel(t, status);
+}
+
+function sourceHealthDispositionLabel(t: (key: string) => string, disposition: string | null | undefined) {
+  if (disposition === "accepted_fallback") return t("admin.sourceHealthDisposition_accepted_fallback");
+  if (disposition === "manual") return t("admin.sourceHealthDisposition_manual");
+  if (disposition === "vendor_account") return t("admin.sourceHealthDisposition_vendor_account");
+  if (disposition) return disposition;
+  return t("admin.sourceHealthDisposition_pending");
+}
+
+function isoDaysFrom(now: Date, days: number) {
+  const next = new Date(now);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next.toISOString();
+}
+
+export function sourceHealthTriagePatchForAction(
+  action: SourceHealthTriageAction,
+  owner: string,
+  now: Date = new Date(),
+): UpdateAdminDataSourceInput {
+  if (action === "clear") {
+    return {
+      liveHealthOwner: null,
+      liveHealthDisposition: null,
+      liveHealthNextReviewAt: null,
+      liveHealthNotes: null,
+      liveHealthReviewedAt: null,
+    };
+  }
+
+  if (action === "assign") {
+    return {
+      liveHealthOwner: owner,
+      liveHealthDisposition: null,
+      liveHealthNextReviewAt: isoDaysFrom(now, 1),
+      liveHealthNotes: "Scheduled for operator review from Admin source health triage.",
+      liveHealthReviewedAt: null,
+    };
+  }
+
+  return {
+    liveHealthOwner: owner,
+    liveHealthDisposition: action,
+    liveHealthNextReviewAt: null,
+    liveHealthNotes: `Admin source health triage disposition: ${action}.`,
+    liveHealthReviewedAt: now.toISOString(),
+  };
+}
+
 function liveSourceOperationalSeverityTone(value: string | null | undefined) {
   if (value === "critical") return "border-rose-200 bg-rose-50 text-rose-700";
   if (value === "warning") return "border-amber-200 bg-amber-50 text-amber-700";
@@ -289,6 +672,7 @@ function liveSourceRecommendedActionLabel(t: (key: string) => string, action: st
   if (action === "retry_or_increase_timeout") return t("admin.sourceHealthAction_retry_or_increase_timeout");
   if (action === "network_or_tls_review") return t("admin.sourceHealthAction_network_or_tls_review");
   if (action === "add_base_url") return t("admin.sourceHealthAction_add_base_url");
+  if (action && action !== "none") return action;
   return t("admin.sourceHealthAction_none");
 }
 
@@ -317,6 +701,23 @@ function crawlerTone(value: string | null | undefined) {
   if (value === "generic") return "border-slate-200 bg-slate-50 text-slate-600";
   if (value === "beta") return "border-amber-200 bg-amber-50 text-amber-700";
   return "border-slate-200 bg-white text-slate-500";
+}
+
+function filteredDataSourcesSummary(sources: AdminDataSource[]) {
+  return {
+    totalSources: sources.length,
+    enabledSources: sources.filter((source) => source.isEnabled).length,
+    healthySources: sources.filter((source) => {
+      if (source.latestLog) return source.latestLog.status === "success";
+
+      return source.consecutiveFailures === 0 && !source.lastFailureAt;
+    }).length,
+    failingSources: sources.filter((source) => {
+      if (source.latestLog) return source.latestLog.status !== "success";
+
+      return source.consecutiveFailures > 0 || Boolean(source.lastFailureAt);
+    }).length,
+  };
 }
 
 function sourceApprovalTone(value: AdminDataSource["approvalStatus"]) {
@@ -472,6 +873,10 @@ function formatConfigValueJson(entry: AdminConfigRegistryEntry) {
   return JSON.stringify(entry.configValue, null, 2);
 }
 
+function isMarketingContentConfigEntry(entry: AdminConfigRegistryEntry) {
+  return entry.module === MARKETING_CONTENT_CONFIG_MODULE && entry.configKey === MARKETING_CONTENT_CONFIG_KEY;
+}
+
 function configDraftFor(entry: AdminConfigRegistryEntry, drafts: Record<string, ConfigEditDraft>) {
   return drafts[entry.id] ?? {
     configValueJson: formatConfigValueJson(entry),
@@ -500,7 +905,7 @@ function ConfigRegistrySection({
   onSave: (entry: AdminConfigRegistryEntry) => void;
 }) {
   return (
-    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
+    <section id="configuration" className="rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
         <div>
           <div className="flex items-center gap-2 font-semibold text-slate-950">
@@ -525,6 +930,26 @@ function ConfigRegistrySection({
           Config registry could not be loaded.
         </div>
       )}
+      <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+              <ShieldCheck size={16} className="text-emerald-600" />
+              Marketing Content CMS
+            </div>
+            <div className="mt-1 text-xs leading-5 text-slate-600">
+              Copy Library edits live in <code className="rounded bg-white px-1">{MARKETING_CONTENT_CONFIG_ID}</code>{" "}
+              and cover homepage/resources scope. Keep local JSON copy-only; no external CMS or rich text editor is
+              connected here.
+            </div>
+          </div>
+          <div className="max-w-xl rounded-md border border-emerald-100 bg-white px-3 py-2 text-xs leading-5 text-slate-600">
+            <span className="font-semibold text-emerald-700">safe validation</span>
+            {": "}
+            unsafe claim guard is enforced by the marketing content resolver. {MARKETING_CONTENT_SAFE_VALIDATION_COPY}
+          </div>
+        </div>
+      </div>
       {isLoading && configEntries.length === 0 ? (
         <div className="grid gap-3 p-4 md:grid-cols-3">
           {Array.from({ length: 3 }).map((_, index) => (
@@ -563,6 +988,12 @@ function ConfigRegistrySection({
                     <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-700">
                       {entry.configKey}
                     </code>
+                    {isMarketingContentConfigEntry(entry) && (
+                      <div className="mt-2 rounded-md border border-emerald-100 bg-emerald-50 px-2 py-1 text-xs leading-5 text-emerald-800">
+                        Copy Library: homepage/resources scope uses safe validation and the unsafe claim guard before
+                        marketing overrides are applied.
+                      </div>
+                    )}
                   </TableCell>
                   <TableCell>
                     <div className="flex flex-col gap-2">
@@ -683,12 +1114,225 @@ function RiskDetailItem({ detail }: { detail: string }) {
   );
 }
 
+function stateDataQualityRiskTone(riskLevel: StateDataQualityRiskLevel | string) {
+  if (riskLevel === "PASS") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (riskLevel === "P0") return "border-rose-200 bg-rose-50 text-rose-700";
+  if (riskLevel === "P1") return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-sky-200 bg-sky-50 text-sky-700";
+}
+
+function stateDataQualityRiskFilterLabel(filter: StateDataQualityRiskFilter) {
+  return filter === "all" ? "All" : filter;
+}
+
+function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) {
+  const [stateQualityRiskFilter, setStateQualityRiskFilter] = useState<StateDataQualityRiskFilter>("all");
+  const [stateQualityReasonFilter, setStateQualityReasonFilter] = useState<StateDataQualityReasonFilter>("all");
+  const [stateQualityActionRecommendedFilter, setStateQualityActionRecommendedFilter] =
+    useState<RecommendedActionFilter>("all");
+  const reasonOptions = stateDataQualityReasonOptions(report.rows);
+  const actionRecommendedOptions = stateDataQualityActionRecommendedActionOptions(report.actions);
+  const filteredRows = filterStateDataQualityRows(report.rows, {
+    riskLevel: stateQualityRiskFilter,
+    reasonCode: stateQualityReasonFilter,
+  });
+  const filteredActions = filterStateDataQualityActionsByRecommendedAction(
+    report.actions,
+    stateQualityActionRecommendedFilter,
+  );
+  const p0BlockerNotice = stateDataQualityP0BlockerNotice(report.rows);
+
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-3">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-950">
+            <Database size={15} />
+            50-state data quality matrix
+            <Badge variant="outline" className={riskCheckTone(report.ok)}>
+              {report.ok ? "PASS" : "P0 blocker review"}
+            </Badge>
+          </div>
+          <div className="mt-1 text-xs leading-5 text-slate-500">
+            50-state data quality matrix summary: total states, P0/P1/P2 counts, source enablement, bids, attachment real ratio, and reason code.
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
+          <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-700">
+            total states: {report.summary.totalStates}
+          </Badge>
+          <Badge variant="outline" className="border-rose-200 bg-rose-50 text-rose-700">
+            P0: {report.summary.p0BlockerStates}
+          </Badge>
+          <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
+            P1: {report.summary.p1WarningStates}
+          </Badge>
+          <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
+            P2: {report.summary.p2WarningStates}
+          </Badge>
+        </div>
+      </div>
+      {p0BlockerNotice && (
+        <div className="mt-3 rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-xs font-medium leading-5 text-rose-800">
+          {p0BlockerNotice}
+        </div>
+      )}
+      <div className="mt-3 rounded-md border border-slate-100 bg-slate-50 px-3 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-xs font-black uppercase text-slate-700">State data quality action queue</div>
+          <Badge variant="outline" className="border-slate-200 bg-white text-slate-600">
+            {filteredActions.length}/{report.actions.length} actions
+          </Badge>
+        </div>
+        <label className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase text-slate-500">
+          Recommended action
+          <select
+            value={stateQualityActionRecommendedFilter}
+            onChange={(event) => setStateQualityActionRecommendedFilter(event.target.value)}
+            className="h-8 max-w-full rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium normal-case text-slate-700 outline-none"
+          >
+            {actionRecommendedOptions.map((action) => (
+              <option key={action} value={action}>
+                {action === "all" ? "all recommended actions" : action}
+              </option>
+            ))}
+          </select>
+        </label>
+        {filteredActions.length === 0 ? (
+          <div className="mt-2 text-xs font-medium text-slate-500">No state data quality actions are open.</div>
+        ) : (
+          <div className="mt-2 grid gap-2">
+            {filteredActions.slice(0, 6).map((action) => (
+              <div
+                key={action.id}
+                className="grid gap-2 rounded-md border border-white bg-white px-3 py-2 text-xs md:grid-cols-[auto_1fr_auto]"
+              >
+                <Badge variant="outline" className={stateDataQualityRiskTone(action.priority)}>
+                  {action.priority}
+                </Badge>
+                <div className="min-w-0">
+                  <div className="font-bold text-slate-900">
+                    {action.stateCode} · {action.reasonCode}
+                  </div>
+                  <div className="mt-1 text-slate-600">{action.recommendedAction}</div>
+                  <div className="mt-1 truncate text-slate-400" title={action.evidence}>
+                    {action.evidence}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-1 md:justify-end">
+                  <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+                    {action.ownerHint}
+                  </Badge>
+                  <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+                    {action.dueInHours}h
+                  </Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="mt-3 flex flex-col gap-2 border-y border-slate-100 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold uppercase text-slate-500">Risk filter</span>
+          {STATE_DATA_QUALITY_RISK_FILTERS.map((filter) => (
+            <Button
+              key={filter}
+              type="button"
+              variant={stateQualityRiskFilter === filter ? "default" : "outline"}
+              size="sm"
+              onClick={() => setStateQualityRiskFilter(filter)}
+              className={
+                stateQualityRiskFilter === filter
+                  ? "h-8 rounded-lg px-2 text-xs"
+                  : "h-8 rounded-lg border-slate-200 px-2 text-xs text-slate-600"
+              }
+            >
+              {stateDataQualityRiskFilterLabel(filter)}
+            </Button>
+          ))}
+        </div>
+        <label className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase text-slate-500">
+          Reason code
+          <select
+            value={stateQualityReasonFilter}
+            onChange={(event) => setStateQualityReasonFilter(event.target.value)}
+            className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium normal-case text-slate-700 outline-none"
+          >
+            {reasonOptions.map((reasonCode) => (
+              <option key={reasonCode} value={reasonCode}>
+                {reasonCode === "all" ? "all reason codes" : reasonCode}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="mt-3 overflow-x-auto">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>state</TableHead>
+              <TableHead>risk</TableHead>
+              <TableHead>bids</TableHead>
+              <TableHead>enabled source</TableHead>
+              <TableHead>attachment real ratio</TableHead>
+              <TableHead>reason code</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filteredRows.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6} className="py-5 text-center text-sm text-slate-500">
+                  No state data quality rows match this filter.
+                </TableCell>
+              </TableRow>
+            )}
+            {filteredRows.map((row) => {
+              const reasonCodes = row.reasons.map((reason) => reason.code);
+
+              return (
+                <TableRow key={row.stateCode}>
+                  <TableCell className="font-semibold text-slate-900">{row.stateCode}</TableCell>
+                  <TableCell>
+                    <Badge variant="outline" className={stateDataQualityRiskTone(row.riskLevel)}>
+                      {row.riskLevel}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>{row.bidCount}</TableCell>
+                  <TableCell>{row.enabledSourceCount}</TableCell>
+                  <TableCell>{stateAttachmentRealRatio(row)}</TableCell>
+                  <TableCell>
+                    <div className="flex max-w-xl flex-wrap gap-1">
+                      {reasonCodes.length === 0 ? (
+                        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
+                          none
+                        </Badge>
+                      ) : (
+                        reasonCodes.map((reasonCode) => (
+                          <Badge key={`${row.stateCode}-${reasonCode}`} variant="outline" className="border-slate-200 bg-slate-50 text-slate-700">
+                            {reasonCode}
+                          </Badge>
+                        ))
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  );
+}
+
 function RiskCheck({
   history,
   isRefreshing,
   onExport,
   onRefresh,
   report,
+  stateDataQuality,
   t,
   trend,
 }: {
@@ -697,6 +1341,7 @@ function RiskCheck({
   onExport: () => void;
   onRefresh: () => void;
   report: AdminRiskChecklistResponse["report"];
+  stateDataQuality: AdminRiskChecklistResponse["stateDataQuality"];
   t: (key: string) => string;
   trend: AdminRiskChecklistResponse["trend"];
 }) {
@@ -799,6 +1444,7 @@ function RiskCheck({
             )}
           </div>
         )}
+        {stateDataQuality && <StateDataQualityMatrix report={stateDataQuality} />}
         <div className="grid gap-3 lg:grid-cols-5">
           {report.checks.map((check) => (
             <div key={check.id} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
@@ -882,10 +1528,35 @@ function AdminAccessState({
   );
 }
 
+function AdminSectionStateCard({
+  action,
+  actionLabel,
+  code,
+  message,
+  title,
+}: {
+  action?: () => void;
+  actionLabel: string;
+  code: "error" | "loading";
+  message: string;
+  title: string;
+}) {
+  return (
+    <UniversalState
+      actions={action ? [{ label: actionLabel, onClick: action }] : undefined}
+      className="bg-white"
+      code={code}
+      message={message}
+      title={title}
+    />
+  );
+}
+
 export default function AdminPage() {
   const { t } = useLanguage();
   const { user, isLoading: isAuthLoading } = useAuth();
-  const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [state, setState] = useState<AdminDashboardSections>(() => createInitialAdminSectionState());
+  const stateRef = useRef(state);
   const [configRegistryStatus, setConfigRegistryStatus] = useState<ConfigRegistryStatus>({
     status: "loading",
     configEntries: [],
@@ -896,12 +1567,18 @@ export default function AdminPage() {
   const [sourceApprovalPendingId, setSourceApprovalPendingId] = useState<string | null>(null);
   const [sourceApprovalBatchPending, setSourceApprovalBatchPending] = useState(false);
   const [sourceHealthPendingId, setSourceHealthPendingId] = useState<string | null>(null);
+  const [sourceTriagePendingId, setSourceTriagePendingId] = useState<string | null>(null);
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [pendingBidQaId, setPendingBidQaId] = useState<string | null>(null);
   const [pendingBidQaBatch, setPendingBidQaBatch] = useState(false);
   const [bidQaFilters, setBidQaFilters] = useState<BidQaFilters>(DEFAULT_BID_QA_FILTERS);
   const [selectedBidQaIds, setSelectedBidQaIds] = useState<string[]>([]);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
+  const [sourceHealthClassificationFilter, setSourceHealthClassificationFilter] =
+    useState<SourceHealthClassificationFilter>("all");
+  const [sourceHealthTriageFilter, setSourceHealthTriageFilter] = useState<SourceHealthTriageStatusFilter>("all");
+  const [sourceHealthRecommendedActionFilter, setSourceHealthRecommendedActionFilter] =
+    useState<RecommendedActionFilter>("all");
   const [correctionHistoryBidId, setCorrectionHistoryBidId] = useState<string | null>(null);
   const [correctionHistoryItems, setCorrectionHistoryItems] = useState<AdminBidQaCorrectionHistoryItem[]>([]);
   const [isLoadingCorrectionHistory, setIsLoadingCorrectionHistory] = useState(false);
@@ -931,6 +1608,10 @@ export default function AdminPage() {
   const canManageUsers = isAdmin;
   const canManageConfig = isAdmin;
   const canRunOperations = isAdmin || isOperator;
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   const auditLogRequest = useCallback(() => ({
     limit: 10,
@@ -970,34 +1651,26 @@ export default function AdminPage() {
   const load = useCallback(() => {
     if (!canAccessAdminConsole) return;
 
-    setState({ status: "loading" });
+    const current = stateRef.current;
+
+    setState(createRefreshingAdminSectionState(current));
     void refreshConfigRegistry();
-    Promise.all([
-      listAdminDataSources(),
-      getAdminRiskChecklist(),
-      listAdminCrawlerLogs(),
-      listAdminBidQaItems(bidQaRequest()),
-      canManageUsers ? listAdminUsers(userFilters) : Promise.resolve({ users: [] }),
-      canManageUsers ? listAdminUserAuditLogs(auditLogRequest()) : Promise.resolve({ logs: [] }),
-      listAdminNotifications({ limit: 10 }),
-    ])
-      .then(([data, riskResponse, logsResponse, bidQa, usersResponse, userAuditLogsResponse, notificationsResponse]) => {
-        setState({
-          status: "ready",
-          data,
-          riskReport: riskResponse.report,
-          riskHistory: riskResponse.history,
-          riskTrend: riskResponse.trend,
-          logs: logsResponse.logs,
-          bidQa,
-          users: usersResponse.users,
-          userAuditLogs: userAuditLogsResponse.logs,
-          notifications: notificationsResponse.notifications,
-        });
-      })
-      .catch(() => {
-        setState({ status: "error" });
-      });
+    void loadAdminDashboardSections(
+      {
+        dataSources: listAdminDataSources,
+        risk: getAdminRiskChecklist,
+        crawlerLogs: listAdminCrawlerLogs,
+        bidQa: () => listAdminBidQaItems(bidQaRequest()),
+        users: () => (canManageUsers ? listAdminUsers(userFilters) : Promise.resolve({ users: [] })),
+        userAuditLogs: () =>
+          canManageUsers ? listAdminUserAuditLogs(auditLogRequest()) : Promise.resolve({ logs: [] }),
+        notifications: () => listAdminNotifications({ limit: 10 }),
+        marketingFunnel: getAdminMarketingFunnel,
+      },
+      current,
+    ).then((sections) => {
+      setState(sections);
+    });
   }, [auditLogRequest, bidQaRequest, canAccessAdminConsole, canManageUsers, refreshConfigRegistry, userFilters]);
 
   useEffect(() => {
@@ -1007,21 +1680,43 @@ export default function AdminPage() {
     queueMicrotask(load);
   }, [canAccessAdminConsole, isAuthLoading, load]);
 
-  const summary = state.status === "ready" ? state.data.summary : null;
-  const riskReport = state.status === "ready" ? state.riskReport : null;
-  const riskHistory = state.status === "ready" ? state.riskHistory : [];
-  const riskTrend = state.status === "ready" ? state.riskTrend : null;
-  const sources = state.status === "ready" ? state.data.sources : [];
-  const logs = state.status === "ready" ? state.logs : [];
-  const bidQa = state.status === "ready" ? state.bidQa : null;
+  const isLoadingDashboard = isAdminDashboardLoading(state);
+  const areMainSectionsFullyFailed = isAdminDashboardFullyFailed(state);
+  const isFullyFailedDashboard =
+    areMainSectionsFullyFailed && (!canManageConfig || configRegistryStatus.status === "error");
+  const allSources = state.dataSources.status === "ready" ? state.dataSources.data?.sources ?? [] : [];
+  const sourceOpsFilters: SourceOpsFilters = {
+    classification: sourceHealthClassificationFilter,
+    triageStatus: sourceHealthTriageFilter,
+    recommendedAction: sourceHealthRecommendedActionFilter,
+  };
+  const sources = filterAdminDataSourcesBySourceOps(allSources, sourceOpsFilters);
+  const sourceHealthRecommendedActionOptions = sourceRecommendedActionOptions(allSources);
+  const hasSourceOpsFilters =
+    sourceHealthClassificationFilter !== "all" ||
+    sourceHealthTriageFilter !== "all" ||
+    sourceHealthRecommendedActionFilter !== "all";
+  const summary =
+    state.dataSources.status === "ready"
+      ? !hasSourceOpsFilters
+        ? state.dataSources.data?.summary ?? null
+        : filteredDataSourcesSummary(sources)
+      : null;
+  const riskReport = state.risk.status === "ready" ? state.risk.data?.report ?? null : null;
+  const riskHistory = state.risk.status === "ready" ? state.risk.data?.history ?? [] : [];
+  const riskTrend = state.risk.status === "ready" ? state.risk.data?.trend ?? null : null;
+  const stateDataQuality = state.risk.status === "ready" ? state.risk.data?.stateDataQuality ?? null : null;
+  const logs = state.crawlerLogs.status === "ready" ? state.crawlerLogs.data : [];
+  const bidQa = state.bidQa.status === "ready" ? state.bidQa.data : null;
   const bidQaItems = bidQa?.items ?? [];
   const visibleSelectedBidQaIds = selectedBidQaIds.filter((id) => bidQaItems.some((item) => item.id === id));
   const allVisibleBidQaSelected = bidQaItems.length > 0 && bidQaItems.every((item) => selectedBidQaIds.includes(item.id));
   const visibleSelectedSourceIds = selectedSourceIds.filter((id) => sources.some((source) => source.id === id));
   const allVisibleSourcesSelected = sources.length > 0 && sources.every((source) => selectedSourceIds.includes(source.id));
-  const users = state.status === "ready" ? state.users : [];
-  const userAuditLogs = state.status === "ready" ? state.userAuditLogs : [];
-  const notifications = state.status === "ready" ? state.notifications : [];
+  const users = state.users.status === "ready" ? state.users.data : [];
+  const userAuditLogs = state.userAuditLogs.status === "ready" ? state.userAuditLogs.data : [];
+  const notifications = state.notifications.status === "ready" ? state.notifications.data : [];
+  const marketingFunnel = state.marketingFunnel.status === "ready" ? state.marketingFunnel.data : null;
   const configEntries = configRegistryStatus.configEntries;
 
   const updateConfigEditDraft = (id: string, updater: (draft: ConfigEditDraft) => ConfigEditDraft) => {
@@ -1079,18 +1774,21 @@ export default function AdminPage() {
 
   const replaceSource = (updated: AdminDataSource) => {
     setState((current) => {
-      if (current.status !== "ready") return current;
+      if (!current.dataSources.data) return current;
 
-      const sources = current.data.sources.map((item) => (item.id === updated.id ? updated : item));
+      const sources = current.dataSources.data.sources.map((item) => (item.id === updated.id ? updated : item));
 
       return {
         ...current,
-        data: {
-          ...current.data,
-          sources,
-          summary: {
-            ...current.data.summary,
-            enabledSources: sources.filter((item) => item.isEnabled).length,
+        dataSources: {
+          status: "ready",
+          data: {
+            ...current.dataSources.data,
+            sources,
+            summary: {
+              ...current.dataSources.data.summary,
+              enabledSources: sources.filter((item) => item.isEnabled).length,
+            },
           },
         },
       };
@@ -1101,22 +1799,71 @@ export default function AdminPage() {
     const updates = new Map(updatedSources.map((source) => [source.id, source]));
 
     setState((current) => {
-      if (current.status !== "ready") return current;
+      if (!current.dataSources.data) return current;
 
-      const sources = current.data.sources.map((item) => updates.get(item.id) ?? item);
+      const sources = current.dataSources.data.sources.map((item) => updates.get(item.id) ?? item);
 
       return {
         ...current,
-        data: {
-          ...current.data,
-          sources,
-          summary: {
-            ...current.data.summary,
-            enabledSources: sources.filter((item) => item.isEnabled).length,
+        dataSources: {
+          status: "ready",
+          data: {
+            ...current.dataSources.data,
+            sources,
+            summary: {
+              ...current.dataSources.data.summary,
+              enabledSources: sources.filter((item) => item.isEnabled).length,
+            },
           },
         },
       };
     });
+  };
+
+  const refreshDataSources = () => {
+    setState((current) => ({
+      ...current,
+      dataSources: sectionLoading(current.dataSources.data),
+    }));
+
+    return listAdminDataSources()
+      .then((dataSources) => {
+        setState((current) => ({
+          ...current,
+          dataSources: sectionReady(dataSources),
+        }));
+        return dataSources;
+      })
+      .catch((error) => {
+        setState((current) => ({
+          ...current,
+          dataSources: sectionError(current.dataSources.data),
+        }));
+        throw error;
+      });
+  };
+
+  const refreshCrawlerLogs = () => {
+    setState((current) => ({
+      ...current,
+      crawlerLogs: sectionLoading(current.crawlerLogs.data),
+    }));
+
+    return listAdminCrawlerLogs()
+      .then((response) => {
+        setState((current) => ({
+          ...current,
+          crawlerLogs: sectionReady(response.logs),
+        }));
+        return response;
+      })
+      .catch((error) => {
+        setState((current) => ({
+          ...current,
+          crawlerLogs: sectionError(current.crawlerLogs.data),
+        }));
+        throw error;
+      });
   };
 
   const toggleSource = (source: AdminDataSource) => {
@@ -1217,16 +1964,28 @@ export default function AdminPage() {
   };
 
   const refreshRiskReport = () => {
-    if (state.status !== "ready") return;
-
     setIsRefreshingRiskReport(true);
+    setState((current) => ({
+      ...current,
+      risk: sectionLoading(current.risk.data),
+    }));
     getAdminRiskChecklist()
       .then((response) => {
-        setState((current) => current.status === "ready"
-          ? { ...current, riskReport: response.report, riskHistory: response.history, riskTrend: response.trend }
-          : current);
+        setState((current) => ({
+          ...current,
+          risk: sectionReady({
+            report: response.report,
+            history: response.history,
+            trend: response.trend,
+            stateDataQuality: response.stateDataQuality ?? null,
+          }),
+        }));
       })
       .catch(() => {
+        setState((current) => ({
+          ...current,
+          risk: sectionError(current.risk.data),
+        }));
         setRunMessage(t("admin.riskCheckRefreshFailed"));
       })
       .finally(() => {
@@ -1269,6 +2028,27 @@ export default function AdminPage() {
       });
   };
 
+  const updateSourceHealthTriage = (source: AdminDataSource, action: SourceHealthTriageAction) => {
+    if (!user) return;
+
+    setSourceTriagePendingId(source.id);
+    setRunMessage(null);
+    updateAdminDataSource(
+      source.id,
+      sourceHealthTriagePatchForAction(action, user.email || user.displayName || user.id),
+    )
+      .then(({ source: updated }) => {
+        replaceSource(updated);
+        setRunMessage(t("admin.sourceHealthTriageUpdated"));
+      })
+      .catch(() => {
+        setRunMessage(t("admin.sourceHealthTriageFailed"));
+      })
+      .finally(() => {
+        setSourceTriagePendingId(null);
+      });
+  };
+
   const runSourceNow = (source: AdminDataSource) => {
     const stateCrawlerSourceId = stateCrawlerSourceIdFor(source);
     if (!stateCrawlerSourceId) return;
@@ -1288,19 +2068,29 @@ export default function AdminPage() {
       });
   };
 
-  const refreshBidQa = () =>
-    listAdminBidQaItems(bidQaRequest()).then((bidQa) => {
-      setState((current) => {
-        if (current.status !== "ready") return current;
+  const refreshBidQa = () => {
+    setState((current) => ({
+      ...current,
+      bidQa: sectionLoading(current.bidQa.data),
+    }));
 
-        return {
+    return listAdminBidQaItems(bidQaRequest())
+      .then((bidQa) => {
+        setState((current) => ({
           ...current,
-          bidQa,
-        };
+          bidQa: sectionReady(bidQa),
+        }));
+        setSelectedBidQaIds((current) => current.filter((id) => bidQa.items.some((item) => item.id === id)));
+        return bidQa;
+      })
+      .catch((error) => {
+        setState((current) => ({
+          ...current,
+          bidQa: sectionError(current.bidQa.data),
+        }));
+        throw error;
       });
-      setSelectedBidQaIds((current) => current.filter((id) => bidQa.items.some((item) => item.id === id)));
-      return bidQa;
-    });
+  };
 
   const updateBidQaStatus = (item: AdminBidQaItem, reviewStatus: AdminBidQaReviewStatus) => {
     setPendingBidQaId(item.id);
@@ -1439,11 +2229,9 @@ export default function AdminPage() {
     updateAdminUserAccess(user.id, input)
       .then(({ user: updated }) => {
         setState((current) => {
-          if (current.status !== "ready") return current;
-
           return {
             ...current,
-            users: current.users.map((item) => (item.id === updated.id ? updated : item)),
+            users: sectionReady(current.users.data.map((item) => (item.id === updated.id ? updated : item))),
           };
         });
         return listAdminUserAuditLogs(auditLogRequest());
@@ -1452,11 +2240,9 @@ export default function AdminPage() {
         if (!response) return;
 
         setState((current) => {
-          if (current.status !== "ready") return current;
-
           return {
             ...current,
-            userAuditLogs: response.logs,
+            userAuditLogs: sectionReady(response.logs),
           };
         });
       })
@@ -1517,11 +2303,9 @@ export default function AdminPage() {
       })
       .then((response) => {
         setState((current) => {
-          if (current.status !== "ready") return current;
-
           return {
             ...current,
-            userAuditLogs: response.logs,
+            userAuditLogs: sectionReady(response.logs),
           };
         });
       })
@@ -1530,6 +2314,79 @@ export default function AdminPage() {
       })
       .finally(() => {
         setIsUpdatingFeatureOverride(false);
+      });
+  };
+
+  const refreshUsers = () => {
+    if (!canManageUsers) return Promise.resolve();
+
+    setState((current) => ({
+      ...current,
+      users: sectionLoading(current.users.data),
+    }));
+
+    return listAdminUsers(userFilters)
+      .then((response) => {
+        setState((current) => ({
+          ...current,
+          users: sectionReady(response.users),
+        }));
+        return response;
+      })
+      .catch((error) => {
+        setState((current) => ({
+          ...current,
+          users: sectionError(current.users.data),
+        }));
+        throw error;
+      });
+  };
+
+  const refreshUserAuditLogs = () => {
+    if (!canManageUsers) return Promise.resolve();
+
+    setState((current) => ({
+      ...current,
+      userAuditLogs: sectionLoading(current.userAuditLogs.data),
+    }));
+
+    return listAdminUserAuditLogs(auditLogRequest())
+      .then((response) => {
+        setState((current) => ({
+          ...current,
+          userAuditLogs: sectionReady(response.logs),
+        }));
+        return response;
+      })
+      .catch((error) => {
+        setState((current) => ({
+          ...current,
+          userAuditLogs: sectionError(current.userAuditLogs.data),
+        }));
+        throw error;
+      });
+  };
+
+  const refreshNotifications = () => {
+    setState((current) => ({
+      ...current,
+      notifications: sectionLoading(current.notifications.data),
+    }));
+
+    return listAdminNotifications({ limit: 10 })
+      .then((response) => {
+        setState((current) => ({
+          ...current,
+          notifications: sectionReady(response.notifications),
+        }));
+        return response;
+      })
+      .catch((error) => {
+        setState((current) => ({
+          ...current,
+          notifications: sectionError(current.notifications.data),
+        }));
+        throw error;
       });
   };
 
@@ -1554,11 +2411,9 @@ export default function AdminPage() {
         setInvitedTemporaryPassword(response.temporaryPassword);
         setRunMessage(t("admin.inviteCreated").replace("{email}", response.user.email ?? response.user.id));
         setState((current) => {
-          if (current.status !== "ready") return current;
-
           return {
             ...current,
-            users: [...current.users, response.user],
+            users: sectionReady([...current.users.data, response.user]),
           };
         });
         return listAdminUserAuditLogs(auditLogRequest());
@@ -1567,11 +2422,9 @@ export default function AdminPage() {
         if (!response) return;
 
         setState((current) => {
-          if (current.status !== "ready") return current;
-
           return {
             ...current,
-            userAuditLogs: response.logs,
+            userAuditLogs: sectionReady(response.logs),
           };
         });
       })
@@ -1598,11 +2451,9 @@ export default function AdminPage() {
       })
       .then((response) => {
         setState((current) => {
-          if (current.status !== "ready") return current;
-
           return {
             ...current,
-            notifications: response.notifications,
+            notifications: sectionReady(response.notifications),
           };
         });
       })
@@ -1629,11 +2480,9 @@ export default function AdminPage() {
       })
       .then((response) => {
         setState((current) => {
-          if (current.status !== "ready") return current;
-
           return {
             ...current,
-            users: response.users,
+            users: sectionReady(response.users),
           };
         });
       })
@@ -1688,7 +2537,7 @@ export default function AdminPage() {
           <Button
             variant="outline"
             onClick={load}
-            disabled={state.status === "loading"}
+            disabled={isLoadingDashboard}
             className="h-10 rounded-lg border-slate-200"
           >
             <RefreshCw size={16} />
@@ -1724,7 +2573,7 @@ export default function AdminPage() {
         </div>
       )}
 
-      {state.status === "loading" && (
+      {state.dataSources.status === "loading" && !summary && !isFullyFailedDashboard && (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {Array.from({ length: 4 }).map((_, index) => (
             <div key={index} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -1735,7 +2584,7 @@ export default function AdminPage() {
         </div>
       )}
 
-      {state.status === "error" && (
+      {isFullyFailedDashboard && (
         <UniversalState
           actions={[{ label: t("admin.refresh"), onClick: load }]}
           code="error"
@@ -1753,19 +2602,104 @@ export default function AdminPage() {
         </div>
       )}
 
-      {riskReport && riskTrend && (
+      {!isFullyFailedDashboard && state.marketingFunnel.status === "error" && (
+        <AdminSectionStateCard
+          action={load}
+          actionLabel={t("admin.refresh")}
+          code="error"
+          message={t("admin.errorDescription")}
+          title="Marketing Funnel"
+        />
+      )}
+
+      {!isFullyFailedDashboard && state.marketingFunnel.status === "loading" && !marketingFunnel && (
+        <AdminSectionStateCard
+          actionLabel={t("admin.refresh")}
+          code="loading"
+          message={t("admin.loading")}
+          title="Marketing Funnel"
+        />
+      )}
+
+      {!isFullyFailedDashboard && marketingFunnel && (
+        <section id="data-sources" className="rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+            <div className="flex items-center gap-2 font-semibold text-slate-950">
+              <Bell size={18} />
+              Marketing Funnel
+            </div>
+            <a
+              href="/api/admin/marketing/leads/export"
+              className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+            >
+              <Download size={16} />
+              Export leads CSV
+            </a>
+          </div>
+          <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-5">
+            <SummaryCard label="Request Demo" value={marketingFunnel.counts.requestDemoSubmitted} icon={Bell} />
+            <SummaryCard label="Signup complete" value={marketingFunnel.counts.completeSignup} icon={UserCog} />
+            <SummaryCard label="Profile started" value={marketingFunnel.counts.startSupplierProfile} icon={Activity} />
+            <SummaryCard label="Profile complete" value={marketingFunnel.counts.completeSupplierProfile} icon={ShieldCheck} />
+            <SummaryCard label="First matched bid" value={marketingFunnel.counts.firstMatchedBidViewed} icon={Search} />
+          </div>
+          <div className="border-t border-slate-100 px-4 py-3">
+            <div className="text-sm font-black text-slate-950">Latest request-demo leads</div>
+            {marketingFunnel.latestRequestDemoLeads.length === 0 ? (
+              <div className="mt-2 text-sm font-medium text-slate-500">No request-demo leads recorded yet.</div>
+            ) : (
+              <div className="mt-3 grid gap-2">
+                {marketingFunnel.latestRequestDemoLeads.map((lead) => (
+                  <div
+                    key={lead.eventId}
+                    className="grid gap-1 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-sm md:grid-cols-[1fr_auto]"
+                  >
+                    <div>
+                      <div className="font-bold text-slate-900">{lead.companyName ?? lead.email ?? lead.eventId}</div>
+                      <div className="text-slate-500">{lead.email ?? "-"}</div>
+                    </div>
+                    <div className="text-xs font-medium text-slate-500">{formatDate(lead.occurredAt)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {!isFullyFailedDashboard && state.risk.status === "error" && (
+        <AdminSectionStateCard
+          action={() => refreshRiskReport()}
+          actionLabel={t("admin.refresh")}
+          code="error"
+          message={t("admin.errorDescription")}
+          title={t("admin.riskCheck")}
+        />
+      )}
+
+      {!isFullyFailedDashboard && state.risk.status === "loading" && !state.risk.data && (
+        <AdminSectionStateCard
+          actionLabel={t("admin.refresh")}
+          code="loading"
+          message={t("admin.loading")}
+          title={t("admin.riskCheck")}
+        />
+      )}
+
+      {!isFullyFailedDashboard && riskReport && riskTrend && (
         <RiskCheck
           history={riskHistory}
           isRefreshing={isRefreshingRiskReport}
           onExport={exportRiskReport}
           onRefresh={refreshRiskReport}
           report={riskReport}
+          stateDataQuality={stateDataQuality}
           t={t}
           trend={riskTrend}
         />
       )}
 
-      {canManageConfig && state.status === "ready" && (
+      {canManageConfig && !isFullyFailedDashboard && (
         <ConfigRegistrySection
           configEntries={configEntries}
           configEditDrafts={configEditDrafts}
@@ -1778,7 +2712,26 @@ export default function AdminPage() {
         />
       )}
 
-      {state.status === "ready" && bidQa && (
+      {!isFullyFailedDashboard && state.bidQa.status === "error" && (
+        <AdminSectionStateCard
+          action={() => void refreshBidQa().catch(() => undefined)}
+          actionLabel={t("admin.refresh")}
+          code="error"
+          message={t("admin.errorDescription")}
+          title={t("admin.bidQa")}
+        />
+      )}
+
+      {!isFullyFailedDashboard && state.bidQa.status === "loading" && !state.bidQa.data && (
+        <AdminSectionStateCard
+          actionLabel={t("admin.refresh")}
+          code="loading"
+          message={t("admin.loading")}
+          title={t("admin.bidQa")}
+        />
+      )}
+
+      {!isFullyFailedDashboard && bidQa && (
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex items-center gap-2 font-semibold text-slate-950">
@@ -2154,7 +3107,26 @@ export default function AdminPage() {
         </section>
       )}
 
-      {state.status === "ready" && canManageUsers && (
+      {!isFullyFailedDashboard && canManageUsers && state.users.status === "error" && (
+        <AdminSectionStateCard
+          action={() => void refreshUsers().catch(() => undefined)}
+          actionLabel={t("admin.refresh")}
+          code="error"
+          message={t("admin.errorDescription")}
+          title={t("admin.users")}
+        />
+      )}
+
+      {!isFullyFailedDashboard && canManageUsers && state.users.status === "loading" && state.users.data.length === 0 && (
+        <AdminSectionStateCard
+          actionLabel={t("admin.refresh")}
+          code="loading"
+          message={t("admin.loading")}
+          title={t("admin.users")}
+        />
+      )}
+
+      {!isFullyFailedDashboard && state.users.status === "ready" && canManageUsers && (
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
             <div className="flex items-center gap-2 font-semibold text-slate-950">
@@ -2506,7 +3478,26 @@ export default function AdminPage() {
         </section>
       )}
 
-      {state.status === "ready" && (
+      {!isFullyFailedDashboard && state.notifications.status === "error" && (
+        <AdminSectionStateCard
+          action={() => void refreshNotifications().catch(() => undefined)}
+          actionLabel={t("admin.refresh")}
+          code="error"
+          message={t("admin.errorDescription")}
+          title={t("admin.notificationDelivery")}
+        />
+      )}
+
+      {!isFullyFailedDashboard && state.notifications.status === "loading" && state.notifications.data.length === 0 && (
+        <AdminSectionStateCard
+          actionLabel={t("admin.refresh")}
+          code="loading"
+          message={t("admin.loading")}
+          title={t("admin.notificationDelivery")}
+        />
+      )}
+
+      {!isFullyFailedDashboard && state.notifications.status === "ready" && (
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2 font-semibold text-slate-950">
@@ -2554,7 +3545,29 @@ export default function AdminPage() {
         </section>
       )}
 
-      {state.status === "ready" && canManageUsers && (
+      {!isFullyFailedDashboard && canManageUsers && state.userAuditLogs.status === "error" && (
+        <AdminSectionStateCard
+          action={() => void refreshUserAuditLogs().catch(() => undefined)}
+          actionLabel={t("admin.refresh")}
+          code="error"
+          message={t("admin.errorDescription")}
+          title={t("admin.userAuditLogs")}
+        />
+      )}
+
+      {!isFullyFailedDashboard &&
+        canManageUsers &&
+        state.userAuditLogs.status === "loading" &&
+        state.userAuditLogs.data.length === 0 && (
+          <AdminSectionStateCard
+            actionLabel={t("admin.refresh")}
+            code="loading"
+            message={t("admin.loading")}
+            title={t("admin.userAuditLogs")}
+          />
+        )}
+
+      {!isFullyFailedDashboard && state.userAuditLogs.status === "ready" && canManageUsers && (
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 font-semibold text-slate-950">
             <History size={18} />
@@ -2658,12 +3671,112 @@ export default function AdminPage() {
         </section>
       )}
 
-      {state.status === "ready" && (
+      {!isFullyFailedDashboard && state.dataSources.status === "error" && (
+        <AdminSectionStateCard
+          action={() => void refreshDataSources().catch(() => undefined)}
+          actionLabel={t("admin.refresh")}
+          code="error"
+          message={t("admin.errorDescription")}
+          title={t("admin.sources")}
+        />
+      )}
+
+      {!isFullyFailedDashboard && state.dataSources.status === "loading" && !state.dataSources.data && (
+        <AdminSectionStateCard
+          actionLabel={t("admin.refresh")}
+          code="loading"
+          message={t("admin.loading")}
+          title={t("admin.sources")}
+        />
+      )}
+
+      {!isFullyFailedDashboard && state.dataSources.status === "ready" && (
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
             <div className="flex items-center gap-2 font-semibold text-slate-950">
               <ServerCog size={18} />
               {t("admin.sources")}
+            </div>
+          </div>
+          <div className="border-b border-slate-100 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium text-slate-600">{t("admin.sourceHealthClassificationFilter")}</span>
+              {SOURCE_HEALTH_CLASSIFICATION_FILTERS.map((filter) => {
+                const count =
+                  filter === "all"
+                    ? allSources.length
+                    : filterAdminDataSourcesByHealthClassification(allSources, filter).length;
+                const isActive = sourceHealthClassificationFilter === filter;
+
+                return (
+                  <Button
+                    key={filter}
+                    type="button"
+                    variant={isActive ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setSourceHealthClassificationFilter(filter)}
+                    className={
+                      isActive
+                        ? "h-8 rounded-lg px-2 text-xs"
+                        : "h-8 rounded-lg border-slate-200 px-2 text-xs text-slate-600"
+                    }
+                  >
+                    {sourceHealthClassificationLabel(t, filter)}
+                    <span className="ml-1 text-xs opacity-75">{count}</span>
+                  </Button>
+                );
+              })}
+            </div>
+            <div className="mt-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-slate-600">{t("admin.sourceHealthTriage")}</span>
+                {SOURCE_HEALTH_TRIAGE_STATUS_FILTERS.map((filter) => {
+                  const count = filterAdminDataSourcesBySourceOps(
+                    allSources,
+                    { ...sourceOpsFilters, triageStatus: filter },
+                  ).length;
+                  const isActive = sourceHealthTriageFilter === filter;
+
+                  return (
+                    <Button
+                      key={filter}
+                      type="button"
+                      variant={isActive ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setSourceHealthTriageFilter(filter)}
+                      className={
+                        isActive
+                          ? "h-8 rounded-lg px-2 text-xs"
+                          : "h-8 rounded-lg border-slate-200 px-2 text-xs text-slate-600"
+                      }
+                    >
+                      {sourceHealthTriageFilterLabel(t, filter)}
+                      <span className="ml-1 text-xs opacity-75">{count}</span>
+                    </Button>
+                  );
+                })}
+              </div>
+              <label className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-600">
+                {t("admin.liveSourceRecommendedAction")}
+                <select
+                  value={sourceHealthRecommendedActionFilter}
+                  onChange={(event) => setSourceHealthRecommendedActionFilter(event.target.value)}
+                  className="h-8 max-w-full rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 outline-none"
+                >
+                  {sourceHealthRecommendedActionOptions.map((action) => (
+                    <option key={action} value={action}>
+                      {action === "all"
+                        ? "All recommended actions"
+                        : liveSourceRecommendedActionLabel(t, action)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="mt-2 text-xs text-slate-500">
+              {t("admin.sourceHealthClassificationFilteredSummary")
+                .replace("{shown}", String(sources.length))
+                .replace("{total}", String(allSources.length))}
             </div>
           </div>
           {canManageUsers && (
@@ -2721,9 +3834,21 @@ export default function AdminPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
+              {sources.length === 0 && (
+                <TableRow>
+                  <TableCell
+                    colSpan={8 + (canManageUsers ? 1 : 0) + (canRunOperations ? 1 : 0)}
+                    className="px-4 py-8 text-center text-sm text-slate-500"
+                  >
+                    {t("admin.sourceHealthClassificationEmpty")}
+                  </TableCell>
+                </TableRow>
+              )}
               {sources.map((source) => {
                 const liveHealth = source.latestLiveHealth;
                 const healthTrend = source.sourceHealthTrend;
+                const liveHealthTriage = source as SourceHealthTriageFields;
+                const triageStatus = sourceHealthTriageStatus(liveHealthTriage);
                 const liveHealthCode = liveHealth?.statusCode ?? liveHealth?.httpStatus ?? null;
                 const liveHealthErrorMessage = liveHealth?.error ?? liveHealth?.errorMessage ?? null;
 
@@ -2894,6 +4019,9 @@ export default function AdminPage() {
                           <Badge variant="outline" className={liveSourceHealthTone(liveHealth?.status)}>
                             {liveSourceHealthLabel(t, liveHealth?.status)}
                           </Badge>
+                          <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
+                            {sourceHealthClassificationLabel(t, sourceHealthClassificationFor(source))}
+                          </Badge>
                         </div>
                         {liveHealth ? (
                           <>
@@ -2907,6 +4035,18 @@ export default function AdminPage() {
                             {liveHealthErrorMessage && (
                               <div className="mt-1 text-rose-700">
                                 {compactErrorMessage(liveHealthErrorMessage)}
+                              </div>
+                            )}
+                            {liveHealth.reason && (
+                              <div className="mt-1 text-slate-600">
+                                {compactErrorMessage(liveHealth.reason)}
+                              </div>
+                            )}
+                            {liveHealth.evidenceSnippets.length > 0 && (
+                              <div className="mt-1 text-slate-500">
+                                {liveHealth.evidenceSnippets.slice(0, 2).map((snippet) => (
+                                  <div key={snippet}>{compactErrorMessage(snippet)}</div>
+                                ))}
                               </div>
                             )}
                             {liveHealth?.recommendedAction && liveHealth.recommendedAction !== "none" && (
@@ -2948,6 +4088,67 @@ export default function AdminPage() {
                         ) : (
                           <div className="mt-1 text-slate-500">{t("admin.liveSourceHealthNoCheck")}</div>
                         )}
+                        <div className="mt-2 rounded border border-slate-100 bg-slate-50 px-2 py-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium text-slate-700">{t("admin.sourceHealthTriage")}</span>
+                            <Badge variant="outline" className={sourceHealthTriageTone(triageStatus)}>
+                              {sourceHealthTriageLabel(t, triageStatus)}
+                            </Badge>
+                          </div>
+                          <div className="mt-1 grid gap-1 text-slate-500">
+                            <div>
+                              <span className="font-medium text-slate-600">{t("admin.sourceHealthOwner")}:</span>{" "}
+                              {liveHealthTriage.liveHealthOwner ?? t("admin.sourceHealthTriage_unassigned")}
+                            </div>
+                            <div>
+                              <span className="font-medium text-slate-600">{t("admin.sourceHealthDisposition")}:</span>{" "}
+                              {sourceHealthDispositionLabel(t, liveHealthTriage.liveHealthDisposition)}
+                            </div>
+                            <div>
+                              <span className="font-medium text-slate-600">{t("admin.sourceHealthNextReview")}:</span>{" "}
+                              {formatDate(liveHealthTriage.liveHealthNextReviewAt ?? null)}
+                            </div>
+                            {liveHealthTriage.liveHealthReviewedAt && (
+                              <div>
+                                <span className="font-medium text-slate-600">
+                                  {t("admin.sourceHealthReviewedAt")}:
+                                </span>{" "}
+                                {formatDate(liveHealthTriage.liveHealthReviewedAt)}
+                              </div>
+                            )}
+                            {liveHealthTriage.liveHealthNotes && (
+                              <div className="text-slate-600">
+                                <span className="font-medium">{t("admin.sourceHealthNotes")}:</span>{" "}
+                                {compactErrorMessage(liveHealthTriage.liveHealthNotes)}
+                              </div>
+                            )}
+                          </div>
+                          {canRunOperations && (
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {(
+                                [
+                                  ["assign", "sourceHealthTriageAssign"],
+                                  ["accepted_fallback", "sourceHealthTriageAcceptFallback"],
+                                  ["manual", "sourceHealthTriageManual"],
+                                  ["vendor_account", "sourceHealthTriageVendorAccount"],
+                                  ["clear", "sourceHealthTriageClear"],
+                                ] satisfies [SourceHealthTriageAction, string][]
+                              ).map(([action, labelKey]) => (
+                                <Button
+                                  key={action}
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => updateSourceHealthTriage(source, action)}
+                                  disabled={sourceTriagePendingId === source.id}
+                                  className="h-7 rounded-lg border-slate-200 px-2 text-xs"
+                                >
+                                  {sourceTriagePendingId === source.id ? t("common.saving") : t(`admin.${labelKey}`)}
+                                </Button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                         {canRunOperations && (
                           <Button
                             type="button"
@@ -3016,7 +4217,26 @@ export default function AdminPage() {
         </section>
       )}
 
-      {state.status === "ready" && (
+      {!isFullyFailedDashboard && state.crawlerLogs.status === "error" && (
+        <AdminSectionStateCard
+          action={() => void refreshCrawlerLogs().catch(() => undefined)}
+          actionLabel={t("admin.refresh")}
+          code="error"
+          message={t("admin.errorDescription")}
+          title={t("admin.recentLogs")}
+        />
+      )}
+
+      {!isFullyFailedDashboard && state.crawlerLogs.status === "loading" && state.crawlerLogs.data.length === 0 && (
+        <AdminSectionStateCard
+          actionLabel={t("admin.refresh")}
+          code="loading"
+          message={t("admin.loading")}
+          title={t("admin.recentLogs")}
+        />
+      )}
+
+      {!isFullyFailedDashboard && state.crawlerLogs.status === "ready" && (
         <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 font-semibold text-slate-950">
             <Activity size={18} />

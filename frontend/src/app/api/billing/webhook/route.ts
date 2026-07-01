@@ -38,9 +38,9 @@ function isBillingProviderEvent(body: unknown): body is BillingProviderEvent {
 }
 
 function verifyWebhookSignature(rawBody: string, signature: string | null) {
-  const secret = process.env.BILLING_WEBHOOK_SECRET;
+  const secret = process.env.BILLING_WEBHOOK_SECRET?.trim();
 
-  if (!secret) return true;
+  if (!secret) return process.env.NODE_ENV !== "production";
   if (!signature) return false;
 
   const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
@@ -50,12 +50,20 @@ function verifyWebhookSignature(rawBody: string, signature: string | null) {
   return actualBuffer.length === expectedBuffer.length && timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
+function isStripeBillingProvider() {
+  return process.env.BILLING_PROVIDER?.trim().toLowerCase() === "stripe";
+}
+
+function hasStripeWebhookConfig(request: Request) {
+  return Boolean(process.env.STRIPE_WEBHOOK_SECRET?.trim()) && Boolean(request.headers.get("stripe-signature"));
+}
+
 function shouldUseStripeWebhook(request: Request) {
-  return (
-    process.env.BILLING_PROVIDER?.trim().toLowerCase() === "stripe" &&
-    Boolean(process.env.STRIPE_WEBHOOK_SECRET?.trim()) &&
-    Boolean(request.headers.get("stripe-signature"))
-  );
+  return isStripeBillingProvider() && hasStripeWebhookConfig(request);
+}
+
+function shouldRequireStripeWebhook(request: Request) {
+  return process.env.NODE_ENV === "production" && isStripeBillingProvider() && !hasStripeWebhookConfig(request);
 }
 
 function constructStripeEvent(rawBody: string, signature: string | null) {
@@ -71,6 +79,10 @@ function constructStripeEvent(rawBody: string, signature: string | null) {
 export async function POST(request: Request) {
   const rawBody = await readBodyText(request);
   const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
+
+  if (shouldRequireStripeWebhook(request)) {
+    return errorResponse("INVALID_SIGNATURE", "Valid Stripe billing webhook signature is required", 401);
+  }
 
   if (shouldUseStripeWebhook(request)) {
     try {

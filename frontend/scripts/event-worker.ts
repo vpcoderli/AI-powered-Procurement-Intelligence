@@ -12,9 +12,36 @@ import {
 } from "../src/server/events/event-log";
 
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
+const PRODUCTION_LIKE_ENV_VALUES = new Set(["production", "prod", "staging"]);
 
-function positiveIntegerEnv(name: string) {
-  const value = Number(process.env[name]);
+type WorkerEnv = NonNullable<Parameters<typeof isMysqlDatabaseUrlConfigured>[0]>;
+
+function envValue(env: WorkerEnv, name: string) {
+  return env[name]?.trim() ?? "";
+}
+
+function isProductionLikeWorkerRuntime(env: WorkerEnv) {
+  return [
+    envValue(env, "NODE_ENV"),
+    envValue(env, "APP_ENV"),
+    envValue(env, "DEPLOY_ENV"),
+    envValue(env, "VERCEL_ENV"),
+    envValue(env, "RUNTIME_ENV"),
+  ].some((value) => PRODUCTION_LIKE_ENV_VALUES.has(value.toLowerCase()));
+}
+
+function sqliteResolutionMessage(env: WorkerEnv) {
+  if (envValue(env, "DATABASE_URL") && !/^mysql2?:\/\//.test(envValue(env, "DATABASE_URL"))) {
+    return "DATABASE_URL resolves to SQLite; production and staging worker runtimes must use DATABASE_URL or MYSQL_DATABASE_URL with mysql:// or mysql2://";
+  }
+  if (envValue(env, "MYSQL_DATABASE_URL") && !/^mysql2?:\/\//.test(envValue(env, "MYSQL_DATABASE_URL"))) {
+    return "MYSQL_DATABASE_URL resolves to SQLite; production and staging worker runtimes must use DATABASE_URL or MYSQL_DATABASE_URL with mysql:// or mysql2://";
+  }
+  return "DATABASE_URL or MYSQL_DATABASE_URL must use mysql:// or mysql2:// for production and staging worker runtimes";
+}
+
+function positiveIntegerEnv(name: string, env: WorkerEnv = process.env) {
+  const value = Number(env[name]);
   return Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
@@ -30,12 +57,18 @@ function workerArgs() {
   return new Set(process.argv.slice(2));
 }
 
-function validateEventWorkerEnvironment(env = process.env) {
+function validateEventWorkerEnvironment(env: WorkerEnv = process.env) {
   const errors: string[] = [];
   for (const name of ["EVENT_WORKER_INTERVAL_MS", "EVENT_WORKER_DELIVERY_LIMIT", "EVENT_WORKER_MAX_ATTEMPTS"]) {
-    if (env[name]?.trim() && !positiveIntegerEnv(name)) {
+    if (env[name]?.trim() && !positiveIntegerEnv(name, env)) {
       errors.push(`${name} must be a positive integer`);
     }
+  }
+
+  const mysqlConfigured = isMysqlDatabaseUrlConfigured(env);
+  const strictMode = isProductionLikeWorkerRuntime(env);
+  if (strictMode && !mysqlConfigured) {
+    errors.push(sqliteResolutionMessage(env));
   }
 
   if (errors.length > 0) {
@@ -44,7 +77,8 @@ function validateEventWorkerEnvironment(env = process.env) {
 
   return {
     ok: true,
-    database: isMysqlDatabaseUrlConfigured(env) ? "mysql" : "sqlite",
+    database: mysqlConfigured ? "mysql" : "sqlite",
+    strictMode,
     runOnce: runOnce(),
     intervalMs: env.EVENT_WORKER_INTERVAL_MS?.trim() || String(DEFAULT_INTERVAL_MS),
     deliveryLimit: env.EVENT_WORKER_DELIVERY_LIMIT?.trim() || "default",

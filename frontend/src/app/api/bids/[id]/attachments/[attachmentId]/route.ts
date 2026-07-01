@@ -9,8 +9,13 @@ interface RouteContext {
 
 function notFound() {
   return NextResponse.json(
-    { error: { code: "ATTACHMENT_NOT_FOUND", message: "Attachment not found" } },
-    { status: 404 },
+    {
+      error: {
+        code: "ATTACHMENT_NOT_FOUND",
+        message: "Attachment record not found; no archived file or source download note is available.",
+      },
+    },
+    { status: 404, headers: { "X-WinBids-Attachment-Availability": "missing" } },
   );
 }
 
@@ -25,25 +30,63 @@ function downloadNoteFilename(filename: string) {
   return `${base}-download-note.txt`;
 }
 
-function fallbackText(attachment: BidAttachmentDownload, reason: string) {
+type NoteAvailability = "source_download_note" | "archive_missing" | "archive_failed";
+type NoteKind = "source_download_note" | "archive_status_note";
+
+function fallbackTitle(availability: NoteAvailability) {
+  return availability === "source_download_note"
+    ? "WinBids source attachment download note"
+    : "WinBids archived attachment status note";
+}
+
+function fallbackStatusLine(availability: NoteAvailability) {
+  if (availability === "archive_missing") return "Archived file unavailable";
+  if (availability === "archive_failed") return "Archive failed";
+  return "Source download note";
+}
+
+function fallbackExplanation(availability: NoteAvailability) {
+  if (availability === "source_download_note") {
+    return [
+      "This is a source download note, not an archived local file.",
+      "External source availability is not guaranteed.",
+    ];
+  }
+
   return [
-    "WinBids attachment download note",
+    "The archived file cannot be opened from local storage.",
+    "This status note explains the archive problem and preserves the original source URL.",
+    "External source availability is not guaranteed.",
+  ];
+}
+
+function fallbackText(attachment: BidAttachmentDownload, reason: string, availability: NoteAvailability) {
+  return [
+    fallbackTitle(availability),
     "",
     `Attachment: ${attachment.filename}`,
+    `Status: ${fallbackStatusLine(availability)}`,
     `Archive status: ${attachment.archiveStatus}`,
     `Reason: ${reason}`,
     attachment.archiveError ? `Archive error: ${attachment.archiveError}` : null,
     `Original URL: ${attachment.originalUrl}`,
     "",
-    "This note is served by WinBids so users are not sent directly to a broken external attachment link.",
+    ...fallbackExplanation(availability),
   ].filter(Boolean).join("\n");
 }
 
-function fallbackResponse(attachment: BidAttachmentDownload, reason: string) {
-  return new Response(fallbackText(attachment, reason), {
+function fallbackResponse(
+  attachment: BidAttachmentDownload,
+  reason: string,
+  availability: NoteAvailability,
+  noteKind: NoteKind,
+) {
+  return new Response(fallbackText(attachment, reason, availability), {
     headers: {
       "Content-Disposition": contentDisposition(downloadNoteFilename(attachment.filename)),
       "Content-Type": "text/plain; charset=utf-8",
+      "X-WinBids-Attachment-Availability": availability,
+      "X-WinBids-Download-Kind": noteKind,
       "X-WinBids-Original-Url": attachment.originalUrl,
     },
   });
@@ -58,18 +101,25 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   if (attachment.kind === "fallback") {
-    return fallbackResponse(attachment, attachment.reason);
+    return fallbackResponse(attachment, attachment.reason, attachment.availability, attachment.noteKind);
   }
 
   const content = await readFile(attachment.filePath).catch(() => undefined);
   if (!content) {
-    return fallbackResponse(attachment, "The archived attachment file is no longer available on disk.");
+    return fallbackResponse(
+      attachment,
+      "Archived file unavailable: the archived attachment file is no longer available on disk.",
+      "archive_missing",
+      "archive_status_note",
+    );
   }
 
   return new Response(content, {
     headers: {
       "Content-Disposition": contentDisposition(attachment.filename),
       "Content-Type": attachment.mimeType ?? "application/octet-stream",
+      "X-WinBids-Attachment-Availability": attachment.availability,
+      "X-WinBids-Download-Kind": attachment.downloadKind,
     },
   });
 }

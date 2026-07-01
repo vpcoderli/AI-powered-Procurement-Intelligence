@@ -24,6 +24,7 @@ import type {
   ResponseWorkspaceCommentResponse,
   ResponseWorkspaceCommentsResponse,
   ResponseWorkspaceResponse,
+  UpdateResponsePackageExportReviewInput,
   UpdateResponseWorkspaceItemInput,
 } from "@/server/response-workspace/types";
 import type {
@@ -36,6 +37,10 @@ import type {
   QuoteWorkspaceResponse,
   UpdateQuoteRequestInput,
 } from "@/server/quotes/types";
+import type {
+  AwardOutcomeResponse,
+  UpdateAwardOutcomeInput,
+} from "@/server/awards/types";
 import type {
   DeadlineWorkspaceResponse,
 } from "@/server/deadlines/types";
@@ -67,6 +72,7 @@ function isApiErrorResponse(body: unknown): body is IntentApiErrorResponse {
 
   return (
     (code === "BID_NOT_FOUND" ||
+      code === "AUTH_REQUIRED" ||
       code === "FEATURE_NOT_AVAILABLE" ||
       code === "INTENT_NOT_FOUND" ||
       code === "INVALID_REQUEST" ||
@@ -156,6 +162,25 @@ export async function confirmSubmission(
   });
 
   return parseResponse<SubmissionConfirmationResponse>(response);
+}
+
+export async function fetchAwardOutcome(id: string) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/award`);
+
+  return parseResponse<AwardOutcomeResponse>(response);
+}
+
+export async function updateAwardOutcome(
+  id: string,
+  input: UpdateAwardOutcomeInput,
+) {
+  const response = await fetch(`/api/intents/${encodeURIComponent(id)}/award`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<AwardOutcomeResponse>(response);
 }
 
 export async function fetchComplianceManifest(id: string) {
@@ -251,8 +276,31 @@ export async function createResponsePackageExport(
   const response = await fetch(`/api/intents/${encodeURIComponent(id)}/response-workspace/package/exports`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      snapshotId: input.snapshotId,
+      ...(input.format ? { format: input.format } : {}),
+    }),
   });
+
+  return parseResponse<ResponsePackageExportResponse>(response);
+}
+
+export async function updateResponsePackageExportReview(
+  id: string,
+  exportId: string,
+  input: UpdateResponsePackageExportReviewInput,
+) {
+  const response = await fetch(
+    `/api/intents/${encodeURIComponent(id)}/response-workspace/package/exports/${encodeURIComponent(exportId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        reviewStatus: input.reviewStatus,
+        reviewNotes: input.reviewNotes ?? "",
+      }),
+    },
+  );
 
   return parseResponse<ResponsePackageExportResponse>(response);
 }
@@ -286,6 +334,44 @@ export async function uploadSupplierArtifact(
     method: "POST",
     body: form,
   });
+
+  return parseResponse<ArtifactVaultResponse>(response);
+}
+
+export async function deleteSupplierArtifact(id: string, artifactId: string) {
+  const response = await fetch(
+    `/api/intents/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(artifactId)}`,
+    { method: "DELETE" },
+  );
+
+  return parseResponse<ArtifactVaultResponse>(response);
+}
+
+export async function replaceSupplierArtifact(
+  id: string,
+  artifactId: string,
+  input: {
+    file: File;
+    replacementReason?: string;
+    title?: string;
+    expiresAt?: string | null;
+    notes?: string;
+  },
+) {
+  const form = new FormData();
+  form.set("file", input.file);
+  if (input.replacementReason) form.set("replacementReason", input.replacementReason);
+  if (input.title) form.set("title", input.title);
+  if (input.expiresAt) form.set("expiresAt", input.expiresAt);
+  if (input.notes) form.set("notes", input.notes);
+
+  const response = await fetch(
+    `/api/intents/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(artifactId)}`,
+    {
+      method: "PUT",
+      body: form,
+    },
+  );
 
   return parseResponse<ArtifactVaultResponse>(response);
 }

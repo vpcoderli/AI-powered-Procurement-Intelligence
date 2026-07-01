@@ -453,6 +453,12 @@ function temporaryPassword() {
   return `Temp-${crypto.randomBytes(12).toString("base64url")}`;
 }
 
+function adminInviteWorkspaceName(input: Pick<CreateAdminUserInviteInput, "displayName">, email: string) {
+  const displayName = normalizeDisplayName(input.displayName);
+
+  return displayName ? `${displayName}'s Workspace` : `${email}'s Workspace`;
+}
+
 function isUniqueEmailConflict(error: unknown) {
   if (!(error instanceof Error)) return false;
 
@@ -583,6 +589,8 @@ export async function createAdminUserInvite(
     throw error;
   }
 
+  ensureUserWorkspace(db, user.id);
+
   db.insert(adminUserAuditLogs)
     .values({
       id: `audit_${crypto.randomUUID()}`,
@@ -665,6 +673,28 @@ export async function createAdminUserInviteFromMysql(
 
     throw error;
   }
+
+  const organizationId = `org_${crypto.randomUUID()}`;
+  await mysqlExecute(
+    mysql,
+    "INSERT INTO organizations (id, name, account_tier, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    [organizationId, adminInviteWorkspaceName(input, email), input.tier, timestamp, timestamp],
+  );
+  await mysqlExecute(
+    mysql,
+    `
+      INSERT INTO organization_memberships (
+        organization_id,
+        user_id,
+        role,
+        status,
+        created_at,
+        updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?)
+    `,
+    [organizationId, user.id, "owner", "active", timestamp, timestamp],
+  );
 
   await mysqlExecute(
     mysql,

@@ -12,13 +12,16 @@ import type {
   ResponseWorkspaceItem,
   ResponseWorkspaceItemKind,
   ResponseWorkspaceItemStatus,
+  ResponsePackageExportFormat,
+  ResponsePackageExportReviewStatus,
   ResponsePackageWorkspace,
 } from "@/server/response-workspace/types";
-import { RESPONSE_WORKSPACE_ITEM_STATUSES } from "@/server/response-workspace/types";
+import { RESPONSE_PACKAGE_EXPORT_FORMATS, RESPONSE_WORKSPACE_ITEM_STATUSES } from "@/server/response-workspace/types";
 import type { SupplierArtifact } from "@/server/artifacts/types";
 import { PackageCheck, Send } from "lucide-react";
 
 const responseWorkspaceStatusOptions: ResponseWorkspaceItemStatus[] = [...RESPONSE_WORKSPACE_ITEM_STATUSES];
+const responsePackageExportFormatOptions: ResponsePackageExportFormat[] = [...RESPONSE_PACKAGE_EXPORT_FORMATS];
 const responseWorkspaceKinds: ResponseWorkspaceItemKind[] = [
   "task",
   "checkpoint",
@@ -48,8 +51,13 @@ interface ResponseWorkspacePanelProps {
   notice: string;
   onCommentDraftsChange: Dispatch<SetStateAction<Record<string, string>>>;
   onCreateComment: (item: ResponseWorkspaceItem) => void;
-  onCreatePackageExport: (snapshotId: string) => void;
+  onCreatePackageExport: (snapshotId: string, format: ResponsePackageExportFormat) => void;
   onCreatePackageSnapshot: () => void;
+  onReviewPackageExport: (
+    exportId: string,
+    reviewStatus: ResponsePackageExportReviewStatus,
+    reviewNotes: string,
+  ) => void;
   onLocalItemUpdate: (
     itemId: string,
     patch: Partial<Pick<ResponseWorkspaceItem, "notes">>,
@@ -61,6 +69,7 @@ interface ResponseWorkspacePanelProps {
   onSaveLinkedArtifacts: (item: ResponseWorkspaceItem, linkedArtifactIds: string[]) => void;
   savingCommentItemId: string | null;
   savingItemId: string | null;
+  reviewingExportId: string | null;
   t: Translator;
   packageWorkspace: ResponsePackageWorkspace | null;
   workspace: ResponseWorkspace | null;
@@ -93,16 +102,30 @@ export function ResponseWorkspacePanel({
   onCreateComment,
   onCreatePackageExport,
   onCreatePackageSnapshot,
+  onReviewPackageExport,
   onLocalItemUpdate,
   onSaveItem,
   onSaveLinkedArtifacts,
   savingCommentItemId,
   savingItemId,
+  reviewingExportId,
   t,
   packageWorkspace,
   workspace,
 }: ResponseWorkspacePanelProps) {
   const [artifactLinkDrafts, setArtifactLinkDrafts] = useState<Record<string, string[]>>({});
+  const [reviewNotesByExportId, setReviewNotesByExportId] = useState<Record<string, string>>({});
+  const [showAllPackageSnapshots, setShowAllPackageSnapshots] = useState(false);
+  const [selectedPackageComparisonKey, setSelectedPackageComparisonKey] = useState("");
+  const packageSnapshots = packageWorkspace?.snapshots ?? [];
+  const packageVersionHistory = packageWorkspace?.versionHistory;
+  const governanceSummary = packageWorkspace?.governanceSummary;
+  const versionComparisons = packageWorkspace?.versionComparisons ?? [];
+  const selectedPackageComparison = versionComparisons.find((comparison) =>
+    comparison.comparisonKey === selectedPackageComparisonKey
+  ) ?? packageWorkspace?.defaultVersionComparison ?? null;
+  const visiblePackageSnapshots = showAllPackageSnapshots ? packageSnapshots : packageSnapshots.slice(0, 3);
+  const hiddenPackageSnapshotCount = Math.max(packageSnapshots.length - visiblePackageSnapshots.length, 0);
 
   return (
     <section
@@ -193,17 +216,156 @@ export function ResponseWorkspacePanel({
                 </div>
               ))}
             </div>
+            {governanceSummary ? (
+              <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50/40 p-3">
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <p className="text-xs font-black uppercase text-emerald-700">
+                      {t("intentsPage.responsePackageGovernance")}
+                    </p>
+                    <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
+                      {governanceSummary.canSubmitWithReviewedExport
+                        ? t("intentsPage.responsePackageGovernanceReviewedExportReady")
+                        : t("intentsPage.responsePackageGovernanceReviewedExportMissing")}
+                    </p>
+                  </div>
+                  <Badge className="w-fit border border-emerald-100 bg-white text-[10px] font-black uppercase text-emerald-700">
+                    {governanceSummary.latestReviewerUserId
+                      ? governanceSummary.latestReviewerUserId
+                      : t("intentsPage.responsePackageGovernanceNoReviewer")}
+                  </Badge>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-4">
+                  {[
+                    ["pendingReview", governanceSummary.pendingReviewCount],
+                    ["approved", governanceSummary.approvedCount],
+                    ["needsChanges", governanceSummary.needsChangesCount],
+                    ["longestPending", governanceSummary.longestPendingAgeHours ?? 0],
+                  ].map(([key, value]) => (
+                    <div key={key as string} className="rounded-md border border-emerald-100 bg-white px-3 py-2">
+                      <p className="text-[10px] font-black uppercase text-emerald-500">
+                        {t(`intentsPage.responsePackageGovernanceSummary.${key as string}`)}
+                      </p>
+                      <p className="mt-1 text-lg font-black text-slate-950">{value}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div className="mt-3 rounded-lg border border-violet-100 bg-white p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs font-black uppercase text-slate-500">
                   {t("intentsPage.responsePackageSnapshots")}
                 </p>
                 <Badge variant="outline" className="border-violet-100 bg-violet-50 text-violet-700">
-                  {packageWorkspace?.snapshots.length ?? 0} {t("intentsPage.items")}
+                  {packageSnapshots.length} {t("intentsPage.items")}
                 </Badge>
               </div>
+              {packageVersionHistory ? (
+                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <div className="rounded-md border border-violet-100 bg-violet-50/50 px-3 py-2">
+                    <p className="text-[10px] font-black uppercase text-violet-500">
+                      {t("intentsPage.responsePackageTotalVersions")}
+                    </p>
+                    <p className="mt-1 text-lg font-black text-slate-950">
+                      {packageVersionHistory.totalVersions}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-violet-100 bg-violet-50/50 px-3 py-2">
+                    <p className="text-[10px] font-black uppercase text-violet-500">
+                      {t("intentsPage.responsePackageVersionHistory")}
+                    </p>
+                    <p className="mt-1 text-lg font-black text-slate-950">
+                      {packageVersionHistory.latestVersionNumber}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-violet-100 bg-violet-50/50 px-3 py-2">
+                    <p className="text-[10px] font-black uppercase text-violet-500">
+                      {t("intentsPage.responsePackageTotalChanges")}
+                    </p>
+                    <p className="mt-1 text-lg font-black text-slate-950">
+                      {packageVersionHistory.totalChanges}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
+              {versionComparisons.length > 0 && selectedPackageComparison ? (
+                <div className="mt-3 rounded-md border border-violet-100 bg-slate-50/80 p-3">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="text-xs font-black uppercase text-violet-700">
+                        {t("intentsPage.responsePackageSideBySideComparison")}
+                      </p>
+                      <p className="mt-1 text-xs font-semibold leading-5 text-slate-500">
+                        {t("intentsPage.responsePackageCompareVersions")}
+                      </p>
+                    </div>
+                    <Select
+                      value={selectedPackageComparison.comparisonKey}
+                      onValueChange={(value) => setSelectedPackageComparisonKey(value ?? "")}
+                    >
+                      <SelectTrigger className="h-9 min-w-[220px] rounded-lg border-violet-100 bg-white text-xs font-black shadow-sm focus:ring-violet-700">
+                        <span className="truncate">
+                          v{selectedPackageComparison.fromVersionNumber} -&gt; v{selectedPackageComparison.toVersionNumber}
+                        </span>
+                      </SelectTrigger>
+                      <SelectContent className="rounded-lg border-slate-200 shadow-lg">
+                        {versionComparisons.map((comparison) => (
+                          <SelectItem key={comparison.comparisonKey} value={comparison.comparisonKey}>
+                            v{comparison.fromVersionNumber} -&gt; v{comparison.toVersionNumber}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {[selectedPackageComparison].map((comparison) => (
+                    <div key={comparison.comparisonKey} className="mt-3 grid gap-3">
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <div className="rounded-md border border-slate-100 bg-white px-3 py-2">
+                          <p className="text-[10px] font-black uppercase text-slate-400">
+                            {t("intentsPage.responsePackageFromVersion")}
+                          </p>
+                          <p className="mt-1 break-words text-xs font-black text-slate-800">
+                            v{comparison.fromVersionNumber} {comparison.fromTitle}
+                          </p>
+                        </div>
+                        <div className="rounded-md border border-slate-100 bg-white px-3 py-2">
+                          <p className="text-[10px] font-black uppercase text-slate-400">
+                            {t("intentsPage.responsePackageToVersion")}
+                          </p>
+                          <p className="mt-1 break-words text-xs font-black text-slate-800">
+                            v{comparison.toVersionNumber} {comparison.toTitle}
+                          </p>
+                        </div>
+                      </div>
+                      {comparison.items.length > 0 ? (
+                        <div className="grid gap-2">
+                          {comparison.items.slice(0, 6).map((item) => (
+                            <div
+                              key={`${item.kind}-${item.label}-${item.toValue ?? "none"}`}
+                              className="grid gap-2 rounded-md border border-slate-100 bg-white p-2 sm:grid-cols-[1fr_1fr_1fr]"
+                            >
+                              <p className="break-words text-[11px] font-black text-slate-700">{item.label}</p>
+                              <p className="break-words text-[11px] font-semibold leading-5 text-slate-500">
+                                {item.fromValue || "-"}
+                              </p>
+                              <p className="break-words text-[11px] font-semibold leading-5 text-slate-800">
+                                {item.toValue || "-"}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs font-semibold text-slate-400">
+                          {t("intentsPage.responsePackageComparisonNoChanges")}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
               <div className="mt-2 grid gap-2">
-                {(packageWorkspace?.snapshots ?? []).slice(0, 3).map((snapshot) => (
+                {visiblePackageSnapshots.map((snapshot) => (
                   <div key={snapshot.id} className="rounded-md border border-slate-100 bg-slate-50/70 p-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="break-words text-xs font-black text-slate-800">{snapshot.title}</p>
@@ -215,32 +377,146 @@ export function ResponseWorkspacePanel({
                       {snapshot.readiness.completedOutlineSections}/{snapshot.readiness.totalOutlineSections}{" "}
                       {t("intentsPage.responsePackageSummary.outline")}
                     </p>
+                    <div className="mt-2 rounded-md border border-violet-100 bg-white px-2 py-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <Badge className="border border-violet-100 bg-violet-50 text-[10px] font-black uppercase text-violet-700">
+                          {t("intentsPage.responsePackageVersion")} {snapshot.version.versionNumber}
+                        </Badge>
+                        <p className="text-[11px] font-bold text-slate-400">
+                          {snapshot.version.changeCount} {t("intentsPage.responsePackageChangesSincePrevious")}
+                        </p>
+                      </div>
+                      {snapshot.version.changes.length > 0 ? (
+                        <div className="mt-2 grid gap-1">
+                          {snapshot.version.changes.slice(0, 3).map((change) => (
+                            <p
+                              key={`${change.kind}-${change.label}-${change.toValue ?? "none"}`}
+                              className="break-words text-[11px] font-semibold leading-5 text-slate-500"
+                            >
+                              <span className="font-black text-slate-700">{change.label}</span>
+                              {change.fromValue !== null || change.toValue !== null
+                                ? `: ${change.fromValue ?? "-"} -> ${change.toValue ?? "-"}`
+                                : ""}
+                            </p>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-[11px] font-semibold leading-5 text-slate-400">
+                          {t("intentsPage.responsePackageNoVersionChanges")}
+                        </p>
+                      )}
+                    </div>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <Button
-                        type="button"
-                        onClick={() => onCreatePackageExport(snapshot.id)}
-                        disabled={Boolean(exportingSnapshotId)}
-                        className="h-8 rounded-md bg-slate-950 px-3 text-xs font-black text-white hover:bg-slate-800"
-                      >
-                        {exportingSnapshotId === snapshot.id
-                          ? t("intentsPage.submissionSaving")
-                          : t("intentsPage.exportResponsePackage")}
-                      </Button>
-                      {snapshot.exports.slice(0, 2).map((exportRecord) => (
-                        <a
-                          key={exportRecord.id}
-                          href={exportRecord.downloadUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex min-h-8 items-center rounded-md border border-violet-100 bg-white px-3 text-xs font-black text-violet-700 hover:border-violet-200"
+                      {responsePackageExportFormatOptions.map((formatOption) => (
+                        <Button
+                          key={formatOption}
+                          type="button"
+                          onClick={() => onCreatePackageExport(snapshot.id, formatOption)}
+                          disabled={Boolean(exportingSnapshotId)}
+                          className="h-8 rounded-md bg-slate-950 px-3 text-xs font-black text-white hover:bg-slate-800"
                         >
-                          {t("intentsPage.downloadResponsePackage")}
-                        </a>
+                          {exportingSnapshotId === snapshot.id
+                            ? t("intentsPage.submissionSaving")
+                            : `${t("intentsPage.exportResponsePackage")} ${t(`intentsPage.responsePackageExportFormats.${formatOption}`)}`}
+                        </Button>
+                      ))}
+                      {snapshot.exports.slice(0, 2).map((exportRecord) => (
+                        <div key={exportRecord.id} className="min-w-[260px] rounded-md border border-slate-100 bg-white p-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <a
+                              href={exportRecord.downloadUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex min-h-8 items-center rounded-md border border-violet-100 bg-white px-3 text-xs font-black text-violet-700 hover:border-violet-200"
+                            >
+                              {t("intentsPage.downloadResponsePackage")}
+                            </a>
+                            <Badge className="border border-slate-200 bg-slate-50 text-[10px] font-black uppercase text-slate-500">
+                              {t(`intentsPage.responsePackageExportReviewStatuses.${exportRecord.reviewStatus}`)}
+                            </Badge>
+                            <Badge className="border border-slate-200 bg-white text-[10px] font-black uppercase text-slate-500">
+                              {t(`intentsPage.responsePackageExportFormats.${exportRecord.format}`)}
+                            </Badge>
+                            <Input
+                              value={reviewNotesByExportId[exportRecord.id] ?? exportRecord.reviewNotes}
+                              onChange={(event) =>
+                                setReviewNotesByExportId((current) => ({
+                                  ...current,
+                                  [exportRecord.id]: event.target.value,
+                                }))
+                              }
+                              placeholder={t("intentsPage.responsePackageReviewNotePlaceholder")}
+                              className="h-8 min-w-[180px] flex-1 rounded-md border-slate-200 bg-slate-50/70 text-xs"
+                            />
+                            <Button
+                              type="button"
+                              onClick={() =>
+                                onReviewPackageExport(
+                                  exportRecord.id,
+                                  "approved",
+                                  reviewNotesByExportId[exportRecord.id] ?? exportRecord.reviewNotes,
+                                )
+                              }
+                              disabled={reviewingExportId === exportRecord.id}
+                              className="h-8 rounded-md bg-emerald-700 px-3 text-xs font-black text-white hover:bg-emerald-800"
+                            >
+                              {t("intentsPage.approveResponsePackageExport")}
+                            </Button>
+                            <Button
+                              type="button"
+                              onClick={() =>
+                                onReviewPackageExport(
+                                  exportRecord.id,
+                                  "needs_changes",
+                                  reviewNotesByExportId[exportRecord.id] ?? exportRecord.reviewNotes,
+                                )
+                              }
+                              disabled={reviewingExportId === exportRecord.id || !(reviewNotesByExportId[exportRecord.id] ?? exportRecord.reviewNotes).trim()}
+                              className="h-8 rounded-md bg-amber-600 px-3 text-xs font-black text-white hover:bg-amber-700"
+                            >
+                              {t("intentsPage.requestResponsePackageChanges")}
+                            </Button>
+                          </div>
+                          {exportRecord.reviewHistory.length > 0 ? (
+                            <div className="mt-2 space-y-1 rounded-md border border-slate-100 bg-slate-50/80 p-2">
+                              <p className="text-[10px] font-black uppercase tracking-wide text-slate-500">
+                                {t("intentsPage.responsePackageReviewHistory")}
+                              </p>
+                              {exportRecord.reviewHistory.slice(-3).map((event) => (
+                                <div key={event.id} className="rounded border border-white bg-white/80 px-2 py-1 text-[11px] leading-5 text-slate-600">
+                                  <p className="font-black text-slate-700">
+                                    {t(`intentsPage.responsePackageExportReviewStatuses.${event.fromReviewStatus}`)}
+                                    {" -> "}
+                                    {t(`intentsPage.responsePackageExportReviewStatuses.${event.toReviewStatus}`)}
+                                    <span className="ml-2 font-semibold text-slate-400">
+                                      {event.createdAt.slice(0, 16).replace("T", " ")}
+                                    </span>
+                                  </p>
+                                  {event.reviewNotes ? (
+                                    <p className="break-words text-slate-500">{event.reviewNotes}</p>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
                       ))}
                     </div>
                   </div>
                 ))}
-                {(packageWorkspace?.snapshots.length ?? 0) === 0 ? (
+                {packageSnapshots.length > 3 ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowAllPackageSnapshots((current) => !current)}
+                    className="h-8 w-fit rounded-md border-violet-100 bg-white px-3 text-xs font-black text-violet-700 hover:border-violet-200"
+                  >
+                    {showAllPackageSnapshots
+                      ? t("intentsPage.showRecentResponsePackageVersions")
+                      : `${t("intentsPage.showAllResponsePackageVersions")} (${hiddenPackageSnapshotCount})`}
+                  </Button>
+                ) : null}
+                {packageSnapshots.length === 0 ? (
                   <p className="text-xs font-semibold text-slate-400">
                     {t("intentsPage.responsePackageNoSnapshots")}
                   </p>

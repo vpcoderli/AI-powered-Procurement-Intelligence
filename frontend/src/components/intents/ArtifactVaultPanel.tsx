@@ -1,6 +1,6 @@
 "use client";
 
-import type { Dispatch, SetStateAction } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { UniversalState } from "@/components/universal-state";
 import type { ArtifactPurpose, ArtifactType, ArtifactVault } from "@/server/artifacts/types";
 import { ARTIFACT_PURPOSES, ARTIFACT_TYPES } from "@/server/artifacts/types";
-import { ExternalLink, FileArchive, Upload } from "lucide-react";
+import { ExternalLink, FileArchive, RefreshCcw, Trash2, Upload } from "lucide-react";
 
 export interface ArtifactDraft {
   title: string;
@@ -27,10 +27,14 @@ interface ArtifactVaultPanelProps {
   error: Error | null;
   featureEnabled: boolean;
   isLoading: boolean;
+  deletingArtifactId: string | null;
+  replacingArtifactId: string | null;
   isUploading: boolean;
   lockedMessage: string;
   notice: string;
   onDraftChange: Dispatch<SetStateAction<ArtifactDraft>>;
+  onDelete: (artifactId: string) => void;
+  onReplace: (artifactId: string, file: File, replacementReason: string) => Promise<void> | void;
   onUpload: () => void;
   t: Translator;
   vault: ArtifactVault | null;
@@ -53,19 +57,37 @@ function LockedFeatureState({ message, title }: { message: string; title: string
   );
 }
 
+function latestVersionNumber(artifact: ArtifactVault["artifacts"][number]) {
+  return artifact.versions.reduce((latest, version) => Math.max(latest, version.versionNumber), 1);
+}
+
 export function ArtifactVaultPanel({
   draft,
   error,
   featureEnabled,
   isLoading,
+  deletingArtifactId,
+  replacingArtifactId,
   isUploading,
   lockedMessage,
   notice,
   onDraftChange,
+  onDelete,
+  onReplace,
   onUpload,
   t,
   vault,
 }: ArtifactVaultPanelProps) {
+  const [replacementArtifactId, setReplacementArtifactId] = useState<string | null>(null);
+  const [replacementFiles, setReplacementFiles] = useState<Record<string, File | null>>({});
+  const [replacementReasons, setReplacementReasons] = useState<Record<string, string>>({});
+
+  function resetReplacementDraft(artifactId: string) {
+    setReplacementFiles((current) => ({ ...current, [artifactId]: null }));
+    setReplacementReasons((current) => ({ ...current, [artifactId]: "" }));
+    setReplacementArtifactId(null);
+  }
+
   return (
     <section
       className={`winbids-panel artifactVault rounded-lg border p-5 shadow-sm ${
@@ -238,6 +260,15 @@ export function ArtifactVaultPanel({
             <div className="grid gap-3 lg:grid-cols-2">
               {vault.artifacts.map((artifact) => (
                 <article key={artifact.id} className="rounded-lg border border-slate-200 bg-white p-4">
+                  {(() => {
+                    const versionCount = artifact.versions.length || 1;
+                    const selectedReplacementFile = replacementFiles[artifact.id] ?? null;
+                    const replacementReason = replacementReasons[artifact.id] ?? "";
+                    const isReplacingThisArtifact = replacingArtifactId === artifact.id;
+                    const showReplacementForm = replacementArtifactId === artifact.id;
+
+                    return (
+                      <>
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
                       <p className="break-words text-sm font-black leading-6 text-slate-950">{artifact.title}</p>
@@ -266,7 +297,13 @@ export function ArtifactVaultPanel({
                     <Badge variant="outline" className="border-slate-200 bg-white text-slate-700">
                       {t(`intentsPage.artifactReviewStatuses.${artifact.reviewStatus}`)}
                     </Badge>
+                    <Badge variant="outline" className="border-fuchsia-100 bg-fuchsia-50 text-fuchsia-700">
+                      {t("intentsPage.artifactVersions")}: v{latestVersionNumber(artifact)} / {versionCount}
+                    </Badge>
                   </div>
+                  <p className="mt-3 text-xs font-bold text-slate-400">
+                    {t("intentsPage.artifactLatestVersion")}: v{latestVersionNumber(artifact)}
+                  </p>
                   {artifact.expiresAt ? (
                     <p className="mt-3 text-xs font-bold text-slate-400">
                       {t("intentsPage.artifactExpiresAt")}: {artifact.expiresAt.slice(0, 10)}
@@ -275,13 +312,99 @@ export function ArtifactVaultPanel({
                   {artifact.notes ? (
                     <p className="mt-2 break-words text-sm leading-6 text-slate-600">{artifact.notes}</p>
                   ) : null}
-                  <Link
-                    href={artifact.downloadUrl}
-                    className="mt-3 inline-flex items-center text-sm font-black text-blue-700 hover:text-blue-900"
-                  >
-                    <ExternalLink className="mr-2 h-4 w-4" aria-hidden="true" />
-                    {t("intentsPage.artifactDownload")}
-                  </Link>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <Link
+                      href={artifact.downloadUrl}
+                      className="inline-flex items-center text-sm font-black text-blue-700 hover:text-blue-900"
+                    >
+                      <ExternalLink className="mr-2 h-4 w-4" aria-hidden="true" />
+                      {t("intentsPage.artifactDownload")}
+                    </Link>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => onDelete(artifact.id)}
+                      disabled={Boolean(deletingArtifactId)}
+                      className="h-8 rounded-lg border-rose-200 bg-white px-3 text-xs font-black text-rose-700 hover:bg-rose-50"
+                    >
+                      <Trash2 className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
+                      {deletingArtifactId === artifact.id
+                        ? t("intentsPage.artifactDeleting")
+                        : t("intentsPage.artifactDelete")}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() =>
+                        setReplacementArtifactId((current) => (current === artifact.id ? null : artifact.id))
+                      }
+                      disabled={Boolean(replacingArtifactId)}
+                      className="h-8 rounded-lg border-blue-200 bg-white px-3 text-xs font-black text-blue-700 hover:bg-blue-50"
+                    >
+                      <RefreshCcw className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
+                      {t("intentsPage.artifactReplace")}
+                    </Button>
+                  </div>
+                  {showReplacementForm ? (
+                    <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50/60 p-3">
+                      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+                        <label className="grid gap-1.5 text-xs font-black uppercase text-slate-500">
+                          {t("intentsPage.artifactReplaceFile")}
+                          <input
+                            type="file"
+                            onChange={(event) =>
+                              setReplacementFiles((current) => ({
+                                ...current,
+                                [artifact.id]: event.target.files?.[0] ?? null,
+                              }))
+                            }
+                            disabled={isReplacingThisArtifact}
+                            className="h-10 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 file:mr-3 file:rounded-md file:border-0 file:bg-blue-700 file:px-3 file:py-1.5 file:text-xs file:font-black file:text-white"
+                          />
+                        </label>
+                        <label className="grid gap-1.5 text-xs font-black uppercase text-slate-500">
+                          {t("intentsPage.artifactReplacementReason")}
+                          <Input
+                            value={replacementReason}
+                            onChange={(event) =>
+                              setReplacementReasons((current) => ({
+                                ...current,
+                                [artifact.id]: event.target.value,
+                              }))
+                            }
+                            disabled={isReplacingThisArtifact}
+                            placeholder={t("intentsPage.artifactReplacementReasonPlaceholder")}
+                            className="h-10 rounded-lg border-slate-200 bg-white"
+                          />
+                        </label>
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <Button
+                          type="button"
+                          onClick={() => {
+                            if (!selectedReplacementFile) return;
+                            void Promise.resolve(onReplace(artifact.id, selectedReplacementFile, replacementReason))
+                              .then(() => resetReplacementDraft(artifact.id));
+                          }}
+                          disabled={isReplacingThisArtifact || !selectedReplacementFile}
+                          className="h-9 rounded-lg bg-blue-700 text-xs font-black text-white hover:bg-blue-800"
+                        >
+                          <RefreshCcw className="mr-2 h-3.5 w-3.5" aria-hidden="true" />
+                          {isReplacingThisArtifact
+                            ? t("intentsPage.artifactReplacing")
+                            : t("intentsPage.artifactReplaceSave")}
+                        </Button>
+                        <p className="text-xs font-bold text-slate-500">
+                          {selectedReplacementFile
+                            ? selectedReplacementFile.name
+                            : t("intentsPage.artifactNoFile")}
+                        </p>
+                      </div>
+                    </div>
+                  ) : null}
+                      </>
+                    );
+                  })()}
                 </article>
               ))}
             </div>

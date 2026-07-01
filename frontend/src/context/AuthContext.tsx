@@ -25,6 +25,8 @@ interface AuthContextType {
     email: string;
     password: string;
     displayName?: string;
+    marketingIntent?: "demo";
+    leadEventId?: string;
   }) => Promise<PublicUser>;
   login: (input: { email: string; password: string }) => Promise<PublicUser>;
   logout: () => Promise<void>;
@@ -74,7 +76,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refreshSession]);
 
   const register = useCallback(
-    async (input: { email: string; password: string; displayName?: string }) => {
+    async (input: {
+      email: string;
+      password: string;
+      displayName?: string;
+      marketingIntent?: "demo";
+      leadEventId?: string;
+    }) => {
       setIsLoading(true);
       try {
         const response = await registerRequest(input);

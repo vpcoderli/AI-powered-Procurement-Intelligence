@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolvePrincipal } from "@/server/auth/principal";
+import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { db, type AppDatabase } from "@/server/db/client";
 import { createDashboardSummary, type DashboardSummary, type DashboardSummarySubject } from "@/server/dashboard/summary";
 
@@ -31,6 +32,11 @@ export function createDashboardSummaryGet(dependencies: DashboardSummaryRouteDep
 
     try {
       const principal = await resolvePrincipal(database as AppDatabase, request);
+
+      if (!isAuthenticatedPrincipal(principal)) {
+        return authRequiredResponse();
+      }
+
       const createSummary = dependencies.createSummary ?? createDashboardSummary;
       const summary = await createSummary(
         database,
@@ -42,10 +48,6 @@ export function createDashboardSummaryGet(dependencies: DashboardSummaryRouteDep
         dependencies.now?.() ?? new Date(),
       );
       const response = NextResponse.json({ summary });
-
-      if (principal.kind === "anonymous" && principal.anonymousCookie) {
-        response.headers.append("Set-Cookie", principal.anonymousCookie);
-      }
 
       return response;
     } catch (error) {

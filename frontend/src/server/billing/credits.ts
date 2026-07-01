@@ -24,6 +24,44 @@ export interface CreditSummary {
   resetsAt: string | null;
 }
 
+export interface AiCreditDryRunQuote {
+  mode: "dry_run_quote";
+  billable: false;
+  billingEnforcement: false;
+  featureKey: FeatureKey;
+  actionId: string;
+  aiRunId: string | null;
+  provider: string | null;
+  model: string | null;
+  creditCost: number;
+  estimatedCredits: number;
+  chargedAmount: 0;
+  balanceAfter: null;
+  estimatedCost: {
+    currency: "USD";
+    total: 0;
+    estimatedUsd: number;
+  };
+}
+
+export interface QuoteAiCreditDryRunInput {
+  featureKey: FeatureKey;
+  actionId: string;
+  aiRun?: {
+    id?: string | null;
+    provider?: string | null;
+    model?: string | null;
+    estimatedCostUsd?: number | null;
+    estimatedCredits?: number | null;
+    cost?: {
+      estimatedUsd?: number | null;
+    } | null;
+    credits?: {
+      estimated?: number | null;
+    } | null;
+  } | null;
+}
+
 const INCLUDED_MONTHLY_CREDITS_BY_TIER: Record<AccountTier, number | null> = {
   free: 0,
   pro: 25,
@@ -98,5 +136,37 @@ export function creditSummaryForTier(tier: AccountTier): CreditSummary {
     purchasedCredits: 0,
     availableCredits: includedMonthlyCredits,
     resetsAt: null,
+  };
+}
+
+function normalizeNonNegativeNumber(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+export function quoteAiCreditDryRun(input: QuoteAiCreditDryRunInput): AiCreditDryRunQuote {
+  const creditCost = creditCostForFeature(input.featureKey);
+  const estimatedCredits = normalizeNonNegativeNumber(
+    input.aiRun?.estimatedCredits ?? input.aiRun?.credits?.estimated,
+    creditCost,
+  );
+  const estimatedUsd = normalizeNonNegativeNumber(
+    input.aiRun?.estimatedCostUsd ?? input.aiRun?.cost?.estimatedUsd,
+    0,
+  );
+
+  return {
+    mode: "dry_run_quote",
+    billable: false,
+    billingEnforcement: false,
+    featureKey: input.featureKey,
+    actionId: input.actionId,
+    aiRunId: input.aiRun?.id ?? null,
+    provider: input.aiRun?.provider ?? null,
+    model: input.aiRun?.model ?? null,
+    creditCost,
+    estimatedCredits,
+    chargedAmount: 0,
+    balanceAfter: null,
+    estimatedCost: { currency: "USD", total: 0, estimatedUsd },
   };
 }

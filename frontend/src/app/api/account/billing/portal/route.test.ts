@@ -61,11 +61,53 @@ describe("POST /api/account/billing/portal", () => {
     });
   });
 
+  it("returns a clear error when provider portal setup lacks a customer id", async () => {
+    vi.mocked(authService.getSessionUser).mockResolvedValueOnce({
+      id: "user_1",
+      email: "buyer@example.com",
+      displayName: "Buyer",
+      role: "user",
+      tier: "pro",
+      features: ["bid_search", "submission_guidance"],
+    });
+    vi.mocked(billingService.createCustomerPortalSession).mockImplementationOnce(() => {
+      throw new billingService.InvalidSubscriptionInputError("Provider customer id is required for billing portal");
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/account/billing/portal", {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE_NAME}=sess_valid` },
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("INVALID_REQUEST");
+    expect(body.error.message).toContain("Provider customer id");
+  });
+
   it("requires authentication", async () => {
     const response = await POST(new Request("http://localhost/api/account/billing/portal", { method: "POST" }));
     const body = await response.json();
 
     expect(response.status).toBe(401);
     expect(body.error.code).toBe("AUTH_REQUIRED");
+  });
+
+  it("rejects stale session cookies", async () => {
+    vi.mocked(authService.getSessionUser).mockResolvedValueOnce(null);
+
+    const response = await POST(
+      new Request("http://localhost/api/account/billing/portal", {
+        method: "POST",
+        headers: { cookie: `${SESSION_COOKIE_NAME}=sess_stale` },
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(401);
+    expect(body.error.code).toBe("AUTH_REQUIRED");
+    expect(billingService.createCustomerPortalSession).not.toHaveBeenCalled();
   });
 });

@@ -85,7 +85,12 @@ STATE_SOURCE_DEFINITIONS = (
     ("MA", "ma_state_procurement", "Massachusetts COMMBUYS", "https://www.commbuys.com"),
     ("MI", "mi_state_procurement", "Michigan State Procurement", "https://www.michigan.gov/dtmb/procurement"),
     ("MN", "mn_state_procurement", "Minnesota State Procurement", "https://mn.gov/admin/osp"),
-    ("MS", "ms_state_procurement", "Mississippi State Procurement", "https://www.dfa.ms.gov/procurement"),
+    (
+        "MS",
+        "ms_state_procurement",
+        "Mississippi State Procurement",
+        "https://www.ms.gov/dfa/contract_bid_search/Bid?autoloadGrid=true",
+    ),
     ("MO", "mo_state_procurement", "Missouri State Procurement", "https://oa.mo.gov/purchasing"),
     ("MT", "mt_state_procurement", "Montana State Procurement", "https://spb.mt.gov"),
     ("NE", "ne_state_procurement", "Nebraska State Procurement", "https://das.nebraska.gov/materiel/purchasing"),

@@ -1,4 +1,5 @@
 import type { Bid } from "@/server/bids/domain";
+import type { AiRunMetadata } from "@/server/ai/run-metadata";
 import type { BidMatchResult } from "@/server/match/types";
 
 export const INTENT_STATUSES = [
@@ -19,6 +20,7 @@ export interface GeneratedIntentContent {
   };
   initialChecklist: string[];
   riskFlags: string[];
+  aiRun?: AiRunMetadata;
 }
 
 export interface IntentSummary {
@@ -46,6 +48,7 @@ export interface IntentApiErrorResponse {
   error: {
     code:
       | "BID_NOT_FOUND"
+      | "AUTH_REQUIRED"
       | "FEATURE_NOT_AVAILABLE"
       | "INTENT_NOT_FOUND"
       | "INVALID_REQUEST"

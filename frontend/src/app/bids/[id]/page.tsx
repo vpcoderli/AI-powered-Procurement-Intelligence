@@ -3,6 +3,7 @@
 import { cloneElement, isValidElement, useEffect, useRef, useState, type ComponentProps, type ReactElement } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { useAuth } from "@/context/AuthContext";
 import { useSavedBids } from "@/context/SavedBidsContext";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { Button as BaseButton, buttonVariants } from "@/components/ui/button";
@@ -33,12 +34,19 @@ import {
   CheckCircle2,
   Loader2,
   Sparkles,
+  LogIn,
+  UserPlus,
 } from "lucide-react";
 
 const ADD_TO_INTENT_FALLBACK = "Add to Intent";
 
 type ButtonProps = ComponentProps<typeof BaseButton> & {
   asChild?: boolean;
+};
+
+type DetailAttachment = Bid["attachments"][number] & {
+  checksumSha256?: string;
+  originalUrl?: string;
 };
 
 function Button({ asChild, children, className, variant, size, ...props }: ButtonProps) {
@@ -64,18 +72,44 @@ function scoreTone(score: number) {
   return "text-slate-600 bg-slate-50 border-slate-200";
 }
 
-function archiveTone(status: string | undefined) {
-  if (status === "archived") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+function attachmentIsArchivedOpenable(file: DetailAttachment) {
+  return (
+    file.archiveStatus === "archived" &&
+    Boolean(file.storagePath?.trim()) &&
+    Boolean(file.checksumSha256?.trim())
+  );
+}
+
+function archiveTone(status: string | undefined, isArchivedOpenable = false) {
+  if (isArchivedOpenable) return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "archived") return "border-amber-200 bg-amber-50 text-amber-700";
   if (status === "failed") return "border-rose-200 bg-rose-50 text-rose-700";
   if (status === "unavailable") return "border-amber-200 bg-amber-50 text-amber-700";
   return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
-function archiveLabelKey(status: string | undefined) {
+function archiveLabelKey(file: DetailAttachment) {
+  const status = file.archiveStatus;
+
+  if (attachmentIsArchivedOpenable(file)) return "detail.archiveStatus_archivedOpenable";
   if (status === "archived") return "detail.archiveStatus_archived";
   if (status === "failed") return "detail.archiveStatus_failed";
   if (status === "unavailable") return "detail.archiveStatus_unavailable";
-  return "detail.archiveStatus_not_archived";
+  return "detail.archiveStatus_sourceDownloadNote";
+}
+
+function attachmentStatusDescriptionKey(file: DetailAttachment) {
+  if (attachmentIsArchivedOpenable(file)) return "detail.attachmentArchivedOpenableDescription";
+  if (file.archiveStatus === "failed") return "detail.attachmentFailedDescription";
+  if (file.archiveStatus === "archived") return "detail.attachmentArchivedStatusDescription";
+  return "detail.attachmentSourceNoteDescription";
+}
+
+function attachmentActionLabelKey(file: DetailAttachment) {
+  if (attachmentIsArchivedOpenable(file)) return "detail.openArchivedAttachment";
+  if (file.archiveStatus === "failed") return "detail.openArchiveStatusNote";
+  if (file.archiveStatus === "archived") return "detail.openAttachmentViaWinBids";
+  return "detail.openSourceDownloadNote";
 }
 
 function fallbackLabel(label: string, key: string, fallback: string) {
@@ -86,9 +120,14 @@ function isUsageLimitError(error: Error | null) {
   return error instanceof ApiError && error.code === "USAGE_LIMIT_REACHED";
 }
 
+function isAuthRequiredError(error: Error | null) {
+  return error instanceof ApiError && error.code === "AUTH_REQUIRED";
+}
+
 export default function BidDetailsPage() {
   const params = useParams();
   const router = useRouter();
+  const { user, isLoading: isAuthLoading } = useAuth();
   const { isSaved, toggleSaveBid } = useSavedBids();
   const { t } = useLanguage();
   const mountedRef = useRef(true);
@@ -101,6 +140,7 @@ export default function BidDetailsPage() {
   const [isCreatingIntent, setIsCreatingIntent] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [pursuitError, setPursuitError] = useState<Error | null>(null);
+  const [saveAuthPromptVisible, setSaveAuthPromptVisible] = useState(false);
   
   // Handling the id parameter unwrapping per Next.js 15+ patterns if needed,
   // but for simple client components useParams() is fine.
@@ -108,9 +148,12 @@ export default function BidDetailsPage() {
   const bidId = rawBidId ? bidIdFromRouteParam(rawBidId) : '';
   
   const saved = isSaved(bidId);
+  const canCreateIntent = Boolean(user);
   const addToIntentLabel = fallbackLabel(t("detail.pursuitAddToIntent"), "detail.pursuitAddToIntent", ADD_TO_INTENT_FALLBACK);
   const pursuitMessage = pursuitError
-    ? isUsageLimitError(pursuitError)
+    ? isAuthRequiredError(pursuitError)
+      ? t("detail.pursuitAuthRequired")
+      : isUsageLimitError(pursuitError)
       ? t("detail.intentLimitReached")
       : t("detail.pursuitError")
     : intent
@@ -173,7 +216,7 @@ export default function BidDetailsPage() {
   }, [bidId]);
 
   const handleCreateIntent = async () => {
-    if (!bidId || isCreatingIntent) return;
+    if (!bidId || isCreatingIntent || !canCreateIntent) return;
 
     const requestedBidId = bidId;
     const requestId = createIntentRequestRef.current + 1;
@@ -213,6 +256,17 @@ export default function BidDetailsPage() {
         setIsCreatingIntent(false);
       }
     }
+  };
+
+  const handleToggleSave = () => {
+    if (isAuthLoading) return;
+
+    if (!user) {
+      setSaveAuthPromptVisible(true);
+      return;
+    }
+
+    void toggleSaveBid(bidId);
   };
 
   if (isLoading) {
@@ -288,61 +342,81 @@ export default function BidDetailsPage() {
   return (
     <div className="winbids-detail-workspace">
       {/* Header Actions */}
-      <div className="flex items-center justify-between">
-        <Button variant="ghost" onClick={() => router.back()} className="-ml-4 text-slate-500 hover:text-slate-900 font-medium">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <Button variant="ghost" onClick={() => router.back()} className="-ml-2 w-full justify-start text-slate-500 hover:text-slate-900 font-medium sm:-ml-4 sm:w-auto">
           <ArrowLeft className="mr-2 h-4 w-4" /> {t("detail.backToResults")}
         </Button>
-        <div className="flex items-center gap-3">
-          <Button variant="outline" onClick={() => toggleSaveBid(bidId)} className="border-slate-200 hover:bg-slate-50 text-slate-700">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3">
+          <Button
+            variant="outline"
+            onClick={handleToggleSave}
+            disabled={isAuthLoading}
+            className="w-full sm:w-auto justify-center whitespace-normal border-slate-200 text-slate-700 hover:bg-slate-50"
+          >
             <Star className={`mr-2 h-4 w-4 ${saved ? 'fill-slate-900 text-slate-900' : 'text-slate-400'}`} />
             {saved ? t("bid.saved") : t("bid.save")}
           </Button>
-          <Button asChild className="bg-slate-900 hover:bg-slate-800 text-white shadow-sm transition-all">
-            <a href={bid.sourceUrl} target="_blank" rel="noreferrer">
+          <Button asChild className="w-full sm:w-auto justify-center whitespace-normal bg-slate-900 text-white shadow-sm transition-all hover:bg-slate-800">
+            <a href={bid.sourceUrl} target="_blank" rel="noreferrer" className="break-all">
               <ExternalLink className="mr-2 h-4 w-4" /> {t("detail.viewSource")}
             </a>
           </Button>
         </div>
       </div>
 
+      {saveAuthPromptVisible && !user ? (
+        <UniversalState
+          actions={[
+            { href: "/login", label: t("detail.pursuitSignIn") },
+            { href: "/register", label: t("detail.pursuitRegister"), variant: "secondary" },
+            { label: t("common.dismiss"), onClick: () => setSaveAuthPromptVisible(false), variant: "secondary" },
+          ]}
+          className="border-blue-100 bg-blue-50/60"
+          code="permission_denied"
+          message={t("detail.saveAuthDescription")}
+          severity="info"
+          title={t("detail.saveAuthTitle")}
+        />
+      ) : null}
+
       {/* Title & Badge */}
       <section className="winbids-hero-panel flex flex-col gap-4">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Badge variant="outline" className="rounded-md font-medium border-slate-200 text-slate-600 bg-slate-50 px-2.5 py-1">
             {bid.source}
           </Badge>
-          <span className="text-sm font-medium text-slate-500 flex items-center gap-1.5 uppercase tracking-wider">
+          <span className="flex min-w-0 items-center gap-1.5 break-words text-sm font-medium uppercase text-slate-500">
             <Building2 size={14} className="text-slate-400" /> {bid.issuerName}
           </span>
         </div>
-        <h1 className="winbids-title">{bid.title}</h1>
+        <h1 className="winbids-title break-words">{bid.title}</h1>
       </section>
 
       {/* Metadata Grid (Receipt Style) */}
-      <div className="winbids-panel grid grid-cols-2 md:grid-cols-4 gap-6">
-        <div className="flex flex-col gap-1.5">
+      <div className="winbids-panel grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-6">
+        <div className="min-w-0 flex flex-col gap-1.5">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
             <Building2 size={14}/> {t("bid.issuerType")}
           </span>
-          <span className="font-medium text-slate-900 text-lg">{bid.issuerType === 'federal' ? t("dashboard.federal") : t("dashboard.state")}</span>
+          <span className="break-words font-medium text-slate-900 text-lg">{bid.issuerType === 'federal' ? t("dashboard.federal") : t("dashboard.state")}</span>
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div className="min-w-0 flex flex-col gap-1.5">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
             <Calendar size={14}/> {t("dashboard.publishedDate")}
           </span>
-          <span className="font-medium text-slate-900 text-lg">{bid.publishedDate}</span>
+          <span className="break-words font-medium text-slate-900 text-lg">{bid.publishedDate}</span>
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div className="min-w-0 flex flex-col gap-1.5">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
             <Clock size={14}/> {t("bid.deadline")}
           </span>
-          <span className="font-medium text-slate-900 text-lg">{bid.deadlineDate}</span>
+          <span className="break-words font-medium text-slate-900 text-lg">{bid.deadlineDate}</span>
         </div>
-        <div className="flex flex-col gap-1.5">
+        <div className="min-w-0 flex flex-col gap-1.5">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
             <FileText size={14}/> {t("detail.estimatedValue")}
           </span>
-          <span className="font-semibold text-slate-900 text-lg">{bid.amount || '—'}</span>
+          <span className="break-words font-semibold text-slate-900 text-lg">{bid.amount || '—'}</span>
         </div>
       </div>
 
@@ -439,11 +513,29 @@ export default function BidDetailsPage() {
                         <ExternalLink className="mr-2 h-4 w-4" /> {t("detail.openIntent")}
                       </Link>
                     </Button>
-                  ) : (
-                    <Button onClick={() => void handleCreateIntent()} disabled={isCreatingIntent} className="bg-slate-900 hover:bg-slate-800 text-white shadow-sm">
+                  ) : canCreateIntent ? (
+                    <Button onClick={() => void handleCreateIntent()} disabled={isCreatingIntent || isAuthLoading} className="bg-slate-900 hover:bg-slate-800 text-white shadow-sm">
                       {isCreatingIntent ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Target className="mr-2 h-4 w-4" />}
                       {isCreatingIntent ? t("detail.creatingIntent") : addToIntentLabel}
                     </Button>
+                  ) : (
+                    <div className="flex w-full flex-col gap-3 sm:w-auto sm:items-end">
+                      <p className="text-sm font-medium text-slate-600">
+                        {isAuthLoading ? t("detail.pursuitAuthLoading") : t("detail.pursuitAuthRequired")}
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button asChild className="bg-slate-900 hover:bg-slate-800 text-white shadow-sm">
+                          <Link href="/login">
+                            <LogIn className="mr-2 h-4 w-4" /> {t("detail.pursuitSignIn")}
+                          </Link>
+                        </Button>
+                        <Button asChild variant="outline" className="border-slate-200 bg-white text-slate-700 hover:bg-slate-50">
+                          <Link href="/register">
+                            <UserPlus className="mr-2 h-4 w-4" /> {t("detail.pursuitRegister")}
+                          </Link>
+                        </Button>
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
@@ -522,19 +614,19 @@ export default function BidDetailsPage() {
         </CardHeader>
         <CardContent className="p-6 bg-slate-50/50">
           <div className="grid gap-4 md:grid-cols-3">
-            <div className="flex flex-col gap-1.5">
+            <div className="min-w-0 flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{t("bid.contact")}</span>
-              <span className="font-medium text-slate-900">{bid.contactName}</span>
+              <span className="break-words font-medium text-slate-900">{bid.contactName}</span>
             </div>
-            <div className="flex flex-col gap-1.5">
+            <div className="min-w-0 flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{t("bid.email")}</span>
-              <a href={`mailto:${bid.contactEmail}`} className="font-medium text-slate-900 hover:text-slate-600">
+              <a href={`mailto:${bid.contactEmail}`} className="break-all font-medium text-slate-900 hover:text-slate-600">
                 {bid.contactEmail}
               </a>
             </div>
-            <div className="flex flex-col gap-1.5">
+            <div className="min-w-0 flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{t("bid.phone")}</span>
-              <a href={`tel:${bid.contactPhone}`} className="font-medium text-slate-900 hover:text-slate-600">
+              <a href={`tel:${bid.contactPhone}`} className="break-words font-medium text-slate-900 hover:text-slate-600">
                 {bid.contactPhone}
               </a>
             </div>
@@ -553,29 +645,32 @@ export default function BidDetailsPage() {
           {bid.attachments && bid.attachments.length > 0 ? (
             <ul className="flex flex-col gap-3">
               {bid.attachments.map((file, idx) => (
-                <li key={idx} className="flex items-center justify-between p-4 bg-white border border-slate-200 rounded-lg hover:border-slate-300 hover:shadow-sm transition-all group">
-                  <div className="flex items-center gap-4">
-                    <div className="p-2.5 bg-slate-100 text-slate-600 rounded-md group-hover:bg-slate-900 group-hover:text-white transition-colors">
+                <li key={idx} className="flex flex-col gap-3 p-4 bg-white border border-slate-200 rounded-lg hover:border-slate-300 hover:shadow-sm transition-all group sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex min-w-0 items-start gap-4">
+                    <div className="shrink-0 p-2.5 bg-slate-100 text-slate-600 rounded-md group-hover:bg-slate-900 group-hover:text-white transition-colors">
                       <FileText size={20} />
                     </div>
-                    <div className="flex flex-col">
-                      <span className="font-medium text-sm text-slate-900">{file.name}</span>
+                    <div className="min-w-0 flex flex-col">
+                      <span className="break-words font-medium text-sm text-slate-900">{file.name}</span>
                       <div className="mt-1 flex flex-wrap items-center gap-2">
                         <span className="text-xs font-medium text-slate-500">{file.size}</span>
-                        <Badge variant="outline" className={cn("h-5 rounded-md px-1.5 text-[11px]", archiveTone(file.archiveStatus))}>
-                          {t(archiveLabelKey(file.archiveStatus))}
+                        <Badge variant="outline" className={cn("h-5 rounded-md px-1.5 text-[11px]", archiveTone(file.archiveStatus, attachmentIsArchivedOpenable(file)))}>
+                          {t(archiveLabelKey(file))}
                         </Badge>
                       </div>
+                      <span className="mt-1 max-w-full break-words text-xs leading-5 text-slate-500">
+                        {t(attachmentStatusDescriptionKey(file))}
+                      </span>
                       {file.archiveError && (
-                        <span className="mt-1 max-w-md truncate text-xs text-rose-700" title={file.archiveError}>
+                        <span className="mt-1 max-w-full break-words text-xs text-rose-700" title={file.archiveError}>
                           {t("detail.archiveError")}: {file.archiveError}
                         </span>
                       )}
                     </div>
                   </div>
-                  <Button asChild variant="ghost" size="sm" className="text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium">
-                    <a href={file.url} target="_blank" rel="noreferrer">
-                      <Download size={16} className="mr-2" /> {t("detail.download")}
+                  <Button asChild variant="ghost" size="sm" className="w-full sm:w-auto justify-center whitespace-normal text-slate-600 hover:text-slate-900 hover:bg-slate-100 font-medium">
+                    <a href={file.url} target="_blank" rel="noreferrer" className="break-all">
+                      <Download size={16} className="mr-2" /> {t(attachmentActionLabelKey(file))}
                     </a>
                   </Button>
                 </li>

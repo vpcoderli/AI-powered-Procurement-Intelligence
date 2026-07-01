@@ -3,6 +3,7 @@ import type { AppDatabase } from "@/server/db/client";
 import { listWorkspaceMemberUserIds } from "@/server/account/workspace";
 import { listMysqlWorkspaceMemberUserIds } from "@/server/account/mysql-workspace";
 import { ensureUser, ensureUserFromMysql, getBidByIdFromMysql, getBidByIdFromRepository } from "@/server/bids/repository";
+import { createDeterministicAiRunMetadata } from "@/server/ai/run-metadata";
 import { calculateBidMatch } from "@/server/match/service";
 import type { BidMatchResult } from "@/server/match/types";
 import { getSupplierProfile } from "@/server/profile/service";
@@ -51,6 +52,15 @@ function parseJsonField<T>(value: string, field: string): T {
   }
 }
 
+function createHydratedIntentAiRun(match: BidMatchResult) {
+  return createDeterministicAiRunMetadata({
+    action: "intent_brief",
+    promptVersion: "intent-brief-lite@2026-06-10",
+    confidence: match.confidence,
+    fallbackReason: "no_llm_provider_configured",
+  });
+}
+
 interface MysqlIntentRow {
   id: string;
   userId: string;
@@ -72,6 +82,8 @@ async function hydrateIntent(db: AppDatabase, row: IntentRow): Promise<IntentDet
     throw new IntentBidNotFoundError();
   }
 
+  const match = parseJsonField<BidMatchResult>(row.matchScoreSnapshotJson, "matchScoreSnapshotJson");
+
   return {
     id: row.id,
     userId: row.userId,
@@ -88,8 +100,9 @@ async function hydrateIntent(db: AppDatabase, row: IntentRow): Promise<IntentDet
         "initialChecklistJson",
       ),
       riskFlags: parseJsonField<string[]>(row.riskFlagsJson, "riskFlagsJson"),
+      aiRun: createHydratedIntentAiRun(match),
     },
-    match: parseJsonField<BidMatchResult>(row.matchScoreSnapshotJson, "matchScoreSnapshotJson"),
+    match,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -102,6 +115,8 @@ async function hydrateMysqlIntent(mysql: ReturnType<typeof resolveMysqlPool>, ro
     throw new IntentBidNotFoundError();
   }
 
+  const match = parseJsonField<BidMatchResult>(row.matchScoreSnapshotJson, "matchScoreSnapshotJson");
+
   return {
     id: row.id,
     userId: row.userId,
@@ -112,8 +127,9 @@ async function hydrateMysqlIntent(mysql: ReturnType<typeof resolveMysqlPool>, ro
       keyDates: parseJsonField<GeneratedIntentContent["keyDates"]>(row.keyDatesJson, "keyDatesJson"),
       initialChecklist: parseJsonField<string[]>(row.initialChecklistJson, "initialChecklistJson"),
       riskFlags: parseJsonField<string[]>(row.riskFlagsJson, "riskFlagsJson"),
+      aiRun: createHydratedIntentAiRun(match),
     },
-    match: parseJsonField<BidMatchResult>(row.matchScoreSnapshotJson, "matchScoreSnapshotJson"),
+    match,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };

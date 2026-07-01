@@ -86,6 +86,11 @@ export interface AdminDataSource {
   sourceOwner: string;
   approvalNotes: string | null;
   lastApprovalReviewedAt: string | null;
+  liveHealthOwner: string | null;
+  liveHealthDisposition: string | null;
+  liveHealthNextReviewAt: string | null;
+  liveHealthNotes: string | null;
+  liveHealthReviewedAt: string | null;
   createdAt: string;
   updatedAt: string;
   latestLog: AdminCrawlerLog | null;
@@ -131,6 +136,9 @@ export interface AdminLiveSourceHealth {
   errorCode: string | null;
   errorMessage: string | null;
   error: string | null;
+  classification: string | null;
+  reason: string | null;
+  evidenceSnippets: string[];
   latencyMs: number | null;
   url: string | null;
   operationalSeverity: string | null;
@@ -180,6 +188,11 @@ export interface UpdateAdminDataSourceInput {
   approvalStatus?: SourceApprovalStatus;
   legalReviewStatus?: SourceLegalReviewStatus;
   approvalNotes?: string | null;
+  liveHealthOwner?: string | null;
+  liveHealthDisposition?: string | null;
+  liveHealthNextReviewAt?: string | null;
+  liveHealthNotes?: string | null;
+  liveHealthReviewedAt?: string | null;
 }
 
 export interface UpdateAdminDataSourceOptions {
@@ -189,6 +202,25 @@ export interface UpdateAdminDataSourceOptions {
 const CRAWLER_LOG_SOURCE_BY_STATE = STATE_CRAWLER_SOURCE_IDS_BY_STATE;
 
 type SourceApprovalEventRow = typeof sourceApprovalEvents.$inferSelect;
+
+function redactLiveHealthNotes(value: string | null) {
+  if (value === null) return null;
+
+  return value.replace(
+    /\b(password|token|secret|api[_-]?key|api[_-]?token|access[_-]?token|refresh[_-]?token)\b(\s*[:=]\s*)([^\s;,]+)/gi,
+    (_match, key: string, separator: string) => `${key}${separator}[REDACTED]`,
+  );
+}
+
+function hasLiveHealthTriageUpdate(input: UpdateAdminDataSourceInput) {
+  return (
+    input.liveHealthOwner !== undefined ||
+    input.liveHealthDisposition !== undefined ||
+    input.liveHealthNextReviewAt !== undefined ||
+    input.liveHealthNotes !== undefined ||
+    input.liveHealthReviewedAt !== undefined
+  );
+}
 
 function crawlerLogKeysForSource(source: typeof dataSources.$inferSelect) {
   return [CRAWLER_LOG_SOURCE_BY_STATE[source.stateCode], source.label, source.id].filter(
@@ -268,6 +300,9 @@ function latestLiveHealthForSource(
         errorCode: health.result.errorCode,
         errorMessage: error,
         error,
+        classification: latestHealthStringField(health.result, "classification"),
+        reason: latestHealthStringField(health.result, "reason"),
+        evidenceSnippets: latestHealthStringArrayField(health.result, "evidenceSnippets"),
         latencyMs: latestHealthLatencyMs(health.result),
         url: health.result.url,
         operationalSeverity: latestHealthStringField(health.result, "operationalSeverity"),
@@ -308,6 +343,11 @@ function latestHealthNumberField(result: LatestLiveSourceHealth["result"], key: 
 function latestHealthStringField(result: LatestLiveSourceHealth["result"], key: string) {
   const value = (result as unknown as Record<string, unknown>)[key];
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function latestHealthStringArrayField(result: LatestLiveSourceHealth["result"], key: string) {
+  const value = (result as unknown as Record<string, unknown>)[key];
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 function latestHealthStatusCode(result: LatestLiveSourceHealth["result"]) {
@@ -509,6 +549,11 @@ function toAdminSource(
     sourceOwner: row.sourceOwner ?? defaultGovernance.sourceOwner,
     approvalNotes: row.approvalNotes ?? defaultGovernance.approvalNotes,
     lastApprovalReviewedAt: row.lastApprovalReviewedAt ?? defaultGovernance.lastApprovalReviewedAt,
+    liveHealthOwner: row.liveHealthOwner,
+    liveHealthDisposition: row.liveHealthDisposition,
+    liveHealthNextReviewAt: row.liveHealthNextReviewAt,
+    liveHealthNotes: row.liveHealthNotes,
+    liveHealthReviewedAt: row.liveHealthReviewedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     latestLog,
@@ -548,6 +593,11 @@ function dataSourceSelectSql(where = "") {
       source_owner AS sourceOwner,
       approval_notes AS approvalNotes,
       last_approval_reviewed_at AS lastApprovalReviewedAt,
+      live_health_owner AS liveHealthOwner,
+      live_health_disposition AS liveHealthDisposition,
+      live_health_next_review_at AS liveHealthNextReviewAt,
+      live_health_notes AS liveHealthNotes,
+      live_health_reviewed_at AS liveHealthReviewedAt,
       last_success_at AS lastSuccessAt,
       last_failure_at AS lastFailureAt,
       consecutive_failures AS consecutiveFailures,
@@ -664,6 +714,12 @@ export async function updateAdminDataSource(
   const updatedAt = new Date().toISOString();
   const previousSource = toAdminSource(existing, null);
   const lastApprovalReviewedAt = hasGovernanceUpdate(input) ? updatedAt : existing.lastApprovalReviewedAt;
+  const liveHealthReviewedAt =
+    input.liveHealthReviewedAt !== undefined
+      ? input.liveHealthReviewedAt
+      : hasLiveHealthTriageUpdate(input)
+        ? updatedAt
+        : existing.liveHealthReviewedAt;
   db.update(dataSources)
     .set({
       ...(input.isEnabled !== undefined ? { isEnabled: input.isEnabled ? 1 : 0 } : {}),
@@ -673,6 +729,11 @@ export async function updateAdminDataSource(
       ...(input.approvalStatus !== undefined ? { approvalStatus: input.approvalStatus } : {}),
       ...(input.legalReviewStatus !== undefined ? { legalReviewStatus: input.legalReviewStatus } : {}),
       ...(input.approvalNotes !== undefined ? { approvalNotes: input.approvalNotes } : {}),
+      ...(input.liveHealthOwner !== undefined ? { liveHealthOwner: input.liveHealthOwner } : {}),
+      ...(input.liveHealthDisposition !== undefined ? { liveHealthDisposition: input.liveHealthDisposition } : {}),
+      ...(input.liveHealthNextReviewAt !== undefined ? { liveHealthNextReviewAt: input.liveHealthNextReviewAt } : {}),
+      ...(input.liveHealthNotes !== undefined ? { liveHealthNotes: redactLiveHealthNotes(input.liveHealthNotes) } : {}),
+      ...(hasLiveHealthTriageUpdate(input) ? { liveHealthReviewedAt } : {}),
       lastApprovalReviewedAt,
       updatedAt,
     })
@@ -750,6 +811,26 @@ export async function updateAdminDataSourceFromMysql(
   if (input.approvalNotes !== undefined) {
     fields.push("approval_notes = ?");
     values.push(input.approvalNotes);
+  }
+  if (input.liveHealthOwner !== undefined) {
+    fields.push("live_health_owner = ?");
+    values.push(input.liveHealthOwner);
+  }
+  if (input.liveHealthDisposition !== undefined) {
+    fields.push("live_health_disposition = ?");
+    values.push(input.liveHealthDisposition);
+  }
+  if (input.liveHealthNextReviewAt !== undefined) {
+    fields.push("live_health_next_review_at = ?");
+    values.push(input.liveHealthNextReviewAt);
+  }
+  if (input.liveHealthNotes !== undefined) {
+    fields.push("live_health_notes = ?");
+    values.push(redactLiveHealthNotes(input.liveHealthNotes));
+  }
+  if (hasLiveHealthTriageUpdate(input)) {
+    fields.push("live_health_reviewed_at = ?");
+    values.push(input.liveHealthReviewedAt !== undefined ? input.liveHealthReviewedAt : updatedAt);
   }
   if (hasGovernanceUpdate(input)) {
     fields.push("last_approval_reviewed_at = ?");

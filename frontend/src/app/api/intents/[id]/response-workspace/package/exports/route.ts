@@ -8,7 +8,10 @@ import {
   createResponsePackageExport,
   ResponseWorkspaceValidationError,
 } from "@/server/response-workspace/service";
-import type { CreateResponsePackageExportInput } from "@/server/response-workspace/types";
+import {
+  isResponsePackageExportFormat,
+  type CreateResponsePackageExportInput,
+} from "@/server/response-workspace/types";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -33,7 +36,12 @@ function parseCreateExport(body: unknown): CreateResponsePackageExportInput | nu
   const source = body as Record<string, unknown>;
 
   if (typeof source.snapshotId !== "string" || !source.snapshotId.trim()) return null;
-  return { snapshotId: source.snapshotId };
+  if (source.format !== undefined && !isResponsePackageExportFormat(source.format)) return null;
+
+  return {
+    snapshotId: source.snapshotId,
+    ...(source.format ? { format: source.format } : {}),
+  };
 }
 
 export async function POST(request: Request, context: RouteContext) {

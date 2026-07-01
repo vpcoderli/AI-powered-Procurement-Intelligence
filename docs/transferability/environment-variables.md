@@ -31,6 +31,21 @@ rg -n "sk_live_|whsec_|secret|password|token" docs frontend/.env.local 2>/dev/nu
 | `CRAWLER_RUN_TOKEN` | Optional local token for protected crawler run APIs. | Required if crawler run APIs are exposed; store in secret manager. |
 | `CRAWLER_ATTACHMENT_DIR` | Optional local attachment path. | Persistent storage path or object storage handoff. |
 
+## Object Storage
+
+| Variable | Local boundary | Production boundary |
+|---|---|---|
+| `OBJECT_STORAGE_PROVIDER` | Defaults to `local`; set `s3` only for integration testing with a safe bucket. | Set to `s3`; production/staging preflight rejects local storage unless `PRODUCTION_ALLOW_LOCAL_OBJECT_STORAGE=1` is explicitly documented. |
+| `OBJECT_STORAGE_LOCAL_ROOT` | Optional local directory; defaults to `frontend/data/object-storage`. | Not suitable for normal production storage. |
+| `OBJECT_STORAGE_BUCKET` | Placeholder or test bucket when `OBJECT_STORAGE_PROVIDER=s3`. | Required S3 bucket name. |
+| `OBJECT_STORAGE_REGION` | Placeholder or test region when `OBJECT_STORAGE_PROVIDER=s3`. | Required bucket region. |
+| `OBJECT_STORAGE_BASE_URL` | Example: `https://s3.us-east-1.amazonaws.com` or a test S3-compatible endpoint. | Required S3/S3-compatible endpoint base URL. |
+| `OBJECT_STORAGE_CREDENTIALS_REF` | Placeholder reference only, for example `aws-secrets-manager:dev/object-storage`. | Required secret-manager reference; this value is printed only as `configured` by preflight. |
+| `OBJECT_STORAGE_ACCESS_KEY_ID` | Test/integration credential only; do not commit. | Inject from Secrets Manager/SSM or the approved runtime secret source. |
+| `OBJECT_STORAGE_SECRET_ACCESS_KEY` | Test/integration credential only; do not commit. | Inject from Secrets Manager/SSM or the approved runtime secret source. |
+| `OBJECT_STORAGE_SESSION_TOKEN` | Optional temporary test token. | Optional temporary credential token when the runtime uses session credentials. |
+| `PRODUCTION_ALLOW_LOCAL_OBJECT_STORAGE` | Usually unset. | Emergency/documented override only; not a substitute for S3 production storage. |
+
 ## Billing
 
 | Variable | Local boundary | Production boundary |
@@ -91,3 +106,42 @@ STATE_CRAWLER_LIMIT=5 npm run crawler:once
 ## Secret Handling Rule
 
 Use placeholders such as `REPLACE_ME`, `sk_test_REPLACE_ME`, or `whsec_REPLACE_ME` in docs. Real values belong in the deployment platform secret manager or AWS Secrets Manager.
+
+## AWS Runtime Notes
+
+For AWS deployment, store production values in AWS Secrets Manager or SSM Parameter Store and reference them from App Runner, ECS task definitions, or the deploy job. Do not put these values in `.env.local`:
+
+```bash
+DATABASE_URL
+STRIPE_SECRET_KEY
+STRIPE_WEBHOOK_SECRET
+STRIPE_PRICE_PRO_MONTHLY
+STRIPE_PRICE_BUSINESS_MONTHLY
+NOTIFICATION_HTTP_TOKEN
+SAM_API_KEY
+CRAWLER_RUN_TOKEN
+OBJECT_STORAGE_ACCESS_KEY_ID
+OBJECT_STORAGE_SECRET_ACCESS_KEY
+OBJECT_STORAGE_SESSION_TOKEN
+```
+
+For App Runner first web release:
+
+```bash
+Build command: npm ci && npm run build
+Start command: npm run start -- -p 8080
+Service port: 8080
+```
+
+Do not define a custom App Runner variable named `PORT`; configure the service port and start command instead.
+
+Production must not set:
+
+```bash
+ADMIN_UI_LOCAL_BYPASS=true
+STRIPE_SECRET_KEY=sk_test_REPLACE_ME
+NOTIFICATION_PROVIDER=file
+NOTIFICATION_PROVIDER=console
+OBJECT_STORAGE_PROVIDER=local
+PRODUCTION_ALLOW_LOCAL_OBJECT_STORAGE=1
+```

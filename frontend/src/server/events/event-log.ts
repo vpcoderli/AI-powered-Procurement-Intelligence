@@ -67,6 +67,7 @@ export interface EventOutboxDeliveryOptions {
   now?: string;
   limit?: number;
   maxAttempts?: number;
+  destinations?: string[];
 }
 
 export interface EventOutboxDeliveryResult {
@@ -369,33 +370,48 @@ async function defaultEventOutboxHandler() {
 
 export function listDeliverableEventOutboxRows(
   db: AppDatabase,
-  options: Pick<EventOutboxDeliveryOptions, "limit" | "maxAttempts"> = {},
+  options: Pick<EventOutboxDeliveryOptions, "limit" | "maxAttempts" | "destinations"> = {},
 ) {
   const limit = Math.max(1, Math.min(options.limit ?? 100, 500));
   const maxAttempts = Math.max(1, options.maxAttempts ?? 3);
+  const destinations = [...new Set((options.destinations ?? []).map((destination) => destination.trim()).filter(Boolean))];
+  const destinationSql = destinations.length > 0
+    ? `AND destination IN (${destinations.map(() => "?").join(", ")})`
+    : "";
 
   return db.$client
     .prepare(`
       SELECT *
       FROM event_outbox
       WHERE status IN ('pending', 'failed')
+        ${destinationSql}
         AND attempt_count < ?
       ORDER BY created_at ASC, id ASC
       LIMIT ?
     `)
-    .all(maxAttempts, limit)
+    .all(...destinations, maxAttempts, limit)
     .map((row) => parseOutboxRow(row as Record<string, unknown>));
 }
 
 export async function listDeliverableEventOutboxRowsFromMysql(
   mysql: Pick<MysqlEventLogStore, "query">,
-  options: Pick<EventOutboxDeliveryOptions, "limit" | "maxAttempts"> = {},
+  options: Pick<EventOutboxDeliveryOptions, "limit" | "maxAttempts" | "destinations"> = {},
 ) {
   const limit = Math.max(1, Math.min(options.limit ?? 100, 500));
   const maxAttempts = Math.max(1, options.maxAttempts ?? 3);
+  const destinations = [...new Set((options.destinations ?? []).map((destination) => destination.trim()).filter(Boolean))];
+  const destinationSql = destinations.length > 0
+    ? `AND destination IN (${destinations.map(() => "?").join(", ")})`
+    : "";
   const rows = await mysqlSelectOne<{ candidateCount: number | string }>(
     mysql,
-    "SELECT COUNT(*) AS candidateCount FROM event_outbox WHERE status IN ('pending', 'failed')",
+    `
+      SELECT COUNT(*) AS candidateCount
+      FROM event_outbox
+      WHERE status IN ('pending', 'failed')
+        ${destinationSql}
+    `,
+    destinations,
   );
 
   const deliverableRows = await mysqlSelectMany<Record<string, unknown>>(
@@ -404,11 +420,12 @@ export async function listDeliverableEventOutboxRowsFromMysql(
       SELECT *
       FROM event_outbox
       WHERE status IN ('pending', 'failed')
+        ${destinationSql}
         AND attempt_count < ?
       ORDER BY created_at ASC, id ASC
       LIMIT ?
     `,
-    [maxAttempts, limit],
+    [...destinations, maxAttempts, limit],
   );
 
   return {
@@ -417,10 +434,19 @@ export async function listDeliverableEventOutboxRowsFromMysql(
   };
 }
 
-function countPendingEventOutboxRows(db: AppDatabase) {
+function countPendingEventOutboxRows(db: AppDatabase, options: Pick<EventOutboxDeliveryOptions, "destinations"> = {}) {
+  const destinations = [...new Set((options.destinations ?? []).map((destination) => destination.trim()).filter(Boolean))];
+  const destinationSql = destinations.length > 0
+    ? `AND destination IN (${destinations.map(() => "?").join(", ")})`
+    : "";
   const row = db.$client
-    .prepare("SELECT COUNT(*) AS candidateCount FROM event_outbox WHERE status IN ('pending', 'failed')")
-    .get() as { candidateCount?: number | string } | undefined;
+    .prepare(`
+      SELECT COUNT(*) AS candidateCount
+      FROM event_outbox
+      WHERE status IN ('pending', 'failed')
+        ${destinationSql}
+    `)
+    .get(...destinations) as { candidateCount?: number | string } | undefined;
 
   return Number(row?.candidateCount ?? 0);
 }
@@ -432,7 +458,7 @@ export async function deliverPendingEventOutboxRows(
 ): Promise<EventOutboxDeliveryResult> {
   const now = options.now ?? new Date().toISOString();
   const rows = listDeliverableEventOutboxRows(db, options);
-  const candidateCount = countPendingEventOutboxRows(db);
+  const candidateCount = countPendingEventOutboxRows(db, options);
   const result: EventOutboxDeliveryResult = { attempted: 0, delivered: 0, failed: 0, skipped: 0 };
 
   for (const row of rows) {

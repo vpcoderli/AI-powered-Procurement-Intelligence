@@ -168,6 +168,9 @@ describe("admin data sources repository", () => {
           statusText: "Service Unavailable",
           errorCode: "http_error",
           errorMessage: "HTTP 503 Service Unavailable",
+          classification: "http_error",
+          reason: "HTTP 503 Service Unavailable",
+          evidenceSnippets: ["HTTP 503 Service Unavailable"],
           latencyMs: 842,
           operationalSeverity: "warning",
           recommendedAction: "browser_or_access_review",
@@ -192,8 +195,11 @@ describe("admin data sources repository", () => {
             status: "unhealthy",
             httpStatus: 503,
             statusCode: 503,
+            classification: "http_error",
+            reason: "HTTP 503 Service Unavailable",
             error: "HTTP 503 Service Unavailable",
             errorMessage: "HTTP 503 Service Unavailable",
+            evidenceSnippets: ["HTTP 503 Service Unavailable"],
             latencyMs: 842,
             operationalSeverity: "warning",
             recommendedAction: "browser_or_access_review",
@@ -241,6 +247,49 @@ describe("admin data sources repository", () => {
       id: "sam_gov",
       isEnabled: false,
     });
+  });
+
+  it("records live source health triage fields and redacts credential-like notes", async () => {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id: "sam_gov",
+        label: "SAM.gov",
+        issuerType: "federal",
+        stateCode: "US",
+        isEnabled: 1,
+        cadence: "daily",
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+      .run();
+
+    await expect(
+      updateAdminDataSource(testDb.db, "sam_gov", {
+        liveHealthOwner: "ops@example.com",
+        liveHealthDisposition: "needs_manual_triage",
+        liveHealthNextReviewAt: "2026-06-15T00:00:00.000Z",
+        liveHealthNotes: "Portal returns 403; password=super-secret token: abc123 should not persist.",
+      }),
+    ).resolves.toMatchObject({
+      id: "sam_gov",
+      liveHealthOwner: "ops@example.com",
+      liveHealthDisposition: "needs_manual_triage",
+      liveHealthNextReviewAt: "2026-06-15T00:00:00.000Z",
+      liveHealthNotes: expect.stringContaining("password=[REDACTED]"),
+      liveHealthReviewedAt: expect.any(String),
+    });
+
+    const listed = await listAdminDataSources(testDb.db);
+    const source = listed.sources.find((item) => item.id === "sam_gov");
+    expect(source).toMatchObject({
+      liveHealthOwner: "ops@example.com",
+      liveHealthDisposition: "needs_manual_triage",
+      liveHealthNextReviewAt: "2026-06-15T00:00:00.000Z",
+      liveHealthReviewedAt: expect.any(String),
+    });
+    expect(source?.liveHealthNotes).not.toContain("super-secret");
+    expect(source?.liveHealthNotes).not.toContain("abc123");
   });
 
   it("maps state data source rows to crawler log source ids", async () => {
@@ -639,6 +688,11 @@ describe("admin data sources repository", () => {
         expect.objectContaining({
           id: "california_caleprocure",
           isEnabled: false,
+          liveHealthOwner: "ca-ops@example.com",
+          liveHealthDisposition: "blocked_by_403",
+          liveHealthNextReviewAt: "2026-06-20T00:00:00.000Z",
+          liveHealthNotes: "Needs proxy review.",
+          liveHealthReviewedAt: "2026-06-10T00:00:00.000Z",
           latestLog: null,
           crawlerSourceId: "ca_caleprocure",
           sourceAuthority: "official",
@@ -661,6 +715,21 @@ describe("admin data sources repository", () => {
       isEnabled: false,
     });
     expect(mysql.sources.find((source) => source.id === "sam_gov")?.isEnabled).toBe(0);
+
+    await expect(
+      updateAdminDataSourceFromMysql(mysql, "sam_gov", {
+        liveHealthOwner: "mysql-ops@example.com",
+        liveHealthDisposition: "reviewed_healthy",
+        liveHealthNotes: "Checked manually with api_token=live-secret.",
+        liveHealthReviewedAt: "2026-06-11T00:00:00.000Z",
+      }),
+    ).resolves.toMatchObject({
+      id: "sam_gov",
+      liveHealthOwner: "mysql-ops@example.com",
+      liveHealthDisposition: "reviewed_healthy",
+      liveHealthNotes: "Checked manually with api_token=[REDACTED]",
+      liveHealthReviewedAt: "2026-06-11T00:00:00.000Z",
+    });
   });
 });
 
@@ -694,6 +763,11 @@ function createFakeMysqlDataSourcesStore() {
       sourceOwner: null,
       approvalNotes: null,
       lastApprovalReviewedAt: null,
+      liveHealthOwner: "ca-ops@example.com",
+      liveHealthDisposition: "blocked_by_403",
+      liveHealthNextReviewAt: "2026-06-20T00:00:00.000Z",
+      liveHealthNotes: "Needs proxy review.",
+      liveHealthReviewedAt: "2026-06-10T00:00:00.000Z",
       lastSuccessAt: null,
       lastFailureAt: "2026-05-19T00:00:00.000Z",
       consecutiveFailures: 2,
@@ -728,6 +802,11 @@ function createFakeMysqlDataSourcesStore() {
       sourceOwner: null,
       approvalNotes: null,
       lastApprovalReviewedAt: null,
+      liveHealthOwner: null,
+      liveHealthDisposition: null,
+      liveHealthNextReviewAt: null,
+      liveHealthNotes: null,
+      liveHealthReviewedAt: null,
       lastSuccessAt: null,
       lastFailureAt: null,
       consecutiveFailures: 0,
@@ -774,10 +853,21 @@ function createFakeMysqlDataSourcesStore() {
     },
     async execute(sql: string, values: unknown[] = []) {
       if (sql.includes("UPDATE data_sources")) {
-        const source = sources.find((item) => item.id === values[2]);
+        const sourceId = String(values.at(-1));
+        const source = sources.find((item) => item.id === sourceId);
         if (!source) return [{ affectedRows: 0 }];
-        source.isEnabled = values[0] === 1 ? 1 : 0;
-        source.updatedAt = String(values[1]);
+        const assignments = sql.match(/SET ([\s\S]*?) WHERE id = \?/i)?.[1].split(",").map((item) => item.trim()) ?? [];
+        assignments.forEach((assignment, index) => {
+          const column = assignment.split("=")[0].trim();
+          const value = values[index];
+          if (column === "is_enabled") source.isEnabled = value === 1 ? 1 : 0;
+          if (column === "live_health_owner") source.liveHealthOwner = value as string | null;
+          if (column === "live_health_disposition") source.liveHealthDisposition = value as string | null;
+          if (column === "live_health_next_review_at") source.liveHealthNextReviewAt = value as string | null;
+          if (column === "live_health_notes") source.liveHealthNotes = value as string | null;
+          if (column === "live_health_reviewed_at") source.liveHealthReviewedAt = value as string | null;
+          if (column === "updated_at") source.updatedAt = String(value);
+        });
         return [{ affectedRows: 1 }];
       }
 

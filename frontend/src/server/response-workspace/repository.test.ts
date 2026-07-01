@@ -4,15 +4,20 @@ import {
   createResponseWorkspaceCommentRowFromMysql,
   createResponseWorkspaceItemRowsFromMysql,
   createResponsePackageExportRowFromMysql,
+  createResponsePackageExportReviewEventRowFromMysql,
   createResponsePackageSnapshotRowFromMysql,
   replaceResponseWorkspaceItemArtifactLinksFromMysql,
   findResponseWorkspaceItemRowFromMysql,
+  listResponsePackageArtifactFileRowsFromMysql,
   listResponseWorkspaceActivityRowsFromMysql,
   listResponseWorkspaceLinkedArtifactRowsFromMysql,
   listResponseWorkspaceCommentRowsFromMysql,
   listResponseWorkspaceItemRowsFromMysql,
   listResponsePackageSnapshotRowsFromMysql,
   listResponsePackageExportRowsFromMysql,
+  listResponsePackageExportReviewEventRowsFromMysql,
+  markResponsePackageExportDownloadedRowFromMysql,
+  updateResponsePackageExportReviewRowFromMysql,
   updateResponseWorkspaceItemRowFromMysql,
 } from "./repository";
 
@@ -23,14 +28,22 @@ describe("response workspace repository MySQL runtime", () => {
     const activity = new Map<string, Record<string, unknown>>();
     const snapshots = new Map<string, Record<string, unknown>>();
     const packageExports = new Map<string, Record<string, unknown>>();
+    const packageReviewEvents = new Map<string, Record<string, unknown>>();
     const artifacts = new Map<string, Record<string, unknown>>([
       ["artifact_1", {
         id: "artifact_1",
+        intentId: "intent_1",
+        userId: "user_1",
         itemId: "workspace_item_1",
         title: "Capability statement",
         artifactType: "capability_statement",
         purpose: "response_workspace",
         fileName: "capability.pdf",
+        contentType: "application/pdf",
+        byteSize: 1024,
+        storagePath: "data/artifact-vault/user_1/intent_1/capability.pdf",
+        checksumSha256: "hash_artifact_1",
+        reviewStatus: "pending_review",
       }],
     ]);
     const links = new Map<string, Record<string, unknown>>();
@@ -107,15 +120,36 @@ describe("response workspace repository MySQL runtime", () => {
             userId: values[4],
             requestedByUserId: values[5],
             status: values[6],
-            fileName: values[7],
-            contentType: values[8],
-            byteSize: values[9],
-            storagePath: values[10],
-            checksumSha256: values[11],
-            readinessJson: values[12],
-            createdAt: values[13],
-            updatedAt: values[14],
+            format: values[7],
+            fileName: values[8],
+            contentType: values[9],
+            byteSize: values[10],
+            storagePath: values[11],
+            checksumSha256: values[12],
+            readinessJson: values[13],
+            createdAt: values[14],
+            updatedAt: values[15],
+            reviewStatus: values[16],
+            reviewedAt: values[17],
+            reviewedByUserId: values[18],
+            reviewNotes: values[19],
             downloadedAt: null,
+          });
+        }
+
+        if (sql.includes("INSERT INTO response_package_export_review_events")) {
+          packageReviewEvents.set(values[0] as string, {
+            id: values[0],
+            exportId: values[1],
+            snapshotId: values[2],
+            intentId: values[3],
+            bidId: values[4],
+            userId: values[5],
+            actorUserId: values[6],
+            fromReviewStatus: values[7],
+            toReviewStatus: values[8],
+            reviewNotes: values[9],
+            createdAt: values[10],
           });
         }
 
@@ -142,6 +176,23 @@ describe("response workspace repository MySQL runtime", () => {
           }
         }
 
+        if (sql.includes("UPDATE response_package_exports") && sql.includes("SET review_status")) {
+          const row = packageExports.get(values[7] as string);
+          if (row) {
+            row.reviewStatus = values[0];
+            row.reviewedAt = values[1];
+            row.reviewedByUserId = values[2];
+            row.reviewNotes = values[3];
+            row.updatedAt = values[4];
+          }
+        } else if (sql.includes("UPDATE response_package_exports")) {
+          const row = packageExports.get(values[4] as string);
+          if (row) {
+            row.downloadedAt = values[0];
+            row.updatedAt = values[1];
+          }
+        }
+
         return [{ affectedRows: 1 }, undefined];
       }),
       query: vi.fn(async (sql: string, values: unknown[] = []): Promise<[unknown[], unknown?]> => {
@@ -152,6 +203,24 @@ describe("response workspace repository MySQL runtime", () => {
               .map((row) => ({
                 itemId: row.itemId,
                 ...artifacts.get(row.artifactId as string),
+              })),
+            undefined,
+          ];
+        }
+
+        if (sql.includes("FROM supplier_artifacts") && sql.includes("storage_path AS storagePath")) {
+          return [
+            [...artifacts.values()]
+              .filter((row) =>
+                row.userId === values[0] &&
+                row.intentId === values[1] &&
+                values.includes(row.id),
+              )
+              .map((row) => ({
+                id: row.id,
+                storagePath: row.storagePath,
+                byteSize: row.byteSize,
+                checksumSha256: row.checksumSha256,
               })),
             undefined,
           ];
@@ -189,6 +258,15 @@ describe("response workspace repository MySQL runtime", () => {
             [...packageExports.values()]
               .filter((row) => row.userId === values[0] && row.intentId === values[1])
               .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt))),
+            undefined,
+          ];
+        }
+
+        if (sql.includes("FROM response_package_export_review_events")) {
+          return [
+            [...packageReviewEvents.values()]
+              .filter((row) => row.userId === values[0] && row.intentId === values[1])
+              .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt))),
             undefined,
           ];
         }
@@ -288,6 +366,21 @@ describe("response workspace repository MySQL runtime", () => {
         id: "artifact_1",
         title: "Capability statement",
         fileName: "capability.pdf",
+        contentType: "application/pdf",
+        checksumSha256: "hash_artifact_1",
+      },
+    ]);
+    await expect(listResponsePackageArtifactFileRowsFromMysql(
+      mysql,
+      "user_1",
+      "intent_1",
+      ["artifact_1"],
+    )).resolves.toEqual([
+      {
+        id: "artifact_1",
+        storagePath: "data/artifact-vault/user_1/intent_1/capability.pdf",
+        byteSize: 1024,
+        checksumSha256: "hash_artifact_1",
       },
     ]);
 
@@ -317,6 +410,7 @@ describe("response workspace repository MySQL runtime", () => {
       userId: "user_1",
       requestedByUserId: "user_1",
       status: "ready",
+      format: "markdown",
       fileName: "response-package.md",
       contentType: "text/markdown; charset=utf-8",
       byteSize: 100,
@@ -330,8 +424,70 @@ describe("response workspace repository MySQL runtime", () => {
       {
         id: "export_1",
         snapshotId: "snapshot_1",
+        format: "markdown",
         fileName: "response-package.md",
         byteSize: 100,
+        reviewStatus: "pending_review",
+        reviewedAt: null,
+        reviewedByUserId: null,
+        reviewNotes: "",
+        downloadedAt: null,
+      },
+    ]);
+    await markResponsePackageExportDownloadedRowFromMysql(
+      mysql,
+      "user_1",
+      "intent_1",
+      "export_1",
+      "2026-06-01T00:06:00.000Z",
+    );
+    await expect(listResponsePackageExportRowsFromMysql(mysql, "user_1", "intent_1")).resolves.toMatchObject([
+      {
+        id: "export_1",
+        downloadedAt: "2026-06-01T00:06:00.000Z",
+      },
+    ]);
+    await updateResponsePackageExportReviewRowFromMysql(
+      mysql,
+      "user_1",
+      "intent_1",
+      "export_1",
+      {
+        reviewStatus: "needs_changes",
+        reviewedAt: "2026-06-01T00:07:00.000Z",
+        reviewedByUserId: "user_1",
+        reviewNotes: "Add pricing backup.",
+      },
+    );
+    await createResponsePackageExportReviewEventRowFromMysql(mysql, {
+      id: "export_review_event_1",
+      exportId: "export_1",
+      snapshotId: "snapshot_1",
+      intentId: "intent_1",
+      bidId: "bid_1",
+      userId: "user_1",
+      actorUserId: "user_1",
+      fromReviewStatus: "pending_review",
+      toReviewStatus: "needs_changes",
+      reviewNotes: "Add pricing backup.",
+      createdAt: "2026-06-01T00:07:00.000Z",
+    });
+    await expect(listResponsePackageExportRowsFromMysql(mysql, "user_1", "intent_1")).resolves.toMatchObject([
+      {
+        id: "export_1",
+        reviewStatus: "needs_changes",
+        reviewedAt: "2026-06-01T00:07:00.000Z",
+        reviewedByUserId: "user_1",
+        reviewNotes: "Add pricing backup.",
+      },
+    ]);
+    await expect(listResponsePackageExportReviewEventRowsFromMysql(mysql, "user_1", "intent_1")).resolves.toMatchObject([
+      {
+        id: "export_review_event_1",
+        exportId: "export_1",
+        fromReviewStatus: "pending_review",
+        toReviewStatus: "needs_changes",
+        reviewNotes: "Add pricing backup.",
       },
     ]);
   });

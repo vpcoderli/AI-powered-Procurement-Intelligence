@@ -5,6 +5,7 @@ import {
   creditAllowanceForTier,
   creditCostForFeature,
   creditSummaryForTier,
+  quoteAiCreditDryRun,
 } from "./credits";
 
 describe("billing credits", () => {
@@ -21,7 +22,9 @@ describe("billing credits", () => {
       refundOnSystemFailure: true,
     });
     expect(creditCostForFeature("package.review.run")).toBe(4);
+    expect(creditCostForFeature("bid.brief.full.generate")).toBe(1);
     expect(creditCostForFeature("bid_search")).toBe(0);
+    expect(CREDIT_EVENT_TYPES).toContain("premium_action");
     expect(CREDIT_EVENT_TYPES).toContain("system_refund");
   });
 
@@ -37,6 +40,33 @@ describe("billing credits", () => {
       purchasedCredits: 0,
       availableCredits: null,
       resetsAt: null,
+    });
+  });
+
+  it("quotes AI credit usage as dry-run without charging real credits", () => {
+    expect(quoteAiCreditDryRun({
+      featureKey: "bid.brief.full.generate",
+      actionId: "qualification_qa:intent_1",
+      aiRun: {
+        id: "ai_run_qualification_qa_2026-06-10T00:00:00.000Z",
+        provider: "deterministic",
+        model: "rules://winbids/deterministic-ai-enterprise-depth-lite",
+        estimatedCostUsd: 0,
+      },
+    })).toEqual({
+      mode: "dry_run_quote",
+      billable: false,
+      billingEnforcement: false,
+      featureKey: "bid.brief.full.generate",
+      actionId: "qualification_qa:intent_1",
+      aiRunId: "ai_run_qualification_qa_2026-06-10T00:00:00.000Z",
+      provider: "deterministic",
+      model: "rules://winbids/deterministic-ai-enterprise-depth-lite",
+      creditCost: 1,
+      estimatedCredits: 1,
+      chargedAmount: 0,
+      balanceAfter: null,
+      estimatedCost: { currency: "USD", total: 0, estimatedUsd: 0 },
     });
   });
 });

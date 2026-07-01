@@ -6,6 +6,21 @@ function readIntentComponent(fileName: string) {
 }
 
 describe("intent detail page", () => {
+  it("keeps premium intent locks on shared upgrade messaging instead of unavailable states", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+    const featureHelper = readFileSync(new URL("../../../lib/features/useFeature.ts", import.meta.url), "utf8");
+
+    expect(featureHelper).toContain("Upgrade to ${requiredTier} to unlock this feature.");
+
+    for (const feature of ["submission_guidance", "compliance_manifest"]) {
+      expect(page).toContain(`message={lockedFeatureMessage("${feature}")}`);
+    }
+
+    expect(page).toContain('lockedFeatureMessage("knowledge_station")');
+
+    expect(page).not.toContain('code="permission_denied"');
+  });
+
   it("wires every paid intent module to feature gating and plan-limit locked states", () => {
     const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
     const panels = {
@@ -104,6 +119,45 @@ describe("intent detail page", () => {
     expect(page).toContain('t("intentsPage.groundedAnswer")');
   });
 
+  it("renders deterministic AI metadata and credit dry-run details for Q&A answers", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("qaAnswer?.aiRun");
+    expect(page).toContain("qaAnswer.creditUsage");
+    expect(page).toContain("qaAnswer.creditUsage.chargedAmount");
+    expect(page).toContain('t("intentsPage.aiRunMetadata")');
+    expect(page).toContain('t("intentsPage.aiDeterministicNoLlmNotice")');
+    expect(page).toContain('t("intentsPage.aiProvider")');
+    expect(page).toContain('t("intentsPage.aiModelOrRulesVersion")');
+    expect(page).toContain('t("intentsPage.aiPromptVersion")');
+    expect(page).toContain('t("intentsPage.aiConfidence")');
+    expect(page).toContain('t("intentsPage.aiCostTotal")');
+    expect(page).toContain('t("intentsPage.aiFallbackReason")');
+    expect(page).toContain('t("intentsPage.aiGeneratedAt")');
+    expect(page).toContain('t("intentsPage.aiMetadataUnavailable")');
+    expect(page).toContain('t("intentsPage.creditDryRun")');
+    expect(page).toContain('t("intentsPage.creditChargedAmount")');
+  });
+
+  it("renders Knowledge retrieval trace only inside the enabled Knowledge Station area", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("KnowledgeRetrievalTrace");
+    expect(page).toContain("knowledgeRetrievalTrace");
+    expect(page).toContain("includeRetrievalTrace: true");
+    expect(page).toContain("response.retrievalTrace");
+    expect(page).toContain("knowledgeStationFeature.enabled");
+    expect(page).toContain("selectedItemIds");
+    expect(page).toContain("matchedFields.length");
+    expect(page).toContain("futureEmbeddingStatus.status");
+    expect(page).toContain('t("knowledge.retrievalTrace")');
+    expect(page).toContain('t("knowledge.retrievalTraceOperatorOnly")');
+    expect(page).toContain('t("knowledge.selectedItemIds")');
+    expect(page).toContain('t("knowledge.matchedFields")');
+    expect(page).toContain('t("knowledge.futureEmbeddingStatus")');
+    expect(page).toContain('t("knowledge.retrievalTraceUnavailable")');
+  });
+
   it("renders structured pursue/no-bid reason details", () => {
     const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
 
@@ -122,6 +176,35 @@ describe("intent detail page", () => {
 
     expect(page).toContain("item.evidenceRefs");
     expect(page).toContain('t("intentsPage.linkedEvidence")');
+  });
+
+  it("renders submission status and confirmation history while gated", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("const [submissionConfirmations");
+    expect(page).toContain('t("intentsPage.submissionStatus")');
+    expect(page).toContain('t(`intentsPage.submissionStatuses.${submissionGuidance.status}`)');
+    expect(page).toContain('t("intentsPage.confirmationHistory")');
+    expect(page).toContain("response.confirmations");
+    expect(page).toContain("submissionGuidanceFeature.enabled");
+  });
+
+  it("renders submission evidence links returned by guidance and confirmation APIs", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("SubmissionEvidenceLinks");
+    expect(page).toContain("const [submissionEvidenceLinks");
+    expect(page).toContain("response.evidenceLinks");
+    expect(page).toContain("responsePackageExports");
+    expect(page).toContain("linkedSupplierArtifacts");
+    expect(page).toContain("awardOutcome");
+    expect(page).toContain("downloadUrl");
+    expect(page).toContain("artifactDownloadUrl");
+    expect(page).toContain('t("intentsPage.submissionEvidence")');
+    expect(page).toContain('t("intentsPage.submissionEvidenceEmpty")');
+    expect(page).toContain('t("intentsPage.submissionEvidencePackageExports")');
+    expect(page).toContain('t("intentsPage.submissionEvidenceLinkedArtifacts")');
+    expect(page).toContain('t("intentsPage.submissionEvidenceAwardOutcome")');
   });
 
   it("uses UniversalState for intent detail load failures and gated feature sections", () => {
@@ -150,11 +233,22 @@ describe("intent detail page", () => {
 
     expect(page).toContain("fetchArtifactVault");
     expect(page).toContain("uploadSupplierArtifact");
+    expect(page).toContain("deleteSupplierArtifact");
+    expect(page).toContain("replaceSupplierArtifact");
+    expect(page).toContain("handleDeleteSupplierArtifact");
+    expect(page).toContain("handleReplaceSupplierArtifact");
+    expect(page).toContain("deletingArtifactId");
+    expect(page).toContain("replacingArtifactId");
+    expect(page).toContain("onDelete={handleDeleteSupplierArtifact}");
+    expect(page).toContain("onReplace={handleReplaceSupplierArtifact}");
     expect(page).toContain('useFeature("artifact.vault.upload")');
     expect(page).toContain("artifactVault");
     expect(page).toContain("artifactDraft");
     expect(panel).toContain('t("intentsPage.artifactVault")');
     expect(panel).toContain('t("intentsPage.uploadArtifact")');
+    expect(panel).toContain('t("intentsPage.artifactDelete")');
+    expect(panel).toContain('t("intentsPage.artifactVersions")');
+    expect(panel).toContain('t("intentsPage.artifactReplace")');
     expect(panel).toContain('code="empty"');
     expect(panel).toContain('code="upload_failed"');
   });
@@ -175,6 +269,24 @@ describe("intent detail page", () => {
     expect(panel).toContain('code="error"');
   });
 
+  it("renders procurement workflow read-model summaries on the intent page", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    expect(page).toContain("quoteComparisonSummary");
+    expect(page).toContain("lowAmountCents");
+    expect(page).toContain("medianAmountCents");
+    expect(page).toContain("highAmountCents");
+    expect(page).toContain("spreadAmountCents");
+    expect(page).toContain("recommendedReviewFlags");
+    expect(page).toContain("learningSummary");
+    expect(page).toContain("primaryDriver");
+    expect(page).toContain("recommendedActions");
+    expect(page).toContain("submissionEvidenceAutoLinkSummary");
+    expect(page).toContain("responsePackageExports.length");
+    expect(page).toContain("linkedSupplierArtifacts.length");
+    expect(page).toContain("artifact/submission evidence");
+  });
+
   it("renders Deadline Notifications Lite controls", () => {
     const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
     const panel = readIntentComponent("DeadlineNotificationsPanel.tsx");
@@ -187,6 +299,33 @@ describe("intent detail page", () => {
     expect(panel).toContain('t("intentsPage.acknowledgeReminder")');
     expect(panel).toContain('t("intentsPage.snoozeReminder")');
     expect(panel).toContain('code="empty"');
+    expect(panel).toContain('code="error"');
+  });
+
+  it("renders Award / Win-Loss Lite controls behind feature gating", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+    const panel = readIntentComponent("AwardWinLossPanel.tsx");
+
+    expect(page).toContain('import { AwardWinLossPanel } from "@/components/intents/AwardWinLossPanel"');
+    expect(page).toContain("fetchAwardOutcome");
+    expect(page).toContain("updateAwardOutcome");
+    expect(page).toContain('useFeature("award.tabulation.analyze")');
+    expect(page).toContain("awardOutcome");
+    expect(page).toContain("handleAwardOutcomeUpdate");
+    expect(page).toContain("<AwardWinLossPanel");
+    expect(page).toContain("availableArtifacts={artifactVault?.artifacts ?? []}");
+    expect(page).toContain('lockedFeatureMessage("award.tabulation.analyze")');
+    expect(panel).toContain('t("intentsPage.awardWinLoss")');
+    expect(panel).toContain('t("intentsPage.awardNoticeUrl")');
+    expect(panel).toContain('t("intentsPage.tabulationArtifact")');
+    expect(panel).toContain('t("intentsPage.tabulationArtifactUrl")');
+    expect(panel).toContain('t("intentsPage.winnerName")');
+    expect(panel).toContain('t("intentsPage.awardAmount")');
+    expect(panel).toContain('t("intentsPage.lossReason")');
+    expect(panel).toContain('t("intentsPage.nextAction")');
+    expect(panel).toContain('t("intentsPage.nextActionDueAt")');
+    expect(panel).toContain('t("intentsPage.awardNotes")');
+    expect(panel).toContain('code="plan_limit"');
     expect(panel).toContain('code="error"');
   });
 
@@ -230,6 +369,54 @@ describe("intent detail page", () => {
     expect(page).toContain("handleCreateResponsePackageExport");
     expect(panel).toContain('t("intentsPage.exportResponsePackage")');
     expect(panel).toContain("onCreatePackageExport");
+    expect(panel).toContain("responsePackageExportFormatOptions");
+    expect(panel).toContain("formatOption");
+    expect(panel).toContain("onCreatePackageExport(snapshot.id, formatOption)");
+    expect(page).toContain("handleCreateResponsePackageExport(snapshotId");
+    expect(page).toContain("format: ResponsePackageExportFormat");
+    expect(page).toContain("updateResponsePackageExportReview");
+    expect(page).toContain("handleReviewResponsePackageExport");
     expect(panel).toContain("snapshot.exports");
+    expect(panel).toContain("snapshot.version.versionNumber");
+    expect(panel).toContain("snapshot.version.changes");
+    expect(panel).toContain('t("intentsPage.responsePackageVersion")');
+    expect(panel).toContain('t("intentsPage.responsePackageChangesSincePrevious")');
+    expect(panel).toContain('t("intentsPage.responsePackageNoVersionChanges")');
+    expect(panel).toContain("packageWorkspace?.versionHistory");
+    expect(panel).toContain("visiblePackageSnapshots");
+    expect(panel).toContain("showAllPackageSnapshots");
+    expect(panel).toContain("setShowAllPackageSnapshots");
+    expect(panel).toContain('t("intentsPage.responsePackageVersionHistory")');
+    expect(panel).toContain('t("intentsPage.responsePackageTotalVersions")');
+    expect(panel).toContain('t("intentsPage.responsePackageTotalChanges")');
+    expect(panel).toContain('t("intentsPage.showAllResponsePackageVersions")');
+    expect(panel).toContain('t("intentsPage.showRecentResponsePackageVersions")');
+    expect(panel).toContain("packageWorkspace?.versionComparisons");
+    expect(panel).toContain("selectedPackageComparisonKey");
+    expect(panel).toContain("selectedPackageComparison");
+    expect(panel).toContain("comparison.items");
+    expect(panel).toContain('t("intentsPage.responsePackageSideBySideComparison")');
+    expect(panel).toContain('t("intentsPage.responsePackageCompareVersions")');
+    expect(panel).toContain('t("intentsPage.responsePackageFromVersion")');
+    expect(panel).toContain('t("intentsPage.responsePackageToVersion")');
+    expect(panel).toContain('t("intentsPage.responsePackageComparisonNoChanges")');
+    expect(panel).toContain("onReviewPackageExport");
+    expect(panel).toContain("approveResponsePackageExport");
+    expect(panel).toContain("requestResponsePackageChanges");
+    expect(panel).toContain("responsePackageExportReviewStatuses");
+    expect(panel).toContain("responsePackageReviewHistory");
+    expect(panel).toContain("exportRecord.reviewHistory");
+    expect(panel).toContain("responsePackageExportFormats");
+    expect(panel).toContain("exportRecord.format");
+    expect(panel).toContain("packageWorkspace?.governanceSummary");
+    expect(panel).toContain("governanceSummary.pendingReviewCount");
+    expect(panel).toContain("governanceSummary.approvedCount");
+    expect(panel).toContain("governanceSummary.needsChangesCount");
+    expect(panel).toContain("governanceSummary.longestPendingAgeHours");
+    expect(panel).toContain("governanceSummary.latestReviewerUserId");
+    expect(panel).toContain("governanceSummary.canSubmitWithReviewedExport");
+    expect(panel).toContain('t("intentsPage.responsePackageGovernance")');
+    expect(panel).toContain('t("intentsPage.responsePackageGovernanceReviewedExportReady")');
+    expect(panel).toContain('t("intentsPage.responsePackageGovernanceNoReviewer")');
   });
 });

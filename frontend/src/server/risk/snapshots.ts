@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { desc } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
+import { mysqlExecute, mysqlSelectMany } from "@/server/db/mysql-runtime";
 import { riskCheckSnapshots } from "@/server/db/schema";
 import type { RiskChecklistReport } from "./checklist";
+import type { Pool } from "mysql2/promise";
 
 export interface RiskChecklistSnapshot {
   id: string;
@@ -20,6 +22,14 @@ export interface RiskChecklistTrend {
   latestGlobalUrlSummary: string | null;
   latestStateCoverageSummary: string | null;
   latestAttachmentSummary: string | null;
+}
+
+interface MysqlRiskChecklistSnapshotRow {
+  id: string;
+  ok: number | string;
+  checkedAt: string;
+  reportJson: string;
+  createdAt: string;
 }
 
 function checkById(report: RiskChecklistReport, id: string) {
@@ -47,6 +57,16 @@ function hydrateSnapshot(row: typeof riskCheckSnapshots.$inferSelect): RiskCheck
   };
 }
 
+function hydrateMysqlSnapshot(row: MysqlRiskChecklistSnapshotRow): RiskChecklistSnapshot {
+  return {
+    id: row.id,
+    ok: Number(row.ok) === 1,
+    checkedAt: row.checkedAt,
+    createdAt: row.createdAt,
+    report: parseReport(row.reportJson),
+  };
+}
+
 export function recordRiskChecklistSnapshot(
   db: AppDatabase,
   report: RiskChecklistReport,
@@ -65,6 +85,31 @@ export function recordRiskChecklistSnapshot(
   return hydrateSnapshot(row);
 }
 
+export async function recordRiskChecklistSnapshotFromMysql(
+  mysql: Pool,
+  report: RiskChecklistReport,
+  createdAt = new Date().toISOString(),
+) {
+  const row = {
+    id: `risk_snapshot_${randomUUID()}`,
+    ok: report.ok ? 1 : 0,
+    checkedAt: report.checkedAt,
+    reportJson: JSON.stringify(report),
+    createdAt,
+  };
+
+  await mysqlExecute(
+    mysql,
+    `
+      INSERT INTO risk_check_snapshots (id, ok, checked_at, report_json, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `,
+    [row.id, row.ok, row.checkedAt, row.reportJson, row.createdAt],
+  );
+
+  return hydrateMysqlSnapshot(row);
+}
+
 export function listRiskChecklistSnapshots(db: AppDatabase, limit = 5) {
   return db.select()
     .from(riskCheckSnapshots)
@@ -72,6 +117,26 @@ export function listRiskChecklistSnapshots(db: AppDatabase, limit = 5) {
     .limit(limit)
     .all()
     .map(hydrateSnapshot);
+}
+
+export async function listRiskChecklistSnapshotsFromMysql(mysql: Pool, limit = 5) {
+  const normalizedLimit = Math.max(1, Math.min(limit, 50));
+  const rows = await mysqlSelectMany<MysqlRiskChecklistSnapshotRow>(
+    mysql,
+    `
+      SELECT
+        id,
+        ok,
+        checked_at AS checkedAt,
+        report_json AS reportJson,
+        created_at AS createdAt
+      FROM risk_check_snapshots
+      ORDER BY checked_at DESC, created_at DESC
+      LIMIT ${normalizedLimit}
+    `,
+  );
+
+  return rows.map(hydrateMysqlSnapshot);
 }
 
 export function summarizeRiskChecklistTrend(history: RiskChecklistSnapshot[]): RiskChecklistTrend {

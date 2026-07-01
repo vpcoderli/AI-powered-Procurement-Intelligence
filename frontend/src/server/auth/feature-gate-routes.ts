@@ -73,6 +73,11 @@ export const FEATURE_API_COVERAGE: readonly FeatureApiCoverageEntry[] = [
     methods: ["GET", "PATCH"],
   },
   {
+    sourcePath: "../../app/api/intents/[id]/award/route.ts",
+    feature: "award.tabulation.analyze",
+    methods: ["GET", "PATCH"],
+  },
+  {
     sourcePath: "../../app/api/account/deadline-reminders/route.ts",
     feature: "deadline_notifications",
     methods: ["GET", "PATCH"],
@@ -95,7 +100,6 @@ export const UNIMPLEMENTED_PAID_FEATURE_API_COVERAGE = [
   "response.section.draft",
   "package.review.run",
   "amendment.delta.run",
-  "award.tabulation.analyze",
   "price.to.win.run",
   "team.member.invite",
 ] as const satisfies readonly FeatureKey[];

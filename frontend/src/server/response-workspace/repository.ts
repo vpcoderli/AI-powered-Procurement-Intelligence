@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { mysqlExecute, mysqlSelectMany, mysqlSelectOne } from "@/server/db/mysql-runtime";
 import {
@@ -6,6 +6,7 @@ import {
   responseWorkspaceActivity,
   responseWorkspaceItemArtifacts,
   responseWorkspaceItems,
+  responsePackageExportReviewEvents,
   responsePackageExports,
   responsePackageSnapshots,
   supplierArtifacts,
@@ -21,10 +22,23 @@ import type {
 export type ResponseWorkspaceItemRow = typeof responseWorkspaceItems.$inferSelect;
 export type ResponseWorkspaceLinkedArtifactRow = Pick<
   typeof supplierArtifacts.$inferSelect,
-  "id" | "title" | "fileName" | "artifactType" | "purpose" | "intentId"
+  | "id"
+  | "title"
+  | "fileName"
+  | "artifactType"
+  | "purpose"
+  | "intentId"
+  | "contentType"
+  | "byteSize"
+  | "checksumSha256"
+  | "reviewStatus"
 > & {
   itemId: string;
 };
+export type ResponsePackageArtifactFileRow = Pick<
+  typeof supplierArtifacts.$inferSelect,
+  "id" | "storagePath" | "byteSize" | "checksumSha256"
+>;
 export type ResponseWorkspaceCommentRow = typeof responseWorkspaceComments.$inferSelect & {
   authorEmail: string | null;
   authorDisplayName: string | null;
@@ -35,6 +49,7 @@ export type ResponseWorkspaceActivityRow = typeof responseWorkspaceActivity.$inf
 };
 export type ResponsePackageSnapshotRow = typeof responsePackageSnapshots.$inferSelect;
 export type ResponsePackageExportRow = typeof responsePackageExports.$inferSelect;
+export type ResponsePackageExportReviewEventRow = typeof responsePackageExportReviewEvents.$inferSelect;
 
 export interface CreateResponseWorkspaceActivityRowInput {
   id: string;
@@ -103,6 +118,17 @@ interface MysqlResponseWorkspaceLinkedArtifactRow {
   fileName: string;
   artifactType: string;
   purpose: string;
+  contentType: string;
+  byteSize: number | string;
+  checksumSha256: string;
+  reviewStatus: string;
+}
+
+interface MysqlResponsePackageArtifactFileRow {
+  id: string;
+  storagePath: string;
+  byteSize: number | string;
+  checksumSha256: string;
 }
 
 interface MysqlResponsePackageSnapshotRow {
@@ -125,6 +151,7 @@ interface MysqlResponsePackageExportRow {
   userId: string;
   requestedByUserId: string;
   status: string;
+  format: string | null;
   fileName: string;
   contentType: string;
   byteSize: number | string;
@@ -134,6 +161,24 @@ interface MysqlResponsePackageExportRow {
   createdAt: string;
   updatedAt: string;
   downloadedAt: string | null;
+  reviewStatus: string;
+  reviewedAt: string | null;
+  reviewedByUserId: string | null;
+  reviewNotes: string;
+}
+
+interface MysqlResponsePackageExportReviewEventRow {
+  id: string;
+  exportId: string;
+  snapshotId: string;
+  intentId: string;
+  bidId: string;
+  userId: string;
+  actorUserId: string;
+  fromReviewStatus: string;
+  toReviewStatus: string;
+  reviewNotes: string;
+  createdAt: string;
 }
 
 function toActivityRow(row: ResponseWorkspaceActivityRow): ResponseWorkspaceActivityRow {
@@ -434,6 +479,7 @@ export function listLinkableSupplierArtifactRows(
       eq(supplierArtifacts.userId, userId),
       eq(supplierArtifacts.intentId, intentId),
       inArray(supplierArtifacts.id, artifactIds),
+      isNull(supplierArtifacts.deletedAt),
     ))
     .all();
 }
@@ -452,7 +498,7 @@ export async function listLinkableSupplierArtifactRowsFromMysql(
     `
       SELECT id
       FROM supplier_artifacts
-      WHERE user_id = ? AND intent_id = ? AND id IN (${placeholders})
+      WHERE user_id = ? AND intent_id = ? AND id IN (${placeholders}) AND deleted_at IS NULL
     `,
     [userId, intentId, ...artifactIds],
   );
@@ -523,10 +569,17 @@ export function listResponseWorkspaceLinkedArtifactRows(db: AppDatabase, itemIds
       fileName: supplierArtifacts.fileName,
       artifactType: supplierArtifacts.artifactType,
       purpose: supplierArtifacts.purpose,
+      contentType: supplierArtifacts.contentType,
+      byteSize: supplierArtifacts.byteSize,
+      checksumSha256: supplierArtifacts.checksumSha256,
+      reviewStatus: supplierArtifacts.reviewStatus,
     })
     .from(responseWorkspaceItemArtifacts)
     .innerJoin(supplierArtifacts, eq(responseWorkspaceItemArtifacts.artifactId, supplierArtifacts.id))
-    .where(inArray(responseWorkspaceItemArtifacts.itemId, itemIds))
+    .where(and(
+      inArray(responseWorkspaceItemArtifacts.itemId, itemIds),
+      isNull(supplierArtifacts.deletedAt),
+    ))
     .orderBy(asc(responseWorkspaceItemArtifacts.itemId), asc(supplierArtifacts.title), asc(supplierArtifacts.id))
     .all();
 }
@@ -534,11 +587,11 @@ export function listResponseWorkspaceLinkedArtifactRows(db: AppDatabase, itemIds
 export async function listResponseWorkspaceLinkedArtifactRowsFromMysql(
   mysql: MysqlResponseWorkspaceRepository,
   itemIds: string[],
-) {
+): Promise<ResponseWorkspaceLinkedArtifactRow[]> {
   if (itemIds.length === 0) return [];
   const placeholders = itemIds.map(() => "?").join(", ");
 
-  return mysqlSelectMany<MysqlResponseWorkspaceLinkedArtifactRow>(
+  const rows = await mysqlSelectMany<MysqlResponseWorkspaceLinkedArtifactRow>(
     mysql,
     `
       SELECT
@@ -548,15 +601,82 @@ export async function listResponseWorkspaceLinkedArtifactRowsFromMysql(
         supplier_artifacts.title,
         supplier_artifacts.file_name AS fileName,
         supplier_artifacts.artifact_type AS artifactType,
-        supplier_artifacts.purpose
+        supplier_artifacts.purpose,
+        supplier_artifacts.content_type AS contentType,
+        supplier_artifacts.byte_size AS byteSize,
+        supplier_artifacts.checksum_sha256 AS checksumSha256,
+        supplier_artifacts.review_status AS reviewStatus
       FROM response_workspace_item_artifacts
       INNER JOIN supplier_artifacts
         ON supplier_artifacts.id = response_workspace_item_artifacts.artifact_id
       WHERE response_workspace_item_artifacts.item_id IN (${placeholders})
+        AND supplier_artifacts.deleted_at IS NULL
       ORDER BY response_workspace_item_artifacts.item_id ASC, supplier_artifacts.title ASC, supplier_artifacts.id ASC
     `,
     itemIds,
   );
+
+  return rows.map((row) => ({
+    ...row,
+    byteSize: Number(row.byteSize),
+  }));
+}
+
+export function listResponsePackageArtifactFileRows(
+  db: AppDatabase,
+  userId: string,
+  intentId: string,
+  artifactIds: string[],
+): ResponsePackageArtifactFileRow[] {
+  if (artifactIds.length === 0) return [];
+
+  return db
+    .select({
+      id: supplierArtifacts.id,
+      storagePath: supplierArtifacts.storagePath,
+      byteSize: supplierArtifacts.byteSize,
+      checksumSha256: supplierArtifacts.checksumSha256,
+    })
+    .from(supplierArtifacts)
+    .where(and(
+      eq(supplierArtifacts.userId, userId),
+      eq(supplierArtifacts.intentId, intentId),
+      inArray(supplierArtifacts.id, artifactIds),
+      isNull(supplierArtifacts.deletedAt),
+    ))
+    .all();
+}
+
+export async function listResponsePackageArtifactFileRowsFromMysql(
+  mysql: MysqlResponseWorkspaceRepository,
+  userId: string,
+  intentId: string,
+  artifactIds: string[],
+): Promise<ResponsePackageArtifactFileRow[]> {
+  if (artifactIds.length === 0) return [];
+  const placeholders = artifactIds.map(() => "?").join(", ");
+
+  const rows = await mysqlSelectMany<MysqlResponsePackageArtifactFileRow>(
+    mysql,
+    `
+      SELECT
+        id,
+        storage_path AS storagePath,
+        byte_size AS byteSize,
+        checksum_sha256 AS checksumSha256
+      FROM supplier_artifacts
+      WHERE user_id = ?
+        AND intent_id = ?
+        AND id IN (${placeholders})
+        AND deleted_at IS NULL
+    `,
+    [userId, intentId, ...artifactIds],
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    byteSize: Number(row.byteSize),
+  }));
 }
 
 export function createResponseWorkspaceActivityRows(
@@ -973,6 +1093,7 @@ export function createResponsePackageExportRow(
     userId: string;
     requestedByUserId: string;
     status: "ready";
+    format?: string;
     fileName: string;
     contentType: string;
     byteSize: number;
@@ -981,6 +1102,10 @@ export function createResponsePackageExportRow(
     readinessJson: string;
     createdAt: string;
     updatedAt: string;
+    reviewStatus?: "pending_review" | "approved" | "needs_changes";
+    reviewedAt?: string | null;
+    reviewedByUserId?: string | null;
+    reviewNotes?: string;
   },
 ) {
   db.insert(responsePackageExports)
@@ -998,6 +1123,7 @@ export async function createResponsePackageExportRowFromMysql(
     userId: string;
     requestedByUserId: string;
     status: "ready";
+    format?: string;
     fileName: string;
     contentType: string;
     byteSize: number;
@@ -1006,6 +1132,10 @@ export async function createResponsePackageExportRowFromMysql(
     readinessJson: string;
     createdAt: string;
     updatedAt: string;
+    reviewStatus?: "pending_review" | "approved" | "needs_changes";
+    reviewedAt?: string | null;
+    reviewedByUserId?: string | null;
+    reviewNotes?: string;
   },
 ) {
   await mysqlExecute(
@@ -1019,6 +1149,7 @@ export async function createResponsePackageExportRowFromMysql(
         user_id,
         requested_by_user_id,
         status,
+        format,
         file_name,
         content_type,
         byte_size,
@@ -1026,9 +1157,13 @@ export async function createResponsePackageExportRowFromMysql(
         checksum_sha256,
         readiness_json,
         created_at,
-        updated_at
+        updated_at,
+        review_status,
+        reviewed_at,
+        reviewed_by_user_id,
+        review_notes
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
     [
       input.id,
@@ -1038,6 +1173,7 @@ export async function createResponsePackageExportRowFromMysql(
       input.userId,
       input.requestedByUserId,
       input.status,
+      input.format ?? "markdown",
       input.fileName,
       input.contentType,
       input.byteSize,
@@ -1046,6 +1182,10 @@ export async function createResponsePackageExportRowFromMysql(
       input.readinessJson,
       input.createdAt,
       input.updatedAt,
+      input.reviewStatus ?? "pending_review",
+      input.reviewedAt ?? null,
+      input.reviewedByUserId ?? null,
+      input.reviewNotes ?? "",
     ],
   );
 }
@@ -1059,6 +1199,7 @@ function toResponsePackageExportRow(row: MysqlResponsePackageExportRow): Respons
     userId: row.userId,
     requestedByUserId: row.requestedByUserId,
     status: row.status,
+    format: row.format || "markdown",
     fileName: row.fileName,
     contentType: row.contentType,
     byteSize: Number(row.byteSize),
@@ -1068,6 +1209,10 @@ function toResponsePackageExportRow(row: MysqlResponsePackageExportRow): Respons
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     downloadedAt: row.downloadedAt,
+    reviewStatus: row.reviewStatus,
+    reviewedAt: row.reviewedAt,
+    reviewedByUserId: row.reviewedByUserId,
+    reviewNotes: row.reviewNotes,
   };
 }
 
@@ -1096,6 +1241,7 @@ export async function listResponsePackageExportRowsFromMysql(
         user_id AS userId,
         requested_by_user_id AS requestedByUserId,
         status,
+        format,
         file_name AS fileName,
         content_type AS contentType,
         byte_size AS byteSize,
@@ -1104,7 +1250,11 @@ export async function listResponsePackageExportRowsFromMysql(
         readiness_json AS readinessJson,
         created_at AS createdAt,
         updated_at AS updatedAt,
-        downloaded_at AS downloadedAt
+        downloaded_at AS downloadedAt,
+        review_status AS reviewStatus,
+        reviewed_at AS reviewedAt,
+        reviewed_by_user_id AS reviewedByUserId,
+        review_notes AS reviewNotes
       FROM response_package_exports
       WHERE user_id = ? AND intent_id = ?
       ORDER BY created_at DESC, id DESC
@@ -1133,6 +1283,93 @@ export function findResponsePackageExportRow(
     .get();
 }
 
+export function markResponsePackageExportDownloadedRow(
+  db: AppDatabase,
+  userId: string,
+  intentId: string,
+  exportId: string,
+  timestamp: string,
+) {
+  db.update(responsePackageExports)
+    .set({
+      downloadedAt: timestamp,
+      updatedAt: timestamp,
+    })
+    .where(and(
+      eq(responsePackageExports.userId, userId),
+      eq(responsePackageExports.intentId, intentId),
+      eq(responsePackageExports.id, exportId),
+    ))
+    .run();
+}
+
+export function updateResponsePackageExportReviewRow(
+  db: AppDatabase,
+  userId: string,
+  intentId: string,
+  exportId: string,
+  input: {
+    reviewStatus: "pending_review" | "approved" | "needs_changes";
+    reviewedAt: string;
+    reviewedByUserId: string;
+    reviewNotes: string;
+  },
+) {
+  db.update(responsePackageExports)
+    .set({
+      reviewStatus: input.reviewStatus,
+      reviewedAt: input.reviewedAt,
+      reviewedByUserId: input.reviewedByUserId,
+      reviewNotes: input.reviewNotes,
+      updatedAt: input.reviewedAt,
+    })
+    .where(and(
+      eq(responsePackageExports.userId, userId),
+      eq(responsePackageExports.intentId, intentId),
+      eq(responsePackageExports.id, exportId),
+    ))
+    .run();
+
+  return findResponsePackageExportRow(db, userId, intentId, exportId) ?? null;
+}
+
+export function createResponsePackageExportReviewEventRow(
+  db: AppDatabase,
+  input: {
+    id: string;
+    exportId: string;
+    snapshotId: string;
+    intentId: string;
+    bidId: string;
+    userId: string;
+    actorUserId: string;
+    fromReviewStatus: string;
+    toReviewStatus: string;
+    reviewNotes: string;
+    createdAt: string;
+  },
+) {
+  db.insert(responsePackageExportReviewEvents)
+    .values(input)
+    .run();
+}
+
+export function listResponsePackageExportReviewEventRows(
+  db: AppDatabase,
+  userId: string,
+  intentId: string,
+) {
+  return db
+    .select()
+    .from(responsePackageExportReviewEvents)
+    .where(and(
+      eq(responsePackageExportReviewEvents.userId, userId),
+      eq(responsePackageExportReviewEvents.intentId, intentId),
+    ))
+    .orderBy(asc(responsePackageExportReviewEvents.createdAt), asc(responsePackageExportReviewEvents.id))
+    .all();
+}
+
 export async function findResponsePackageExportRowFromMysql(
   mysql: MysqlResponseWorkspaceRepository,
   userId: string,
@@ -1150,6 +1387,7 @@ export async function findResponsePackageExportRowFromMysql(
         user_id AS userId,
         requested_by_user_id AS requestedByUserId,
         status,
+        format,
         file_name AS fileName,
         content_type AS contentType,
         byte_size AS byteSize,
@@ -1158,7 +1396,11 @@ export async function findResponsePackageExportRowFromMysql(
         readiness_json AS readinessJson,
         created_at AS createdAt,
         updated_at AS updatedAt,
-        downloaded_at AS downloadedAt
+        downloaded_at AS downloadedAt,
+        review_status AS reviewStatus,
+        reviewed_at AS reviewedAt,
+        reviewed_by_user_id AS reviewedByUserId,
+        review_notes AS reviewNotes
       FROM response_package_exports
       WHERE user_id = ? AND intent_id = ? AND id = ?
       LIMIT 1
@@ -1167,4 +1409,154 @@ export async function findResponsePackageExportRowFromMysql(
   );
 
   return row ? toResponsePackageExportRow(row) : null;
+}
+
+export async function markResponsePackageExportDownloadedRowFromMysql(
+  mysql: MysqlResponseWorkspaceRepository,
+  userId: string,
+  intentId: string,
+  exportId: string,
+  timestamp: string,
+) {
+  await mysqlExecute(
+    mysql,
+    `
+      UPDATE response_package_exports
+      SET downloaded_at = ?, updated_at = ?
+      WHERE user_id = ? AND intent_id = ? AND id = ?
+    `,
+    [timestamp, timestamp, userId, intentId, exportId],
+  );
+}
+
+export async function updateResponsePackageExportReviewRowFromMysql(
+  mysql: MysqlResponseWorkspaceRepository,
+  userId: string,
+  intentId: string,
+  exportId: string,
+  input: {
+    reviewStatus: "pending_review" | "approved" | "needs_changes";
+    reviewedAt: string;
+    reviewedByUserId: string;
+    reviewNotes: string;
+  },
+) {
+  await mysqlExecute(
+    mysql,
+    `
+      UPDATE response_package_exports
+      SET review_status = ?, reviewed_at = ?, reviewed_by_user_id = ?, review_notes = ?, updated_at = ?
+      WHERE user_id = ? AND intent_id = ? AND id = ?
+    `,
+    [
+      input.reviewStatus,
+      input.reviewedAt,
+      input.reviewedByUserId,
+      input.reviewNotes,
+      input.reviewedAt,
+      userId,
+      intentId,
+      exportId,
+    ],
+  );
+
+  return findResponsePackageExportRowFromMysql(mysql, userId, intentId, exportId);
+}
+
+export async function createResponsePackageExportReviewEventRowFromMysql(
+  mysql: MysqlResponseWorkspaceRepository,
+  input: {
+    id: string;
+    exportId: string;
+    snapshotId: string;
+    intentId: string;
+    bidId: string;
+    userId: string;
+    actorUserId: string;
+    fromReviewStatus: string;
+    toReviewStatus: string;
+    reviewNotes: string;
+    createdAt: string;
+  },
+) {
+  await mysqlExecute(
+    mysql,
+    `
+      INSERT INTO response_package_export_review_events (
+        id,
+        export_id,
+        snapshot_id,
+        intent_id,
+        bid_id,
+        user_id,
+        actor_user_id,
+        from_review_status,
+        to_review_status,
+        review_notes,
+        created_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    [
+      input.id,
+      input.exportId,
+      input.snapshotId,
+      input.intentId,
+      input.bidId,
+      input.userId,
+      input.actorUserId,
+      input.fromReviewStatus,
+      input.toReviewStatus,
+      input.reviewNotes,
+      input.createdAt,
+    ],
+  );
+}
+
+function toResponsePackageExportReviewEventRow(
+  row: MysqlResponsePackageExportReviewEventRow,
+): ResponsePackageExportReviewEventRow {
+  return {
+    id: row.id,
+    exportId: row.exportId,
+    snapshotId: row.snapshotId,
+    intentId: row.intentId,
+    bidId: row.bidId,
+    userId: row.userId,
+    actorUserId: row.actorUserId,
+    fromReviewStatus: row.fromReviewStatus,
+    toReviewStatus: row.toReviewStatus,
+    reviewNotes: row.reviewNotes,
+    createdAt: row.createdAt,
+  };
+}
+
+export async function listResponsePackageExportReviewEventRowsFromMysql(
+  mysql: MysqlResponseWorkspaceRepository,
+  userId: string,
+  intentId: string,
+) {
+  const rows = await mysqlSelectMany<MysqlResponsePackageExportReviewEventRow>(
+    mysql,
+    `
+      SELECT
+        id,
+        export_id AS exportId,
+        snapshot_id AS snapshotId,
+        intent_id AS intentId,
+        bid_id AS bidId,
+        user_id AS userId,
+        actor_user_id AS actorUserId,
+        from_review_status AS fromReviewStatus,
+        to_review_status AS toReviewStatus,
+        review_notes AS reviewNotes,
+        created_at AS createdAt
+      FROM response_package_export_review_events
+      WHERE user_id = ? AND intent_id = ?
+      ORDER BY created_at ASC, id ASC
+    `,
+    [userId, intentId],
+  );
+
+  return rows.map(toResponsePackageExportReviewEventRow);
 }
