@@ -20,6 +20,8 @@
 /data/*.sqlite-shm
 /data/*.sqlite-wal
 /data/backups/
+/data/backup-drill-scratch/
+/data/backup-drill-evidence/
 !/data/.gitkeep
 
 # next.js
