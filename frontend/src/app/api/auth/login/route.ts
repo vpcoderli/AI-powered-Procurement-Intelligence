@@ -11,9 +11,21 @@ import { mergeSavedBidIds, mergeSavedBidIdsFromMysql } from "@/server/bids/repos
 import { clearAnonymousUserCookie, resolveAnonymousUser } from "@/server/bids/user";
 import { db } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { getClientIp } from "@/server/security/request-ip";
+import { loginGuard } from "@/server/security/login-guard";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
+}
+
+function rateLimitedResponse(retryAfterSeconds: number) {
+  const response = errorResponse(
+    "TOO_MANY_REQUESTS",
+    "Too many login attempts. Please try again later.",
+    429,
+  );
+  response.headers.set("Retry-After", String(retryAfterSeconds));
+  return response;
 }
 
 async function readBody(request: Request) {
@@ -36,12 +48,21 @@ export async function POST(request: Request) {
     return errorResponse("INVALID_REQUEST", "Request body must include email and password", 400);
   }
 
+  const clientIp = getClientIp(request);
+  const guardOutcome = loginGuard.checkLoginAllowed(clientIp, body.email);
+
+  if (guardOutcome.blocked) {
+    return rateLimitedResponse(guardOutcome.retryAfterSeconds);
+  }
+
   try {
     const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
     const result = mysql
       ? await loginMysqlUser(mysql, body.email, body.password)
       : await loginUser(db, body.email, body.password);
     const anonymousUser = resolveAnonymousUser(request);
+
+    loginGuard.recordLoginSuccess(body.email);
 
     if (!anonymousUser.isNewUser) {
       if (mysql) {
@@ -61,6 +82,7 @@ export async function POST(request: Request) {
     return response;
   } catch (error) {
     if (error instanceof InvalidCredentialsError) {
+      loginGuard.recordLoginFailure(body.email);
       return errorResponse("INVALID_CREDENTIALS", error.message, 401);
     }
 
