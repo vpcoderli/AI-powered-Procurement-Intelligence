@@ -74,6 +74,64 @@ describe("requireAdmin", () => {
     });
   });
 
+  it("ignores ADMIN_UI_LOCAL_BYPASS=true in production and still authenticates via a real session (regression guard)", async () => {
+    // This proves the bypass has genuinely zero effect in production, not merely that an
+    // unauthenticated request fails. A real admin session must still be required and honored.
+    process.env.NODE_ENV = "production";
+    process.env.ADMIN_UI_LOCAL_BYPASS = "true";
+
+    const token = "prod_admin_session_token";
+    testDb.db
+      .insert(users)
+      .values({
+        id: "user_prod_admin",
+        email: "prod-admin@example.com",
+        role: "admin",
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+      .run();
+    testDb.db
+      .insert(sessions)
+      .values({
+        id: "session_prod_admin",
+        userId: "user_prod_admin",
+        tokenHash: hashSessionToken(token),
+        expiresAt: "2099-05-20T00:00:00.000Z",
+        createdAt: NOW,
+        lastSeenAt: NOW,
+      })
+      .run();
+
+    // A real, valid admin session still resolves normally (kind: "admin", not "local-bypass"),
+    // proving ADMIN_UI_LOCAL_BYPASS was never consulted once NODE_ENV=production.
+    await expect(requireAdmin(testDb.db, requestWithSession(token))).resolves.toEqual({
+      kind: "admin",
+      userId: "user_prod_admin",
+    });
+
+    // And with no session at all, the bypass still does not kick in.
+    await expect(requireAdmin(testDb.db, new Request("http://localhost/admin"))).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+  });
+
+  it("treats every non-production NODE_ENV value as bypass-eligible, and only literal 'production' as bypass-ineligible", async () => {
+    process.env.ADMIN_UI_LOCAL_BYPASS = "true";
+
+    for (const nodeEnv of ["development", "test", "staging", ""]) {
+      process.env.NODE_ENV = nodeEnv;
+      await expect(requireAdmin(testDb.db, new Request("http://localhost/admin"))).resolves.toEqual({
+        kind: "local-bypass",
+      });
+    }
+
+    process.env.NODE_ENV = "production";
+    await expect(requireAdmin(testDb.db, new Request("http://localhost/admin"))).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+  });
+
   it("allows authenticated admin users", async () => {
     const token = "session_token";
     testDb.db

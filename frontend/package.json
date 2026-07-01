@@ -38,7 +38,8 @@
     "source:health:access-review": "tsx scripts/source-health-access-review.ts",
     "source:health:ops": "tsx scripts/source-health-check.ts --all --timeout-ms 10000 --inspect-body --write-snapshot --report-only",
     "source:health:scheduled": "npm run source:health:ops",
-    "risk:check": "tsx scripts/risk-check.ts && npm audit --omit=dev --audit-level=moderate"
+    "secrets:scan": "tsx scripts/secrets-scan.ts",
+    "risk:check": "tsx scripts/risk-check.ts && npm run secrets:scan && npm audit --omit=dev --audit-level=moderate"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
