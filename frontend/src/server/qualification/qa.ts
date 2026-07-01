@@ -1,5 +1,8 @@
 import type { AppDatabase } from "@/server/db/client";
 import { createDeterministicAiRunMetadata } from "@/server/ai/run-metadata";
+import { resolvePromptVersion } from "@/server/ai/prompt-registry";
+import { PROMPT_NAMES } from "@/server/ai/known-prompts";
+import { recordZeroCostAiCall } from "@/server/ai/cost-tracking";
 import type {
   QualificationCitation,
   QualificationEvidenceCoverage,
@@ -156,11 +159,17 @@ function formatAnswer(question: string, citations: QualificationCitation[]) {
   return `Based on available evidence, ${evidenceSummary}`;
 }
 
+export interface AnswerQualificationQuestionOptions {
+  /** Workspace/org id for cost-ledger attribution, when available (e.g. from the request principal in the API route). Optional so existing call sites/tests are unaffected. */
+  organizationId?: string | null;
+}
+
 export async function answerQualificationQuestion(
   database: AppDatabase,
   userId: string,
   intentId: string,
   input: QualificationQuestionInput,
+  options: AnswerQualificationQuestionOptions = {},
 ): Promise<QualificationQuestionResponse> {
   const question = normalizeQuestion(input.question);
   const evidence = await getOrCreateQualificationCitations(database, userId, intentId);
@@ -171,6 +180,38 @@ export async function answerQualificationQuestion(
     matchedCitationCount: selection.matchedCitationCount,
     totalCitationCount: evidence.citations.length,
   });
+  const confidence = citations[0]?.confidence ?? "medium";
+  // Resolved from the prompt registry (server/ai/prompt-registry.ts) rather
+  // than a hand-typed literal, so this call site can never silently drift
+  // from the registered/known prompt version — see known-prompts.ts.
+  const promptVersion = resolvePromptVersion(PROMPT_NAMES.qualificationQa);
+  const aiRun = createDeterministicAiRunMetadata({
+    action: "qualification_qa",
+    promptVersion,
+    confidence,
+    fallbackReason: "no_llm_provider_configured",
+  });
+
+  // Deterministic/rule-based answerer today (no live LLM), so this is a
+  // zero-token/zero-cost call — see server/ai/cost-tracking.ts module header.
+  // Still logged so the ai_call_logs ledger has a complete history of every
+  // AI-labeled run, cost or no cost. Never let a logging failure break the
+  // actual QA response.
+  await recordZeroCostAiCall(database, {
+    aiRunId: aiRun.id,
+    action: "qualification_qa",
+    provider: aiRun.provider,
+    model: aiRun.model,
+    promptVersion,
+    confidence,
+    organizationId: options.organizationId ?? null,
+    userId,
+    metadata: {
+      intentId,
+      citationCount: citations.length,
+      groundingStatus: groundingStatusFromCoverage(evidenceCoverage),
+    },
+  }).catch(() => undefined);
 
   return {
     intentId: evidence.intentId,
@@ -182,12 +223,7 @@ export async function answerQualificationQuestion(
     groundingStatus: groundingStatusFromCoverage(evidenceCoverage),
     evidenceCoverage,
     limitations: LOCAL_QA_LIMITATIONS,
-    aiRun: createDeterministicAiRunMetadata({
-      action: "qualification_qa",
-      promptVersion: "qualification-qa-lite@2026-06-10",
-      confidence: citations[0]?.confidence ?? "medium",
-      fallbackReason: "no_llm_provider_configured",
-    }),
+    aiRun,
     generatedAt: nowIso(),
   };
 }

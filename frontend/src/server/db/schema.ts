@@ -177,6 +177,34 @@ export const creditUsageEvents = sqliteTable(
   }),
 );
 
+export const aiCallLogs = sqliteTable(
+  "ai_call_logs",
+  {
+    id: text("id").primaryKey(),
+    aiRunId: text("ai_run_id").notNull(),
+    organizationId: text("organization_id").references(() => organizations.id, { onDelete: "set null" }),
+    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+    action: text("action").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    confidence: text("confidence").notNull().default("medium"),
+    promptTokens: integer("prompt_tokens").notNull().default(0),
+    completionTokens: integer("completion_tokens").notNull().default(0),
+    totalTokens: integer("total_tokens").notNull().default(0),
+    estimatedCostUsdMicros: integer("estimated_cost_usd_micros").notNull().default(0),
+    metadataJson: text("metadata_json").notNull().default("{}"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    aiRunIdx: index("idx_ai_call_logs_ai_run_id").on(table.aiRunId),
+    organizationIdx: index("idx_ai_call_logs_organization_id").on(table.organizationId),
+    userIdx: index("idx_ai_call_logs_user_id").on(table.userId),
+    actionIdx: index("idx_ai_call_logs_action").on(table.action),
+    createdIdx: index("idx_ai_call_logs_created_at").on(table.createdAt),
+  }),
+);
+
 export const knowledgeItems = sqliteTable(
   "knowledge_items",
   {

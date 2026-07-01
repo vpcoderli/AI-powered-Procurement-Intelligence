@@ -82,7 +82,9 @@ export async function POST(request: Request, context: RouteContext) {
       });
     }
 
-    const intent = await createIntentForBid(db, principal.userId, id);
+    const intent = await createIntentForBid(db, principal.userId, id, {
+      organizationId: principal.workspace?.organizationId ?? null,
+    });
 
     return jsonWithPrincipalCookie({ intent }, principal);
   } catch (error) {

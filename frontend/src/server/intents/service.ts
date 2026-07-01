@@ -1,9 +1,12 @@
 import crypto from "node:crypto";
-import type { AppDatabase } from "@/server/db/client";
+import { db, type AppDatabase } from "@/server/db/client";
 import { listWorkspaceMemberUserIds } from "@/server/account/workspace";
 import { listMysqlWorkspaceMemberUserIds } from "@/server/account/mysql-workspace";
 import { ensureUser, ensureUserFromMysql, getBidByIdFromMysql, getBidByIdFromRepository } from "@/server/bids/repository";
 import { createDeterministicAiRunMetadata } from "@/server/ai/run-metadata";
+import { resolvePromptVersion } from "@/server/ai/prompt-registry";
+import { PROMPT_NAMES } from "@/server/ai/known-prompts";
+import { recordZeroCostAiCall } from "@/server/ai/cost-tracking";
 import { calculateBidMatch } from "@/server/match/service";
 import type { BidMatchResult } from "@/server/match/types";
 import { getSupplierProfile } from "@/server/profile/service";
@@ -36,6 +39,8 @@ function nowIso() {
 
 interface WorkspaceScopeOptions {
   scopeUserIds?: string[];
+  /** Org id for AI cost-ledger attribution, when available (e.g. from the request principal in the API route). Optional so existing call sites/tests are unaffected. */
+  organizationId?: string | null;
 }
 
 function scopedUserIds(database: AppDatabase, userId: string, options: WorkspaceScopeOptions = {}) {
@@ -55,10 +60,48 @@ function parseJsonField<T>(value: string, field: string): T {
 function createHydratedIntentAiRun(match: BidMatchResult) {
   return createDeterministicAiRunMetadata({
     action: "intent_brief",
-    promptVersion: "intent-brief-lite@2026-06-10",
+    // Resolved from the prompt registry (server/ai/prompt-registry.ts) so
+    // this reconstruction can never silently drift from the registered
+    // version used when the brief was originally generated — see
+    // known-prompts.ts, which registers "intent-brief-lite@2026-06-10" as
+    // the active version.
+    promptVersion: resolvePromptVersion(PROMPT_NAMES.intentBrief),
     confidence: match.confidence,
     fallbackReason: "no_llm_provider_configured",
   });
+}
+
+/**
+ * Records token usage/cost for a freshly generated intent brief. Only called
+ * at brief-creation time (createIntentForBid / createMysqlIntentForBid), not
+ * every time an already-persisted intent is hydrated/read back — otherwise
+ * the ai_call_logs ledger would log a new "call" on every page view instead
+ * of once per actual brief generation. Deterministic/rule-based generator
+ * today, so this is a zero-token/zero-cost call (see cost-tracking.ts module
+ * header). Never let a logging failure break intent creation.
+ */
+async function recordIntentBriefCost(input: {
+  database: AppDatabase;
+  aiRunId: string;
+  provider: string;
+  model: string;
+  promptVersion: string;
+  confidence: BidMatchResult["confidence"];
+  userId: string;
+  bidId: string;
+  organizationId?: string | null;
+}) {
+  await recordZeroCostAiCall(input.database, {
+    aiRunId: input.aiRunId,
+    action: "intent_brief",
+    provider: input.provider,
+    model: input.model,
+    promptVersion: input.promptVersion,
+    confidence: input.confidence,
+    organizationId: input.organizationId ?? null,
+    userId: input.userId,
+    metadata: { bidId: input.bidId },
+  }).catch(() => undefined);
 }
 
 interface MysqlIntentRow {
@@ -210,6 +253,18 @@ async function createMysqlIntentForBid(
   const timestamp = nowIso();
   const intentId = `intent_${crypto.randomUUID()}`;
 
+  await recordIntentBriefCost({
+    database: db,
+    aiRunId: generated.aiRun.id,
+    provider: generated.aiRun.provider,
+    model: generated.aiRun.model,
+    promptVersion: generated.aiRun.promptVersion,
+    confidence: match.confidence,
+    userId,
+    bidId,
+    organizationId: options.organizationId,
+  });
+
   await mysqlExecute(
     mysql,
     `
@@ -348,6 +403,18 @@ export async function createIntentForBid(
   if (!row) {
     throw new Error("Failed to create intent");
   }
+
+  await recordIntentBriefCost({
+    database,
+    aiRunId: generated.aiRun.id,
+    provider: generated.aiRun.provider,
+    model: generated.aiRun.model,
+    promptVersion: generated.aiRun.promptVersion,
+    confidence: match.confidence,
+    userId,
+    bidId,
+    organizationId: options.organizationId,
+  });
 
   return hydrateIntent(database, row);
 }

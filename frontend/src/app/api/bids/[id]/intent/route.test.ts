@@ -111,7 +111,9 @@ describe("POST /api/bids/[id]/intent", () => {
       feature: "intent_workspace",
       resourceId: "bid_1",
     });
-    expect(createIntentForBid).toHaveBeenCalledWith(expect.anything(), "user_1", "bid_1");
+    expect(createIntentForBid).toHaveBeenCalledWith(expect.anything(), "user_1", "bid_1", {
+      organizationId: null,
+    });
     expect(response.headers.get("set-cookie")).toBeNull();
   });
 

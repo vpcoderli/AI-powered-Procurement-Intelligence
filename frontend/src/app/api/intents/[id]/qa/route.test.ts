@@ -143,6 +143,8 @@ describe("POST /api/intents/[id]/qa", () => {
     });
     expect(answerQualificationQuestion).toHaveBeenCalledWith(expect.anything(), "user_1", "intent_1", {
       question: "What is the deadline?",
+    }, {
+      organizationId: null,
     });
     expect(recordPremiumActionUsageDryRun).toHaveBeenCalledWith(expect.anything(), {
       organizationId: null,
