@@ -726,6 +726,27 @@ function sourceApprovalTone(value: AdminDataSource["approvalStatus"]) {
   return "border-amber-200 bg-amber-50 text-amber-700";
 }
 
+function robotsTxtTone(value: AdminDataSource["robotsTxtStatus"]) {
+  if (value === "clear" || value === "not_found") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (value === "disallow_all" || value === "disallow_crawled_paths") return "border-rose-200 bg-rose-50 text-rose-700";
+  if (value === "unreachable") return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+function robotsTxtStatusLabel(t: (key: string) => string, value: AdminDataSource["robotsTxtStatus"]) {
+  if (value === "clear") return t("admin.robotsTxt_clear");
+  if (value === "disallow_all") return t("admin.robotsTxt_disallow_all");
+  if (value === "disallow_crawled_paths") return t("admin.robotsTxt_disallow_crawled_paths");
+  if (value === "not_found") return t("admin.robotsTxt_not_found");
+  if (value === "unreachable") return t("admin.robotsTxt_unreachable");
+  return t("admin.robotsTxt_unknown");
+}
+
+function tosReviewedTone(value: AdminDataSource["tosReviewed"]) {
+  if (value === true) return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  return "border-amber-200 bg-amber-50 text-amber-700";
+}
+
 function sourceTrustTone(value: AdminDataSource["trustStatus"]) {
   if (value === "verified") return "border-emerald-200 bg-emerald-50 text-emerald-700";
   if (value === "fallback" || value === "beta") return "border-amber-200 bg-amber-50 text-amber-700";
@@ -3951,6 +3972,37 @@ export default function AdminPage() {
                         {source.approvalNotes}
                       </div>
                     )}
+                    <div className="mt-2 max-w-64 rounded-md border border-slate-200 bg-white p-2 text-xs leading-5 text-slate-600">
+                      <div className="font-semibold text-slate-700">{t("admin.complianceLedger")}</div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        <Badge variant="outline" className={robotsTxtTone(source.robotsTxtStatus)}>
+                          {robotsTxtStatusLabel(t, source.robotsTxtStatus)}
+                        </Badge>
+                        <Badge variant="outline" className={tosReviewedTone(source.tosReviewed)}>
+                          {source.tosReviewed ? t("admin.tosReviewed_yes") : t("admin.tosReviewed_no")}
+                        </Badge>
+                      </div>
+                      {source.robotsTxtFlagReason && (
+                        <div className="mt-1 truncate text-amber-700" title={source.robotsTxtFlagReason}>
+                          {source.robotsTxtFlagReason}
+                        </div>
+                      )}
+                      {source.complianceReviewer && (
+                        <div className="mt-1 truncate" title={source.complianceReviewer}>
+                          {t("admin.complianceReviewer")}: {source.complianceReviewer}
+                        </div>
+                      )}
+                      {source.legalOpinionReference && (
+                        <div className="mt-1 truncate" title={source.legalOpinionReference}>
+                          {t("admin.legalOpinionReference")}: {source.legalOpinionReference}
+                        </div>
+                      )}
+                      {source.complianceReviewDueAt && (
+                        <div className="mt-1">
+                          {t("admin.complianceReviewDue")}: {formatDate(source.complianceReviewDueAt)}
+                        </div>
+                      )}
+                    </div>
                     {source.approvalHistory.length > 0 && (
                       <div className="mt-2 max-w-64 rounded-md border border-slate-200 bg-slate-50/70 p-2 text-xs leading-5 text-slate-600">
                         <div className="font-semibold text-slate-700">{t("admin.sourceApprovalHistory")}</div>

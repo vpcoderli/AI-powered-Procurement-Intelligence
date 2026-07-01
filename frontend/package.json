@@ -38,6 +38,9 @@
     "source:health:access-review": "tsx scripts/source-health-access-review.ts",
     "source:health:ops": "tsx scripts/source-health-check.ts --all --timeout-ms 10000 --inspect-body --write-snapshot --report-only",
     "source:health:scheduled": "npm run source:health:ops",
+    "source:compliance:scan": "tsx scripts/source-compliance-scan.ts",
+    "source:compliance:report": "tsx scripts/source-compliance-report.ts",
+    "source:compliance:ops": "tsx scripts/source-compliance-scan.ts --all --timeout-ms 10000 --write-snapshot --report-only",
     "risk:check": "tsx scripts/risk-check.ts && npm audit --omit=dev --audit-level=moderate"
   },
   "dependencies": {

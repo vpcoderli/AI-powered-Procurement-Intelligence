@@ -105,6 +105,40 @@ async function parsePatchBody(request: Request): Promise<UpdateAdminDataSourceIn
     if (value === undefined) return null;
     input.liveHealthReviewedAt = value;
   }
+  if (Object.hasOwn(body, "tosReviewed")) {
+    if (body.tosReviewed !== null && typeof body.tosReviewed !== "boolean") return null;
+    input.tosReviewed = body.tosReviewed as boolean | null;
+  }
+  if (Object.hasOwn(body, "tosReviewedAt")) {
+    const value = parseNullableString(body.tosReviewedAt);
+    if (value === undefined) return null;
+    input.tosReviewedAt = value;
+  }
+  if (Object.hasOwn(body, "tosUrl")) {
+    const value = parseNullableString(body.tosUrl);
+    if (value === undefined) return null;
+    input.tosUrl = value;
+  }
+  if (Object.hasOwn(body, "complianceReviewer")) {
+    const value = parseNullableString(body.complianceReviewer);
+    if (value === undefined) return null;
+    input.complianceReviewer = value;
+  }
+  if (Object.hasOwn(body, "legalOpinionReference")) {
+    const value = parseNullableString(body.legalOpinionReference);
+    if (value === undefined) return null;
+    input.legalOpinionReference = value;
+  }
+  if (Object.hasOwn(body, "complianceReviewDueAt")) {
+    const value = parseNullableString(body.complianceReviewDueAt);
+    if (value === undefined) return null;
+    input.complianceReviewDueAt = value;
+  }
+  if (Object.hasOwn(body, "complianceNotes")) {
+    const value = parseNullableString(body.complianceNotes);
+    if (value === undefined) return null;
+    input.complianceNotes = value;
+  }
 
   return Object.keys(input).length > 0 ? input : null;
 }
@@ -122,7 +156,14 @@ function includesGovernanceUpdate(input: UpdateAdminDataSourceInput) {
     Object.hasOwn(input, "approvedForIngestion") ||
     Object.hasOwn(input, "approvalStatus") ||
     Object.hasOwn(input, "legalReviewStatus") ||
-    Object.hasOwn(input, "approvalNotes")
+    Object.hasOwn(input, "approvalNotes") ||
+    Object.hasOwn(input, "tosReviewed") ||
+    Object.hasOwn(input, "tosReviewedAt") ||
+    Object.hasOwn(input, "tosUrl") ||
+    Object.hasOwn(input, "complianceReviewer") ||
+    Object.hasOwn(input, "legalOpinionReference") ||
+    Object.hasOwn(input, "complianceReviewDueAt") ||
+    Object.hasOwn(input, "complianceNotes")
   );
 }
 

@@ -888,6 +888,18 @@ describe("database schema", () => {
           "live_health_next_review_at",
           "live_health_notes",
           "live_health_reviewed_at",
+          "robots_txt_status",
+          "robots_txt_checked_at",
+          "robots_txt_hash",
+          "robots_txt_disallows_crawled_paths",
+          "robots_txt_flag_reason",
+          "tos_reviewed",
+          "tos_reviewed_at",
+          "tos_url",
+          "compliance_reviewer",
+          "legal_opinion_reference",
+          "compliance_review_due_at",
+          "compliance_notes",
         ]),
       );
 
