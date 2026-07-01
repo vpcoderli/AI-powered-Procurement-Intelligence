@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createObjectStorageProvider,
   ObjectStorageConfigurationError,
+  ObjectStorageMalwareScanError,
   validateObjectStoragePreflight,
 } from "./object-storage";
 
@@ -259,5 +260,74 @@ describe("object storage provider abstraction", () => {
     }
 
     throw new Error("Expected object storage preflight to fail");
+  });
+
+  it("does not scan uploads by default, preserving existing provider behavior", async () => {
+    const storage = createObjectStorageProvider({
+      env: { OBJECT_STORAGE_PROVIDER: "local" },
+      localRoot: root,
+    });
+
+    // No contentType/allowlisted type at all; would be blocked by the
+    // heuristic scanner's content-type allowlist if scanning were on by
+    // default. Scanning is opt-in, so this must still succeed.
+    await expect(storage.putObject({
+      key: ["user_1", "artifact.bin"],
+      bytes: Buffer.from("arbitrary bytes"),
+    })).resolves.toMatchObject({ provider: "local" });
+  });
+
+  it("blocks putObject with ObjectStorageMalwareScanError when malware scanning is enabled and the scan fails", async () => {
+    const storage = createObjectStorageProvider({
+      env: { OBJECT_STORAGE_PROVIDER: "local" },
+      localRoot: root,
+      enableMalwareScan: true,
+      malwareScanner: {
+        engine: "test-stub",
+        async scan() {
+          return { clean: false, status: "blocked", engine: "test-stub", reason: "test forced block" };
+        },
+      },
+    });
+
+    await expect(storage.putObject({
+      key: ["user_1", "artifact.bin"],
+      bytes: Buffer.from("arbitrary bytes"),
+      contentType: "application/octet-stream",
+    })).rejects.toBeInstanceOf(ObjectStorageMalwareScanError);
+  });
+
+  it("allows putObject through when malware scanning is enabled and the scan passes", async () => {
+    const storage = createObjectStorageProvider({
+      env: { OBJECT_STORAGE_PROVIDER: "local" },
+      localRoot: root,
+      enableMalwareScan: true,
+      malwareScanner: {
+        engine: "test-stub",
+        async scan() {
+          return { clean: true, status: "clean", engine: "test-stub" };
+        },
+      },
+    });
+
+    await expect(storage.putObject({
+      key: ["user_1", "artifact.bin"],
+      bytes: Buffer.from("arbitrary bytes"),
+      contentType: "application/octet-stream",
+    })).resolves.toMatchObject({ provider: "local" });
+  });
+
+  it("resolves the heuristic scanner from OBJECT_STORAGE_MALWARE_SCANNER when enabled without an explicit scanner", async () => {
+    const storage = createObjectStorageProvider({
+      env: { OBJECT_STORAGE_PROVIDER: "local", OBJECT_STORAGE_MALWARE_SCANNER: "external" },
+      localRoot: root,
+      enableMalwareScan: true,
+    });
+
+    await expect(storage.putObject({
+      key: ["user_1", "installer.exe"],
+      bytes: Buffer.from("MZ fake pe header"),
+      contentType: "application/octet-stream",
+    })).rejects.toThrow(/malware scan/i);
   });
 });

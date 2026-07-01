@@ -10,7 +10,7 @@ This document lists transferability and production readiness gaps that a receivi
 - Observability is basic: logs, provider dashboards, database state, and manual checks. Centralized metrics, tracing, alert routing, and uptime checks are future production requirements.
 - Notification delivery supports file, console, and generic HTTP provider paths. A provider-specific email adapter and bounce/complaint webhook handling are not complete.
 - Billing production readiness depends on live Stripe configuration, production webhook setup, secret rotation drills, and a low-risk live smoke test.
-- Artifact Vault and response package exports still use local file storage helpers; production S3/object-storage adapter and malware scanning are future production requirements.
+- Artifact Vault and response package exports default to local file storage helpers; an S3-compatible object storage adapter exists (`OBJECT_STORAGE_PROVIDER=s3`, either a hand-rolled SigV4 REST client or `@aws-sdk/client-s3` via `OBJECT_STORAGE_S3_CLIENT=aws-sdk`) but has not been validated against a real AWS bucket. Malware scanning (`OBJECT_STORAGE_MALWARE_SCANNER`) is a pluggable heuristic (file-type allowlist + size limit), not a real anti-malware engine; see `frontend/src/server/storage/malware-scan.ts` for how to integrate ClamAV or an AWS-native scanning service.
 - Source ingestion governance is still being hardened. Login-required, paid, restricted, browser-check, or terms-uncertain sources must remain blocked or needs-review until approval exists.
 - AI-backed extraction, confidence handling, prompt/version logging, and production LLM cost controls are not complete.
 - Universal UX state coverage is not yet complete across every route.

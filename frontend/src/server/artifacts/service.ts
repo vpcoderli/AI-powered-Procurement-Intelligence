@@ -5,6 +5,7 @@ import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysq
 import { writeAuditEvent, writeAuditEventFromMysql } from "@/server/events/event-log";
 import { getUserIntent } from "@/server/intents/service";
 import { IntentNotFoundError } from "@/server/intents/types";
+import { resolveMalwareScanner as resolveObjectStorageMalwareScanner } from "@/server/storage/malware-scan";
 import { createObjectStorageProvider } from "@/server/storage/object-storage";
 import {
   createArtifactVersionRow,
@@ -44,10 +45,6 @@ const MAX_TITLE_LENGTH = 180;
 const MAX_NOTES_LENGTH = 2000;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const DEFAULT_RETENTION_POLICY: ArtifactRetentionPolicy = "standard_business_record";
-const MALWARE_TEST_SIGNATURES = [
-  "EICAR-STANDARD-ANTIVIRUS-TEST-FILE",
-  "MALWARE_TEST_SIGNATURE",
-] as const;
 
 export class ArtifactVaultValidationError extends Error {
   constructor(message: string) {
@@ -70,7 +67,13 @@ interface ArtifactMalwareScanInput {
 
 interface ArtifactMalwareScanResult {
   status: ArtifactSecurityScanStatus;
-  provider: "local/noop";
+  /**
+   * Identifies which scanner produced this result, e.g. `"local/noop"` (dev
+   * fallback, always clean) or `"heuristic-v1"` (file-type allowlist + size
+   * limit; see `@/server/storage/malware-scan.ts`). Not a real AV engine
+   * name unless a real scanner has been wired in via `options.malwareScanner`.
+   */
+  provider: string;
   signature?: string;
 }
 
@@ -132,28 +135,40 @@ function computedStatus(row: Pick<SupplierArtifactRow, "expiresAt">, now: Date):
   return row.expiresAt && new Date(row.expiresAt).getTime() < now.getTime() ? "expired" : "active";
 }
 
-const localNoopMalwareScanner: ArtifactMalwareScanner = {
-  async scan(input) {
-    const text = input.bytes.toString("utf8");
-    const signature = MALWARE_TEST_SIGNATURES.find((value) => text.includes(value));
+/**
+ * Default artifact malware scanner. Delegates to the shared, pluggable
+ * `resolveMalwareScanner` in `@/server/storage/malware-scan.ts`, which maps
+ * `OBJECT_STORAGE_MALWARE_SCANNER` to a concrete implementation:
+ *
+ *  - unset / `local` / `local/noop` / `noop` / `none` -> a deterministic
+ *    local/no-op scanner (dev-only; only blocks the hardcoded EICAR-style
+ *    test signatures, otherwise always clean).
+ *  - any other configured value (e.g. `external`) -> the heuristic scanner
+ *    (file-type allowlist + size limit + the same test signatures), clearly
+ *    labeled `engine: "heuristic-v1"` — not a real AV engine. See the module
+ *    doc comment in `malware-scan.ts` for how to swap in ClamAV or an
+ *    AWS-native S3 malware-scanning service later.
+ *
+ * `options.malwareScanner` still takes precedence for dependency injection
+ * (tests, or a future real scanner wired in by the caller).
+ */
+function defaultMalwareScanner(): ArtifactMalwareScanner {
+  const scanner = resolveObjectStorageMalwareScanner(process.env);
 
-    if (signature) {
+  return {
+    async scan(input) {
+      const result = await scanner.scan(input);
       return {
-        status: "blocked",
-        provider: "local/noop",
-        signature,
+        status: result.status,
+        provider: scanner.engine,
+        signature: result.signature,
       };
-    }
-
-    return {
-      status: "clean",
-      provider: "local/noop",
-    };
-  },
-};
+    },
+  };
+}
 
 function malwareScanner(options: ArtifactServiceOptions = {}) {
-  return options.malwareScanner ?? localNoopMalwareScanner;
+  return options.malwareScanner ?? defaultMalwareScanner();
 }
 
 function hydrateArtifactVersion(row: ArtifactVersionRow): SupplierArtifactVersion {

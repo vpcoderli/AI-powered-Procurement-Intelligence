@@ -41,6 +41,7 @@
     "risk:check": "tsx scripts/risk-check.ts && npm audit --omit=dev --audit-level=moderate"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.906.0",
     "@base-ui/react": "^1.4.1",
     "@next/env": "16.2.6",
     "better-sqlite3": "^12.10.0",
