@@ -68,6 +68,18 @@ function validatePositiveIntegerEnv(env: WorkerEnv, name: string, errors: string
   }
 }
 
+function sendRetryMaxAttempts() {
+  return positiveIntegerEnv("NOTIFICATION_WORKER_SEND_RETRY_MAX_ATTEMPTS") ?? 3;
+}
+
+function sendRetryBaseDelayMs() {
+  return positiveIntegerEnv("NOTIFICATION_WORKER_SEND_RETRY_BASE_DELAY_MS") ?? 200;
+}
+
+function sendRetryMaxDelayMs() {
+  return positiveIntegerEnv("NOTIFICATION_WORKER_SEND_RETRY_MAX_DELAY_MS") ?? 10_000;
+}
+
 function validateHttpUrl(value: string | undefined, name: string, errors: string[]) {
   if (!value?.trim()) {
     errors.push(`${name} is required when NOTIFICATION_PROVIDER=http`);
@@ -98,6 +110,9 @@ function validateWorkerEnvironment(env: WorkerEnv = process.env) {
   validatePositiveIntegerEnv(env, "NOTIFICATION_WORKER_DUNNING_LIMIT", errors);
   validatePositiveIntegerEnv(env, "NOTIFICATION_WORKER_DELIVERY_LIMIT", errors);
   validatePositiveIntegerEnv(env, "NOTIFICATION_WORKER_MAX_ATTEMPTS", errors);
+  validatePositiveIntegerEnv(env, "NOTIFICATION_WORKER_SEND_RETRY_MAX_ATTEMPTS", errors);
+  validatePositiveIntegerEnv(env, "NOTIFICATION_WORKER_SEND_RETRY_BASE_DELAY_MS", errors);
+  validatePositiveIntegerEnv(env, "NOTIFICATION_WORKER_SEND_RETRY_MAX_DELAY_MS", errors);
 
   if (provider === "http") {
     validateHttpUrl(env.NOTIFICATION_HTTP_ENDPOINT, "NOTIFICATION_HTTP_ENDPOINT", errors);
@@ -133,6 +148,9 @@ function validateWorkerEnvironment(env: WorkerEnv = process.env) {
     dunningLimit: env.NOTIFICATION_WORKER_DUNNING_LIMIT?.trim() || "default",
     deliveryLimit: env.NOTIFICATION_WORKER_DELIVERY_LIMIT?.trim() || "default",
     maxAttempts: env.NOTIFICATION_WORKER_MAX_ATTEMPTS?.trim() || "default",
+    sendRetryMaxAttempts: env.NOTIFICATION_WORKER_SEND_RETRY_MAX_ATTEMPTS?.trim() || "default",
+    sendRetryBaseDelayMs: env.NOTIFICATION_WORKER_SEND_RETRY_BASE_DELAY_MS?.trim() || "default",
+    sendRetryMaxDelayMs: env.NOTIFICATION_WORKER_SEND_RETRY_MAX_DELAY_MS?.trim() || "default",
     warnings,
   };
 }
@@ -149,11 +167,17 @@ async function runLoop() {
     { isMysqlDatabaseUrlConfigured, resolveMysqlPool, closeResolvedMysqlPool, runMysqlMigrations },
     { runMigrations },
     { runNotificationWorkerOnce },
+    { deliverPendingNotifications },
+    { createNotificationProvider },
+    { createRetryingNotificationProvider },
   ] = await Promise.all([
     import("../src/server/db/client"),
     import("../src/server/db/mysql"),
     import("../src/server/db/migrate"),
     import("../src/server/notifications/worker"),
+    import("../src/server/notifications/delivery"),
+    import("../src/server/notifications/provider"),
+    import("../src/server/notifications/retrying-provider"),
   ]);
   const mysqlEnabled = isMysqlDatabaseUrlConfigured();
   const db = mysqlEnabled ? createDatabase(":memory:") : createDatabase(databasePath());
@@ -171,12 +195,27 @@ async function runLoop() {
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
 
+  // Wrap the configured notification provider (file/console/http) so a single transient
+  // send failure (e.g. a dropped connection to the http provider endpoint) gets a few fast
+  // in-process retries before this tick's delivery attempt is recorded. This does not
+  // change how many times `notification_outbox.attempt_count` increments per tick — see
+  // `createRetryingNotificationProvider` for why that durable, cross-tick retry mechanism
+  // (governed by NOTIFICATION_WORKER_MAX_ATTEMPTS) is left untouched.
+  const retryingProvider = createRetryingNotificationProvider(createNotificationProvider(), {
+    worker: "notification-worker",
+    maxAttempts: sendRetryMaxAttempts(),
+    baseDelayMs: sendRetryBaseDelayMs(),
+    maxDelayMs: sendRetryMaxDelayMs(),
+  });
+
   try {
     do {
       const result = await runNotificationWorkerOnce(db, {
         dunningLimit: positiveIntegerEnv("NOTIFICATION_WORKER_DUNNING_LIMIT"),
         deliveryLimit: positiveIntegerEnv("NOTIFICATION_WORKER_DELIVERY_LIMIT"),
         maxAttempts: positiveIntegerEnv("NOTIFICATION_WORKER_MAX_ATTEMPTS"),
+        deliverer: (workerDb, _provider, deliveryOptions) =>
+          deliverPendingNotifications(workerDb, retryingProvider, deliveryOptions),
       });
       console.log(JSON.stringify(result, null, 2));
 

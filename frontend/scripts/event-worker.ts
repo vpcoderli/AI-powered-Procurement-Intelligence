@@ -9,7 +9,9 @@ import { runMigrations } from "../src/server/db/migrate";
 import {
   deliverPendingEventOutboxRows,
   deliverPendingEventOutboxRowsFromMysql,
+  type EventOutboxHandler,
 } from "../src/server/events/event-log";
+import { createRetryingEventOutboxHandler } from "../src/server/events/retrying-outbox-handler";
 
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
 const PRODUCTION_LIKE_ENV_VALUES = new Set(["production", "prod", "staging"]);
@@ -57,9 +59,28 @@ function workerArgs() {
   return new Set(process.argv.slice(2));
 }
 
+function deliveryRetryMaxAttempts() {
+  return positiveIntegerEnv("EVENT_WORKER_DELIVERY_RETRY_MAX_ATTEMPTS") ?? 3;
+}
+
+function deliveryRetryBaseDelayMs() {
+  return positiveIntegerEnv("EVENT_WORKER_DELIVERY_RETRY_BASE_DELAY_MS") ?? 200;
+}
+
+function deliveryRetryMaxDelayMs() {
+  return positiveIntegerEnv("EVENT_WORKER_DELIVERY_RETRY_MAX_DELAY_MS") ?? 10_000;
+}
+
 function validateEventWorkerEnvironment(env: WorkerEnv = process.env) {
   const errors: string[] = [];
-  for (const name of ["EVENT_WORKER_INTERVAL_MS", "EVENT_WORKER_DELIVERY_LIMIT", "EVENT_WORKER_MAX_ATTEMPTS"]) {
+  for (const name of [
+    "EVENT_WORKER_INTERVAL_MS",
+    "EVENT_WORKER_DELIVERY_LIMIT",
+    "EVENT_WORKER_MAX_ATTEMPTS",
+    "EVENT_WORKER_DELIVERY_RETRY_MAX_ATTEMPTS",
+    "EVENT_WORKER_DELIVERY_RETRY_BASE_DELAY_MS",
+    "EVENT_WORKER_DELIVERY_RETRY_MAX_DELAY_MS",
+  ]) {
     if (env[name]?.trim() && !positiveIntegerEnv(name, env)) {
       errors.push(`${name} must be a positive integer`);
     }
@@ -83,6 +104,9 @@ function validateEventWorkerEnvironment(env: WorkerEnv = process.env) {
     intervalMs: env.EVENT_WORKER_INTERVAL_MS?.trim() || String(DEFAULT_INTERVAL_MS),
     deliveryLimit: env.EVENT_WORKER_DELIVERY_LIMIT?.trim() || "default",
     maxAttempts: env.EVENT_WORKER_MAX_ATTEMPTS?.trim() || "default",
+    deliveryRetryMaxAttempts: env.EVENT_WORKER_DELIVERY_RETRY_MAX_ATTEMPTS?.trim() || "default",
+    deliveryRetryBaseDelayMs: env.EVENT_WORKER_DELIVERY_RETRY_BASE_DELAY_MS?.trim() || "default",
+    deliveryRetryMaxDelayMs: env.EVENT_WORKER_DELIVERY_RETRY_MAX_DELAY_MS?.trim() || "default",
   };
 }
 
@@ -90,17 +114,38 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * No-op outbox handler mirroring `event-log.ts`'s private `defaultEventOutboxHandler`
+ * (not exported — this worker never had a real destination adapter wired in). Kept here,
+ * wrapped in retry, so this worker's call site already has the retry-wiring pattern in
+ * place for whenever a real destination adapter (e.g. the marketing CRM handoff in
+ * `src/server/marketing/crm.ts`) is wired into this worker instead of the placeholder.
+ */
+async function noopEventOutboxHandler(): Promise<{ ok: true }> {
+  return { ok: true };
+}
+
+function createRetryingDefaultHandler(): EventOutboxHandler {
+  return createRetryingEventOutboxHandler(noopEventOutboxHandler, {
+    worker: "event-worker",
+    maxAttempts: deliveryRetryMaxAttempts(),
+    baseDelayMs: deliveryRetryBaseDelayMs(),
+    maxDelayMs: deliveryRetryMaxDelayMs(),
+  });
+}
+
 async function runWorkerOnce(db: AppDatabase) {
   const options = {
     limit: positiveIntegerEnv("EVENT_WORKER_DELIVERY_LIMIT"),
     maxAttempts: positiveIntegerEnv("EVENT_WORKER_MAX_ATTEMPTS"),
   };
+  const handler = createRetryingDefaultHandler();
 
   if (isMysqlDatabaseUrlConfigured()) {
-    return deliverPendingEventOutboxRowsFromMysql(resolveMysqlPool(), undefined, options);
+    return deliverPendingEventOutboxRowsFromMysql(resolveMysqlPool(), handler, options);
   }
 
-  return deliverPendingEventOutboxRows(db, undefined, options);
+  return deliverPendingEventOutboxRows(db, handler, options);
 }
 
 async function runLoop() {

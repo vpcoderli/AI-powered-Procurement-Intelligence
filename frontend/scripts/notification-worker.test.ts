@@ -48,6 +48,26 @@ describe("notification worker script", () => {
     expect(packageJson).toContain("\"worker:notifications:check\"");
   });
 
+  it("wraps notification delivery in a retrying provider with configurable backoff", () => {
+    const script = readFileSync(new URL("notification-worker.ts", import.meta.url), "utf8");
+
+    expect(script).toContain("createRetryingNotificationProvider");
+    expect(script).toContain("NOTIFICATION_WORKER_SEND_RETRY_MAX_ATTEMPTS");
+    expect(script).toContain("NOTIFICATION_WORKER_SEND_RETRY_BASE_DELAY_MS");
+    expect(script).toContain("NOTIFICATION_WORKER_SEND_RETRY_MAX_DELAY_MS");
+  });
+
+  it("rejects a non-positive-integer send retry env var during --check", () => {
+    const result = runWorkerCheck("notification-worker.ts", {
+      NODE_ENV: "development",
+      NOTIFICATION_PROVIDER: "file",
+      NOTIFICATION_WORKER_SEND_RETRY_MAX_ATTEMPTS: "0",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("NOTIFICATION_WORKER_SEND_RETRY_MAX_ATTEMPTS must be a positive integer");
+  });
+
   it("blocks production check when DATABASE_URL resolves to SQLite even if MYSQL_DATABASE_URL is set", () => {
     const result = runWorkerCheck("notification-worker.ts", {
       NODE_ENV: "production",
@@ -111,6 +131,25 @@ describe("event worker script", () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("DATABASE_URL resolves to SQLite");
   });
+
+  it("wraps outbox delivery in a retrying handler with configurable backoff", () => {
+    const script = readFileSync(new URL("event-worker.ts", import.meta.url), "utf8");
+
+    expect(script).toContain("createRetryingEventOutboxHandler");
+    expect(script).toContain("EVENT_WORKER_DELIVERY_RETRY_MAX_ATTEMPTS");
+    expect(script).toContain("EVENT_WORKER_DELIVERY_RETRY_BASE_DELAY_MS");
+    expect(script).toContain("EVENT_WORKER_DELIVERY_RETRY_MAX_DELAY_MS");
+  });
+
+  it("rejects a non-positive-integer delivery retry env var during --check", () => {
+    const result = runWorkerCheck("event-worker.ts", {
+      NODE_ENV: "test",
+      EVENT_WORKER_DELIVERY_RETRY_MAX_ATTEMPTS: "-1",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("EVENT_WORKER_DELIVERY_RETRY_MAX_ATTEMPTS must be a positive integer");
+  });
 });
 
 describe("crawler worker script", () => {
@@ -138,5 +177,37 @@ describe("crawler worker script", () => {
 
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("DATABASE_URL resolves to SQLite");
+  });
+
+  it("retries each crawler source independently with configurable backoff and alerts on exhaustion", () => {
+    const script = readFileSync(new URL("crawler-worker.ts", import.meta.url), "utf8");
+
+    expect(script).toContain("createRetryingRunCrawlerSourceOnce");
+    expect(script).toContain("retryResultWithBackoff");
+    expect(script).toContain("emitWorkerFailureAlert");
+    expect(script).toContain("CRAWLER_WORKER_RETRY_MAX_ATTEMPTS");
+    expect(script).toContain("CRAWLER_WORKER_RETRY_BASE_DELAY_MS");
+    expect(script).toContain("CRAWLER_WORKER_RETRY_MAX_DELAY_MS");
+    expect(script).toContain("CRAWLER_WORKER_SEND_RETRY_MAX_ATTEMPTS");
+  });
+
+  it("rejects a non-positive-integer crawler retry env var during --check", () => {
+    const result = runWorkerCheck("crawler-worker.ts", {
+      NODE_ENV: "test",
+      CRAWLER_WORKER_RETRY_MAX_ATTEMPTS: "abc",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("CRAWLER_WORKER_RETRY_MAX_ATTEMPTS must be a positive integer");
+  });
+
+  it("rejects a non-positive-integer crawler send-retry env var during --check", () => {
+    const result = runWorkerCheck("crawler-worker.ts", {
+      NODE_ENV: "test",
+      CRAWLER_WORKER_SEND_RETRY_MAX_ATTEMPTS: "0",
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("CRAWLER_WORKER_SEND_RETRY_MAX_ATTEMPTS must be a positive integer");
   });
 });
