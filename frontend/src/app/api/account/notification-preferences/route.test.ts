@@ -105,4 +105,23 @@ describe("PATCH /api/account/notification-preferences", () => {
       defaultAlertFrequency: "weekly",
     });
   });
+
+  it("rejects a preferences update from a cross-site Origin", async () => {
+    const response = await PATCH(
+      new Request("http://localhost/api/account/notification-preferences", {
+        method: "PATCH",
+        headers: {
+          cookie: `${SESSION_COOKIE_NAME}=sess_valid`,
+          origin: "https://evil.example.com",
+        },
+        body: JSON.stringify({ savedSearchAlertsEnabled: false }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("CSRF_VALIDATION_FAILED");
+    expect(authService.getSessionUser).not.toHaveBeenCalled();
+    expect(preferencesService.updateAccountNotificationPreferences).not.toHaveBeenCalled();
+  });
 });

@@ -7,6 +7,7 @@ import {
 } from "@/server/billing/subscriptions";
 import type { AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { csrfRejectedResponse, verifyCsrfSafe } from "@/server/security/csrf";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -43,6 +44,10 @@ function positiveInteger(value: unknown) {
 
 export function createAdminSubscriptionsReconcilePost(database?: AppDatabase) {
   return async function POST(request: Request) {
+    if (!verifyCsrfSafe(request)) {
+      return csrfRejectedResponse();
+    }
+
     try {
       const resolvedDb = await resolveDatabase(database);
       await requireAdmin(resolvedDb, request);

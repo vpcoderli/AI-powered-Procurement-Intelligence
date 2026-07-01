@@ -10,6 +10,7 @@ import {
 import type { AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import type { SourceApprovalStatus, SourceLegalReviewStatus } from "@/lib/state-crawler-sources";
+import { csrfRejectedResponse, verifyCsrfSafe } from "@/server/security/csrf";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -134,6 +135,10 @@ export function createAdminDataSourcePatch(database?: AppDatabase, mysql?: Mysql
   const shouldUseMysqlRuntime = () => Boolean(mysql) || (!database && isMysqlDatabaseUrlConfigured());
 
   return async function PATCH(request: Request, context: RouteContext) {
+    if (!verifyCsrfSafe(request)) {
+      return csrfRejectedResponse();
+    }
+
     try {
       const resolvedDb = await resolveDatabase(database);
       const access = await requireAdminAccess(resolvedDb, request, { roles: ["admin", "operator"] });

@@ -147,4 +147,56 @@ describe("POST /api/account/subscription/cancel", () => {
     expect(body.error.code).toBe("AUTH_REQUIRED");
     expect(billingService.cancelAccountSubscription).not.toHaveBeenCalled();
   });
+
+  it("rejects requests from a cross-site Origin before checking the session", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/account/subscription/cancel", {
+        method: "POST",
+        headers: {
+          cookie: `${SESSION_COOKIE_NAME}=sess_valid`,
+          origin: "https://evil.example.com",
+        },
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("CSRF_VALIDATION_FAILED");
+    expect(authService.getSessionUser).not.toHaveBeenCalled();
+    expect(billingService.cancelAccountSubscription).not.toHaveBeenCalled();
+  });
+
+  it("allows requests with a same-origin Origin header", async () => {
+    vi.mocked(authService.getSessionUser).mockResolvedValueOnce({
+      id: "user_1",
+      email: "buyer@example.com",
+      displayName: "Buyer",
+      role: "user",
+      tier: "pro",
+      features: ["bid_search", "submission_guidance"],
+    });
+    vi.mocked(billingService.cancelAccountSubscription).mockReturnValueOnce({
+      subscription: {
+        userId: "user_1",
+        tier: "pro",
+        status: "active",
+        source: "local_checkout",
+        currentPeriodEnd: "2026-06-28T00:00:00.000Z",
+        cancelAtPeriodEnd: true,
+      },
+      plans: billingService.listSubscriptionPlans(),
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/account/subscription/cancel", {
+        method: "POST",
+        headers: {
+          cookie: `${SESSION_COOKIE_NAME}=sess_valid`,
+          origin: "http://localhost",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+  });
 });

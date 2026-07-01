@@ -14,6 +14,7 @@ import {
   recordLiveSourceHealthSnapshot,
   recordLiveSourceHealthSnapshotFromMysql,
 } from "@/server/source-validity/health-snapshots";
+import { csrfRejectedResponse, verifyCsrfSafe } from "@/server/security/csrf";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -92,6 +93,10 @@ export function createAdminDataSourceHealthCheckPost(
   const shouldUseMysqlRuntime = () => Boolean(mysql) || (!database && isMysqlDatabaseUrlConfigured());
 
   return async function POST(request: Request, context: RouteContext) {
+    if (!verifyCsrfSafe(request)) {
+      return csrfRejectedResponse();
+    }
+
     try {
       const resolvedDb = await resolveDatabase(database);
       await requireAdminAccess(resolvedDb, request, { roles: ["admin", "operator"] });

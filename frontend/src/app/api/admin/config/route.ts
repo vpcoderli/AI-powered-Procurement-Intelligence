@@ -14,6 +14,7 @@ import type { AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { writeAuditEvent, writeAuditEventFromMysql } from "@/server/events/event-log";
 import { createRequestContext } from "@/server/http/request-context";
+import { csrfRejectedResponse, verifyCsrfSafe } from "@/server/security/csrf";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -170,6 +171,10 @@ export function createAdminConfigHandlers(database?: AppDatabase) {
       }
     },
     POST: async function POST(request: Request) {
+      if (!verifyCsrfSafe(request)) {
+        return csrfRejectedResponse();
+      }
+
       try {
         const resolvedDb = await resolveDatabase(database);
         const principal = await requireAdminConfigAccess(resolvedDb, request);

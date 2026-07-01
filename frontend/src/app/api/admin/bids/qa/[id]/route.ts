@@ -16,6 +16,7 @@ import {
 } from "@/server/admin/bid-qa-repository";
 import type { AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { csrfRejectedResponse, verifyCsrfSafe } from "@/server/security/csrf";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -107,6 +108,10 @@ export function createAdminBidQaPatch(database?: AppDatabase) {
   const shouldUseMysqlRuntime = () => !database && isMysqlDatabaseUrlConfigured();
 
   return async function PATCH(request: Request, context: RouteContext) {
+    if (!verifyCsrfSafe(request)) {
+      return csrfRejectedResponse();
+    }
+
     const input = await parsePatchBody(request);
     if (!input) {
       return errorResponse("INVALID_REQUEST", "Request body must include a valid reviewStatus.", 400);
