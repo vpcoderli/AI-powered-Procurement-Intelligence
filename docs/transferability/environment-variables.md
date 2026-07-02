@@ -100,7 +100,7 @@ npm run billing:stripe:sandbox
 
 | Variable | Local boundary | Production boundary |
 |---|---|---|
-| `NOTIFICATION_PROVIDER` | `file` or `console`; `http` for integration testing. | `http` or a future provider-specific adapter. |
+| `NOTIFICATION_PROVIDER` | `file` or `console`; `http`, `ses`, or `sendgrid` for integration testing. | `ses`, `sendgrid`, or `http`. |
 | `NOTIFICATION_OUTBOX_DIR` | Local file output directory. | Not suitable for live email delivery. |
 | `NOTIFICATION_HTTP_ENDPOINT` | Local/staging provider endpoint. | Production provider endpoint. |
 | `NOTIFICATION_HTTP_TOKEN` | Placeholder or test token only. | Secret manager only. |
@@ -116,6 +116,32 @@ Notification preflight:
 cd frontend
 npm run worker:notifications:check
 ```
+
+### Amazon SES provider (`NOTIFICATION_PROVIDER=ses`)
+
+Requires `@aws-sdk/client-sesv2` to be installed (`npm install` after this dependency lands in `package.json`; see the human follow-up in the P0-5 delivery notes).
+
+| Variable | Local boundary | Production boundary |
+|---|---|---|
+| `NOTIFICATION_SES_REGION` | Test/sandbox SES region, for example `us-east-1`. Falls back to `AWS_REGION` if unset. | Required production SES region. |
+| `NOTIFICATION_SES_FROM_ADDRESS` | Verified sandbox sender address. | Required verified sender address on a domain with DKIM/SPF configured (see `docs/operations/notification-delivery-runbook.md`). |
+| `NOTIFICATION_SES_CONFIGURATION_SET` | Optional; unset unless testing configuration-set-scoped event publishing. | Recommended: an SES configuration set with SNS event publishing enabled for bounce/complaint/delivery. |
+| `NOTIFICATION_SES_ACCESS_KEY_ID` | Optional test/integration credential. | Prefer the runtime's default credential provider chain (IAM instance/task role) over explicit keys; if set, inject from Secrets Manager/SSM. |
+| `NOTIFICATION_SES_SECRET_ACCESS_KEY` | Optional test/integration credential. | Same boundary as `NOTIFICATION_SES_ACCESS_KEY_ID`. |
+| `NOTIFICATION_SES_SESSION_TOKEN` | Optional temporary test token. | Optional temporary credential token when using session credentials. |
+| `NOTIFICATION_SES_SNS_SKIP_SIGNATURE_VERIFICATION` | `1` only for local testing against unsigned SNS fixture payloads. | Must be unset; the webhook route refuses this bypass whenever `NODE_ENV=production` regardless of this value. |
+
+### SendGrid provider (`NOTIFICATION_PROVIDER=sendgrid`)
+
+Requires `@sendgrid/mail` to be installed (`npm install` after this dependency lands in `package.json`).
+
+| Variable | Local boundary | Production boundary |
+|---|---|---|
+| `NOTIFICATION_SENDGRID_API_KEY` | Test-mode API key placeholder only. | Secret manager only; never commit. |
+| `NOTIFICATION_SENDGRID_FROM_ADDRESS` | Verified sandbox sender address. | Required verified sender identity/domain. |
+| `NOTIFICATION_SENDGRID_WEBHOOK_PUBLIC_KEY` | Optional; only needed to test signature verification locally. | Required. Base64 ECDSA public key from SendGrid Event Webhook settings; the webhook route fails closed (401) in production if unset. |
+
+Both adapters tag/annotate each outbound message with the originating `notification_outbox.id` (SES `EmailTags`, SendGrid `custom_args`) so the corresponding bounce/complaint/delivery webhook route can correlate the async event back to the correct row without depending on recipient address uniqueness.
 
 ## Observability
 
@@ -164,6 +190,11 @@ STRIPE_WEBHOOK_SECRET
 STRIPE_PRICE_PRO_MONTHLY
 STRIPE_PRICE_BUSINESS_MONTHLY
 NOTIFICATION_HTTP_TOKEN
+NOTIFICATION_SES_ACCESS_KEY_ID
+NOTIFICATION_SES_SECRET_ACCESS_KEY
+NOTIFICATION_SES_SESSION_TOKEN
+NOTIFICATION_SENDGRID_API_KEY
+NOTIFICATION_SENDGRID_WEBHOOK_PUBLIC_KEY
 SAM_API_KEY
 CRAWLER_RUN_TOKEN
 OBJECT_STORAGE_ACCESS_KEY_ID
@@ -189,6 +220,7 @@ ADMIN_UI_LOCAL_BYPASS=true
 STRIPE_SECRET_KEY=sk_test_REPLACE_ME
 NOTIFICATION_PROVIDER=file
 NOTIFICATION_PROVIDER=console
+NOTIFICATION_SES_SNS_SKIP_SIGNATURE_VERIFICATION=1
 OBJECT_STORAGE_PROVIDER=local
 PRODUCTION_ALLOW_LOCAL_OBJECT_STORAGE=1
 ```

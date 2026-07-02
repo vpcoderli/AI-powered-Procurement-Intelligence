@@ -2,8 +2,10 @@ import type { NotificationProvider } from "./types";
 import { createConsoleNotificationProvider } from "./providers/console";
 import { createFileNotificationProvider } from "./providers/file";
 import { createHttpNotificationProvider } from "./providers/http";
+import { createSendgridNotificationProvider } from "./providers/sendgrid";
+import { createSesNotificationProvider } from "./providers/ses";
 
-export type NotificationProviderName = "file" | "console" | "http";
+export type NotificationProviderName = "file" | "console" | "http" | "ses" | "sendgrid";
 
 export interface NotificationProviderConfig {
   provider: NotificationProviderName;
@@ -13,7 +15,15 @@ export interface NotificationProviderConfig {
   warnings: string[];
 }
 
-const VALID_PROVIDERS = new Set<NotificationProviderName>(["file", "console", "http"]);
+const VALID_PROVIDERS = new Set<NotificationProviderName>([
+  "file",
+  "console",
+  "http",
+  "ses",
+  "sendgrid",
+]);
+
+const LIVE_EMAIL_PROVIDERS = new Set<NotificationProviderName>(["http", "ses", "sendgrid"]);
 
 export class NotificationProviderConfigError extends Error {
   constructor(public readonly issues: string[]) {
@@ -57,14 +67,14 @@ export function resolveNotificationProviderConfig(
   const provider = normalizedProvider(env.NOTIFICATION_PROVIDER);
   if (!provider) {
     throw new NotificationProviderConfigError([
-      "NOTIFICATION_PROVIDER must be one of file, console, or http",
+      "NOTIFICATION_PROVIDER must be one of file, console, http, ses, or sendgrid",
     ]);
   }
 
   const warnings: string[] = [];
-  if (env.NODE_ENV === "production" && provider !== "http") {
+  if (env.NODE_ENV === "production" && !LIVE_EMAIL_PROVIDERS.has(provider)) {
     warnings.push(
-      `NODE_ENV=production is using the ${provider} notification provider fallback; set NOTIFICATION_PROVIDER=http for live email delivery.`,
+      `NODE_ENV=production is using the ${provider} notification provider fallback; set NOTIFICATION_PROVIDER=ses, sendgrid, or http for live email delivery.`,
     );
   }
 
@@ -100,6 +110,14 @@ export function createNotificationProvider(): NotificationProvider {
 
   if (config.provider === "console") {
     return createConsoleNotificationProvider();
+  }
+
+  if (config.provider === "ses") {
+    return createSesNotificationProvider();
+  }
+
+  if (config.provider === "sendgrid") {
+    return createSendgridNotificationProvider();
   }
 
   return createFileNotificationProvider({
