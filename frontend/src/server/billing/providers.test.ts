@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { InvalidSubscriptionInputError } from "./subscriptions";
-import { normalizeStripeWebhookEvent, stripePriceIdForTier } from "./providers";
+import { assertStripeKeyModeForRuntime, normalizeStripeWebhookEvent, stripePriceIdForTier } from "./providers";
 
 describe("billing provider adapters", () => {
   it("resolves Stripe monthly price ids by tier", () => {
@@ -127,6 +127,57 @@ describe("billing provider adapters", () => {
       tier: "business",
       status: "past_due",
       metadata: { stripeEventType: "invoice.payment_failed" },
+    });
+  });
+
+  describe("assertStripeKeyModeForRuntime", () => {
+    it("allows a live secret key in a production-like runtime", () => {
+      expect(() =>
+        assertStripeKeyModeForRuntime("sk_live_real_secret", { NODE_ENV: "production" }),
+      ).not.toThrow();
+    });
+
+    it("rejects a test secret key in a production-like runtime (NODE_ENV)", () => {
+      expect(() =>
+        assertStripeKeyModeForRuntime("sk_test_fake_secret", { NODE_ENV: "production" }),
+      ).toThrow(/STRIPE_SECRET_KEY must be a Stripe live mode secret key/);
+    });
+
+    it("rejects a test secret key across other production-like runtime signals", () => {
+      for (const env of [
+        { APP_ENV: "production" },
+        { DEPLOY_ENV: "prod" },
+        { VERCEL_ENV: "production" },
+        { RUNTIME_ENV: "prod" },
+      ]) {
+        expect(() => assertStripeKeyModeForRuntime("sk_test_fake_secret", env)).toThrow(
+          /STRIPE_SECRET_KEY must be a Stripe live mode secret key/,
+        );
+      }
+    });
+
+    it("does not throw for a test secret key outside production-like runtimes", () => {
+      expect(() =>
+        assertStripeKeyModeForRuntime("sk_test_fake_secret", { NODE_ENV: "development" }),
+      ).not.toThrow();
+      expect(() => assertStripeKeyModeForRuntime("sk_test_fake_secret", {})).not.toThrow();
+    });
+
+    it("does not throw for an empty secret key regardless of runtime", () => {
+      expect(() => assertStripeKeyModeForRuntime("", { NODE_ENV: "production" })).not.toThrow();
+      expect(() => assertStripeKeyModeForRuntime("   ", { NODE_ENV: "production" })).not.toThrow();
+    });
+
+    it("does not leak the rejected secret value in the error message", () => {
+      try {
+        assertStripeKeyModeForRuntime("sk_test_should_not_leak", { NODE_ENV: "production" });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        expect(message).not.toContain("sk_test_should_not_leak");
+        return;
+      }
+
+      throw new Error("Expected assertStripeKeyModeForRuntime to throw");
     });
   });
 });

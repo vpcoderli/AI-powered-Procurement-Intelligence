@@ -36,6 +36,18 @@ describe("Stripe sandbox verifier helpers", () => {
     ).toThrow(/STRIPE_SECRET_KEY must be a Stripe test mode secret key/);
   });
 
+  it("cross-checks the live-key rejection with a pointer to the live smoke test script", () => {
+    expect(() =>
+      validateStripeSandboxConfig(
+        {
+          ...validEnv,
+          STRIPE_SECRET_KEY: "sk_live_real_secret",
+        },
+        { tier: "pro" },
+      ),
+    ).toThrow(/refusing to run the sandbox verifier with a live sk_live_ key.*billing:stripe:live-smoke/);
+  });
+
   it("rejects invalid tier arguments and missing price ids", () => {
     expect(() => validateStripeSandboxConfig({ ...validEnv, STRIPE_PRICE_BUSINESS_MONTHLY: "" }, { tier: "business" }))
       .toThrow(/STRIPE_PRICE_BUSINESS_MONTHLY/);
