@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# Cancel superseded runs on the same branch/PR to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: frontend
+
+jobs:
+  frontend:
+    name: Frontend (lint, test, build, risk:check)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # frontend/package.json has no "engines" field at the time of writing;
+      # pin Node 20 to match frontend/Dockerfile (node:20-alpine) and
+      # @types/node ^20. Update both together if the Node target changes.
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      # risk:check (frontend/scripts/risk-check.ts) queries the database
+      # directly (50-state bid coverage, attachment routes, source
+      # governance metadata, account tier separation, URL validity). It has
+      # no live/seeded DB in a fresh CI checkout, so seed a throwaway local
+      # SQLite database first. Deliberately NOT setting NODE_ENV=production
+      # here: production mode additionally requires every state source to
+      # carry a full legal/approval review (see
+      # shouldRequireSourceApproval in src/server/risk/checklist.ts), which
+      # tracks real-world data-source approval status, not code
+      # correctness, and is intentionally not satisfied by seed data alone.
+      # That stricter gate belongs to the release/launch-handoff checklist
+      # in docs/operations/aws-deployment-runbook.md, not this PR gate.
+      - name: Seed throwaway SQLite database for risk:check
+        run: npm run db:seed
+        env:
+          DATABASE_PATH: data/apsi.sqlite
+
+      - name: Risk check
+        run: npm run risk:check
