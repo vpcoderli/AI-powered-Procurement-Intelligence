@@ -204,6 +204,9 @@ export function createS3ObjectStorageProvider(options: S3ObjectStorageOptions = 
   let cachedClient: S3Client | undefined = options.client;
 
   function client(): S3Client {
+    // Fail closed on missing runtime credentials before any request is sent,
+    // regardless of whether the client was injected (tests) or constructed.
+    assertRuntimeCredentials(env);
     if (cachedClient) return cachedClient;
     cachedClient = new S3Client(buildClientConfig(env));
     return cachedClient;

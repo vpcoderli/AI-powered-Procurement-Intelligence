@@ -110,12 +110,17 @@ function allowedOrigins(request: Request): Set<string> {
     if (normalized) origins.add(normalized);
   }
 
-  // Fall back to the request's own Host header as a trusted same-origin
-  // value when no explicit allowlist is configured. This keeps the check
-  // useful out of the box (e.g. in preview/staging environments where
-  // `APP_ORIGIN` has not been set yet) without requiring every deployment
-  // to configure `APP_ORIGIN` before this protection takes effect.
-  if (origins.size === 0) {
+  // When no explicit allowlist is configured (`APP_ORIGIN` /
+  // `CSRF_ALLOWED_ORIGINS` unset), fall back to trusting the request's own
+  // origin: an Origin header that matches the host the request was addressed
+  // to is by definition same-origin. This keeps the check useful out of the
+  // box (e.g. preview/staging environments) without requiring every
+  // deployment to configure `APP_ORIGIN` first. Once an explicit allowlist
+  // is configured, it is authoritative and the fallback is disabled so that
+  // unlisted hosts fail closed.
+  if (configuredAllowedOrigins().length === 0) {
+    const selfOrigin = normalizeOrigin(request.url);
+    if (selfOrigin) origins.add(selfOrigin);
     const host = request.headers.get("host");
     if (host) {
       const scheme = process.env.NODE_ENV === "production" ? "https" : "http";

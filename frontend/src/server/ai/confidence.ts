@@ -48,10 +48,12 @@ export interface ConfidenceScore {
 }
 
 function clampScore(score: number): number {
-  if (!Number.isFinite(score)) {
+  if (Number.isNaN(score)) {
     return 0;
   }
 
+  // Math.min/Math.max clamp non-finite values to the bounds
+  // (+Infinity -> 100, -Infinity -> 0).
   return Math.min(100, Math.max(0, score));
 }
 

@@ -76,10 +76,10 @@ describe("intent pages", () => {
     expect(detailPage).toContain("intentsPage.responseWorkspace");
     expect(detailPage).toContain("intentsPage.responseWorkspaceSaved");
     expect(detailPage).toContain("lockedFeatureMessage");
-    expect(detailPage).toContain("Intent Workspace");
-    expect(detailPage).toContain("Submission Path");
-    expect(detailPage).toContain("Knowledge Station");
-    expect(detailPage).toContain("workflow coach");
+    expect(detailPage).toContain("intentsPage.workspaceKicker");
+    expect(detailPage).toContain("intentsPage.submissionPathTitle");
+    expect(detailPage).toContain("intentsPage.knowledgeStationCoachAriaLabel");
+    expect(detailPage).toContain("knowledgeStationCoach");
     expect(detailPage).toContain("knowledge_station");
     expect(detailPage).toContain("createKnowledgeItem");
     expect(detailPage).toContain("fetchKnowledgeItems");
