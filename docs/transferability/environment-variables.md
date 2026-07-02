@@ -179,6 +179,16 @@ Event worker preflight:
 cd frontend
 npm run worker:events:check
 ```
+## AI Cost & Confidence
+
+See `frontend/src/server/ai/prompt-registry.ts`, `frontend/src/server/ai/confidence.ts`, and `frontend/src/server/ai/cost-tracking.ts`. Every AI feature call site (`intent_brief`, `qualification_qa`, and any future live-LLM action) logs its prompt version, confidence tier, and token/cost estimate to the `ai_call_logs` table via `recordAiCallCost` / `recordZeroCostAiCall`.
+
+| Variable | Local boundary | Production boundary |
+|---|---|---|
+| `AI_COST_RATE_OVERRIDES_JSON` | Optional. JSON object mapping a model id to `{ "promptPer1k": number, "completionPer1k": number }` USD rates, for example `{"gpt-4o-mini":{"promptPer1k":0.00015,"completionPer1k":0.0006}}`. Overrides `MODEL_RATE_TABLE_USD` in `cost-tracking.ts` without a code change. | Set once real provider pricing is confirmed, or after a provider price change, until the built-in rate table is updated and redeployed. Malformed JSON is ignored (falls back to the built-in table), so validate with `JSON.parse` before setting. |
+| `AI_COST_ALERT_THRESHOLD_USD` | Optional. A USD number; when set, `isOverCostAlertThreshold()` reports whether a summed cost total has crossed it. Unset means no threshold check. | Set to the desired per-period spend ceiling for whichever scope (org/global) calls `isOverCostAlertThreshold`. This only computes the boolean signal today — no alert channel (Slack/email/PagerDuty) is wired up; see human follow-up in the P1-4 task notes. |
+
+**UNVERIFIED PRICING WARNING:** the default per-model rates baked into `MODEL_RATE_TABLE_USD` (`frontend/src/server/ai/cost-tracking.ts`) are illustrative placeholders for wiring the metering pipeline end to end. They are **not** guaranteed to match any provider's actual current published pricing. Verify and update them (or set `AI_COST_RATE_OVERRIDES_JSON`) against the real provider rate card before relying on `ai_call_logs` totals for billing, invoicing, or cost-alerting decisions.
 
 ## Crawlers
 

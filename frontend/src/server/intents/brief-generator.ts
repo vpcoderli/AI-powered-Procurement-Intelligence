@@ -1,5 +1,7 @@
 import type { Bid } from "@/server/bids/domain";
 import { createDeterministicAiRunMetadata } from "@/server/ai/run-metadata";
+import { resolvePromptVersion } from "@/server/ai/prompt-registry";
+import { PROMPT_NAMES } from "@/server/ai/known-prompts";
 import type { BidMatchResult } from "@/server/match/types";
 import type { GeneratedIntentContent } from "./types";
 
@@ -74,7 +76,11 @@ export function generateIntentBrief({
     riskFlags: riskFlagsForBid(bid, match),
     aiRun: createDeterministicAiRunMetadata({
       action: "intent_brief",
-      promptVersion: "intent-brief-lite@2026-06-10",
+      // Resolved from the prompt registry (server/ai/prompt-registry.ts) so
+      // this can never silently drift from the registered "known" prompt
+      // version — see known-prompts.ts, which registers this exact string
+      // ("intent-brief-lite@2026-06-10") as the current active version.
+      promptVersion: resolvePromptVersion(PROMPT_NAMES.intentBrief),
       confidence: match.confidence,
       fallbackReason: "no_llm_provider_configured",
     }),

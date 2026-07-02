@@ -1,5 +1,6 @@
 import type { Bid } from "@/server/bids/domain";
 import type { SupplierProfile } from "@/server/profile/types";
+import { tierForScore } from "@/server/ai/confidence";
 import type { BidMatchResult } from "./types";
 
 const COMPONENT_WEIGHTS = {
@@ -95,11 +96,12 @@ function scoreDeadline(bid: Bid) {
   return bid.deadlineDate ? COMPONENT_WEIGHTS.deadline : 0;
 }
 
+// Delegates to the shared confidence-tiering thresholds in
+// server/ai/confidence.ts (CONFIDENCE_TIER_THRESHOLDS) so this is the same
+// single source of truth every AI call site uses, rather than a private
+// re-implementation of the >=75/>=50 cutoffs.
 function confidence(score: number): BidMatchResult["confidence"] {
-  if (score >= 75) return "high";
-  if (score >= 50) return "medium";
-
-  return "low";
+  return tierForScore(score);
 }
 
 function missingProfileHints(profile: SupplierProfile) {

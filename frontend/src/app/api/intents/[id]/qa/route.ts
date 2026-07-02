@@ -65,7 +65,9 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     requireFeature(principal, "bid.brief.full.generate");
     const { id } = await context.params;
-    const answer = await answerQualificationQuestion(db, principal.userId, id, input);
+    const answer = await answerQualificationQuestion(db, principal.userId, id, input, {
+      organizationId: principal.workspace?.organizationId ?? null,
+    });
     const creditUsage = await recordPremiumActionUsageDryRun(db, {
       organizationId: principal.workspace?.organizationId ?? null,
       userId: principal.userId,

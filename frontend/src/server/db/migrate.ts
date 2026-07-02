@@ -121,6 +121,24 @@ export function runMigrations(db: AppDatabase) {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS ai_call_logs (
+      id TEXT PRIMARY KEY,
+      ai_run_id TEXT NOT NULL,
+      organization_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      action TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      prompt_version TEXT NOT NULL,
+      confidence TEXT NOT NULL DEFAULT 'medium',
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      estimated_cost_usd_micros INTEGER NOT NULL DEFAULT 0,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS password_reset_tokens (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -840,6 +858,11 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_credit_usage_events_user_id ON credit_usage_events(user_id);
     CREATE INDEX IF NOT EXISTS idx_credit_usage_events_feature_key ON credit_usage_events(feature_key);
     CREATE INDEX IF NOT EXISTS idx_credit_usage_events_created_at ON credit_usage_events(created_at);
+    CREATE INDEX IF NOT EXISTS idx_ai_call_logs_ai_run_id ON ai_call_logs(ai_run_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_call_logs_organization_id ON ai_call_logs(organization_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_call_logs_user_id ON ai_call_logs(user_id);
+    CREATE INDEX IF NOT EXISTS idx_ai_call_logs_action ON ai_call_logs(action);
+    CREATE INDEX IF NOT EXISTS idx_ai_call_logs_created_at ON ai_call_logs(created_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_password_reset_tokens_token_hash ON password_reset_tokens(token_hash);
