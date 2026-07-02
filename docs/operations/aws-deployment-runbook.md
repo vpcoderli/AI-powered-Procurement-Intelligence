@@ -690,8 +690,8 @@ Use this table before switching real users to the AWS environment.
 
 These are known gaps to resolve or explicitly accept before a full production launch:
 
-- Real AWS S3/CloudFront upload, download, signing URL/CDN behavior, IAM policy review, and staging smoke are not complete; the current S3-compatible provider is implemented locally but has not been proven against a real AWS environment.
-- External production malware scanning for supplier uploads is not complete; local deterministic test-signature blocking exists only as a development guard.
+- Real AWS S3/CloudFront upload, download, signing URL/CDN behavior, IAM policy review, and staging smoke are not complete; the S3-compatible provider (hand-rolled SigV4 REST, and an alternate `@aws-sdk/client-s3`-backed provider selectable via `OBJECT_STORAGE_S3_CLIENT=aws-sdk`) has not been proven against a real AWS environment. `@aws-sdk/client-s3` is declared in `frontend/package.json` but requires `npm install` before the `aws-sdk` client mode can run.
+- External production malware scanning for supplier uploads is not complete; `OBJECT_STORAGE_MALWARE_SCANNER` (see `frontend/src/server/storage/malware-scan.ts`) currently resolves to either a local deterministic test-signature guard (dev fallback) or a heuristic scanner (file-type allowlist + size limit, explicitly labeled `engine: "heuristic-v1"`) — neither is a real anti-malware engine. Swap in ClamAV or an AWS-native S3 malware-scanning service before launch; see the module doc comment for integration guidance.
 - Artifact replacement/version history is implemented locally, but production retention/legal-hold approval and real object lifecycle policy validation are not complete.
 - ECS/Fargate worker deployment needs a container image or equivalent production task runtime.
 - Live Stripe checkout/webhook must be tested with a low-risk production transaction.

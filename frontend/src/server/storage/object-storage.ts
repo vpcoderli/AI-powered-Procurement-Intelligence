@@ -10,11 +10,13 @@ import {
   LocalObjectStorageIntegrityError,
   LocalObjectStoragePathError,
 } from "./local-object-storage";
+import { resolveMalwareScanner, type MalwareScanner, type MalwareScanResult } from "./malware-scan";
 
 export {
   LocalObjectStorageIntegrityError as ObjectStorageIntegrityError,
   LocalObjectStoragePathError as ObjectStoragePathError,
 };
+export { resolveMalwareScanner, type MalwareScanner, type MalwareScanResult } from "./malware-scan";
 
 type ObjectStorageEnv = Record<string, string | undefined>;
 
@@ -56,6 +58,33 @@ export interface ObjectStorageProvider {
 export interface ObjectStorageProviderOptions {
   env?: ObjectStorageEnv;
   localRoot?: string;
+  /**
+   * Enables a putObject-level malware scan wrapper around the returned
+   * provider. Off by default (existing callers, including
+   * `@/server/artifacts/service.ts`, run their own scan upstream of
+   * `putObject` today and would otherwise scan the same bytes twice — see
+   * `./malware-scan.ts`). Set to `true` to have `createObjectStorageProvider`
+   * resolve a scanner itself via `resolveMalwareScanner(env)`, or pass
+   * `malwareScanner` to inject a specific implementation (this implies
+   * `enableMalwareScan: true`).
+   */
+  enableMalwareScan?: boolean;
+  /**
+   * Explicit malware scanner to wrap `putObject` with. Implies
+   * `enableMalwareScan: true`. When omitted and `enableMalwareScan` is
+   * `true`, falls back to `resolveMalwareScanner(env)`.
+   */
+  malwareScanner?: MalwareScanner;
+}
+
+export class ObjectStorageMalwareScanError extends Error {
+  constructor(
+    message: string,
+    public readonly scanResult: MalwareScanResult,
+  ) {
+    super(message);
+    this.name = "ObjectStorageMalwareScanError";
+  }
 }
 
 export interface ObjectStoragePreflightResult {
@@ -493,13 +522,108 @@ function createS3CompatibleProvider(env: ObjectStorageEnv): ObjectStorageProvide
   };
 }
 
+function resolveS3ClientMode(env: ObjectStorageEnv): "rest" | "aws-sdk" {
+  const raw = value(env, "OBJECT_STORAGE_S3_CLIENT").toLowerCase();
+  return raw === "aws-sdk" ? "aws-sdk" : "rest";
+}
+
+/**
+ * Lazily loads the `@aws-sdk/client-s3`-backed provider from
+ * `./s3-object-storage.ts`. Loaded dynamically (rather than a static
+ * top-level import) so that modules which only ever use the default
+ * hand-rolled REST S3 provider (or local storage) do not require
+ * `@aws-sdk/client-s3` to be installed at all; the dependency is only
+ * required at runtime when `OBJECT_STORAGE_S3_CLIENT=aws-sdk` is set.
+ */
+async function createAwsSdkS3Provider(env: ObjectStorageEnv): Promise<ObjectStorageProvider> {
+  try {
+    const { createS3ObjectStorageProvider } = await import("./s3-object-storage");
+    return createS3ObjectStorageProvider({ env });
+  } catch (error) {
+    throw new ObjectStorageConfigurationError(
+      `OBJECT_STORAGE_S3_CLIENT=aws-sdk requires the @aws-sdk/client-s3 package to be installed (run npm install in frontend/): ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/**
+ * Wraps `putObject` with a malware scan. Only applied when the caller opts
+ * in via `ObjectStorageProviderOptions.enableMalwareScan` /
+ * `malwareScanner` (see `createObjectStorageProvider`) — most existing
+ * callers, notably `@/server/artifacts/service.ts`, already run their own
+ * scan upstream of `putObject` and surface the scan status on the
+ * artifact/version record, so scanning again here would be redundant (and,
+ * for `artifacts/service.ts` specifically, would require every test file
+ * fixture to also satisfy the storage-layer content-type allowlist).
+ */
+function withMalwareScan(
+  inner: ObjectStorageProvider,
+  scanner: MalwareScanner,
+): ObjectStorageProvider {
+  return {
+    ...inner,
+    async putObject(input) {
+      const bytes = toBuffer(input.bytes);
+      const result = await scanner.scan({
+        fileName: input.key[input.key.length - 1] ?? "object",
+        contentType: input.contentType ?? "application/octet-stream",
+        bytes,
+      });
+
+      if (!result.clean) {
+        throw new ObjectStorageMalwareScanError(
+          `Object storage upload blocked by malware scan (${result.engine}): ${result.reason ?? "no reason provided"}`,
+          result,
+        );
+      }
+
+      return inner.putObject(input);
+    },
+  };
+}
+
 export function createObjectStorageProvider(options: ObjectStorageProviderOptions = {}): ObjectStorageProvider {
   const env = options.env ?? process.env;
   const preflight = validateObjectStoragePreflight(env);
+  const scanEnabled = Boolean(options.enableMalwareScan || options.malwareScanner);
+  const scanner = options.malwareScanner ?? resolveMalwareScanner(env);
 
-  if (preflight.provider === "s3") {
-    return createS3CompatibleProvider(env);
+  const provider = preflight.provider === "s3"
+    ? (resolveS3ClientMode(env) === "aws-sdk"
+      ? createLazyProvider(() => createAwsSdkS3Provider(env))
+      : createS3CompatibleProvider(env))
+    : createLocalProvider(options.localRoot ?? defaultLocalRoot(env));
+
+  return scanEnabled ? withMalwareScan(provider, scanner) : provider;
+}
+
+/**
+ * Wraps an async provider factory so `createObjectStorageProvider` stays
+ * synchronous even when the underlying provider (the `@aws-sdk/client-s3`
+ * path) must be loaded via dynamic `import()`. The factory is invoked once
+ * per operation call and cached after the first successful resolution.
+ */
+function createLazyProvider(factory: () => Promise<ObjectStorageProvider>): ObjectStorageProvider {
+  let cached: Promise<ObjectStorageProvider> | undefined;
+
+  function resolve() {
+    if (!cached) cached = factory();
+    return cached;
   }
 
-  return createLocalProvider(options.localRoot ?? defaultLocalRoot(env));
+  return {
+    provider: "s3",
+    async putObject(input) {
+      return (await resolve()).putObject(input);
+    },
+    async getObject(storagePath, readOptions) {
+      return (await resolve()).getObject(storagePath, readOptions);
+    },
+    async statObject(storagePath, statOptions) {
+      return (await resolve()).statObject(storagePath, statOptions);
+    },
+    async deleteObject(storagePath, deleteOptions) {
+      return (await resolve()).deleteObject(storagePath, deleteOptions);
+    },
+  };
 }

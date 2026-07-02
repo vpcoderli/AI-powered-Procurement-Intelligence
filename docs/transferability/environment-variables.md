@@ -63,7 +63,18 @@ Known limitation: rate-limit and lockout counters live in an in-process `Map`, n
 | `OBJECT_STORAGE_ACCESS_KEY_ID` | Test/integration credential only; do not commit. | Inject from Secrets Manager/SSM or the approved runtime secret source. |
 | `OBJECT_STORAGE_SECRET_ACCESS_KEY` | Test/integration credential only; do not commit. | Inject from Secrets Manager/SSM or the approved runtime secret source. |
 | `OBJECT_STORAGE_SESSION_TOKEN` | Optional temporary test token. | Optional temporary credential token when the runtime uses session credentials. |
+| `OBJECT_STORAGE_S3_CLIENT` | Optional; defaults to `rest` (hand-rolled SigV4 REST client, zero extra runtime dependency). Set `aws-sdk` to use the `@aws-sdk/client-s3`-backed provider instead (`frontend/src/server/storage/s3-object-storage.ts`); requires `npm install` to pull `@aws-sdk/client-s3`. | Either value is acceptable; `aws-sdk` is recommended once the dependency has been installed and verified, for the SDK's credential-provider-chain and retry handling. |
+| `OBJECT_STORAGE_S3_FORCE_PATH_STYLE` | Optional; set `1` for path-style addressing against non-AWS S3-compatible endpoints (e.g. MinIO) when using `OBJECT_STORAGE_S3_CLIENT=aws-sdk`. | Usually unset for real AWS S3 (virtual-hosted-style is the default). |
 | `PRODUCTION_ALLOW_LOCAL_OBJECT_STORAGE` | Usually unset. | Emergency/documented override only; not a substitute for S3 production storage. |
+
+Malware scanning (`OBJECT_STORAGE_MALWARE_SCANNER`, validated by `validateObjectStoragePreflight`) selects a scanner implementation via `resolveMalwareScanner` in `frontend/src/server/storage/malware-scan.ts`:
+
+| Value | Local boundary | Production boundary |
+|---|---|---|
+| Unset, `local`, `local/noop`, `noop`, `none` | Default for local dev; always-clean except for deterministic EICAR-style test signatures. | Rejected by strict S3 production/staging preflight — must be set to a non-local value. |
+| Any other value, e.g. `external` | Resolves to the built-in heuristic scanner (file-type allowlist + size limit + the same test signatures), labeled `engine: "heuristic-v1"`. This is **not** a real anti-malware engine. | Accepted by preflight today, but still only the heuristic scanner unless a real scanner is wired in — see the module doc comment in `malware-scan.ts` for how to integrate ClamAV or an AWS-native S3 malware-scanning service and replace this default. |
+
+The malware scan hook is invoked automatically inside `@/server/artifacts/service.ts` before every artifact upload/replacement (fail-closed: a blocked scan throws before any bytes are written). It is also available at the object-storage layer via `createObjectStorageProvider({ enableMalwareScan: true })` for callers that have not already run their own scan.
 
 ## Billing
 
