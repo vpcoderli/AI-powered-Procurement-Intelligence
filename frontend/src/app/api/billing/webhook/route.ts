@@ -9,6 +9,9 @@ import { applyMysqlBillingProviderEvent } from "@/server/billing/mysql-subscript
 import { constructStripeWebhookEvent, normalizeStripeWebhookEvent } from "@/server/billing/providers";
 import { db } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { logger } from "@/lib/observability/logger";
+
+const routeLogger = logger.child({ service: "api:billing:webhook" });
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -81,6 +84,7 @@ export async function POST(request: Request) {
   const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : null;
 
   if (shouldRequireStripeWebhook(request)) {
+    routeLogger.warn("webhook_rejected", { reason: "missing_stripe_signature_config" });
     return errorResponse("INVALID_SIGNATURE", "Valid Stripe billing webhook signature is required", 401);
   }
 
@@ -89,19 +93,24 @@ export async function POST(request: Request) {
       const event = normalizeStripeWebhookEvent(
         constructStripeEvent(rawBody, request.headers.get("stripe-signature")),
       );
-      return NextResponse.json(
-        mysql ? await applyMysqlBillingProviderEvent(mysql, event) : applyBillingProviderEvent(db, event),
-      );
+      const result = mysql
+        ? await applyMysqlBillingProviderEvent(mysql, event)
+        : applyBillingProviderEvent(db, event);
+      routeLogger.info("webhook_processed", { provider: "stripe", eventId: event.id, eventType: event.type });
+      return NextResponse.json(result);
     } catch (error) {
       if (error instanceof InvalidSubscriptionInputError) {
+        routeLogger.warn("webhook_invalid_request", { provider: "stripe", detail: error.message });
         return errorResponse("INVALID_REQUEST", error.message, 400);
       }
 
+      routeLogger.warn("webhook_invalid_signature", { provider: "stripe" });
       return errorResponse("INVALID_SIGNATURE", "Invalid Stripe billing webhook signature", 401);
     }
   }
 
   if (!verifyWebhookSignature(rawBody, request.headers.get("x-billing-signature"))) {
+    routeLogger.warn("webhook_invalid_signature", { provider: "generic" });
     return errorResponse("INVALID_SIGNATURE", "Invalid billing webhook signature", 401);
   }
 
@@ -114,20 +123,23 @@ export async function POST(request: Request) {
   }
 
   if (!isBillingProviderEvent(body)) {
+    routeLogger.warn("webhook_invalid_request", { provider: "generic", detail: "missing_or_invalid_event_body" });
     return errorResponse("INVALID_REQUEST", "Request body must include a valid provider event", 400);
   }
 
   try {
-    return NextResponse.json(
-      mysql
-        ? await applyMysqlBillingProviderEvent(mysql, body)
-        : applyBillingProviderEvent(db, body),
-    );
+    const result = mysql
+      ? await applyMysqlBillingProviderEvent(mysql, body)
+      : applyBillingProviderEvent(db, body);
+    routeLogger.info("webhook_processed", { provider: "generic", eventId: body.id, eventType: body.type });
+    return NextResponse.json(result);
   } catch (error) {
     if (error instanceof InvalidSubscriptionInputError) {
+      routeLogger.warn("webhook_invalid_request", { provider: "generic", detail: error.message });
       return errorResponse("INVALID_REQUEST", error.message, 400);
     }
 
+    routeLogger.error("webhook_unexpected_error", { error, provider: "generic" });
     return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
   }
 }

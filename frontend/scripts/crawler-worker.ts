@@ -2,6 +2,10 @@ import { createDatabase } from "../src/server/db/client";
 import { closeResolvedMysqlPool, isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "../src/server/db/mysql";
 import { runMigrations } from "../src/server/db/migrate";
 import { parseStateCrawlerLimit, runConfiguredCrawlerSourcesOnce } from "../src/server/crawler/configured-runner";
+import { createLogger } from "../src/lib/observability/logger";
+import { captureException } from "../src/lib/observability/sentry";
+
+const workerLogger = createLogger({ service: "worker:crawler" });
 
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
 const PRODUCTION_LIKE_ENV_VALUES = new Set(["production", "prod", "staging"]);
@@ -105,7 +109,7 @@ async function main() {
         owner: owner(),
         stateRunnerOptions: { limit: parseStateCrawlerLimit() },
       });
-      console.log(JSON.stringify(results, null, 2));
+      workerLogger.info("crawler_run_completed", { results });
 
       if (!stopping) {
         await sleep(intervalMs());
@@ -126,7 +130,8 @@ if (workerArgs().has("--check")) {
   }
 } else {
   void main().catch((error) => {
-    console.error(error);
+    workerLogger.error("crawler_worker_crashed", { error });
+    captureException(error, { worker: "crawler" });
     process.exitCode = 1;
   });
 }

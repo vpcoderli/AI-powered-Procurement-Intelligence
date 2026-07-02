@@ -10,6 +10,10 @@ import {
   deliverPendingEventOutboxRows,
   deliverPendingEventOutboxRowsFromMysql,
 } from "../src/server/events/event-log";
+import { createLogger } from "../src/lib/observability/logger";
+import { captureException } from "../src/lib/observability/sentry";
+
+const workerLogger = createLogger({ service: "worker:events" });
 
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
 const PRODUCTION_LIKE_ENV_VALUES = new Set(["production", "prod", "staging"]);
@@ -124,7 +128,8 @@ async function runLoop() {
 
   try {
     do {
-      console.log(JSON.stringify(await runWorkerOnce(db), null, 2));
+      const result = await runWorkerOnce(db);
+      workerLogger.info("event_delivery_run_completed", { result });
 
       if (runOnce()) {
         break;
@@ -149,7 +154,8 @@ if (workerArgs().has("--check")) {
   }
 } else {
   void runLoop().catch((error) => {
-    console.error(error);
+    workerLogger.error("event_worker_crashed", { error });
+    captureException(error, { worker: "events" });
     process.exitCode = 1;
   });
 }

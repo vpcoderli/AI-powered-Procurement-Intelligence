@@ -13,6 +13,9 @@ import { db } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { getClientIp } from "@/server/security/request-ip";
 import { loginGuard } from "@/server/security/login-guard";
+import { logger } from "@/lib/observability/logger";
+
+const routeLogger = logger.child({ service: "api:auth:login" });
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -79,14 +82,18 @@ export async function POST(request: Request) {
       response.headers.append("Set-Cookie", clearAnonymousUserCookie());
     }
 
+    routeLogger.info("login_succeeded", { userId: result.user.id });
+
     return response;
   } catch (error) {
     if (error instanceof InvalidCredentialsError) {
       loginGuard.recordLoginFailure(body.email);
+      routeLogger.warn("login_failed", { reason: "invalid_credentials" });
       return errorResponse("INVALID_CREDENTIALS", error.message, 401);
     }
 
     if (error instanceof AccountDisabledError) {
+      routeLogger.warn("login_failed", { reason: "account_disabled" });
       return errorResponse("ACCOUNT_DISABLED", error.message, 403);
     }
 
@@ -94,6 +101,7 @@ export async function POST(request: Request) {
       return errorResponse("INVALID_REQUEST", error.message, 400);
     }
 
+    routeLogger.error("login_unexpected_error", { error });
     return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
   }
 }

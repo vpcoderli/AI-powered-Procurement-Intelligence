@@ -1,6 +1,10 @@
+import { createLogger } from "../src/lib/observability/logger";
+import { captureException } from "../src/lib/observability/sentry";
+
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
 const SUPPORTED_NOTIFICATION_PROVIDERS = new Set(["file", "console", "http"]);
 const PRODUCTION_LIKE_ENV_VALUES = new Set(["production", "prod", "staging"]);
+const workerLogger = createLogger({ service: "worker:notifications" });
 
 type WorkerEnv = Record<string, string | undefined>;
 
@@ -178,7 +182,7 @@ async function runLoop() {
         deliveryLimit: positiveIntegerEnv("NOTIFICATION_WORKER_DELIVERY_LIMIT"),
         maxAttempts: positiveIntegerEnv("NOTIFICATION_WORKER_MAX_ATTEMPTS"),
       });
-      console.log(JSON.stringify(result, null, 2));
+      workerLogger.info("notification_run_completed", { result });
 
       if (runOnce()) {
         break;
@@ -203,7 +207,8 @@ if (workerArgs().has("--check")) {
   }
 } else {
   void runLoop().catch((error) => {
-    console.error(error);
+    workerLogger.error("notification_worker_crashed", { error });
+    captureException(error, { worker: "notifications" });
     process.exitCode = 1;
   });
 }

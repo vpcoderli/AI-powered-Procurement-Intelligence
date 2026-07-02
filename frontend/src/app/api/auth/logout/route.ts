@@ -4,6 +4,9 @@ import { logoutSession } from "@/server/auth/service";
 import { logoutMysqlSession } from "@/server/auth/mysql-service";
 import { db } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { logger } from "@/lib/observability/logger";
+
+const routeLogger = logger.child({ service: "api:auth:logout" });
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -25,7 +28,8 @@ export async function POST(request: Request) {
     response.headers.set("Set-Cookie", clearSessionCookie());
 
     return response;
-  } catch {
+  } catch (error) {
+    routeLogger.error("logout_unexpected_error", { error });
     return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
   }
 }
