@@ -26,7 +26,7 @@ function SavedBidsContent() {
             <Bookmark size={22} strokeWidth={2.5} />
           </div>
           <div>
-            <p className="winbids-kicker">Saved queue</p>
+            <p className="winbids-kicker">{t("saved.kicker")}</p>
             <h1 className="winbids-title">{t("saved.title")}</h1>
             <p className="winbids-lead mt-2">
               {savedDescription}

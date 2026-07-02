@@ -46,6 +46,7 @@
     "source:compliance:scan": "tsx scripts/source-compliance-scan.ts",
     "source:compliance:report": "tsx scripts/source-compliance-report.ts",
     "source:compliance:ops": "tsx scripts/source-compliance-scan.ts --all --timeout-ms 10000 --write-snapshot --report-only",
+    "i18n:check": "tsx scripts/i18n-coverage-scan.ts",
     "risk:check": "tsx scripts/risk-check.ts && npm run secrets:scan && npm audit --omit=dev --audit-level=moderate"
   },
   "dependencies": {
