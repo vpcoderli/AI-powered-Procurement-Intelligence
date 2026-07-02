@@ -9,6 +9,7 @@ import {
 import { isAccountTier, isUserRole } from "@/server/auth/entitlements";
 import { db } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { csrfRejectedResponse, verifyCsrfSafe } from "@/server/security/csrf";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -57,6 +58,10 @@ function routeError(error: unknown) {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
+  if (!verifyCsrfSafe(request)) {
+    return csrfRejectedResponse();
+  }
+
   const body = await request.json().catch(() => null);
   const input = parseUpdate(body);
 

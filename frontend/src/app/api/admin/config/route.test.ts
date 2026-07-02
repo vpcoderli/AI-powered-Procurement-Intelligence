@@ -86,4 +86,22 @@ describe("GET/POST /api/admin/config", () => {
       target_type: "config",
     });
   });
+
+  it("rejects config writes from a cross-site Origin before checking admin access", async () => {
+    const handlers = createAdminConfigHandlers(testDb.db);
+    const postResponse = await handlers.POST(new Request("http://localhost/api/admin/config", {
+      method: "POST",
+      headers: { origin: "https://evil.example.com" },
+      body: JSON.stringify({
+        module: "source",
+        configKey: "approval_defaults",
+        configValue: { approvalStatus: "approved" },
+        changeReason: "Approve local public sources.",
+      }),
+    }));
+    const postBody = await postResponse.json();
+
+    expect(postResponse.status).toBe(403);
+    expect(postBody.error.code).toBe("CSRF_VALIDATION_FAILED");
+  });
 });

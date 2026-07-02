@@ -89,4 +89,23 @@ describe("POST /api/account/workspace/ownership", () => {
     expect(response.status).toBe(403);
     expect(body.error.code).toBe("FORBIDDEN");
   });
+
+  it("rejects an ownership transfer request from a cross-site Origin", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/account/workspace/ownership", {
+        method: "POST",
+        headers: {
+          cookie: `${SESSION_COOKIE_NAME}=sess_valid`,
+          origin: "https://evil.example.com",
+        },
+        body: JSON.stringify({ targetUserId: "user_2" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("CSRF_VALIDATION_FAILED");
+    expect(authService.getSessionUser).not.toHaveBeenCalled();
+    expect(lifecycleService.transferWorkspaceOwnership).not.toHaveBeenCalled();
+  });
 });

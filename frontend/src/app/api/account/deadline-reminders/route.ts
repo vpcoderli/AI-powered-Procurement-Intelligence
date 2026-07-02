@@ -10,6 +10,7 @@ import {
   snoozeAccountDeadlineReminder,
 } from "@/server/deadlines/service";
 import type { UpdateDeadlineReminderInput } from "@/server/deadlines/types";
+import { csrfRejectedResponse, verifyCsrfSafe } from "@/server/security/csrf";
 
 function jsonWithPrincipalCookie(body: unknown, principal: RequestPrincipal, init?: ResponseInit) {
   const response = NextResponse.json(body, init);
@@ -69,6 +70,10 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  if (!verifyCsrfSafe(request)) {
+    return csrfRejectedResponse();
+  }
+
   const body = await request.json().catch(() => null);
   const input = parseUpdate(body);
   const principal = await resolvePrincipal(db, request);

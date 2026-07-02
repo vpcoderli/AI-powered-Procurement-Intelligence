@@ -20,6 +20,7 @@ import {
 } from "@/server/account/mysql-workspace";
 import { db } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { csrfRejectedResponse, verifyCsrfSafe } from "@/server/security/csrf";
 
 interface RouteContext {
   params: Promise<{ userId: string }>;
@@ -70,6 +71,10 @@ function workspaceErrorResponse(error: unknown) {
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
+  if (!verifyCsrfSafe(request)) {
+    return csrfRejectedResponse();
+  }
+
   const current = await currentUser(request);
 
   if (!current) {
@@ -117,6 +122,10 @@ export async function PATCH(request: Request, context: RouteContext) {
 }
 
 export async function DELETE(request: Request, context: RouteContext) {
+  if (!verifyCsrfSafe(request)) {
+    return csrfRejectedResponse();
+  }
+
   const current = await currentUser(request);
 
   if (!current) {

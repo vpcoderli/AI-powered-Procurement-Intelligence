@@ -9,6 +9,7 @@ import {
 import { getMysqlSessionUser, updateMysqlUserProfile } from "@/server/auth/mysql-service";
 import { db } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { csrfRejectedResponse, verifyCsrfSafe } from "@/server/security/csrf";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -23,6 +24,10 @@ async function readBody(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  if (!verifyCsrfSafe(request)) {
+    return csrfRejectedResponse();
+  }
+
   const sessionToken = readSessionToken(request);
 
   if (!sessionToken) {

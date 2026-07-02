@@ -30,6 +30,8 @@ rg -n "sk_live_|whsec_|secret|password|token" docs frontend/.env.local 2>/dev/nu
 | `ADMIN_UI_LOCAL_BYPASS` | May be `true` for local admin testing only. | Must be unset or false. |
 | `CRAWLER_RUN_TOKEN` | Optional local token for protected crawler run APIs. | Required if crawler run APIs are exposed; store in secret manager. |
 | `CRAWLER_ATTACHMENT_DIR` | Optional local attachment path. | Persistent storage path or object storage handoff. |
+| `APP_ORIGIN` | Optional; not required when running on `localhost:3000` (dev origins are trusted automatically). | Set to the canonical HTTPS origin (for example `https://app.apsi.example.com`). Used by the CSRF Origin/Referer check in `frontend/src/server/security/csrf.ts`. |
+| `CSRF_ALLOWED_ORIGINS` | Optional comma-separated list, only needed when testing multiple origins locally. | Set when more than one origin legitimately calls state-changing APIs with the session cookie (for example a staging origin kept alongside production, or a separate marketing subdomain). Comma-separated absolute origins, for example `https://app.apsi.example.com,https://staging.apsi.example.com`. |
 
 ## Authentication Rate Limiting & Account Lockout
 
@@ -269,3 +271,11 @@ NOTIFICATION_SES_SNS_SKIP_SIGNATURE_VERIFICATION=1
 OBJECT_STORAGE_PROVIDER=local
 PRODUCTION_ALLOW_LOCAL_OBJECT_STORAGE=1
 ```
+
+Production should set:
+
+```bash
+APP_ORIGIN=https://app.apsi.example.com
+```
+
+Without `APP_ORIGIN`, the CSRF Origin/Referer check (`frontend/src/server/security/csrf.ts`) falls back to trusting the request's own `Host` header. That still blocks cross-site requests, but it depends on the reverse proxy/load balancer rejecting or normalizing spoofed `Host` headers before they reach the app. Setting `APP_ORIGIN` explicitly removes that dependency and is the safer production default. See `docs/qa/csrf-and-response-sanitization-audit.md` for the full design rationale.

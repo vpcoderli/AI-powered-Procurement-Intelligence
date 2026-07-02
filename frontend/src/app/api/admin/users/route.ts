@@ -13,6 +13,7 @@ import {
 import { isAccountTier, isUserRole } from "@/server/auth/entitlements";
 import { db } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { csrfRejectedResponse, verifyCsrfSafe } from "@/server/security/csrf";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
@@ -107,6 +108,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  if (!verifyCsrfSafe(request)) {
+    return csrfRejectedResponse();
+  }
+
   const body = await request.json().catch(() => null);
   const input = parseCreateInput(body);
 

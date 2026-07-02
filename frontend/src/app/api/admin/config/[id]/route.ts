@@ -13,6 +13,7 @@ import type { AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { writeAuditEvent, writeAuditEventFromMysql } from "@/server/events/event-log";
 import { createRequestContext } from "@/server/http/request-context";
+import { csrfRejectedResponse, verifyCsrfSafe } from "@/server/security/csrf";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -116,6 +117,10 @@ export function createAdminConfigPatch(database?: AppDatabase) {
   const shouldUseMysqlRuntime = () => !database && isMysqlDatabaseUrlConfigured();
 
   return async function PATCH(request: Request, context: RouteContext) {
+    if (!verifyCsrfSafe(request)) {
+      return csrfRejectedResponse();
+    }
+
     try {
       const resolvedDb = await resolveDatabase(database);
       const { id } = await context.params;

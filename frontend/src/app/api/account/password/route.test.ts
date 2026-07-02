@@ -119,4 +119,26 @@ describe("POST /api/account/password", () => {
     expect(response.status).toBe(401);
     expect(body.error.code).toBe("AUTH_REQUIRED");
   });
+
+  it("rejects a password change request from a cross-site Origin", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/account/password", {
+        method: "POST",
+        headers: {
+          cookie: `${SESSION_COOKIE_NAME}=sess_valid`,
+          origin: "https://evil.example.com",
+        },
+        body: JSON.stringify({
+          currentPassword: "strong-password",
+          newPassword: "new-strong-password",
+        }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(403);
+    expect(body.error.code).toBe("CSRF_VALIDATION_FAILED");
+    expect(authService.getSessionUser).not.toHaveBeenCalled();
+    expect(authService.changeUserPassword).not.toHaveBeenCalled();
+  });
 });

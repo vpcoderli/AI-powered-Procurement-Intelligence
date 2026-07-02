@@ -10,6 +10,7 @@ import {
 } from "@/server/admin/data-sources-repository";
 import type { AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
+import { csrfRejectedResponse, verifyCsrfSafe } from "@/server/security/csrf";
 
 type BatchSourceApprovalAction = "approve" | "hold";
 
@@ -93,6 +94,10 @@ export function createAdminDataSourcesBatchPost(database?: AppDatabase, mysql?: 
   const shouldUseMysqlRuntime = () => Boolean(mysql) || (!database && isMysqlDatabaseUrlConfigured());
 
   return async function POST(request: Request) {
+    if (!verifyCsrfSafe(request)) {
+      return csrfRejectedResponse();
+    }
+
     const body = await parseBatchBody(request);
     if (!body) {
       return errorResponse("INVALID_REQUEST", "Request body must include sourceIds and a valid batch action.", 400);
