@@ -1,15 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as passwordResetService from "@/server/auth/password-reset";
+import { loginGuard } from "@/server/security/login-guard";
 import { POST } from "./route";
 
 vi.mock("@/server/db/client", () => ({ db: {} }));
 vi.mock("@/server/auth/password-reset", () => ({
   requestPasswordReset: vi.fn(),
 }));
+vi.mock("@/server/security/login-guard", () => ({
+  loginGuard: {
+    checkPasswordResetRequestAllowed: vi.fn(() => ({ blocked: false })),
+  },
+}));
 
 describe("POST /api/auth/password-reset/request", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    vi.mocked(loginGuard.checkPasswordResetRequestAllowed).mockReturnValue({ blocked: false });
   });
 
   it("returns a generic ok response with a local reset token when one is generated", async () => {
@@ -62,5 +69,26 @@ describe("POST /api/auth/password-reset/request", () => {
 
     expect(response.status).toBe(400);
     expect(body.error.code).toBe("INVALID_REQUEST");
+  });
+
+  it("returns 429 with a Retry-After header when the login guard blocks the request", async () => {
+    vi.mocked(loginGuard.checkPasswordResetRequestAllowed).mockReturnValueOnce({
+      blocked: true,
+      reason: "rate_limited",
+      retryAfterSeconds: 120,
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/auth/password-reset/request", {
+        method: "POST",
+        body: JSON.stringify({ email: "buyer@example.com" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("120");
+    expect(body.error.code).toBe("TOO_MANY_REQUESTS");
+    expect(passwordResetService.requestPasswordReset).not.toHaveBeenCalled();
   });
 });

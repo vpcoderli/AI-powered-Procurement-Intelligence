@@ -31,6 +31,25 @@ rg -n "sk_live_|whsec_|secret|password|token" docs frontend/.env.local 2>/dev/nu
 | `CRAWLER_RUN_TOKEN` | Optional local token for protected crawler run APIs. | Required if crawler run APIs are exposed; store in secret manager. |
 | `CRAWLER_ATTACHMENT_DIR` | Optional local attachment path. | Persistent storage path or object storage handoff. |
 
+## Authentication Rate Limiting & Account Lockout
+
+Applies to `/api/auth/login`, `/api/auth/password-reset/request`, and `/api/auth/password-reset/confirm`. Implementation is in-memory and process-local (`frontend/src/server/security/rate-limit.ts`, `frontend/src/server/security/login-guard.ts`) — see the "Known Limitations" note below before relying on this in a multi-instance deployment.
+
+| Variable | Local boundary | Production boundary |
+|---|---|---|
+| `AUTH_LOGIN_LOCKOUT_MAX_ATTEMPTS` | Optional; defaults to `5`. | Set deliberately; lower values increase support load, higher values weaken brute-force protection. |
+| `AUTH_LOGIN_LOCKOUT_WINDOW_MINUTES` | Optional; defaults to `15`. | Set deliberately alongside the max-attempts value. |
+| `AUTH_LOGIN_RATE_LIMIT_PER_IP` | Optional; defaults to `20` login attempts per window. | Tune based on expected shared-IP traffic (offices, NAT). |
+| `AUTH_LOGIN_RATE_LIMIT_PER_ACCOUNT` | Optional; defaults to `10` login attempts per window (looser than lockout, which is the primary defense). | Tune based on observed abuse patterns. |
+| `AUTH_LOGIN_RATE_WINDOW_MINUTES` | Optional; defaults to `15`. Shared by both the per-IP and per-account login rate limits. | Set deliberately. |
+| `AUTH_RESET_REQUEST_RATE_LIMIT_PER_IP` | Optional; defaults to `10` password-reset requests per window. | Tune based on expected shared-IP traffic. |
+| `AUTH_RESET_REQUEST_RATE_LIMIT_PER_ACCOUNT` | Optional; defaults to `5` password-reset requests per window. | Tune based on observed abuse patterns. |
+| `AUTH_RESET_REQUEST_RATE_WINDOW_MINUTES` | Optional; defaults to `15`. Shared by both the per-IP and per-account reset-request rate limits. | Set deliberately. |
+| `AUTH_RESET_CONFIRM_RATE_LIMIT_PER_IP` | Optional; defaults to `20` password-reset confirm (token submission) attempts per window. | Tune based on expected shared-IP traffic. |
+| `AUTH_RESET_CONFIRM_RATE_WINDOW_MINUTES` | Optional; defaults to `15`. | Set deliberately. |
+
+Known limitation: rate-limit and lockout counters live in an in-process `Map`, not a shared store. Each app instance enforces its own independent window/counter, so a multi-instance deployment effectively multiplies the allowed attempt count by the instance count. `frontend/src/server/security/rate-limit.ts` defines a `RateLimitStore` interface specifically so this can be swapped for a distributed store (Redis/Upstash) later without changing call sites; this was not stood up in this pass.
+
 ## Object Storage
 
 | Variable | Local boundary | Production boundary |

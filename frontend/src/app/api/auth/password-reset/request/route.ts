@@ -1,9 +1,21 @@
 import { NextResponse } from "next/server";
 import { requestPasswordReset } from "@/server/auth/password-reset";
 import { db } from "@/server/db/client";
+import { getClientIp } from "@/server/security/request-ip";
+import { loginGuard } from "@/server/security/login-guard";
 
 function errorResponse(code: string, message: string, status: number) {
   return NextResponse.json({ error: { code, message } }, { status });
+}
+
+function rateLimitedResponse(retryAfterSeconds: number) {
+  const response = errorResponse(
+    "TOO_MANY_REQUESTS",
+    "Too many password reset requests. Please try again later.",
+    429,
+  );
+  response.headers.set("Retry-After", String(retryAfterSeconds));
+  return response;
 }
 
 async function readBody(request: Request) {
@@ -24,6 +36,13 @@ export async function POST(request: Request) {
     body.email.trim().length === 0
   ) {
     return errorResponse("INVALID_REQUEST", "Request body must include email", 400);
+  }
+
+  const clientIp = getClientIp(request);
+  const guardOutcome = loginGuard.checkPasswordResetRequestAllowed(clientIp, body.email);
+
+  if (guardOutcome.blocked) {
+    return rateLimitedResponse(guardOutcome.retryAfterSeconds);
   }
 
   try {

@@ -3,6 +3,7 @@ import { SESSION_COOKIE_NAME } from "@/server/auth/session";
 import * as authService from "@/server/auth/service";
 import * as bidRepository from "@/server/bids/repository";
 import { ANONYMOUS_USER_COOKIE_NAME } from "@/server/bids/user";
+import { loginGuard } from "@/server/security/login-guard";
 import { POST } from "./route";
 
 vi.mock("@/server/db/client", () => ({ db: {} }));
@@ -17,10 +18,18 @@ vi.mock("@/server/auth/service", async (importOriginal) => {
     loginUser: vi.fn(),
   };
 });
+vi.mock("@/server/security/login-guard", () => ({
+  loginGuard: {
+    checkLoginAllowed: vi.fn(() => ({ blocked: false })),
+    recordLoginFailure: vi.fn(),
+    recordLoginSuccess: vi.fn(),
+  },
+}));
 
 describe("POST /api/auth/login", () => {
   afterEach(() => {
     vi.clearAllMocks();
+    vi.mocked(loginGuard.checkLoginAllowed).mockReturnValue({ blocked: false });
   });
 
   it("sets the session cookie", async () => {
@@ -79,7 +88,7 @@ describe("POST /api/auth/login", () => {
     expect(setCookie).toContain("Max-Age=0");
   });
 
-  it("returns 401 for the wrong password", async () => {
+  it("returns 401 for the wrong password and records the failure with the login guard", async () => {
     vi.mocked(authService.loginUser).mockRejectedValueOnce(new authService.InvalidCredentialsError());
 
     const response = await POST(
@@ -92,6 +101,51 @@ describe("POST /api/auth/login", () => {
 
     expect(response.status).toBe(401);
     expect(body.error.code).toBe("INVALID_CREDENTIALS");
+    expect(loginGuard.recordLoginFailure).toHaveBeenCalledWith("buyer@example.com");
+  });
+
+  it("records a login success with the login guard", async () => {
+    vi.mocked(authService.loginUser).mockResolvedValueOnce({
+      user: {
+        id: "user_1",
+        email: "buyer@example.com",
+        displayName: null,
+        role: "user",
+        tier: "free",
+        features: ["bid_search"],
+      },
+      sessionToken: "sess_login",
+    });
+
+    await POST(
+      new Request("http://localhost/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email: "buyer@example.com", password: "strong-password" }),
+      }),
+    );
+
+    expect(loginGuard.recordLoginSuccess).toHaveBeenCalledWith("buyer@example.com");
+  });
+
+  it("returns 429 with a Retry-After header when the login guard blocks the request", async () => {
+    vi.mocked(loginGuard.checkLoginAllowed).mockReturnValueOnce({
+      blocked: true,
+      reason: "account_locked",
+      retryAfterSeconds: 900,
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email: "buyer@example.com", password: "wrong-password" }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("Retry-After")).toBe("900");
+    expect(body.error.code).toBe("TOO_MANY_REQUESTS");
+    expect(authService.loginUser).not.toHaveBeenCalled();
   });
 
   it("returns 403 for disabled accounts", async () => {
