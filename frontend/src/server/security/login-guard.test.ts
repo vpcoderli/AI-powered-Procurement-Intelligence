@@ -7,7 +7,7 @@ import {
 
 describe("createLoginGuard - account lockout", () => {
   it("allows login attempts before the failure threshold is reached", () => {
-    let currentTime = 1_000_000;
+    const currentTime = 1_000_000;
     const guard = createLoginGuard({ now: () => currentTime });
 
     for (let attempt = 0; attempt < LOGIN_LOCKOUT_MAX_ATTEMPTS - 1; attempt += 1) {
@@ -21,7 +21,7 @@ describe("createLoginGuard - account lockout", () => {
   });
 
   it("locks the account out after the configured number of consecutive failures", () => {
-    let currentTime = 1_000_000;
+    const currentTime = 1_000_000;
     const guard = createLoginGuard({ now: () => currentTime });
 
     for (let attempt = 0; attempt < LOGIN_LOCKOUT_MAX_ATTEMPTS; attempt += 1) {

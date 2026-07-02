@@ -3,7 +3,7 @@ import { createRateLimiter, InMemoryRateLimitStore, retryAfterSeconds } from "./
 
 describe("createRateLimiter", () => {
   it("allows requests up to the limit within the window", () => {
-    let currentTime = 1_000_000;
+    const currentTime = 1_000_000;
     const limiter = createRateLimiter({ limit: 3, windowMs: 60_000, now: () => currentTime });
 
     const first = limiter("key");
@@ -19,7 +19,7 @@ describe("createRateLimiter", () => {
   });
 
   it("blocks requests once the limit is exceeded and reports retryAfterMs", () => {
-    let currentTime = 1_000_000;
+    const currentTime = 1_000_000;
     const limiter = createRateLimiter({ limit: 2, windowMs: 60_000, now: () => currentTime });
 
     limiter("key");

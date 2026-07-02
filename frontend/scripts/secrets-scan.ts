@@ -132,6 +132,18 @@ const PLACEHOLDER_DOC_ALLOWLIST = new Set([
   "docs/transferability/secrets-and-access.md",
   "docs/operations/aws-deployment-runbook.md",
   "docs/operations/secrets-manager-guide.md",
+  "docs/operations/notification-delivery-runbook.md",
+]);
+
+// Documented local-development-only bootstrap credentials. These are
+// intentionally committed — see `frontend/README.md` ("The default
+// local-only credential is admin@winbids.local / ..."): the value only ever
+// seeds a local dev database, is overridable via LOCAL_ADMIN_EMAIL /
+// LOCAL_ADMIN_PASSWORD, and the README forbids reusing it in production.
+// Scoped to the exact file so any new secret-shaped assignment anywhere
+// else still fails the scan.
+const KNOWN_LOCAL_DEV_CREDENTIAL_FILES = new Set([
+  "frontend/src/server/auth/admin-reset.ts",
 ]);
 
 interface ScanRule {
@@ -307,7 +319,8 @@ function scanFileContents(relativePath: string, contents: string): SecretsScanFi
   const findings: SecretsScanFinding[] = [];
   const lines = contents.split(/\r?\n/);
   const isAllowlistedDoc = PLACEHOLDER_DOC_ALLOWLIST.has(relativePath);
-  const skipGenericRule = isAllowlistedDoc || isTestFile(relativePath);
+  const skipGenericRule =
+    isAllowlistedDoc || isTestFile(relativePath) || KNOWN_LOCAL_DEV_CREDENTIAL_FILES.has(relativePath);
 
   lines.forEach((line, index) => {
     for (const rule of HARD_MATCH_RULES) {
