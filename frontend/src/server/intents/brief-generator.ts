@@ -3,6 +3,7 @@ import { createDeterministicAiRunMetadata } from "@/server/ai/run-metadata";
 import { resolvePromptVersion } from "@/server/ai/prompt-registry";
 import { PROMPT_NAMES } from "@/server/ai/known-prompts";
 import type { BidMatchResult } from "@/server/match/types";
+import type { AiRunMetadata } from "@/server/ai/run-metadata";
 import type { GeneratedIntentContent } from "./types";
 
 const CHECKLIST = [
@@ -55,7 +56,7 @@ export function generateIntentBrief({
 }: {
   bid: Bid;
   match: BidMatchResult;
-}): GeneratedIntentContent {
+}): GeneratedIntentContent & { aiRun: AiRunMetadata } {
   const attachmentSummary =
     bid.attachments.length > 0
       ? `${bid.attachments.length} attachment${bid.attachments.length === 1 ? "" : "s"} available`

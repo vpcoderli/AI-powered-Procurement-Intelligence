@@ -69,7 +69,7 @@ function which(command: string): Promise<boolean> {
 }
 
 export interface MysqlBackupOptions {
-  env?: Record<string, string | undefined>;
+  env?: NodeJS.ProcessEnv;
   /** Injectable for tests; defaults to checking `mysqldump` on PATH. */
   checkMysqldumpAvailable?: () => Promise<boolean>;
   extraArgs?: string[];
