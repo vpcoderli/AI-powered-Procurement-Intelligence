@@ -746,6 +746,15 @@ export function runMigrations(db: AppDatabase) {
       created_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS source_compliance_snapshots (
+      id TEXT PRIMARY KEY,
+      ok INTEGER NOT NULL,
+      checked_at TEXT NOT NULL,
+      summary_json TEXT NOT NULL,
+      results_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS data_sources (
       id TEXT PRIMARY KEY,
       label TEXT NOT NULL,
@@ -782,6 +791,18 @@ export function runMigrations(db: AppDatabase) {
       last_success_at TEXT,
       last_failure_at TEXT,
       consecutive_failures INTEGER NOT NULL DEFAULT 0,
+      robots_txt_status TEXT,
+      robots_txt_checked_at TEXT,
+      robots_txt_hash TEXT,
+      robots_txt_disallows_crawled_paths INTEGER,
+      robots_txt_flag_reason TEXT,
+      tos_reviewed INTEGER,
+      tos_reviewed_at TEXT,
+      tos_url TEXT,
+      compliance_reviewer TEXT,
+      legal_opinion_reference TEXT,
+      compliance_review_due_at TEXT,
+      compliance_notes TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -934,6 +955,8 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_risk_check_snapshots_created_at ON risk_check_snapshots(created_at);
     CREATE INDEX IF NOT EXISTS idx_source_health_snapshots_checked_at ON source_health_snapshots(checked_at);
     CREATE INDEX IF NOT EXISTS idx_source_health_snapshots_created_at ON source_health_snapshots(created_at);
+    CREATE INDEX IF NOT EXISTS idx_source_compliance_snapshots_checked_at ON source_compliance_snapshots(checked_at);
+    CREATE INDEX IF NOT EXISTS idx_source_compliance_snapshots_created_at ON source_compliance_snapshots(created_at);
     CREATE INDEX IF NOT EXISTS idx_source_approval_events_source_created ON source_approval_events(source_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_source_approval_events_actor_created ON source_approval_events(actor_user_id, created_at);
   `);
@@ -1192,4 +1215,16 @@ export function runMigrations(db: AppDatabase) {
   addDataSourceColumn("live_health_next_review_at", "TEXT");
   addDataSourceColumn("live_health_notes", "TEXT");
   addDataSourceColumn("live_health_reviewed_at", "TEXT");
+  addDataSourceColumn("robots_txt_status", "TEXT");
+  addDataSourceColumn("robots_txt_checked_at", "TEXT");
+  addDataSourceColumn("robots_txt_hash", "TEXT");
+  addDataSourceColumn("robots_txt_disallows_crawled_paths", "INTEGER");
+  addDataSourceColumn("robots_txt_flag_reason", "TEXT");
+  addDataSourceColumn("tos_reviewed", "INTEGER");
+  addDataSourceColumn("tos_reviewed_at", "TEXT");
+  addDataSourceColumn("tos_url", "TEXT");
+  addDataSourceColumn("compliance_reviewer", "TEXT");
+  addDataSourceColumn("legal_opinion_reference", "TEXT");
+  addDataSourceColumn("compliance_review_due_at", "TEXT");
+  addDataSourceColumn("compliance_notes", "TEXT");
 }

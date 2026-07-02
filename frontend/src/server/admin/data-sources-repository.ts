@@ -91,6 +91,18 @@ export interface AdminDataSource {
   liveHealthNextReviewAt: string | null;
   liveHealthNotes: string | null;
   liveHealthReviewedAt: string | null;
+  robotsTxtStatus: string | null;
+  robotsTxtCheckedAt: string | null;
+  robotsTxtHash: string | null;
+  robotsTxtDisallowsCrawledPaths: boolean | null;
+  robotsTxtFlagReason: string | null;
+  tosReviewed: boolean | null;
+  tosReviewedAt: string | null;
+  tosUrl: string | null;
+  complianceReviewer: string | null;
+  legalOpinionReference: string | null;
+  complianceReviewDueAt: string | null;
+  complianceNotes: string | null;
   createdAt: string;
   updatedAt: string;
   latestLog: AdminCrawlerLog | null;
@@ -193,6 +205,13 @@ export interface UpdateAdminDataSourceInput {
   liveHealthNextReviewAt?: string | null;
   liveHealthNotes?: string | null;
   liveHealthReviewedAt?: string | null;
+  tosReviewed?: boolean | null;
+  tosReviewedAt?: string | null;
+  tosUrl?: string | null;
+  complianceReviewer?: string | null;
+  legalOpinionReference?: string | null;
+  complianceReviewDueAt?: string | null;
+  complianceNotes?: string | null;
 }
 
 export interface UpdateAdminDataSourceOptions {
@@ -219,6 +238,18 @@ function hasLiveHealthTriageUpdate(input: UpdateAdminDataSourceInput) {
     input.liveHealthNextReviewAt !== undefined ||
     input.liveHealthNotes !== undefined ||
     input.liveHealthReviewedAt !== undefined
+  );
+}
+
+function hasComplianceLedgerUpdate(input: UpdateAdminDataSourceInput) {
+  return (
+    input.tosReviewed !== undefined ||
+    input.tosReviewedAt !== undefined ||
+    input.tosUrl !== undefined ||
+    input.complianceReviewer !== undefined ||
+    input.legalOpinionReference !== undefined ||
+    input.complianceReviewDueAt !== undefined ||
+    input.complianceNotes !== undefined
   );
 }
 
@@ -554,6 +585,18 @@ function toAdminSource(
     liveHealthNextReviewAt: row.liveHealthNextReviewAt,
     liveHealthNotes: row.liveHealthNotes,
     liveHealthReviewedAt: row.liveHealthReviewedAt,
+    robotsTxtStatus: row.robotsTxtStatus,
+    robotsTxtCheckedAt: row.robotsTxtCheckedAt,
+    robotsTxtHash: row.robotsTxtHash,
+    robotsTxtDisallowsCrawledPaths: row.robotsTxtDisallowsCrawledPaths === null ? null : row.robotsTxtDisallowsCrawledPaths === 1,
+    robotsTxtFlagReason: row.robotsTxtFlagReason,
+    tosReviewed: row.tosReviewed === null ? null : row.tosReviewed === 1,
+    tosReviewedAt: row.tosReviewedAt,
+    tosUrl: row.tosUrl,
+    complianceReviewer: row.complianceReviewer,
+    legalOpinionReference: row.legalOpinionReference,
+    complianceReviewDueAt: row.complianceReviewDueAt,
+    complianceNotes: row.complianceNotes,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     latestLog,
@@ -598,6 +641,18 @@ function dataSourceSelectSql(where = "") {
       live_health_next_review_at AS liveHealthNextReviewAt,
       live_health_notes AS liveHealthNotes,
       live_health_reviewed_at AS liveHealthReviewedAt,
+      robots_txt_status AS robotsTxtStatus,
+      robots_txt_checked_at AS robotsTxtCheckedAt,
+      robots_txt_hash AS robotsTxtHash,
+      robots_txt_disallows_crawled_paths AS robotsTxtDisallowsCrawledPaths,
+      robots_txt_flag_reason AS robotsTxtFlagReason,
+      tos_reviewed AS tosReviewed,
+      tos_reviewed_at AS tosReviewedAt,
+      tos_url AS tosUrl,
+      compliance_reviewer AS complianceReviewer,
+      legal_opinion_reference AS legalOpinionReference,
+      compliance_review_due_at AS complianceReviewDueAt,
+      compliance_notes AS complianceNotes,
       last_success_at AS lastSuccessAt,
       last_failure_at AS lastFailureAt,
       consecutive_failures AS consecutiveFailures,
@@ -720,6 +775,12 @@ export async function updateAdminDataSource(
       : hasLiveHealthTriageUpdate(input)
         ? updatedAt
         : existing.liveHealthReviewedAt;
+  const tosReviewedAt =
+    input.tosReviewedAt !== undefined
+      ? input.tosReviewedAt
+      : hasComplianceLedgerUpdate(input)
+        ? updatedAt
+        : existing.tosReviewedAt;
   db.update(dataSources)
     .set({
       ...(input.isEnabled !== undefined ? { isEnabled: input.isEnabled ? 1 : 0 } : {}),
@@ -734,6 +795,13 @@ export async function updateAdminDataSource(
       ...(input.liveHealthNextReviewAt !== undefined ? { liveHealthNextReviewAt: input.liveHealthNextReviewAt } : {}),
       ...(input.liveHealthNotes !== undefined ? { liveHealthNotes: redactLiveHealthNotes(input.liveHealthNotes) } : {}),
       ...(hasLiveHealthTriageUpdate(input) ? { liveHealthReviewedAt } : {}),
+      ...(input.tosReviewed !== undefined ? { tosReviewed: input.tosReviewed === null ? null : input.tosReviewed ? 1 : 0 } : {}),
+      ...(input.tosUrl !== undefined ? { tosUrl: input.tosUrl } : {}),
+      ...(input.complianceReviewer !== undefined ? { complianceReviewer: input.complianceReviewer } : {}),
+      ...(input.legalOpinionReference !== undefined ? { legalOpinionReference: input.legalOpinionReference } : {}),
+      ...(input.complianceReviewDueAt !== undefined ? { complianceReviewDueAt: input.complianceReviewDueAt } : {}),
+      ...(input.complianceNotes !== undefined ? { complianceNotes: input.complianceNotes } : {}),
+      ...(hasComplianceLedgerUpdate(input) ? { tosReviewedAt } : {}),
       lastApprovalReviewedAt,
       updatedAt,
     })
@@ -831,6 +899,34 @@ export async function updateAdminDataSourceFromMysql(
   if (hasLiveHealthTriageUpdate(input)) {
     fields.push("live_health_reviewed_at = ?");
     values.push(input.liveHealthReviewedAt !== undefined ? input.liveHealthReviewedAt : updatedAt);
+  }
+  if (input.tosReviewed !== undefined) {
+    fields.push("tos_reviewed = ?");
+    values.push(input.tosReviewed === null ? null : input.tosReviewed ? 1 : 0);
+  }
+  if (input.tosUrl !== undefined) {
+    fields.push("tos_url = ?");
+    values.push(input.tosUrl);
+  }
+  if (input.complianceReviewer !== undefined) {
+    fields.push("compliance_reviewer = ?");
+    values.push(input.complianceReviewer);
+  }
+  if (input.legalOpinionReference !== undefined) {
+    fields.push("legal_opinion_reference = ?");
+    values.push(input.legalOpinionReference);
+  }
+  if (input.complianceReviewDueAt !== undefined) {
+    fields.push("compliance_review_due_at = ?");
+    values.push(input.complianceReviewDueAt);
+  }
+  if (input.complianceNotes !== undefined) {
+    fields.push("compliance_notes = ?");
+    values.push(input.complianceNotes);
+  }
+  if (hasComplianceLedgerUpdate(input)) {
+    fields.push("tos_reviewed_at = ?");
+    values.push(input.tosReviewedAt !== undefined ? input.tosReviewedAt : updatedAt);
   }
   if (hasGovernanceUpdate(input)) {
     fields.push("last_approval_reviewed_at = ?");

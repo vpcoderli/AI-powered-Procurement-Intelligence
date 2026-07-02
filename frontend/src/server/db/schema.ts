@@ -1281,6 +1281,25 @@ export const sourceHealthSnapshots = sqliteTable(
   }),
 );
 
+// Data-source compliance ledger (P1-2): persisted robots.txt/ToS pre-check runs.
+// This is a triage signal only, not a legal determination. See
+// docs/operations/data-source-compliance-ledger.md for the human review process.
+export const sourceComplianceSnapshots = sqliteTable(
+  "source_compliance_snapshots",
+  {
+    id: text("id").primaryKey(),
+    ok: integer("ok").notNull(),
+    checkedAt: text("checked_at").notNull(),
+    summaryJson: text("summary_json").notNull(),
+    resultsJson: text("results_json").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    checkedAtIdx: index("idx_source_compliance_snapshots_checked_at").on(table.checkedAt),
+    createdAtIdx: index("idx_source_compliance_snapshots_created_at").on(table.createdAt),
+  }),
+);
+
 export const dataSources = sqliteTable("data_sources", {
   id: text("id").primaryKey(),
   label: text("label").notNull(),
@@ -1317,6 +1336,22 @@ export const dataSources = sqliteTable("data_sources", {
   lastSuccessAt: text("last_success_at"),
   lastFailureAt: text("last_failure_at"),
   consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  // Data-source compliance ledger (P1-2): ToS/robots.txt legal review tracking.
+  // This is a signal/triage + audit-trail layer only. Actual legal sign-off is a
+  // human/legal action recorded here, never inferred by code. See
+  // docs/operations/data-source-compliance-ledger.md.
+  robotsTxtStatus: text("robots_txt_status"),
+  robotsTxtCheckedAt: text("robots_txt_checked_at"),
+  robotsTxtHash: text("robots_txt_hash"),
+  robotsTxtDisallowsCrawledPaths: integer("robots_txt_disallows_crawled_paths"),
+  robotsTxtFlagReason: text("robots_txt_flag_reason"),
+  tosReviewed: integer("tos_reviewed"),
+  tosReviewedAt: text("tos_reviewed_at"),
+  tosUrl: text("tos_url"),
+  complianceReviewer: text("compliance_reviewer"),
+  legalOpinionReference: text("legal_opinion_reference"),
+  complianceReviewDueAt: text("compliance_review_due_at"),
+  complianceNotes: text("compliance_notes"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

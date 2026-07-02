@@ -256,6 +256,66 @@ const mysqlColumnMigrations: MysqlColumnMigration[] = [
     columnName: "live_health_reviewed_at",
     definition: "LONGTEXT",
   },
+  {
+    tableName: "data_sources",
+    columnName: "robots_txt_status",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "robots_txt_checked_at",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "robots_txt_hash",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "robots_txt_disallows_crawled_paths",
+    definition: "INT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "robots_txt_flag_reason",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "tos_reviewed",
+    definition: "INT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "tos_reviewed_at",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "tos_url",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "compliance_reviewer",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "legal_opinion_reference",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "compliance_review_due_at",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "compliance_notes",
+    definition: "LONGTEXT",
+  },
 ];
 
 function assertMysqlIdentifier(value: string) {
