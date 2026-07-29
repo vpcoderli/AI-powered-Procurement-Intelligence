@@ -411,9 +411,29 @@ describe("listCrawlableSources", () => {
     expect(listCrawlableSources(testDb.db)).toHaveLength(0);
   });
 
-  it("excludes sources not approved for ingestion", () => {
+  it("excludes sources explicitly denied ingestion", () => {
     testDb.db.insert(dataSources).values(sourceRow({ id: "unapproved", approvedForIngestion: 0 })).run();
     expect(listCrawlableSources(testDb.db)).toHaveLength(0);
+  });
+
+  it("includes sources whose governance fields are unset, matching orchestrator semantics", () => {
+    // orchestrator.ts blocks only on an EXPLICIT denial: approvedForIngestion === false,
+    // a non-approved approvalStatus, or a restricted legalReviewStatus. NULL means
+    // "never reviewed", not "denied" — SAM.gov and the seeded sources sit in this state,
+    // and excluding them here would silently stop crawling them.
+    testDb.db
+      .insert(dataSources)
+      .values(sourceRow({
+        id: "sam_gov",
+        issuerType: "federal",
+        approvedForIngestion: null,
+        approvalStatus: null,
+        legalReviewStatus: null,
+      }))
+      .run();
+
+    const sources = listCrawlableSources(testDb.db);
+    expect(sources.map((source) => source.id)).toEqual(["sam_gov"]);
   });
 
   it("excludes sources whose approval status is not approved", () => {
@@ -515,7 +535,14 @@ export interface MysqlSourceStore {
   query: (sql: string, values?: unknown[]) => Promise<[unknown[], unknown?]>;
 }
 
-/** 与 orchestrator.ts 的 legalReviewAllowsIngestion 保持一致。 */
+/**
+ * 治理门禁语义必须与 orchestrator.ts 的 blockedReasonFor 完全一致:
+ * 只有 **显式拒绝** 才排除,NULL 表示"尚未审核"而非"拒绝"。
+ *
+ * 生产数据现状(2026-07-29):45 个 beta 州源是 approved_for_ingestion=0
+ * (显式拒绝,本来就跑不了),5 个 verified 源是 1,另有 6 行三个字段全 NULL
+ * ——其中包括 sam_gov。若把 NULL 当拒绝,SAM.gov 会被静默停掉。
+ */
 const LEGAL_REVIEW_ALLOWED = ["approved_public", "approved"];
 
 function parseFetchConfig(raw: unknown): Record<string, unknown> {
@@ -537,8 +564,8 @@ export function listCrawlableSources(db: AppDatabase): CrawlableSource[] {
     .where(
       and(
         eq(dataSources.isEnabled, 1),
-        eq(dataSources.approvedForIngestion, 1),
-        eq(dataSources.approvalStatus, "approved"),
+        or(isNull(dataSources.approvedForIngestion), eq(dataSources.approvedForIngestion, 1)),
+        or(isNull(dataSources.approvalStatus), eq(dataSources.approvalStatus, "approved")),
         or(
           isNull(dataSources.legalReviewStatus),
           inArray(dataSources.legalReviewStatus, LEGAL_REVIEW_ALLOWED),
@@ -602,8 +629,8 @@ export async function listCrawlableSourcesFromMysql(
         consecutive_failures AS consecutiveFailures
       FROM data_sources
       WHERE is_enabled = 1
-        AND approved_for_ingestion = 1
-        AND approval_status = 'approved'
+        AND (approved_for_ingestion IS NULL OR approved_for_ingestion = 1)
+        AND (approval_status IS NULL OR approval_status = 'approved')
         AND (legal_review_status IS NULL OR legal_review_status IN ('approved_public', 'approved'))
     `,
   );
@@ -632,7 +659,7 @@ export async function listCrawlableSourcesFromMysql(
 cd frontend && npx vitest run src/server/crawler/source-registry.test.ts
 ```
 
-预期：PASS，8 个测试全绿。
+预期：PASS，9 个测试全绿。
 
 - [ ] **Step 5: 提交**
 
