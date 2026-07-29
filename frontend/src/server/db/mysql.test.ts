@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isMysqlDatabaseUrlConfigured,
   mysqlColumnMigrationStatements,
+  mysqlIndexMigrationStatements,
   mysqlMigrationStatements,
   requireMysqlDatabaseUrl,
   resetMysqlPoolForTests,
@@ -81,5 +82,30 @@ describe("mysql column migrations cover jurisdiction columns", () => {
     for (const column of ["jurisdiction_level", "jurisdiction_name", "fips_code"]) {
       expect(joined).toContain(`bids ADD COLUMN ${column}`);
     }
+  });
+});
+
+describe("mysql index migrations cover jurisdiction columns", () => {
+  it("declares the jurisdiction and fips code indexes for existing MySQL databases", () => {
+    const statements = mysqlIndexMigrationStatements();
+    const joined = statements.join("\n");
+    expect(joined).toContain("idx_data_sources_jurisdiction");
+    expect(joined).toContain("idx_bids_fips_code");
+  });
+
+  it("sizes indexed jurisdiction/fips columns as VARCHAR(191) on a fresh database", () => {
+    const statements = mysqlMigrationStatements();
+    const dataSourcesTable = statements.find((statement) =>
+      statement.includes("CREATE TABLE IF NOT EXISTS data_sources"),
+    );
+    const bidsTable = statements.find((statement) => statement.includes("CREATE TABLE IF NOT EXISTS bids"));
+
+    expect(dataSourcesTable).toContain("jurisdiction_level VARCHAR(191)");
+    expect(dataSourcesTable).toContain("fips_code VARCHAR(191)");
+    expect(dataSourcesTable).not.toContain("jurisdiction_level LONGTEXT");
+    expect(dataSourcesTable).not.toContain("fips_code LONGTEXT");
+
+    expect(bidsTable).toContain("fips_code VARCHAR(191)");
+    expect(bidsTable).not.toContain("fips_code LONGTEXT");
   });
 });

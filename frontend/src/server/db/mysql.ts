@@ -161,6 +161,12 @@ function convertIndexStatement(statement: string) {
 export function mysqlMigrationStatements(sqliteMigrationSql = extractSqliteMigrationSql()) {
   const indexedColumns = indexedTextColumnsByTable(sqliteMigrationSql);
 
+  // Column names that participate in any mysqlIndexMigrations entry are treated as key-style
+  // identifiers wherever they appear (not just on the specific table an index is declared for):
+  // e.g. fips_code is only formally indexed on bids in this phase, but it's the same short-code
+  // value on data_sources too, and LONGTEXT can never be indexed later if we size it wrong now.
+  const indexMigrationColumnNames = indexMigrationColumnNameSet();
+
   return sqliteMigrationSql
     .split(";")
     .map((statement) => statement.trim())
@@ -168,7 +174,11 @@ export function mysqlMigrationStatements(sqliteMigrationSql = extractSqliteMigra
     .flatMap((statement) => {
       if (statement.startsWith("CREATE TABLE")) {
         const tableName = tableNameFromCreateStatement(statement);
-        return [convertCreateTableStatement(statement, tableName ? indexedColumns.get(tableName) : undefined)];
+        const columns = new Set(tableName ? indexedColumns.get(tableName) ?? [] : []);
+        for (const column of indexMigrationColumnNames) {
+          columns.add(column);
+        }
+        return [convertCreateTableStatement(statement, columns)];
       }
       if (statement.startsWith("CREATE INDEX") || statement.startsWith("CREATE UNIQUE INDEX")) {
         const converted = convertIndexStatement(statement);
@@ -360,6 +370,48 @@ export function mysqlColumnMigrationStatements() {
   );
 }
 
+interface MysqlIndexMigration {
+  tableName: string;
+  indexName: string;
+  columns: string[];
+}
+
+// Indexes on columns added after a table's initial CREATE TABLE statement can't live inside the
+// first sqlite.exec() block (see migrate.ts): a pre-existing MySQL/SQLite database won't have the
+// column yet when that block runs, so CREATE INDEX would fail before the column migration below
+// gets a chance to add it. These are applied separately, after mysqlColumnMigrations, in
+// runMysqlMigrations.
+const mysqlIndexMigrations: MysqlIndexMigration[] = [
+  {
+    tableName: "data_sources",
+    indexName: "idx_data_sources_jurisdiction",
+    columns: ["jurisdiction_level", "state_code"],
+  },
+  {
+    tableName: "bids",
+    indexName: "idx_bids_fips_code",
+    columns: ["fips_code"],
+  },
+];
+
+export function mysqlIndexMigrationStatements() {
+  return mysqlIndexMigrations.map(
+    (migration) => `CREATE INDEX ${migration.indexName} ON ${migration.tableName}(${migration.columns.join(", ")})`,
+  );
+}
+
+function indexMigrationColumnNameSet() {
+  const columns = new Set<string>();
+
+  for (const migration of mysqlIndexMigrations) {
+    for (const column of migration.columns) {
+      columns.add(column);
+    }
+  }
+
+  return columns;
+}
+
 function assertMysqlIdentifier(value: string) {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
     throw new Error(`Invalid MySQL identifier: ${value}`);
@@ -416,6 +468,28 @@ export async function runMysqlMigrations(pool: Pool = createMysqlPool()): Promis
       appliedStatements += 1;
     } else {
       skippedStatements += 1;
+    }
+  }
+
+  // Runs after the column migrations above so the indexed columns are guaranteed to exist,
+  // whether this is a brand-new database (columns came from mysqlMigrationStatements) or an
+  // existing one (columns just got added by the loop above).
+  for (const indexStatement of mysqlIndexMigrationStatements()) {
+    try {
+      await pool.query(indexStatement);
+      appliedStatements += 1;
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        duplicateIndexErrors.has(String((error as { code?: unknown }).code))
+      ) {
+        skippedStatements += 1;
+        continue;
+      }
+
+      throw error;
     }
   }
 
