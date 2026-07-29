@@ -1,2 +1,5 @@
 # Local operations evidence and release dry-run artifacts.
 ops-evidence/
+
+# Subagent-driven development scratch (ledger, briefs, review packages).
+.superpowers/
