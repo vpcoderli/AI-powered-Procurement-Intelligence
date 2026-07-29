@@ -17,6 +17,9 @@
   3. `frontend/src/server/db/migrate.ts` — `addDataSourceColumn(…)` / `addBidColumn(…)`（已存在的 SQLite 库）
   4. `frontend/src/server/db/mysql.ts` — `mysqlColumnMigrations` 数组（已存在的 MySQL 库）
 - **新表与新索引必须放在 `migrate.ts` 的第一个 `sqlite.exec()` 块内**。`mysql.ts` 用正则只提取第一个块，块外语句永远到不了 MySQL。
+- **每个任务提交前必须跑 `npm run build`**（Next.js build 内含类型检查，是 CI 的 merge gate）。`npx vitest run` 与 `npm run lint` 都**不做**类型检查，只跑它们会让类型错误潜伏若干任务后才暴露。
+  - 参考基线：未改动的 main 上 `npx tsc --noEmit` 报 315 个错误，全部在测试文件与既有脚本中，属预先存在的技术债，`npm run build` 不受其影响（Next.js 只对被应用引用的文件做类型检查）。**判据是 `npm run build` 通过，不是 tsc 错误清零。**
+  - 给 `data_sources` 或 `bids` 加列，会连带要求更新所有把 MySQL 查询结果映射回 Drizzle 行类型的函数——它们的返回类型必须补齐新字段。已知的三处：`src/server/admin/bid-qa-repository.ts` 的 `mysqlBidRow`、`src/server/risk/checklist.ts`、`src/server/source-validity/state-data-quality.ts`（两个映射函数）。
 - 测试用 Vitest，`globals: false`——必须显式 `import { describe, it, expect } from "vitest"`。
 - 前端测试从 `frontend/` 运行：`npx vitest run <path>`。爬虫测试从 `crawler/` 运行：`PYTHONPATH=. pytest <path>`。
 - 数据库测试用 `createTestDatabase({ seed })`（`@/server/db/test-utils`），并在 `afterEach` 中 `await testDb.cleanup()`。
