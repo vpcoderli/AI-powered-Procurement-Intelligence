@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isMysqlDatabaseUrlConfigured,
+  mysqlColumnMigrationStatements,
   mysqlMigrationStatements,
   requireMysqlDatabaseUrl,
   resetMysqlPoolForTests,
@@ -67,5 +68,18 @@ describe("mysql database foundation", () => {
     expect(bidsTable).toContain("quality_flags_json LONGTEXT NOT NULL DEFAULT ('[]')");
     expect(overridesTable).toContain("organization_id VARCHAR(191) NOT NULL");
     expect(overridesTable).toContain("feature_key VARCHAR(191) NOT NULL");
+  });
+});
+
+describe("mysql column migrations cover jurisdiction columns", () => {
+  it("includes every jurisdiction column for existing MySQL databases", () => {
+    const statements = mysqlColumnMigrationStatements();
+    const joined = statements.join("\n");
+    for (const column of ["jurisdiction_level", "jurisdiction_name", "fips_code", "fetch_config"]) {
+      expect(joined).toContain(`data_sources ADD COLUMN ${column}`);
+    }
+    for (const column of ["jurisdiction_level", "jurisdiction_name", "fips_code"]) {
+      expect(joined).toContain(`bids ADD COLUMN ${column}`);
+    }
   });
 });

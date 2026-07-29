@@ -293,6 +293,9 @@ export function runMigrations(db: AppDatabase) {
       detail_archive_error TEXT,
       first_seen_at TEXT NOT NULL,
       last_seen_at TEXT NOT NULL,
+      jurisdiction_level TEXT,
+      jurisdiction_name TEXT,
+      fips_code TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -821,6 +824,10 @@ export function runMigrations(db: AppDatabase) {
       legal_opinion_reference TEXT,
       compliance_review_due_at TEXT,
       compliance_notes TEXT,
+      jurisdiction_level TEXT,
+      jurisdiction_name TEXT,
+      fips_code TEXT,
+      fetch_config TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -1097,6 +1104,10 @@ export function runMigrations(db: AppDatabase) {
   addBidColumn("detail_fetched_at", "TEXT");
   addBidColumn("detail_checksum_sha256", "TEXT");
   addBidColumn("detail_archive_error", "TEXT");
+  addBidColumn("jurisdiction_level", "TEXT");
+  addBidColumn("jurisdiction_name", "TEXT");
+  addBidColumn("fips_code", "TEXT");
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_bids_fips_code ON bids(fips_code)");
 
   const bidAttachmentColumns = new Set(
     sqlite
@@ -1250,4 +1261,9 @@ export function runMigrations(db: AppDatabase) {
   addDataSourceColumn("legal_opinion_reference", "TEXT");
   addDataSourceColumn("compliance_review_due_at", "TEXT");
   addDataSourceColumn("compliance_notes", "TEXT");
+  addDataSourceColumn("jurisdiction_level", "TEXT");
+  addDataSourceColumn("jurisdiction_name", "TEXT");
+  addDataSourceColumn("fips_code", "TEXT");
+  addDataSourceColumn("fetch_config", "TEXT");
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_data_sources_jurisdiction ON data_sources(jurisdiction_level, state_code)");
 }

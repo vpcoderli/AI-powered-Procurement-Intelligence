@@ -316,7 +316,49 @@ const mysqlColumnMigrations: MysqlColumnMigration[] = [
     columnName: "compliance_notes",
     definition: "LONGTEXT",
   },
+  {
+    tableName: "data_sources",
+    columnName: "jurisdiction_level",
+    definition: "VARCHAR(191)",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "jurisdiction_name",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "fips_code",
+    definition: "VARCHAR(191)",
+  },
+  {
+    tableName: "data_sources",
+    columnName: "fetch_config",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "bids",
+    columnName: "jurisdiction_level",
+    definition: "VARCHAR(191)",
+  },
+  {
+    tableName: "bids",
+    columnName: "jurisdiction_name",
+    definition: "LONGTEXT",
+  },
+  {
+    tableName: "bids",
+    columnName: "fips_code",
+    definition: "VARCHAR(191)",
+  },
 ];
+
+export function mysqlColumnMigrationStatements() {
+  return mysqlColumnMigrations.map(
+    (migration) =>
+      `ALTER TABLE ${migration.tableName} ADD COLUMN ${migration.columnName} ${migration.definition}`,
+  );
+}
 
 function assertMysqlIdentifier(value: string) {
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {

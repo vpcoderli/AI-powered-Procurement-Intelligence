@@ -1717,3 +1717,29 @@ describe("database schema", () => {
     }
   });
 });
+
+describe("jurisdiction columns", () => {
+  it("exposes jurisdiction columns on data_sources and bids", async () => {
+    const testDb = await createTestDatabase({ seed: false });
+    try {
+      const sourceColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(data_sources)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      expect(sourceColumns).toContain("jurisdiction_level");
+      expect(sourceColumns).toContain("jurisdiction_name");
+      expect(sourceColumns).toContain("fips_code");
+      expect(sourceColumns).toContain("fetch_config");
+
+      const bidColumns = testDb.db.$client
+        .prepare("PRAGMA table_info(bids)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      expect(bidColumns).toContain("jurisdiction_level");
+      expect(bidColumns).toContain("jurisdiction_name");
+      expect(bidColumns).toContain("fips_code");
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+});
