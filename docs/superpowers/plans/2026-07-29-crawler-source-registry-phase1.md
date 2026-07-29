@@ -2331,8 +2331,10 @@ export async function runConfiguredCrawlerSourcesOnce(
     );
   const runCrawlerSourceOnce = options.runCrawlerSourceOnce ?? defaultRunCrawlerSourceOnce;
 
+  // MysqlCrawlerLockStore 同时声明了 query 与 execute,结构上是 MysqlSourceStore
+  // 的超集,可直接传入——不要加 `as never` 之类的类型逃逸。
   const allSources: CrawlableSource[] = options.mysql
-    ? await listCrawlableSourcesFromMysql(options.mysql as never)
+    ? await listCrawlableSourcesFromMysql(options.mysql)
     : listCrawlableSources(options.database);
 
   const dueSources = selectDueSources(allSources, now);
