@@ -6,12 +6,20 @@ import {
   runCrawlerSourceOnce as defaultRunCrawlerSourceOnce,
   type CrawlerMatcher,
   type CrawlerNotifier,
+  type CrawlerRunResult,
   type RunCrawlerSourceOnceOptions,
   type RunCrawlerSourceOnceResult,
 } from "./orchestrator";
+import { classifyCrawlerFailure } from "./failure-classifier";
 import { runSamGovCrawler } from "./sam-gov-runner";
 import { listCrawlableSources, listCrawlableSourcesFromMysql, type CrawlableSource } from "./source-registry";
 import { selectDueSources } from "./scheduler";
+import {
+  recordSourceFailure,
+  recordSourceFailureInMysql,
+  recordSourceSuccess,
+  recordSourceSuccessInMysql,
+} from "./source-health-repository";
 import { runCrawlTask } from "./state-runner";
 
 type ConfiguredRunner = <TOptions>(
@@ -39,6 +47,7 @@ export async function runConfiguredCrawlerSourcesOnce(
   options: RunConfiguredCrawlerSourcesOnceOptions,
 ) {
   const now = options.now ?? new Date();
+  const nowIso = now.toISOString();
   const matcher = options.matcher ?? (
     options.mysql
       ? (() => matchEnabledSearchAlertsFromMysql(options.mysql!))
@@ -64,24 +73,95 @@ export async function runConfiguredCrawlerSourcesOnce(
   for (const source of dueSources) {
     const isSamGov = source.id === "sam_gov" || source.issuerType === "federal";
 
-    results.push(
-      await runCrawlerSourceOnce(options.database, {
-        mysql: options.mysql,
-        source: source.id,
-        owner: options.owner,
-        runner: isSamGov
-          ? runSamGovCrawler
-          : () =>
-              runCrawlTask(source, {
-                taskId: `tsk_${source.id}_${now.getTime()}`,
-                limit: options.stateRunnerOptions?.limit,
-                query: options.stateRunnerOptions?.query ?? null,
-              }),
-        matcher,
-        notifier,
-      }),
-    );
+    const result = await runCrawlerSourceOnce(options.database, {
+      mysql: options.mysql,
+      source: source.id,
+      owner: options.owner,
+      runner: isSamGov
+        ? runSamGovCrawler
+        : () =>
+            runCrawlTask(source, {
+              taskId: `tsk_${source.id}_${now.getTime()}`,
+              limit: options.stateRunnerOptions?.limit,
+              query: options.stateRunnerOptions?.query ?? null,
+            }),
+      matcher,
+      notifier,
+    });
+
+    results.push(result);
+    await recordSourceHealthOutcome(options, source.id, result, nowIso);
   }
 
   return results;
+}
+
+/**
+ * Persists the crawl outcome against the source row so Task 4's `selectDueSources` and Task
+ * 11's degrade/backoff logic actually have data to act on. Without this, `last_success_at`
+ * stays NULL forever, `selectDueSources` treats a NULL `lastSuccessAt` as "due immediately",
+ * and every source is due on every cycle regardless of cadence — cadence scheduling silently
+ * does nothing.
+ *
+ * Only "success" and "failure" represent an actual crawl attempt. "locked" (another owner is
+ * mid-run), "disabled", and "blocked" (governance/legal hold) mean the runner never executed,
+ * so writing health data for them would be wrong — e.g. incrementing `consecutive_failures`
+ * for a `blocked` source would eventually demote an as-yet-unreviewed source into
+ * `needs_review` for the sole reason that it isn't approved yet.
+ *
+ * A write-back failure is logged and swallowed rather than thrown, so one source's
+ * bookkeeping error can't stop the rest of the batch from running.
+ */
+async function recordSourceHealthOutcome(
+  options: RunConfiguredCrawlerSourcesOnceOptions,
+  sourceId: string,
+  result: RunCrawlerSourceOnceResult,
+  at: string,
+): Promise<void> {
+  try {
+    if (result.ok) {
+      if (options.mysql) {
+        await recordSourceSuccessInMysql(options.mysql, sourceId, at);
+      } else {
+        recordSourceSuccess(options.database, sourceId, at);
+      }
+      return;
+    }
+
+    if (result.status !== "failure") {
+      // "locked" / "disabled" / "blocked": the crawler never ran, so there is nothing to record.
+      return;
+    }
+
+    // `runCrawlTask`'s result (`CrawlTaskResult`) carries `errorCode`/`fetchedCount`, which
+    // `classifyCrawlerFailure` was built to consume, but `RunCrawlerSourceOnceResult["runner"]`
+    // is statically typed as the narrower `CrawlerRunResult` shared by every runner. SAM.gov
+    // runs through `runSamGovCrawler` instead, whose result carries neither field, so both
+    // read as `undefined` below and `classifyCrawlerFailure` falls back to "unknown" — a
+    // deliberate choice: SAM.gov failures still count toward the consecutive-failure backoff,
+    // they just aren't distinguished by failure kind the way state-source failures are.
+    const runner = result.runner as CrawlerRunResult & {
+      errorCode?: string | null;
+      fetchedCount?: number | null;
+    };
+    const kind = classifyCrawlerFailure({
+      errorCode: runner.errorCode ?? null,
+      errorMessage: runner.stderr ?? null,
+      fetchedCount: runner.fetchedCount ?? null,
+    });
+
+    if (options.mysql) {
+      await recordSourceFailureInMysql(options.mysql, { sourceId, at, kind });
+    } else {
+      recordSourceFailure(options.database, { sourceId, at, kind });
+    }
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: "crawler_health_write_back_failed",
+        source: sourceId,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
 }
