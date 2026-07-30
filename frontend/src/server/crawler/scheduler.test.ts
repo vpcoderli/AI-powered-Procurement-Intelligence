@@ -79,22 +79,70 @@ describe("selectDueSources", () => {
     expect(selectDueSources([manual], NOW)).toHaveLength(0);
   });
 
-  it("orders state-level sources before county and city", () => {
-    const city = source({ id: "city", jurisdictionLevel: "city" });
-    const county = source({ id: "county", jurisdictionLevel: "county" });
-    const state = source({ id: "state", jurisdictionLevel: "state" });
-    const ordered = selectDueSources([city, county, state], NOW).map((s) => s.id);
-    expect(ordered).toEqual(["state", "county", "city"]);
+  it("returns an empty array for empty input", () => {
+    expect(selectDueSources([], NOW)).toEqual([]);
   });
 
-  it("interleaves sources of the same provider family", () => {
+  it("orders all five jurisdiction levels: federal, state, county, city, special_district", () => {
+    const city = source({ id: "city", jurisdictionLevel: "city" });
+    const specialDistrict = source({ id: "special_district", jurisdictionLevel: "special_district" });
+    const county = source({ id: "county", jurisdictionLevel: "county" });
+    const federal = source({ id: "federal", jurisdictionLevel: "federal" });
+    const state = source({ id: "state", jurisdictionLevel: "state" });
+    // Deliberately scrambled input order; the assertion pins the required output order.
+    const ordered = selectDueSources([city, specialDistrict, county, federal, state], NOW).map(
+      (s) => s.id,
+    );
+    expect(ordered).toEqual(["federal", "state", "county", "city", "special_district"]);
+  });
+
+  it("treats a null jurisdiction level as lowest priority, after all named levels", () => {
+    const city = source({ id: "city", jurisdictionLevel: "city" });
+    const unknown = source({ id: "unknown", jurisdictionLevel: null });
+    const ordered = selectDueSources([unknown, city], NOW).map((s) => s.id);
+    expect(ordered).toEqual(["city", "unknown"]);
+  });
+
+  it("interleaves sources of the same provider family instead of grouping them together", () => {
     const sources = [
       source({ id: "bidnet_1", providerFamily: "bidnet" }),
       source({ id: "bidnet_2", providerFamily: "bidnet" }),
       source({ id: "bidnet_3", providerFamily: "bidnet" }),
       source({ id: "bonfire_1", providerFamily: "bonfire" }),
     ];
-    const ordered = selectDueSources(sources, NOW).map((s) => s.providerFamily);
-    expect(ordered[0]).not.toBe(ordered[1]);
+    // Round-robin across families: bidnet (3) and bonfire (1) alternate one turn each: the
+    // first bidnet source pairs with the only bonfire source, then the remaining two bidnet
+    // sources run back-to-back because bonfire has nothing left to interleave with. Full
+    // separation is impossible once one family holds more than half of the sources.
+    const ordered = selectDueSources(sources, NOW).map((s) => s.id);
+    expect(ordered).toEqual(["bidnet_1", "bonfire_1", "bidnet_2", "bidnet_3"]);
+  });
+
+  it("lets provider-family interleaving take precedence over strict due-time order", () => {
+    // x1 and x2 share a provider family and are, by due time, the two most overdue sources;
+    // y1 is a different family, due later than both. Strict due-time order would be
+    // [x1, x2, y1], but the scheduler interleaves families within the jurisdiction level
+    // first, so x2 (same family as x1) is pushed behind y1 even though x2 is due earlier.
+    // This is intentional: at 2000+ source scale, a few minutes of due-time drift is cheap
+    // while hammering one platform risks rate-limiting or an outright block, so platform
+    // diversity is prioritized over strict recency.
+    const x1 = source({
+      id: "x1",
+      providerFamily: "family-x",
+      lastSuccessAt: "2026-07-28T00:00:00.000Z", // nextDueAt 2026-07-29T00:00:00.000Z
+    });
+    const x2 = source({
+      id: "x2",
+      providerFamily: "family-x",
+      lastSuccessAt: "2026-07-28T04:00:00.000Z", // nextDueAt 2026-07-29T04:00:00.000Z
+    });
+    const y1 = source({
+      id: "y1",
+      providerFamily: "family-y",
+      lastSuccessAt: "2026-07-28T08:00:00.000Z", // nextDueAt 2026-07-29T08:00:00.000Z
+    });
+
+    const ordered = selectDueSources([y1, x1, x2], NOW).map((s) => s.id);
+    expect(ordered).toEqual(["x1", "y1", "x2"]);
   });
 });

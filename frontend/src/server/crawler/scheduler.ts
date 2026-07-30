@@ -38,7 +38,19 @@ function jurisdictionRank(level: string | null) {
   return index === -1 ? JURISDICTION_ORDER.length : index;
 }
 
-/** Round-robins sources within the same provider_family so the same platform isn't hit back-to-back. */
+/**
+ * Round-robins sources within the same provider_family so the same platform isn't hit
+ * back-to-back.
+ *
+ * This intentionally takes precedence over strict due-time order. `selectDueSources` sorts a
+ * jurisdiction level by how overdue each source is before calling this function, but
+ * interleaving can still reorder that within the level: a source can end up scheduled after a
+ * less-overdue source from a different family, simply because it shares a family with
+ * whatever ran immediately before it. That's a deliberate tradeoff, not a bug — at the
+ * 2000+ source scale this registry is built for, a source running a few minutes "late" costs
+ * nothing, while hammering one platform's endpoint back-to-back risks rate-limiting or an
+ * outright IP block, which is far more expensive to recover from.
+ */
 function interleaveByProviderFamily(sources: CrawlableSource[]): CrawlableSource[] {
   const groups = new Map<string, CrawlableSource[]>();
   for (const source of sources) {
