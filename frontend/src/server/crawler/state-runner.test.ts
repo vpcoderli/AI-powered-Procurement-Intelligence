@@ -2,7 +2,13 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { importCrawlerJsonRunIntoMysql } from "./mysql-json-importer";
-import { STATE_CRAWLER_SOURCES, createStateCrawlerRunner, runStateCrawler } from "./state-runner";
+import type { CrawlableSource } from "./source-registry";
+import {
+  STATE_CRAWLER_SOURCES,
+  buildCrawlTaskPayload,
+  createStateCrawlerRunner,
+  runStateCrawler,
+} from "./state-runner";
 
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
@@ -280,5 +286,52 @@ describe("state crawler runner", () => {
     expect(args).toContain("--output-json");
     expect(args).not.toContain("--database");
     expect(mockedImportCrawlerJsonRunIntoMysql).toHaveBeenCalledWith(expect.anything(), JSON.parse(mysqlJsonPayload));
+  });
+});
+
+function source(overrides: Partial<CrawlableSource> = {}): CrawlableSource {
+  return {
+    id: "ca_caleprocure",
+    label: "California Cal eProcure",
+    issuerType: "state",
+    stateCode: "CA",
+    baseUrl: "https://caleprocure.ca.gov",
+    cadence: "daily",
+    providerFamily: null,
+    jurisdictionLevel: "state",
+    jurisdictionName: "California",
+    fipsCode: "06",
+    fetchConfig: { base_url: "https://caleprocure.ca.gov" },
+    lastSuccessAt: null,
+    consecutiveFailures: 0,
+    ...overrides,
+  };
+}
+
+describe("buildCrawlTaskPayload", () => {
+  it("carries source identity and fetch config into the contract", () => {
+    const payload = buildCrawlTaskPayload(source(), { taskId: "tsk_1" });
+    expect(payload).toEqual({
+      task_id: "tsk_1",
+      source_id: "ca_caleprocure",
+      label: "California Cal eProcure",
+      state_code: "CA",
+      provider_family: null,
+      jurisdiction_level: "state",
+      fetch_config: { base_url: "https://caleprocure.ca.gov" },
+      limit: 25,
+      query: null,
+    });
+  });
+
+  it("defaults fetch_config.base_url from the source base URL when absent", () => {
+    const payload = buildCrawlTaskPayload(source({ fetchConfig: {} }), { taskId: "tsk_2" });
+    expect(payload.fetch_config).toEqual({ base_url: "https://caleprocure.ca.gov" });
+  });
+
+  it("honours explicit limit and query", () => {
+    const payload = buildCrawlTaskPayload(source(), { taskId: "tsk_3", limit: 5, query: "road" });
+    expect(payload.limit).toBe(5);
+    expect(payload.query).toBe("road");
   });
 });
