@@ -295,6 +295,9 @@ function mysqlBidRow(row: Record<string, unknown>): BidRow {
     detailArchiveError: mysqlNullableString(row, "detail_archive_error"),
     firstSeenAt: mysqlString(row, "first_seen_at"),
     lastSeenAt: mysqlString(row, "last_seen_at"),
+    jurisdictionLevel: mysqlNullableString(row, "jurisdiction_level"),
+    jurisdictionName: mysqlNullableString(row, "jurisdiction_name"),
+    fipsCode: mysqlNullableString(row, "fips_code"),
     createdAt: mysqlString(row, "created_at"),
     updatedAt: mysqlString(row, "updated_at"),
   };

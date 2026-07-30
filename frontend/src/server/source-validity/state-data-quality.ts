@@ -884,6 +884,9 @@ function mysqlBidQualityRow(row: Record<string, unknown>): BidRow {
     detailArchiveError: mysqlNullableString(row, "detailArchiveError"),
     firstSeenAt: mysqlString(row, "firstSeenAt"),
     lastSeenAt: mysqlString(row, "lastSeenAt"),
+    jurisdictionLevel: mysqlNullableString(row, "jurisdictionLevel"),
+    jurisdictionName: mysqlNullableString(row, "jurisdictionName"),
+    fipsCode: mysqlNullableString(row, "fipsCode"),
     createdAt: mysqlString(row, "createdAt"),
     updatedAt: mysqlString(row, "updatedAt"),
   };
@@ -959,6 +962,10 @@ function mysqlDataSourceQualityRow(row: Record<string, unknown>): DataSourceRow 
     legalOpinionReference: mysqlNullableString(row, "legalOpinionReference"),
     complianceReviewDueAt: mysqlNullableString(row, "complianceReviewDueAt"),
     complianceNotes: mysqlNullableString(row, "complianceNotes"),
+    jurisdictionLevel: mysqlNullableString(row, "jurisdictionLevel"),
+    jurisdictionName: mysqlNullableString(row, "jurisdictionName"),
+    fipsCode: mysqlNullableString(row, "fipsCode"),
+    fetchConfig: mysqlNullableString(row, "fetchConfig"),
     createdAt: mysqlString(row, "createdAt"),
     updatedAt: mysqlString(row, "updatedAt"),
   };

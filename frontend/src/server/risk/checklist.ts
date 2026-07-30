@@ -294,6 +294,10 @@ function mysqlDataSourceRow(row: Record<string, unknown>): RiskDataSourceRow {
     legalOpinionReference: row.legalOpinionReference === null || row.legalOpinionReference === undefined ? null : String(row.legalOpinionReference),
     complianceReviewDueAt: row.complianceReviewDueAt === null || row.complianceReviewDueAt === undefined ? null : String(row.complianceReviewDueAt),
     complianceNotes: row.complianceNotes === null || row.complianceNotes === undefined ? null : String(row.complianceNotes),
+    jurisdictionLevel: row.jurisdictionLevel === null || row.jurisdictionLevel === undefined ? null : String(row.jurisdictionLevel),
+    jurisdictionName: row.jurisdictionName === null || row.jurisdictionName === undefined ? null : String(row.jurisdictionName),
+    fipsCode: row.fipsCode === null || row.fipsCode === undefined ? null : String(row.fipsCode),
+    fetchConfig: row.fetchConfig === null || row.fetchConfig === undefined ? null : String(row.fetchConfig),
     createdAt: String(row.createdAt ?? ""),
     updatedAt: String(row.updatedAt ?? ""),
   };
