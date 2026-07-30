@@ -2,11 +2,14 @@ import argparse
 import json
 import os
 import sqlite3
+import sys
 import traceback
 from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
 
+from apsi_crawler.adapters.registry import AdapterNotFoundError, resolve_adapter
+from apsi_crawler.adapters.task import task_source_from_payload
 from apsi_crawler.config import DEFAULT_SOURCE
 from apsi_crawler.live_validation import (
     BETA_DEDICATED_STATE_SOURCES,
@@ -490,6 +493,65 @@ def fetch_state(
             connection.close()
 
 
+def fetch_task(payload):
+    """执行单个抓取任务。输入为任务 JSON,输出结果 JSON 到 stdout。
+
+    与 fetch_state 的区别:源信息全部来自 payload,不查硬编码 registry;
+    不做 fixture 回退——空结果就是失败,这样 last_success_at 才是真信号。
+    """
+    started_at = now_iso()
+    started = perf_counter()
+    run_id = str(uuid4())
+    task_id = payload.get("task_id")
+    source_id = payload.get("source_id")
+    limit = int(payload.get("limit") or 25)
+    query = payload.get("query")
+    metadata = {"mode": "live", "query": query, "limit": limit, "task_id": task_id}
+
+    try:
+        source = task_source_from_payload(payload)
+        adapter = resolve_adapter(source.id, payload.get("provider_family"))
+        metadata["adapter"] = getattr(adapter, "__name__", "unknown")
+
+        bids = adapter(source, query=query, limit=limit)
+        _require_non_empty_bids(bids, source.id)
+
+        finished_at = now_iso()
+        duration_ms = int((perf_counter() - started) * 1000)
+        result = _json_run_payload(
+            source=source.id,
+            run_id=run_id,
+            status="success",
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+            metadata=metadata,
+            bids=bids,
+        )
+        result["taskId"] = task_id
+        _print_json_payload(result)
+        return 0
+    except Exception as error:
+        finished_at = now_iso()
+        duration_ms = int((perf_counter() - started) * 1000)
+        result = _json_run_payload(
+            source=source_id,
+            run_id=run_id,
+            status="failure",
+            started_at=started_at,
+            finished_at=finished_at,
+            duration_ms=duration_ms,
+            metadata=metadata,
+            bids=[],
+            error_code=type(error).__name__,
+            error_message=str(error),
+            error_stack=traceback.format_exc(),
+        )
+        result["taskId"] = task_id
+        _print_json_payload(result)
+        return 1
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="apsi-crawler")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -526,6 +588,8 @@ def build_parser():
     fetch_state_parser.add_argument("--archive-dir")
     fetch_state_parser.add_argument("--archive-detail-pages", action="store_true")
     fetch_state_parser.add_argument("--output-json", action="store_true")
+
+    subparsers.add_parser("fetch-task")
 
     validate_state_live_parser = subparsers.add_parser("validate-state-live")
     validate_state_live_parser.add_argument(
@@ -600,6 +664,9 @@ def main(argv=None):
             archive_detail_pages=args.archive_detail_pages,
             output_json=args.output_json,
         )
+
+    if args.command == "fetch-task":
+        return fetch_task(json.load(sys.stdin))
 
     if args.command == "validate-state-live":
         result = validate_state_live_sources(
