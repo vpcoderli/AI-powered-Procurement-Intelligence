@@ -39,6 +39,18 @@ def test_requires_source_id_and_label():
         task_source_from_payload({"source_id": "x", "state_code": "CA", "fetch_config": {}})
 
 
+def test_rejects_non_dict_fetch_config():
+    with pytest.raises(ValueError, match="non-object fetch_config"):
+        task_source_from_payload(
+            {
+                "source_id": "test",
+                "label": "Test",
+                "state_code": "CA",
+                "fetch_config": "not_a_dict",
+            }
+        )
+
+
 def test_is_accepted_by_the_existing_normalizer():
     source = TaskSource(
         id="ca_caleprocure",
