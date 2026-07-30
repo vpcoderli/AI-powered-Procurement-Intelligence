@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
+import { STATE_CRAWLER_SOURCE_DEFINITIONS } from "@/lib/state-crawler-sources";
 
 // Data-source compliance pre-check (P1-2).
 //
@@ -308,7 +308,7 @@ function summarize(results: SourceComplianceResult[]) {
 }
 
 export async function scanSourceCompliance(
-  sources: readonly SourceComplianceInput[] = STATE_CRAWLER_SOURCES,
+  sources: readonly SourceComplianceInput[] = STATE_CRAWLER_SOURCE_DEFINITIONS,
   options: SourceComplianceScanOptions = {},
 ): Promise<SourceComplianceReport> {
   const fetchImpl = options.fetchImpl ?? fetch;

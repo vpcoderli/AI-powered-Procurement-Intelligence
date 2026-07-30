@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
+import { STATE_CRAWLER_SOURCE_DEFINITIONS } from "@/lib/state-crawler-sources";
 import { MOCK_BIDS } from "../../lib/mock-data";
 import { seedDefaultConfigEntries } from "../config/registry";
 import type { AppDatabase } from "./client";
@@ -75,7 +75,7 @@ export async function seedDatabase(db: AppDatabase) {
     ]),
   );
 
-  for (const source of STATE_CRAWLER_SOURCES) {
+  for (const source of STATE_CRAWLER_SOURCE_DEFINITIONS) {
     sourceRows.set(source.id, {
       id: source.id,
       label: source.label,

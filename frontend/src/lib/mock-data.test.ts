@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { STATE_CRAWLER_SOURCES } from "./state-crawler-sources";
+import { STATE_CRAWLER_SOURCE_DEFINITIONS } from "./state-crawler-sources";
 import { STATE_FILTERS } from "./mock-data";
 
 describe("state filters", () => {
@@ -14,7 +14,7 @@ describe("state filters", () => {
     });
     expect(stateFilters).toHaveLength(50);
     expect(stateFilters.map((filter) => filter.stateCode).sort()).toEqual(
-      STATE_CRAWLER_SOURCES.map((source) => source.stateCode).sort(),
+      STATE_CRAWLER_SOURCE_DEFINITIONS.map((source) => source.stateCode).sort(),
     );
     expect(stateFilters.every((filter) => filter.id === filter.stateCode.toLowerCase())).toBe(true);
     expect(stateFilters.find((filter) => filter.stateCode === "AL")?.label).toBe("Alabama (AL)");

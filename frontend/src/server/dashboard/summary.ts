@@ -1,4 +1,4 @@
-import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
+import { STATE_CRAWLER_SOURCE_DEFINITIONS } from "@/lib/state-crawler-sources";
 import type { AppDatabase } from "@/server/db/client";
 import type { AccountTier, UserRole } from "@/server/auth/entitlements";
 import type { BidQuery, BidQueryOptions, BidListResponse, SavedBidsResponse } from "@/server/bids/types";
@@ -299,7 +299,7 @@ export async function createDashboardSummary(
         ok: attachmentCheck?.ok ?? false,
         summary: attachmentCheck?.summary ?? "Attachment download health has not been checked.",
       },
-      requiredStateSources: new Set(STATE_CRAWLER_SOURCES.map((source) => source.stateCode)).size,
+      requiredStateSources: new Set(STATE_CRAWLER_SOURCE_DEFINITIONS.map((source) => source.stateCode)).size,
     },
     account: {
       role: subject.role,

@@ -1,4 +1,4 @@
-import { STATE_CRAWLER_SOURCES } from "./state-crawler-sources";
+import { STATE_CRAWLER_SOURCE_DEFINITIONS } from "./state-crawler-sources";
 
 export const FEDERAL_SAM_OPPORTUNITIES_URL = "https://sam.gov/search/?index=opp&sort=-modifiedDate&page=1&pageSize=25";
 
@@ -144,7 +144,7 @@ const STATE_FILTER_ORDER = [
   "WY",
 ];
 
-const stateCrawlerSourceStates = new Set<string>(STATE_CRAWLER_SOURCES.map((source) => source.stateCode));
+const stateCrawlerSourceStates = new Set<string>(STATE_CRAWLER_SOURCE_DEFINITIONS.map((source) => source.stateCode));
 
 export const STATE_FILTERS = [
   { id: "sam", label: "Federal (SAM.gov)", stateCode: "US", issuerType: "federal" as const },

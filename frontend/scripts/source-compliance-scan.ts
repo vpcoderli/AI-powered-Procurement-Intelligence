@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { STATE_CRAWLER_SOURCES } from "../src/lib/state-crawler-sources";
+import { STATE_CRAWLER_SOURCE_DEFINITIONS } from "../src/lib/state-crawler-sources";
 import { createDatabase } from "../src/server/db/client";
 import { runMigrations } from "../src/server/db/migrate";
 import { createMysqlPool, isMysqlDatabaseUrlConfigured, requireMysqlDatabaseUrl } from "../src/server/db/mysql";
@@ -114,10 +114,10 @@ export function parseSourceComplianceScanArgs(argv: string[]): CliOptions {
 }
 
 function selectedSources(filters: string[]) {
-  if (filters.length === 0) return STATE_CRAWLER_SOURCES;
+  if (filters.length === 0) return STATE_CRAWLER_SOURCE_DEFINITIONS;
 
   const normalized = new Set(filters.map((filter) => filter.toLowerCase()));
-  const selected = STATE_CRAWLER_SOURCES.filter(
+  const selected = STATE_CRAWLER_SOURCE_DEFINITIONS.filter(
     (source) => normalized.has(source.stateCode.toLowerCase()) || normalized.has(source.id.toLowerCase()),
   );
 
