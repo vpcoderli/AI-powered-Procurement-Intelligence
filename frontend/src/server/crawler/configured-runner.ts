@@ -10,7 +10,7 @@ import {
   type RunCrawlerSourceOnceOptions,
   type RunCrawlerSourceOnceResult,
 } from "./orchestrator";
-import { classifyCrawlerFailure } from "./failure-classifier";
+import { classifyCrawlerFailure, type CrawlerFailureInput } from "./failure-classifier";
 import { runSamGovCrawler } from "./sam-gov-runner";
 import { listCrawlableSources, listCrawlableSourcesFromMysql, type CrawlableSource } from "./source-registry";
 import { selectDueSources } from "./scheduler";
@@ -133,22 +133,7 @@ async function recordSourceHealthOutcome(
       return;
     }
 
-    // `runCrawlTask`'s result (`CrawlTaskResult`) carries `errorCode`/`fetchedCount`, which
-    // `classifyCrawlerFailure` was built to consume, but `RunCrawlerSourceOnceResult["runner"]`
-    // is statically typed as the narrower `CrawlerRunResult` shared by every runner. SAM.gov
-    // runs through `runSamGovCrawler` instead, whose result carries neither field, so both
-    // read as `undefined` below and `classifyCrawlerFailure` falls back to "unknown" — a
-    // deliberate choice: SAM.gov failures still count toward the consecutive-failure backoff,
-    // they just aren't distinguished by failure kind the way state-source failures are.
-    const runner = result.runner as CrawlerRunResult & {
-      errorCode?: string | null;
-      fetchedCount?: number | null;
-    };
-    const kind = classifyCrawlerFailure({
-      errorCode: runner.errorCode ?? null,
-      errorMessage: runner.stderr ?? null,
-      fetchedCount: runner.fetchedCount ?? null,
-    });
+    const kind = classifyCrawlerFailure(buildCrawlerFailureInput(result.runner));
 
     if (options.mysql) {
       await recordSourceFailureInMysql(options.mysql, { sourceId, at, kind });
@@ -164,4 +149,34 @@ async function recordSourceHealthOutcome(
       }),
     );
   }
+}
+
+/**
+ * Maps a crawl run's result onto `classifyCrawlerFailure`'s input shape.
+ *
+ * `runCrawlTask`'s result (`CrawlTaskResult`) carries `errorCode`/`fetchedCount` at runtime,
+ * which `classifyCrawlerFailure` was built to consume, but `RunCrawlerSourceOnceResult["runner"]`
+ * is statically typed as the narrower `CrawlerRunResult` shared by every runner. SAM.gov runs
+ * through `runSamGovCrawler` instead, whose result carries neither field, so both read as
+ * `undefined` here and `classifyCrawlerFailure` falls back to `"unknown"` — a deliberate choice:
+ * SAM.gov failures still count toward the consecutive-failure backoff, they just aren't
+ * distinguished by failure kind the way state-source failures are.
+ *
+ * Exported so this mapping can be asserted directly: the failure classifier's threshold table
+ * currently makes "network" and "unknown" behave identically once recorded (both default to a
+ * threshold of 5 with no forced degrade), so a test that only inspects `data_sources` after the
+ * fact cannot tell whether a concrete `errorCode` actually reached the classifier or was dropped
+ * — this function gives a seam to check that directly.
+ */
+export function buildCrawlerFailureInput(runner: CrawlerRunResult): CrawlerFailureInput {
+  const extended = runner as CrawlerRunResult & {
+    errorCode?: string | null;
+    fetchedCount?: number | null;
+  };
+
+  return {
+    errorCode: extended.errorCode ?? null,
+    errorMessage: extended.stderr ?? null,
+    fetchedCount: extended.fetchedCount ?? null,
+  };
 }
