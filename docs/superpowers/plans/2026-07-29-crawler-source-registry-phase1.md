@@ -2182,18 +2182,27 @@ export async function recordSourceFailureInMysql(
 ): Promise<void> {
   // 解析失败立即降级;否则达到该失败类型的阈值才降级。
   // 用 CASE 表达式一条语句完成,避免读改写竞态。
+  //
+  // ⚠️ SET 子句的顺序是正确性的一部分,不能调换:
+  // MySQL 单表 UPDATE 的赋值按**从左到右**求值,后面的赋值读到的是前面赋值
+  // 写入的**新值**(MySQL 文档明示这与标准 SQL 不同,例:
+  // `UPDATE t1 SET col1 = col1 + 1, col2 = col1` 中 col2 拿到的是新 col1)。
+  // 因此 approval_status 的 CASE 必须排在 consecutive_failures 自增**之前**,
+  // 否则 CASE 里读到的已是 C+1,实际比较变成 C+2 >= 阈值,MySQL 会比 SQLite
+  // 分支早一次降级。该分歧只在从下方逼近边界时可见(两个"应降级"用例在两种
+  // 方言下都降级),因此极易漏过。
   const forceDegrade = shouldFlagForReview(input.kind) ? 1 : 0;
 
   await mysqlExecute(
     pool,
     `UPDATE data_sources
      SET last_failure_at = ?,
-         consecutive_failures = consecutive_failures + 1,
          approval_status = CASE
            WHEN ? = 1 THEN 'needs_review'
            WHEN consecutive_failures + 1 >= ? THEN 'needs_review'
            ELSE approval_status
          END,
+         consecutive_failures = consecutive_failures + 1,
          updated_at = ?
      WHERE id = ?`,
     [input.at, forceDegrade, degradeThresholdFor(input.kind), input.at, input.sourceId] as never[],
