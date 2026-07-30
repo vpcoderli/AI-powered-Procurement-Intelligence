@@ -1,97 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AppDatabase } from "@/server/db/client";
-import type { RunCrawlerSourceOnceOptions } from "./orchestrator";
-import {
-  CONFIGURED_CRAWLER_SOURCES,
-  parseStateCrawlerLimit,
-  runConfiguredCrawlerSourcesOnce,
-} from "./configured-runner";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
+import { dataSources } from "@/server/db/schema";
+import { parseStateCrawlerLimit, runConfiguredCrawlerSourcesOnce } from "./configured-runner";
 
-describe("configured crawler runner", () => {
+describe("parseStateCrawlerLimit", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
-  });
-
-  it("runs SAM.gov first, then configured state sources", async () => {
-    const calls: RunCrawlerSourceOnceOptions<unknown>[] = [];
-    const runCrawlerSourceOnce = vi.fn(async (_db, options) => {
-      calls.push(options);
-      return successResult(options.source);
-    });
-
-    const results = await runConfiguredCrawlerSourcesOnce({
-      database: {} as AppDatabase,
-      owner: "test-owner",
-      runCrawlerSourceOnce,
-    });
-
-    expect(results).toHaveLength(51);
-    expect(results[0].source).toBe("SAM.gov");
-    expect(results.slice(1).map((result) => result.source)).toEqual(
-      CONFIGURED_CRAWLER_SOURCES.slice(1).map((source) => source.source),
-    );
-    expect(calls.map((call) => call.source)).toEqual(
-      CONFIGURED_CRAWLER_SOURCES.map((source) => source.source),
-    );
-  });
-
-  it("continues after one source fails", async () => {
-    const runCrawlerSourceOnce = vi.fn(async (_db, options) => {
-      if (options.source === "tx_esbd") {
-        return failureResult(options.source);
-      }
-      return successResult(options.source);
-    });
-
-    const results = await runConfiguredCrawlerSourcesOnce({
-      database: {} as AppDatabase,
-      owner: "test-owner",
-      runCrawlerSourceOnce,
-    });
-
-    expect(runCrawlerSourceOnce).toHaveBeenCalledTimes(51);
-    expect(results.find((result) => result.source === "tx_esbd")?.status).toBe("failure");
-    expect(results.at(-1)?.source).toBe("wy_state_procurement");
-  });
-
-  it("passes configured state limit to state runners only", async () => {
-    const calls: RunCrawlerSourceOnceOptions<unknown>[] = [];
-    const runCrawlerSourceOnce = vi.fn(async (_db, options) => {
-      calls.push(options);
-      return successResult(options.source);
-    });
-
-    await runConfiguredCrawlerSourcesOnce({
-      database: {} as AppDatabase,
-      owner: "test-owner",
-      stateRunnerOptions: { limit: 7 },
-      runCrawlerSourceOnce,
-    });
-
-    expect(calls[0].runnerOptions).toBeUndefined();
-    expect(calls.slice(1)).toHaveLength(50);
-    expect(calls.slice(1).map((call) => call.runnerOptions)).toEqual(
-      Array.from({ length: 50 }, () => ({ limit: 7 })),
-    );
-  });
-
-  it("passes the MySQL control store to every configured source", async () => {
-    const mysql = {} as RunCrawlerSourceOnceOptions<unknown>["mysql"];
-    const calls: RunCrawlerSourceOnceOptions<unknown>[] = [];
-    const runCrawlerSourceOnce = vi.fn(async (_db, options) => {
-      calls.push(options);
-      return successResult(options.source);
-    });
-
-    await runConfiguredCrawlerSourcesOnce({
-      database: {} as AppDatabase,
-      mysql,
-      owner: "test-owner",
-      runCrawlerSourceOnce,
-    });
-
-    expect(calls).toHaveLength(51);
-    expect(calls.every((call) => call.mysql === mysql)).toBe(true);
   });
 
   it("parses positive state crawler limits from the environment", () => {
@@ -112,22 +26,78 @@ describe("configured crawler runner", () => {
   });
 });
 
-function successResult(source: string) {
-  return {
-    ok: true as const,
-    source,
-    status: "success" as const,
-    runner: { ok: true, source, status: "success" as const, stdout: "", stderr: "" },
-    alertMatching: { evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0, matches: [] },
-    notification: { queued: 0, sent: 0, skipped: 0, failed: 0 },
-  };
-}
+const NOW = "2026-07-29T12:00:00.000Z";
 
-function failureResult(source: string) {
-  return {
-    ok: false as const,
-    source,
-    status: "failure" as const,
-    runner: { ok: false, source, status: "failure" as const, stdout: "", stderr: "failed" },
-  };
-}
+describe("runConfiguredCrawlerSourcesOnce reads sources from the database", () => {
+  let testDb: TestDatabase;
+
+  beforeEach(async () => {
+    testDb = await createTestDatabase({ seed: false });
+  });
+
+  afterEach(async () => {
+    await testDb.cleanup();
+  });
+
+  function insertSource(id: string, overrides: Record<string, unknown> = {}) {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id,
+        label: id,
+        issuerType: "state",
+        stateCode: "CA",
+        baseUrl: "https://example.gov",
+        isEnabled: 1,
+        cadence: "daily",
+        approvedForIngestion: 1,
+        approvalStatus: "approved",
+        legalReviewStatus: "approved_public",
+        jurisdictionLevel: "state",
+        createdAt: NOW,
+        updatedAt: NOW,
+        ...overrides,
+      })
+      .run();
+  }
+
+  it("runs only sources that are due", async () => {
+    insertSource("due_source", { lastSuccessAt: null });
+    insertSource("not_due_source", { lastSuccessAt: NOW });
+
+    const attempted: string[] = [];
+    const results = await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db,
+      owner: "test",
+      now: new Date(NOW),
+      matcher: async () => ({ matched: 0, matches: [] }) as never,
+      notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
+      runCrawlerSourceOnce: (async (_db, options) => {
+        attempted.push(options.source);
+        return { ok: true, source: options.source, status: "success" };
+      }) as never,
+    });
+
+    expect(attempted).toEqual(["due_source"]);
+    expect(results).toHaveLength(1);
+  });
+
+  it("skips sources that governance has not approved", async () => {
+    insertSource("blocked_source", { approvalStatus: "needs_review", lastSuccessAt: null });
+
+    const attempted: string[] = [];
+    await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db,
+      owner: "test",
+      now: new Date(NOW),
+      matcher: async () => ({ matched: 0, matches: [] }) as never,
+      notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
+      runCrawlerSourceOnce: (async (_db, options) => {
+        attempted.push(options.source);
+        return { ok: true, source: options.source, status: "success" };
+      }) as never,
+    });
+
+    expect(attempted).toEqual([]);
+  });
+});
