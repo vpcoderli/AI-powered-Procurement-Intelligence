@@ -1,17 +1,28 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as notificationService from "@/server/notifications/service";
+import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
+import { dataSources } from "@/server/db/schema";
+import { runCrawlTask } from "@/server/crawler/state-runner";
 import { createStateCrawlerRunPost } from "./route";
 
 vi.mock("@/server/notifications/service", () => ({
   sendMatchedAlertNotifications: vi.fn(),
 }));
 
+// Mocked so the "dispatches through runCrawlTask" test can observe exactly what the route
+// passes into the Python task contract without spawning a real python3 subprocess.
+vi.mock("@/server/crawler/state-runner", () => ({ runCrawlTask: vi.fn() }));
+
+const mockedRunCrawlTask = vi.mocked(runCrawlTask);
+const NOW = "2026-07-30T00:00:00.000Z";
+
 describe("POST /api/crawler/state/run", () => {
+  let testDb: TestDatabase;
   const runCrawlerSourceOnce = vi.fn();
   const sendMatchedAlertNotifications = vi.mocked(notificationService.sendMatchedAlertNotifications);
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    testDb = await createTestDatabase({ seed: false });
     vi.clearAllMocks();
     vi.unstubAllEnvs();
     runCrawlerSourceOnce.mockImplementation(async (_database, options) => ({
@@ -34,11 +45,46 @@ describe("POST /api/crawler/state/run", () => {
       skipped: 0,
       failed: 0,
     });
+    mockedRunCrawlTask.mockResolvedValue({
+      ok: true,
+      source: "unused",
+      status: "success",
+      stdout: "",
+      stderr: "",
+      fetchedCount: 0,
+      errorCode: null,
+    });
   });
+
+  afterEach(async () => {
+    await testDb.cleanup();
+  });
+
+  function insertSource(id: string, overrides: Record<string, unknown> = {}) {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id,
+        label: id,
+        issuerType: "state",
+        stateCode: "CA",
+        baseUrl: "https://example.gov",
+        isEnabled: 1,
+        cadence: "daily",
+        approvedForIngestion: 1,
+        approvalStatus: "approved",
+        legalReviewStatus: "approved_public",
+        jurisdictionLevel: "state",
+        createdAt: NOW,
+        updatedAt: NOW,
+        ...overrides,
+      })
+      .run();
+  }
 
   it("requires crawler token when configured", async () => {
     vi.stubEnv("CRAWLER_RUN_TOKEN", "local-token");
-    const POST = createStateCrawlerRunPost({ runCrawlerSourceOnce });
+    const POST = createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce });
 
     const response = await POST(new Request("http://localhost/api/crawler/state/run"));
     const body = await response.json();
@@ -51,39 +97,54 @@ describe("POST /api/crawler/state/run", () => {
     expect(runCrawlerSourceOnce).not.toHaveBeenCalled();
   });
 
-  it("runs all supported state sources by default", async () => {
-    const POST = createStateCrawlerRunPost({ runCrawlerSourceOnce, owner: "state_route_test" });
+  it("runs every state source found in data_sources by default, excluding non-state issuers", async () => {
+    insertSource("il_bidbuy");
+    insertSource("fl_mfmp");
+    // Must be excluded: this route is state-only, SAM.gov has its own sibling route/runner.
+    insertSource("sam_gov", { issuerType: "federal", stateCode: "US" });
+
+    const POST = createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce, owner: "state_route_test" });
 
     const response = await POST(new Request("http://localhost/api/crawler/state/run", { method: "POST" }));
     const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(body.status).toBe("completed");
-    expect(body.results.map((result: { source: string }) => result.source)).toEqual(
-      STATE_CRAWLER_SOURCES.map((source) => source.id),
-    );
-    expect(runCrawlerSourceOnce).toHaveBeenCalledTimes(50);
+    expect(body.results.map((result: { source: string }) => result.source).sort()).toEqual([
+      "fl_mfmp",
+      "il_bidbuy",
+    ]);
+    expect(runCrawlerSourceOnce).toHaveBeenCalledTimes(2);
     expect(runCrawlerSourceOnce.mock.calls[0][1]).toEqual(
-      expect.objectContaining({
-        source: "al_state_procurement",
-        owner: "state_route_test",
-        runnerOptions: { allowFixtureFallback: true },
-      }),
+      expect.objectContaining({ owner: "state_route_test" }),
     );
   });
 
-  it("passes selected sources, query, and limit into each source run", async () => {
-    const POST = createStateCrawlerRunPost({ runCrawlerSourceOnce });
+  it("excludes disabled and governance-denied sources from the default run", async () => {
+    insertSource("approved_source");
+    insertSource("disabled_source", { isEnabled: 0 });
+    insertSource("denied_source", { approvedForIngestion: 0 });
+
+    const POST = createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce });
+
+    const response = await POST(new Request("http://localhost/api/crawler/state/run", { method: "POST" }));
+    const body = await response.json();
+
+    expect(body.results.map((result: { source: string }) => result.source)).toEqual(["approved_source"]);
+  });
+
+  it("runs exactly the requested sources, not the rest of data_sources", async () => {
+    insertSource("il_bidbuy");
+    insertSource("fl_mfmp");
+    insertSource("ca_caleprocure");
+
+    const POST = createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce });
 
     const response = await POST(
       new Request("http://localhost/api/crawler/state/run", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          sources: ["il_bidbuy", "fl_mfmp"],
-          query: "data",
-          limit: 12,
-        }),
+        body: JSON.stringify({ sources: ["il_bidbuy", "fl_mfmp"], query: "data", limit: 12 }),
       }),
     );
     const body = await response.json();
@@ -91,19 +152,50 @@ describe("POST /api/crawler/state/run", () => {
     expect(response.status).toBe(200);
     expect(body.results.map((result: { source: string }) => result.source)).toEqual(["il_bidbuy", "fl_mfmp"]);
     expect(runCrawlerSourceOnce).toHaveBeenCalledTimes(2);
-    expect(runCrawlerSourceOnce.mock.calls[0][1].runnerOptions).toEqual({
-      query: "data",
-      limit: 12,
-      allowFixtureFallback: true,
-    });
-    expect(runCrawlerSourceOnce.mock.calls[1][1].runnerOptions).toEqual({
-      query: "data",
-      limit: 12,
-      allowFixtureFallback: true,
-    });
+  });
+
+  it("drops unrecognized ids from a mixed request but keeps the recognized ones", async () => {
+    insertSource("il_bidbuy");
+    insertSource("fl_mfmp");
+
+    const POST = createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce });
+
+    const response = await POST(
+      new Request("http://localhost/api/crawler/state/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sources: ["il_bidbuy", "not_a_real_source"] }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(body.results.map((result: { source: string }) => result.source)).toEqual(["il_bidbuy"]);
+  });
+
+  it("falls back to running every known source when nothing requested matches", async () => {
+    insertSource("il_bidbuy");
+    insertSource("fl_mfmp");
+
+    const POST = createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce });
+
+    const response = await POST(
+      new Request("http://localhost/api/crawler/state/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sources: ["not_a_real_source"] }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(body.results.map((result: { source: string }) => result.source).sort()).toEqual([
+      "fl_mfmp",
+      "il_bidbuy",
+    ]);
   });
 
   it("continues after a source failure and returns per-source results", async () => {
+    insertSource("il_bidbuy");
+    insertSource("fl_mfmp");
     runCrawlerSourceOnce
       .mockResolvedValueOnce({
         ok: false,
@@ -119,7 +211,7 @@ describe("POST /api/crawler/state/run", () => {
         alertMatching: { evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0 },
         notification: { queued: 0, sent: 0, skipped: 0, failed: 0 },
       });
-    const POST = createStateCrawlerRunPost({ runCrawlerSourceOnce });
+    const POST = createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce });
 
     const response = await POST(
       new Request("http://localhost/api/crawler/state/run", {
@@ -138,6 +230,7 @@ describe("POST /api/crawler/state/run", () => {
   });
 
   it("surfaces blocked source governance results without running later side effects", async () => {
+    insertSource("il_bidbuy");
     runCrawlerSourceOnce.mockResolvedValueOnce({
       ok: false,
       source: "il_bidbuy",
@@ -147,7 +240,7 @@ describe("POST /api/crawler/state/run", () => {
       legalReviewStatus: "restricted",
       approvedForIngestion: false,
     });
-    const POST = createStateCrawlerRunPost({ runCrawlerSourceOnce });
+    const POST = createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce });
 
     const response = await POST(
       new Request("http://localhost/api/crawler/state/run", {
@@ -173,6 +266,37 @@ describe("POST /api/crawler/state/run", () => {
           approvedForIngestion: false,
         },
       ],
+    });
+  });
+
+  it("dispatches through runCrawlTask with the requested query/limit and a per-run task id", async () => {
+    insertSource("il_bidbuy");
+    const now = new Date(NOW);
+
+    const POST = createStateCrawlerRunPost({
+      database: testDb.db,
+      now: () => now,
+      runCrawlerSourceOnce: (async (_database, options) => {
+        await options.runner();
+        return { ok: true, source: options.source, status: "success" };
+      }) as never,
+    });
+
+    await POST(
+      new Request("http://localhost/api/crawler/state/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sources: ["il_bidbuy"], query: "roads", limit: 9 }),
+      }),
+    );
+
+    expect(mockedRunCrawlTask).toHaveBeenCalledTimes(1);
+    const [sourceArg, taskOptions] = mockedRunCrawlTask.mock.calls[0];
+    expect(sourceArg.id).toBe("il_bidbuy");
+    expect(taskOptions).toEqual({
+      taskId: `tsk_il_bidbuy_${now.getTime()}`,
+      limit: 9,
+      query: "roads",
     });
   });
 });

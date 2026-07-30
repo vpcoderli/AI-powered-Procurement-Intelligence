@@ -7,12 +7,8 @@ import {
   type RunCrawlerSourceOnceResult,
 } from "@/server/crawler/orchestrator";
 import type { MysqlCrawlerLockStore } from "@/server/crawler/lock-repository";
-import {
-  STATE_CRAWLER_SOURCES,
-  createStateCrawlerRunner,
-  type StateCrawlerOrchestratorOptions,
-  type StateCrawlerSourceId,
-} from "@/server/crawler/state-runner";
+import { listCrawlableSources, listCrawlableSourcesFromMysql, type CrawlableSource } from "@/server/crawler/source-registry";
+import { runCrawlTask } from "@/server/crawler/state-runner";
 import { db, type AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { sendMatchedAlertNotifications, sendMatchedAlertNotificationsFromMysql } from "@/server/notifications/service";
@@ -35,10 +31,21 @@ interface StateCrawlerRunRouteDependencies {
   matcher: Matcher;
   notifier: CrawlerNotifier;
   runCrawlerSourceOnce: Orchestrator;
+  listSources: (database: AppDatabase, mysql?: MysqlCrawlerLockStore) => Promise<CrawlableSource[]>;
+  now: () => Date;
 }
 
-const DEFAULT_STATE_SOURCE_IDS = STATE_CRAWLER_SOURCES.map((source) => source.id);
-const SUPPORTED_SOURCE_IDS = new Set<StateCrawlerSourceId>(DEFAULT_STATE_SOURCE_IDS);
+/**
+ * Resolves run candidates from `data_sources` the same way the configured (scheduled) runner
+ * does, via `listCrawlableSources`/`listCrawlableSourcesFromMysql` — which already applies the
+ * NULL-tolerant governance gate (see source-registry.ts). Narrowed to `issuerType === "state"`
+ * because this route is specifically the state-crawler trigger; SAM.gov has its own sibling
+ * route (`/api/crawler/sam-gov/run`) and its own runner.
+ */
+async function defaultListSources(database: AppDatabase, mysql?: MysqlCrawlerLockStore): Promise<CrawlableSource[]> {
+  const sources = mysql ? await listCrawlableSourcesFromMysql(mysql) : listCrawlableSources(database);
+  return sources.filter((source) => source.issuerType === "state");
+}
 
 function tokenFromRequest(request: Request) {
   const authorization = request.headers.get("authorization");
@@ -63,16 +70,16 @@ async function isAuthorized(database: AppDatabase, request: Request) {
   }
 }
 
-async function parseOptions(request: Request): Promise<{
-  sources: StateCrawlerSourceId[];
-  runnerOptions: StateCrawlerOrchestratorOptions;
-}> {
+interface ParsedRunOptions {
+  sources: CrawlableSource[];
+  query?: string;
+  limit?: number;
+}
+
+async function parseOptions(request: Request, allSources: CrawlableSource[]): Promise<ParsedRunOptions> {
   const contentType = request.headers.get("content-type") ?? "";
   if (!contentType.includes("application/json")) {
-    return {
-      sources: DEFAULT_STATE_SOURCE_IDS,
-      runnerOptions: { allowFixtureFallback: true },
-    };
+    return { sources: allSources };
   }
 
   const body = (await request.json().catch(() => ({}))) as {
@@ -80,20 +87,18 @@ async function parseOptions(request: Request): Promise<{
     query?: unknown;
     limit?: unknown;
   };
+
+  const byId = new Map(allSources.map((source) => [source.id, source] as const));
   const requestedSources = Array.isArray(body.sources)
-    ? body.sources.filter(
-        (source): source is StateCrawlerSourceId =>
-          typeof source === "string" && SUPPORTED_SOURCE_IDS.has(source as StateCrawlerSourceId),
-      )
-    : DEFAULT_STATE_SOURCE_IDS;
+    ? body.sources
+        .filter((source): source is string => typeof source === "string" && byId.has(source))
+        .map((sourceId) => byId.get(sourceId)!)
+    : allSources;
 
   return {
-    sources: requestedSources.length > 0 ? requestedSources : DEFAULT_STATE_SOURCE_IDS,
-    runnerOptions: {
-      ...(typeof body.query === "string" && body.query ? { query: body.query } : {}),
-      ...(typeof body.limit === "number" ? { limit: body.limit } : {}),
-      allowFixtureFallback: true,
-    },
+    sources: requestedSources.length > 0 ? requestedSources : allSources,
+    ...(typeof body.query === "string" && body.query ? { query: body.query } : {}),
+    ...(typeof body.limit === "number" ? { limit: body.limit } : {}),
   };
 }
 
@@ -118,6 +123,8 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
         ? sendMatchedAlertNotificationsFromMysql(mysql, alertMatching)
         : sendMatchedAlertNotifications(database, alertMatching),
     runCrawlerSourceOnce,
+    listSources: defaultListSources,
+    now: () => new Date(),
     ...overrides,
   };
 
@@ -134,16 +141,22 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
       );
     }
 
-    const { sources, runnerOptions } = await parseOptions(request);
+    const allSources = await dependencies.listSources(dependencies.database, dependencies.mysql);
+    const { sources, query, limit } = await parseOptions(request, allSources);
+    const now = dependencies.now();
     const results: RunCrawlerSourceOnceResult[] = [];
 
     for (const source of sources) {
       const result = await dependencies.runCrawlerSourceOnce(dependencies.database, {
         mysql: dependencies.mysql,
-        source,
+        source: source.id,
         owner: dependencies.owner,
-        runner: createStateCrawlerRunner(source),
-        runnerOptions,
+        runner: () =>
+          runCrawlTask(source, {
+            taskId: `tsk_${source.id}_${now.getTime()}`,
+            limit,
+            query: query ?? null,
+          }),
         matcher: dependencies.matcher,
         notifier: dependencies.notifier,
       });
