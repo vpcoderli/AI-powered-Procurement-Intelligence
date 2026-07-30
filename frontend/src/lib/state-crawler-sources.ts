@@ -32,7 +32,7 @@ export type SourceValidityMetadata = {
   validityNotes: string;
 };
 
-const STATE_CRAWLER_SOURCE_DEFINITIONS = [
+export const STATE_CRAWLER_SOURCE_DEFINITIONS = [
   { stateCode: "AL", id: "al_state_procurement", label: "Alabama State Procurement", baseUrl: "https://purchasing.alabama.gov" },
   { stateCode: "AK", id: "ak_state_procurement", label: "Alaska State Procurement", baseUrl: "https://aws.state.ak.us/OnlinePublicNotices" },
   { stateCode: "AZ", id: "az_state_procurement", label: "Arizona State Procurement", baseUrl: "https://app.az.gov" },
