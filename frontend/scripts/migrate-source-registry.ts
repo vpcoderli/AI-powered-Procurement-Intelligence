@@ -19,10 +19,42 @@ export interface SourceRegistryRow {
   providerFamily: string | null;
 }
 
-/** BidNet Direct 托管的州源,provider_family 归入 bidnet 共享适配器。 */
-const BIDNET_HOSTED = /bidnetdirect\.com/i;
+/**
+ * 官方门户不可靠/不可机读的州,爬虫改用 BidNet Direct 聚合页面抓取——但
+ * data_sources.base_url 记录的仍是官方门户地址(例如 al_state_procurement 是
+ * purchasing.alabama.gov,不是 bidnetdirect.com),所以不能靠 URL 正则判断,
+ * 必须按 source_id 对照这份名单。
+ *
+ * 原样复制自 src/lib/state-crawler-sources.ts 的 BIDNET_FALLBACK_SOURCE_IDS
+ * (19 项),而非 import——那里是 module-private,且下一个任务会删除该文件的
+ * 大部分内容。本脚本是一次性数据迁移工具,输入数据必须自包含,否则未来重跑
+ * 会因符号消失而编译失败。
+ */
+const BIDNET_FALLBACK_SOURCE_IDS = new Set([
+  "al_state_procurement",
+  "ak_state_procurement",
+  "az_state_procurement",
+  "co_state_procurement",
+  "id_state_procurement",
+  "ky_state_procurement",
+  "la_state_procurement",
+  "md_state_procurement",
+  "mi_state_procurement",
+  "mn_state_procurement",
+  "nc_state_procurement",
+  "nd_state_procurement",
+  "ne_state_procurement",
+  "nh_state_procurement",
+  "oh_state_procurement",
+  "sc_state_procurement",
+  "vt_state_procurement",
+  "wi_state_procurement",
+  "wv_state_procurement",
+]);
 
-/** 有专用适配器的源不设 provider_family——解析链会优先命中 DEDICATED_ADAPTERS。 */
+/** 有专用适配器的源不设 provider_family——解析链(resolve_adapter)先查 source_id,
+ * 命中 DEDICATED_ADAPTERS 就直接返回,不看 provider_family。此处仍显式优先判断
+ * dedicated,是为了这份名单本身保持正确即便未来两个集合出现重叠。 */
 const DEDICATED_SOURCE_IDS = new Set([
   "ca_caleprocure",
   "tx_esbd",
@@ -31,9 +63,9 @@ const DEDICATED_SOURCE_IDS = new Set([
   "il_bidbuy",
 ]);
 
-function providerFamilyFor(id: string, baseUrl: string): string | null {
+function providerFamilyFor(id: string): string | null {
   if (DEDICATED_SOURCE_IDS.has(id)) return null;
-  if (BIDNET_HOSTED.test(baseUrl)) return "bidnet";
+  if (BIDNET_FALLBACK_SOURCE_IDS.has(id)) return "bidnet";
   return "generic";
 }
 
@@ -54,7 +86,7 @@ export function buildSourceRegistryRows(): SourceRegistryRow[] {
       jurisdictionName: source.label,
       fipsCode: fips,
       fetchConfig: JSON.stringify({ base_url: source.baseUrl }),
-      providerFamily: providerFamilyFor(source.id, source.baseUrl),
+      providerFamily: providerFamilyFor(source.id),
     };
   });
 }

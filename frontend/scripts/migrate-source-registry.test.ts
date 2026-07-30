@@ -21,6 +21,30 @@ describe("buildSourceRegistryRows", () => {
     const california = buildSourceRegistryRows().find((row) => row.id === "ca_caleprocure");
     expect(california?.fipsCode).toBe("06");
   });
+
+  it("classifies a BidNet-fallback state by source id, not by base_url", () => {
+    // al_state_procurement's base_url is purchasing.alabama.gov (the official portal),
+    // never bidnetdirect.com, because the crawler falls back to a BidNet Direct
+    // aggregator page for this state while still recording the official URL. A
+    // URL-regex classifier would misclassify it as "generic" and route it to the
+    // wrong adapter; this pins the id-based classification instead.
+    const alabama = buildSourceRegistryRows().find((row) => row.id === "al_state_procurement");
+    expect(alabama?.baseUrl).not.toMatch(/bidnetdirect\.com/i);
+    expect(alabama?.providerFamily).toBe("bidnet");
+  });
+
+  it("assigns provider_family counts matching the canonical dedicated/BidNet/generic split", () => {
+    const rows = buildSourceRegistryRows();
+    const counts = rows.reduce<Record<string, number>>((acc, row) => {
+      const key = row.providerFamily ?? "null";
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+
+    expect(counts.null).toBe(5); // dedicated adapters: ca_caleprocure, tx_esbd, ny_contract_reporter, fl_mfmp, il_bidbuy
+    expect(counts.bidnet).toBe(19); // BIDNET_FALLBACK_SOURCE_IDS
+    expect(counts.generic).toBe(26); // remaining states (50 - 5 - 19)
+  });
 });
 
 describe("upsertSourceRegistry", () => {
