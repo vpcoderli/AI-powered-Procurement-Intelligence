@@ -63,18 +63,26 @@ export async function recordSourceFailureInMysql(
   // A parse failure degrades immediately; otherwise degrade once the failure
   // kind's threshold is reached. Done as a single CASE-expression UPDATE to
   // avoid a read-modify-write race between concurrent workers.
+  //
+  // MySQL evaluates a single-table UPDATE's SET assignments left to right,
+  // and a later assignment that references a column assigned earlier in the
+  // same SET clause sees the *already-updated* value (this is a documented
+  // MySQL deviation from standard SQL). So `approval_status` MUST be
+  // assigned before `consecutive_failures` is reassigned, or the CASE would
+  // read the post-increment counter and compare it against the threshold a
+  // second time (an off-by-one that demotes sources one failure early).
   const forceDegrade = shouldFlagForReview(input.kind) ? 1 : 0;
 
   await mysqlExecute(
     pool,
     `UPDATE data_sources
      SET last_failure_at = ?,
-         consecutive_failures = consecutive_failures + 1,
          approval_status = CASE
            WHEN ? = 1 THEN 'needs_review'
            WHEN consecutive_failures + 1 >= ? THEN 'needs_review'
            ELSE approval_status
          END,
+         consecutive_failures = consecutive_failures + 1,
          updated_at = ?
      WHERE id = ?`,
     [input.at, forceDegrade, degradeThresholdFor(input.kind), input.at, input.sourceId] as never[],
