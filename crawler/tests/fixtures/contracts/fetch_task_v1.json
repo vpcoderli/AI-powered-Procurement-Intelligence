@@ -1,0 +1,13 @@
+{
+  "task_id": "tsk_contract_1",
+  "source_id": "ca_caleprocure",
+  "label": "California Cal eProcure",
+  "state_code": "CA",
+  "provider_family": null,
+  "jurisdiction_level": "state",
+  "fetch_config": {
+    "base_url": "https://caleprocure.ca.gov"
+  },
+  "limit": 25,
+  "query": null
+}
