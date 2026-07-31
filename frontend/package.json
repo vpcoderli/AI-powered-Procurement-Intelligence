@@ -17,6 +17,7 @@
     "db:mysql:import-sqlite": "tsx scripts/import-sqlite-to-mysql.ts",
     "db:seed": "tsx scripts/seed-db.ts",
     "db:migrate-source-registry": "tsx scripts/migrate-source-registry.ts",
+    "source:register": "tsx scripts/register-sources.ts",
     "demo:prepare": "tsx scripts/demo-readiness.ts",
     "demo:check": "tsx scripts/demo-readiness.ts --check-only",
     "demo:smoke": "tsx scripts/demo-smoke.ts",
