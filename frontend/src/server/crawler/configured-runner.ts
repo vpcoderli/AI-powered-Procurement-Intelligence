@@ -11,6 +11,7 @@ import {
   type RunCrawlerSourceOnceResult,
 } from "./orchestrator";
 import { classifyCrawlerFailure, type CrawlerFailureInput } from "./failure-classifier";
+import { importCrawlerJsonRunIntoMysql } from "./mysql-json-importer";
 import { runSamGovCrawler } from "./sam-gov-runner";
 import { listCrawlableSources, listCrawlableSourcesFromMysql, type CrawlableSource } from "./source-registry";
 import { selectDueSources } from "./scheduler";
@@ -20,7 +21,8 @@ import {
   recordSourceSuccess,
   recordSourceSuccessInMysql,
 } from "./source-health-repository";
-import { runCrawlTask } from "./state-runner";
+import { importCrawlerJsonRunIntoSqlite, stampJurisdiction } from "./sqlite-json-importer";
+import { runCrawlTask, type CrawlTaskOptions, type CrawlTaskResult } from "./state-runner";
 
 type ConfiguredRunner = <TOptions>(
   db: AppDatabase,
@@ -80,7 +82,7 @@ export async function runConfiguredCrawlerSourcesOnce(
       runner: isSamGov
         ? runSamGovCrawler
         : () =>
-            runCrawlTask(source, {
+            runStateSourceAndImport(source, options, {
               taskId: `tsk_${source.id}_${now.getTime()}`,
               limit: options.stateRunnerOptions?.limit,
               query: options.stateRunnerOptions?.query ?? null,
@@ -94,6 +96,51 @@ export async function runConfiguredCrawlerSourcesOnce(
   }
 
   return results;
+}
+
+/**
+ * Runs the JSON task contract for one state source, then persists whatever it returned.
+ *
+ * `runCrawlTask` itself only spawns the Python subprocess and parses its stdout into a
+ * `CrawlTaskResult` — Task X5 found that nothing downstream ever wrote `result.payload` to the
+ * database, so `crawler:once` was updating source health while silently persisting zero bids
+ * and zero crawler_logs rows on both dialects. This wraps that call with the missing write:
+ * stamp the source's jurisdiction onto every bid (bids don't carry their own jurisdiction,
+ * only the source registry does) and import through the dialect-appropriate importer — for
+ * both success and failure payloads, since a failure payload still needs its crawler_logs row.
+ *
+ * The import step is contained exactly like `recordSourceHealthOutcome` below: caught and
+ * logged rather than thrown, so one source's persistence bug can't stop the rest of the batch
+ * from running. The original `CrawlTaskResult` is returned unchanged either way — this function
+ * only adds a side effect, it does not change what the orchestrator/health write-back see.
+ */
+async function runStateSourceAndImport(
+  source: CrawlableSource,
+  options: RunConfiguredCrawlerSourcesOnceOptions,
+  taskOptions: CrawlTaskOptions,
+): Promise<CrawlTaskResult> {
+  const result = await runCrawlTask(source, taskOptions);
+
+  if (result.payload) {
+    const stamped = stampJurisdiction(result.payload, source);
+    try {
+      if (options.mysql) {
+        await importCrawlerJsonRunIntoMysql(options.mysql, stamped);
+      } else {
+        importCrawlerJsonRunIntoSqlite(options.database, stamped);
+      }
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: "crawler_json_import_failed",
+          source: source.id,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
+  }
+
+  return result;
 }
 
 /**

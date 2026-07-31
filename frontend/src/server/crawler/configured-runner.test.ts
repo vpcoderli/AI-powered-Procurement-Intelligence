@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { dataSources } from "@/server/db/schema";
+import { bids, crawlerLogs, dataSources } from "@/server/db/schema";
 import { classifyCrawlerFailure } from "./failure-classifier";
 import type { RunCrawlerSourceOnceOptions } from "./orchestrator";
 import { runSamGovCrawler } from "./sam-gov-runner";
 import { runCrawlTask } from "./state-runner";
+import { importCrawlerJsonRunIntoSqlite } from "./sqlite-json-importer";
+import type { CrawlerJsonRunPayload } from "./mysql-json-importer";
 import {
   buildCrawlerFailureInput,
   parseStateCrawlerLimit,
@@ -17,9 +19,21 @@ import {
 // passes into each runner without spawning a real python3 subprocess.
 vi.mock("./state-runner", () => ({ runCrawlTask: vi.fn() }));
 vi.mock("./sam-gov-runner", () => ({ runSamGovCrawler: vi.fn() }));
+// Partial mock: everything delegates to the real implementation (so the "imports crawler JSON
+// payloads" describe block below exercises the real SQLite importer against `testDb.db`)
+// except `importCrawlerJsonRunIntoSqlite`, which is wrapped in a spy so one test can force a
+// single call to throw and verify the containment behaviour without a contrived DB fixture.
+vi.mock("./sqlite-json-importer", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./sqlite-json-importer")>();
+  return {
+    ...actual,
+    importCrawlerJsonRunIntoSqlite: vi.fn(actual.importCrawlerJsonRunIntoSqlite),
+  };
+});
 
 const mockedRunCrawlTask = vi.mocked(runCrawlTask);
 const mockedRunSamGovCrawler = vi.mocked(runSamGovCrawler);
+const mockedImportCrawlerJsonRunIntoSqlite = vi.mocked(importCrawlerJsonRunIntoSqlite);
 
 describe("parseStateCrawlerLimit", () => {
   afterEach(() => {
@@ -478,6 +492,7 @@ describe("runConfiguredCrawlerSourcesOnce threads stateRunnerOptions into state 
       stderr: "",
       fetchedCount: 0,
       errorCode: null,
+      payload: null,
     });
     mockedRunSamGovCrawler.mockResolvedValue({
       ok: true,
@@ -515,6 +530,212 @@ describe("runConfiguredCrawlerSourcesOnce threads stateRunnerOptions into state 
       limit: 7,
       query: "roads",
     });
+  });
+});
+
+describe("runConfiguredCrawlerSourcesOnce imports the runCrawlTask JSON payload (Task X5)", () => {
+  // These exercise the runner closure end to end: runCrawlerSourceOnce is faked (as in the
+  // "threads stateRunnerOptions" block above) just enough to invoke `options.runner()`, so the
+  // mocked runCrawlTask result flows through the real stampJurisdiction + (spied-but-real)
+  // importCrawlerJsonRunIntoSqlite and lands in testDb.db.
+  let testDb: TestDatabase;
+
+  beforeEach(async () => {
+    testDb = await createTestDatabase({ seed: false });
+  });
+
+  afterEach(async () => {
+    await testDb.cleanup();
+    mockedRunCrawlTask.mockReset();
+    // Only clear call history — mockReset() would also discard the real passthrough
+    // implementation the module factory above wired in via vi.fn(actual.importCrawlerJsonRunIntoSqlite).
+    mockedImportCrawlerJsonRunIntoSqlite.mockClear();
+  });
+
+  function insertSource(id: string, overrides: Record<string, unknown> = {}) {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id,
+        label: id,
+        issuerType: "state",
+        stateCode: "CA",
+        baseUrl: "https://example.gov",
+        isEnabled: 1,
+        cadence: "daily",
+        approvedForIngestion: 1,
+        approvalStatus: "approved",
+        legalReviewStatus: "approved_public",
+        jurisdictionLevel: "state",
+        jurisdictionName: "California",
+        fipsCode: "06",
+        lastSuccessAt: null,
+        createdAt: NOW,
+        updatedAt: NOW,
+        ...overrides,
+      })
+      .run();
+  }
+
+  const runnerInvokingOrchestrator = (async (_db, options) => {
+    await options.runner();
+    return { ok: true, source: options.source, status: "success" };
+  }) as never;
+
+  function successPayload(sourceId: string): CrawlerJsonRunPayload {
+    return {
+      source: sourceId,
+      runId: `run_${sourceId}`,
+      status: "success",
+      startedAt: NOW,
+      finishedAt: NOW,
+      durationMs: 10,
+      metadata: {},
+      bids: [
+        {
+          id: `bid_${sourceId}`,
+          source: sourceId,
+          source_bid_id: "1",
+          dedupe_key: `${sourceId}:1`,
+          title: "Imported via configured runner",
+          description: "d",
+          issuer_name: "Issuer",
+          issuer_type: "state",
+          state_code: "CA",
+          source_url: "https://example.com/1",
+        },
+      ],
+      errorCode: null,
+      errorMessage: null,
+      errorStack: null,
+    };
+  }
+
+  it("persists bids (with jurisdiction stamped from the source) and a crawler_logs row on a successful payload", async () => {
+    insertSource("import_success_source");
+    mockedRunCrawlTask.mockResolvedValue({
+      ok: true,
+      source: "import_success_source",
+      status: "success",
+      stdout: "",
+      stderr: "",
+      fetchedCount: 1,
+      errorCode: null,
+      payload: successPayload("import_success_source"),
+    });
+
+    await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db,
+      owner: "test",
+      now: new Date(NOW),
+      matcher: async () => ({ matched: 0, matches: [] }) as never,
+      notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
+      runCrawlerSourceOnce: runnerInvokingOrchestrator,
+    });
+
+    const bidRow = testDb.db.select().from(bids).where(eq(bids.id, "bid_import_success_source")).get();
+    expect(bidRow).toMatchObject({
+      title: "Imported via configured runner",
+      jurisdictionLevel: "state",
+      jurisdictionName: "California",
+      fipsCode: "06",
+    });
+
+    const logRows = testDb.db
+      .select()
+      .from(crawlerLogs)
+      .where(eq(crawlerLogs.runId, "run_import_success_source"))
+      .all();
+    expect(logRows).toHaveLength(1);
+    expect(logRows[0]).toMatchObject({ status: "success", fetchedCount: 1, insertedCount: 1 });
+  });
+
+  it("persists only a crawler_logs row (no bids) on a failure payload", async () => {
+    insertSource("import_failure_source");
+    mockedRunCrawlTask.mockResolvedValue({
+      ok: false,
+      source: "import_failure_source",
+      status: "failure",
+      stdout: "",
+      stderr: "no records",
+      fetchedCount: 0,
+      errorCode: "EmptyCrawlerResultError",
+      payload: {
+        source: "import_failure_source",
+        runId: "run_import_failure_source",
+        status: "failure",
+        startedAt: NOW,
+        finishedAt: NOW,
+        durationMs: 5,
+        metadata: {},
+        bids: [],
+        errorCode: "EmptyCrawlerResultError",
+        errorMessage: "No bids found",
+        errorStack: null,
+      },
+    });
+
+    await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db,
+      owner: "test",
+      now: new Date(NOW),
+      matcher: async () => ({ matched: 0, matches: [] }) as never,
+      notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
+      runCrawlerSourceOnce: runnerInvokingOrchestrator,
+    });
+
+    const bidRows = testDb.db.select().from(bids).all();
+    expect(bidRows).toHaveLength(0);
+
+    const logRows = testDb.db
+      .select()
+      .from(crawlerLogs)
+      .where(eq(crawlerLogs.runId, "run_import_failure_source"))
+      .all();
+    expect(logRows).toHaveLength(1);
+    expect(logRows[0]).toMatchObject({ status: "failure", errorCode: "EmptyCrawlerResultError" });
+  });
+
+  it("contains an importer throw to the offending source and still runs the next source", async () => {
+    insertSource("import_throw_source_a");
+    insertSource("import_throw_source_b");
+    mockedRunCrawlTask.mockImplementation(async (sourceArg) => ({
+      ok: true,
+      source: sourceArg.id,
+      status: "success",
+      stdout: "",
+      stderr: "",
+      fetchedCount: 1,
+      errorCode: null,
+      payload: successPayload(sourceArg.id),
+    }));
+    mockedImportCrawlerJsonRunIntoSqlite.mockImplementationOnce(() => {
+      throw new Error("import boom");
+    });
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const results = await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db,
+      owner: "test",
+      now: new Date(NOW),
+      matcher: async () => ({ matched: 0, matches: [] }) as never,
+      notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
+      runCrawlerSourceOnce: runnerInvokingOrchestrator,
+    });
+
+    // Both sources ran to completion despite the first import throwing.
+    expect(results).toHaveLength(2);
+    expect(mockedImportCrawlerJsonRunIntoSqlite).toHaveBeenCalledTimes(2);
+
+    // Exactly one of the two imports actually persisted (the other's throw happened before any
+    // write), and the failure was logged rather than propagated.
+    expect(testDb.db.select().from(bids).all()).toHaveLength(1);
+    expect(testDb.db.select().from(crawlerLogs).all()).toHaveLength(1);
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+    const [loggedPayload] = consoleErrorSpy.mock.calls[0] as [string];
+    expect(JSON.parse(loggedPayload)).toMatchObject({ event: "crawler_json_import_failed" });
+
+    consoleErrorSpy.mockRestore();
   });
 });
 

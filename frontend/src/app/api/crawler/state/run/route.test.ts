@@ -53,6 +53,7 @@ describe("POST /api/crawler/state/run", () => {
       stderr: "",
       fetchedCount: 0,
       errorCode: null,
+      payload: null,
     });
   });
 

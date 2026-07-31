@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
+import type { CrawlerJsonRunPayload } from "./mysql-json-importer";
 import type { CrawlableSource } from "./source-registry";
 
 function crawlerDirectory() {
@@ -54,6 +55,13 @@ export interface CrawlTaskResult {
   stderr: string;
   fetchedCount: number;
   errorCode: string | null;
+  /**
+   * The full camelCase run payload parsed from stdout, on both success and failure — the
+   * importer (configured-runner.ts) needs the whole thing, not just the fetchedCount/errorCode
+   * summary fields above. `null` only when stdout did not parse into an object carrying a
+   * `status` field (e.g. unparseable JSON, or a payload shape from an unrelated failure mode).
+   */
+  payload: CrawlerJsonRunPayload | null;
 }
 
 export async function runCrawlTask(
@@ -77,6 +85,15 @@ export async function runCrawlTask(
         }
 
         const ok = !error && parsed.status === "success";
+        // Same `parsed` value as above — not re-parsed — just validated for the shape the
+        // importer needs (an object with a status field) before being exposed as `resultPayload`.
+        // Named distinctly from the outer `payload` (the outbound task request) so the two
+        // don't shadow each other.
+        const resultPayload: CrawlerJsonRunPayload | null =
+          parsed !== null && typeof parsed === "object" && typeof parsed.status === "string"
+            ? (parsed as CrawlerJsonRunPayload)
+            : null;
+
         resolve({
           ok,
           source: source.id,
@@ -85,6 +102,7 @@ export async function runCrawlTask(
           stderr: String(stderr ?? ""),
           fetchedCount: Array.isArray(parsed.bids) ? parsed.bids.length : 0,
           errorCode: parsed.errorCode ?? null,
+          payload: resultPayload,
         });
       },
     );

@@ -5,7 +5,7 @@ interface MysqlCrawlerImportStore {
   execute: (sql: string, values?: never[]) => Promise<[unknown, unknown?]>;
 }
 
-interface CrawlerJsonImportResult {
+export interface CrawlerJsonImportResult {
   fetchedCount: number;
   insertedCount: number;
   updatedCount: number;
@@ -64,6 +64,12 @@ const bidColumns = [
   "last_seen_at",
   "created_at",
   "updated_at",
+  // Additive: appended at the end so existing positional column/value indices are unaffected.
+  // Absent from payloads that don't carry them (e.g. SAM.gov) — valueByColumn below reads
+  // those as null via optionalString, same as every other optional bid field.
+  "jurisdiction_level",
+  "jurisdiction_name",
+  "fips_code",
 ] as const;
 
 const bidUpdateColumns = bidColumns.filter((column) =>
@@ -176,7 +182,10 @@ function valueByColumn(row: JsonRecord, column: typeof bidColumns[number], fallb
   if (column === "first_seen_at") return stringValue(row.first_seen_at, fallbackTimestamp);
   if (column === "last_seen_at") return stringValue(row.last_seen_at, fallbackTimestamp);
   if (column === "created_at") return stringValue(row.created_at, fallbackTimestamp);
-  return stringValue(row.updated_at, fallbackTimestamp);
+  if (column === "updated_at") return stringValue(row.updated_at, fallbackTimestamp);
+  if (column === "jurisdiction_level") return optionalString(row.jurisdiction_level);
+  if (column === "jurisdiction_name") return optionalString(row.jurisdiction_name);
+  return optionalString(row.fips_code);
 }
 
 async function mysqlExistingBidId(mysql: MysqlCrawlerImportStore, dedupeKey: unknown) {

@@ -92,7 +92,7 @@ describe("runCrawlTask", () => {
   });
 
   it("maps a successful camelCase stdout payload to a CrawlTaskResult", async () => {
-    const stdout = JSON.stringify({
+    const runPayload = {
       source: "ca_caleprocure",
       runId: "run_success",
       status: "success",
@@ -105,7 +105,8 @@ describe("runCrawlTask", () => {
       errorMessage: null,
       errorStack: null,
       taskId: "tsk_success",
-    });
+    };
+    const stdout = JSON.stringify(runPayload);
     mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
       callback(null, stdout, "");
       return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
@@ -121,11 +122,12 @@ describe("runCrawlTask", () => {
       stderr: "",
       fetchedCount: 2,
       errorCode: null,
+      payload: runPayload,
     });
   });
 
   it("maps a failure camelCase stdout payload to a CrawlTaskResult, preserving errorCode", async () => {
-    const stdout = JSON.stringify({
+    const runPayload = {
       source: "ca_caleprocure",
       runId: "run_failure",
       status: "failure",
@@ -138,7 +140,8 @@ describe("runCrawlTask", () => {
       errorMessage: "No bids found",
       errorStack: "Traceback (most recent call last): ...",
       taskId: "tsk_failure",
-    });
+    };
+    const stdout = JSON.stringify(runPayload);
     mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
       // fetch_task exits 1 on exception; execFile surfaces that as a non-null error
       // even though stdout still carries the JSON result payload.
@@ -156,6 +159,31 @@ describe("runCrawlTask", () => {
       stderr: "",
       fetchedCount: 0,
       errorCode: "EmptyCrawlerResultError",
+      payload: runPayload,
     });
+  });
+
+  it("sets payload to null when stdout is not valid JSON", async () => {
+    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+      callback(new Error("Command failed with exit code 1"), "not json", "traceback");
+      return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+
+    const result = await runCrawlTask(source(), { taskId: "tsk_unparseable" });
+
+    expect(result.payload).toBeNull();
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("failure");
+  });
+
+  it("sets payload to null when stdout parses but carries no status field", async () => {
+    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+      callback(null, JSON.stringify({ unrelated: true }), "");
+      return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+
+    const result = await runCrawlTask(source(), { taskId: "tsk_no_status" });
+
+    expect(result.payload).toBeNull();
   });
 });
