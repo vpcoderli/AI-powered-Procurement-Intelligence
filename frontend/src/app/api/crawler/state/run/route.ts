@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { AdminAuthError, requireAdminAccess } from "@/server/admin/auth";
+import { persistCrawlTaskResult } from "@/server/crawler/crawl-task-persistence";
 import {
   runCrawlerSourceOnce,
   type CrawlerNotifier,
@@ -151,12 +152,19 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
         mysql: dependencies.mysql,
         source: source.id,
         owner: dependencies.owner,
-        runner: () =>
-          runCrawlTask(source, {
+        // Mirrors configured-runner.ts's runStateSourceAndImport: run the JSON task contract,
+        // then persist whatever it returned (stamp jurisdiction + dialect-appropriate import,
+        // contained so an import failure can't abort the batch or flip a fetch success into a
+        // reported failure) via the shared persistCrawlTaskResult helper — see
+        // crawl-task-persistence.ts.
+        runner: async () => {
+          const taskResult = await runCrawlTask(source, {
             taskId: `tsk_${source.id}_${now.getTime()}`,
             limit,
             query: query ?? null,
-          }),
+          });
+          return persistCrawlTaskResult(dependencies.database, dependencies.mysql, source, taskResult);
+        },
         matcher: dependencies.matcher,
         notifier: dependencies.notifier,
       });
