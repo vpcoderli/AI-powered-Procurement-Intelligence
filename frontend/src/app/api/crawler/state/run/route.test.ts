@@ -6,6 +6,7 @@ import { bids, crawlerLogs, dataSources } from "@/server/db/schema";
 import { runCrawlTask } from "@/server/crawler/state-runner";
 import { importCrawlerJsonRunIntoSqlite } from "@/server/crawler/sqlite-json-importer";
 import type { CrawlerJsonRunPayload } from "@/server/crawler/mysql-json-importer";
+import { runCrawlerSourceOnce as realRunCrawlerSourceOnce } from "@/server/crawler/orchestrator";
 import { createStateCrawlerRunPost } from "./route";
 
 vi.mock("@/server/notifications/service", () => ({
@@ -236,7 +237,10 @@ describe("POST /api/crawler/state/run", () => {
     expect(runCrawlerSourceOnce).toHaveBeenCalledTimes(2);
   });
 
-  it("drops unrecognized ids from a mixed request but keeps the recognized ones", async () => {
+  // Task final-wave I1: a requested id that isn't in `data_sources` at all must be reported as
+  // its own error entry, distinct from the orchestrator's blocked/disabled results (which mean
+  // the id *was* found). It must never trigger the run-all fallback removed below.
+  it("runs the recognized sources in a mixed request and reports the unrecognized ones as errors", async () => {
     insertSource("il_bidbuy");
     insertSource("fl_mfmp");
 
@@ -251,10 +255,24 @@ describe("POST /api/crawler/state/run", () => {
     );
     const body = await response.json();
 
+    expect(response.status).toBe(200);
     expect(body.results.map((result: { source: string }) => result.source)).toEqual(["il_bidbuy"]);
+    expect(body.errors).toEqual([
+      {
+        source: "not_a_real_source",
+        code: "UNKNOWN_SOURCE",
+        message: expect.stringContaining("not_a_real_source"),
+      },
+    ]);
+    expect(runCrawlerSourceOnce).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to running every known source when nothing requested matches", async () => {
+  // Was "falls back to running every known source when nothing requested matches" -- that
+  // fallback was the I1 bug: an admin manually running a governance-blocked source would see
+  // the route silently run every OTHER approved source instead of reporting the block. Requesting
+  // an id that doesn't exist in data_sources at all must report it as an error and touch nothing
+  // else -- fl_mfmp below is present in the DB but never requested, and must stay untouched.
+  it("reports an unrecognized requested id as an error instead of falling back to running every known source", async () => {
     insertSource("il_bidbuy");
     insertSource("fl_mfmp");
 
@@ -269,10 +287,61 @@ describe("POST /api/crawler/state/run", () => {
     );
     const body = await response.json();
 
-    expect(body.results.map((result: { source: string }) => result.source).sort()).toEqual([
-      "fl_mfmp",
-      "il_bidbuy",
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(false);
+    expect(body.status).toBe("completed_with_failures");
+    expect(body.results).toEqual([]);
+    expect(body.errors).toEqual([
+      {
+        source: "not_a_real_source",
+        code: "UNKNOWN_SOURCE",
+        message: expect.stringContaining("not_a_real_source"),
+      },
     ]);
+    expect(runCrawlerSourceOnce).not.toHaveBeenCalled();
+  });
+
+  // Task final-wave I1 (the headline fix): a requested id whose governance columns block it
+  // (needs_review/not approved) must still be *found* in data_sources and dispatched through the
+  // real orchestrator -- which reports it "blocked" -- rather than being dropped from the
+  // candidate map and triggering the run-all fallback removed above. Deliberately does not
+  // override runCrawlerSourceOnce (unlike every other test in this file) so this exercises the
+  // real blockedReasonFor governance check end to end, not a mock standing in for it.
+  it("dispatches a known-but-blocked source through the real orchestrator and reports it blocked, without running other sources", async () => {
+    insertSource("blocked_source", { approvalStatus: "needs_review", approvedForIngestion: 0 });
+    insertSource("other_crawlable_source"); // approved, but never requested -- must stay untouched
+
+    const POST = createStateCrawlerRunPost({
+      database: testDb.db,
+      runCrawlerSourceOnce: realRunCrawlerSourceOnce,
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/crawler/state/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sources: ["blocked_source"] }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(false);
+    expect(body.status).toBe("completed_with_failures");
+    expect(body.results).toHaveLength(1);
+    expect(body.results[0]).toMatchObject({
+      ok: false,
+      source: "blocked_source",
+      status: "blocked",
+      reason: "Source governance has not approved ingestion.",
+    });
+    expect(body.errors).toBeUndefined();
+    expect(mockedRunCrawlTask).not.toHaveBeenCalled();
+
+    // Neither the blocked source nor (especially) the untouched approved one produced any
+    // side effects -- the orchestrator short-circuits on the governance check before ever
+    // acquiring a lock or invoking the runner.
+    expect(testDb.db.select().from(crawlerLogs).all()).toHaveLength(0);
   });
 
   it("continues after a source failure and returns per-source results", async () => {

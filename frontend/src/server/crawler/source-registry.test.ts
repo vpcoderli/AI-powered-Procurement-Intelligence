@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { dataSources } from "@/server/db/schema";
-import { listCrawlableSources, listCrawlableSourcesFromMysql } from "./source-registry";
+import {
+  listAllSources,
+  listAllSourcesFromMysql,
+  listCrawlableSources,
+  listCrawlableSourcesFromMysql,
+} from "./source-registry";
 
 const NOW = "2026-07-29T00:00:00.000Z";
 
@@ -101,6 +106,43 @@ describe("listCrawlableSources", () => {
   });
 });
 
+describe("listAllSources", () => {
+  let testDb: TestDatabase;
+
+  beforeEach(async () => {
+    testDb = await createTestDatabase({ seed: false });
+  });
+
+  afterEach(async () => {
+    await testDb.cleanup();
+  });
+
+  // The manual admin run route (Fix I1) relies on this NOT applying the governance gate: a
+  // blocked/disabled/needs_review source must still be found here so it can be dispatched
+  // through the orchestrator and come back with its real "blocked"/"disabled" result, instead
+  // of silently disappearing the way it would through listCrawlableSources.
+  it("includes disabled, denied, and unreviewed sources that listCrawlableSources excludes", () => {
+    testDb.db.insert(dataSources).values(sourceRow({ id: "off", isEnabled: 0 })).run();
+    testDb.db.insert(dataSources).values(sourceRow({ id: "unapproved", approvedForIngestion: 0 })).run();
+    testDb.db.insert(dataSources).values(sourceRow({ id: "pending", approvalStatus: "needs_review" })).run();
+
+    expect(listCrawlableSources(testDb.db)).toHaveLength(0);
+    expect(listAllSources(testDb.db).map((source) => source.id).sort()).toEqual([
+      "off",
+      "pending",
+      "unapproved",
+    ]);
+  });
+
+  it("still maps every field the same way listCrawlableSources does", () => {
+    testDb.db.insert(dataSources).values(sourceRow({ id: "with_config", fetchConfig: '{"tenant":"acme"}' })).run();
+    const source = listAllSources(testDb.db)[0];
+    expect(source.fetchConfig).toEqual({ tenant: "acme" });
+    expect(source.cadence).toBe("daily");
+    expect(source.consecutiveFailures).toBe(0);
+  });
+});
+
 describe("listCrawlableSourcesFromMysql", () => {
   it("maps MySQL rows onto CrawlableSource", async () => {
     const pool = {
@@ -130,5 +172,41 @@ describe("listCrawlableSourcesFromMysql", () => {
     expect(sources[0].fipsCode).toBe("48");
     expect(sources[0].fetchConfig).toEqual({ tenant: "tx" });
     expect(sources[0].consecutiveFailures).toBe(2);
+  });
+});
+
+describe("listAllSourcesFromMysql", () => {
+  it("queries without a governance WHERE clause and still maps rows onto CrawlableSource", async () => {
+    let capturedSql = "";
+    const pool = {
+      query: async (sql: string) => {
+        capturedSql = sql;
+        return [
+          [
+            {
+              id: "tx_esbd",
+              label: "Texas ESBD",
+              issuerType: "state",
+              stateCode: "TX",
+              baseUrl: "https://www.txsmartbuy.com",
+              cadence: "weekly",
+              providerFamily: null,
+              jurisdictionLevel: "state",
+              jurisdictionName: "Texas",
+              fipsCode: "48",
+              fetchConfig: '{"tenant":"tx"}',
+              lastSuccessAt: "2026-07-01T00:00:00.000Z",
+              consecutiveFailures: 2,
+            },
+          ],
+        ] as [unknown[], unknown?];
+      },
+    };
+
+    const sources = await listAllSourcesFromMysql(pool);
+    expect(sources).toHaveLength(1);
+    expect(sources[0].fipsCode).toBe("48");
+    expect(sources[0].fetchConfig).toEqual({ tenant: "tx" });
+    expect(capturedSql).not.toMatch(/WHERE/i);
   });
 });

@@ -47,6 +47,24 @@ function parseFetchConfig(raw: unknown): Record<string, unknown> {
   }
 }
 
+function toCrawlableSource(row: typeof dataSources.$inferSelect): CrawlableSource {
+  return {
+    id: row.id,
+    label: row.label,
+    issuerType: row.issuerType,
+    stateCode: row.stateCode,
+    baseUrl: row.baseUrl ?? null,
+    cadence: row.cadence,
+    providerFamily: row.providerFamily ?? null,
+    jurisdictionLevel: row.jurisdictionLevel ?? null,
+    jurisdictionName: row.jurisdictionName ?? null,
+    fipsCode: row.fipsCode ?? null,
+    fetchConfig: parseFetchConfig(row.fetchConfig),
+    lastSuccessAt: row.lastSuccessAt ?? null,
+    consecutiveFailures: row.consecutiveFailures ?? 0,
+  };
+}
+
 export function listCrawlableSources(db: AppDatabase): CrawlableSource[] {
   const rows = db
     .select()
@@ -64,21 +82,20 @@ export function listCrawlableSources(db: AppDatabase): CrawlableSource[] {
     )
     .all();
 
-  return rows.map((row) => ({
-    id: row.id,
-    label: row.label,
-    issuerType: row.issuerType,
-    stateCode: row.stateCode,
-    baseUrl: row.baseUrl ?? null,
-    cadence: row.cadence,
-    providerFamily: row.providerFamily ?? null,
-    jurisdictionLevel: row.jurisdictionLevel ?? null,
-    jurisdictionName: row.jurisdictionName ?? null,
-    fipsCode: row.fipsCode ?? null,
-    fetchConfig: parseFetchConfig(row.fetchConfig),
-    lastSuccessAt: row.lastSuccessAt ?? null,
-    consecutiveFailures: row.consecutiveFailures ?? 0,
-  }));
+  return rows.map(toCrawlableSource);
+}
+
+/**
+ * Every `data_sources` row, with NO governance gate -- unlike listCrawlableSources above.
+ * Used only to resolve explicitly-requested source ids on the manual admin run route
+ * (/api/crawler/state/run): a blocked or needs_review source must still be *found* here so
+ * it can be dispatched through runCrawlerSourceOnce and come back with its real
+ * orchestrator-computed "blocked"/"disabled" result, instead of being treated as "not
+ * requested" -- which is what used to trigger a silent fallback to running every other
+ * approved source instead.
+ */
+export function listAllSources(db: AppDatabase): CrawlableSource[] {
+  return db.select().from(dataSources).all().map(toCrawlableSource);
 }
 
 interface MysqlSourceRow {
@@ -97,35 +114,24 @@ interface MysqlSourceRow {
   consecutiveFailures: number | string | null;
 }
 
-export async function listCrawlableSourcesFromMysql(
-  pool: MysqlSourceStore,
-): Promise<CrawlableSource[]> {
-  const rows = await mysqlSelectMany<MysqlSourceRow>(
-    pool,
-    `
-      SELECT
-        id,
-        label,
-        issuer_type AS issuerType,
-        state_code AS stateCode,
-        base_url AS baseUrl,
-        cadence,
-        provider_family AS providerFamily,
-        jurisdiction_level AS jurisdictionLevel,
-        jurisdiction_name AS jurisdictionName,
-        fips_code AS fipsCode,
-        fetch_config AS fetchConfig,
-        last_success_at AS lastSuccessAt,
-        consecutive_failures AS consecutiveFailures
-      FROM data_sources
-      WHERE is_enabled = 1
-        AND (approved_for_ingestion IS NULL OR approved_for_ingestion = 1)
-        AND (approval_status IS NULL OR approval_status = 'approved')
-        AND (legal_review_status IS NULL OR legal_review_status IN ('approved_public', 'approved'))
-    `,
-  );
+const MYSQL_SOURCE_COLUMNS = `
+  id,
+  label,
+  issuer_type AS issuerType,
+  state_code AS stateCode,
+  base_url AS baseUrl,
+  cadence,
+  provider_family AS providerFamily,
+  jurisdiction_level AS jurisdictionLevel,
+  jurisdiction_name AS jurisdictionName,
+  fips_code AS fipsCode,
+  fetch_config AS fetchConfig,
+  last_success_at AS lastSuccessAt,
+  consecutive_failures AS consecutiveFailures
+`;
 
-  return rows.map((row) => ({
+function toCrawlableSourceFromMysqlRow(row: MysqlSourceRow): CrawlableSource {
+  return {
     id: row.id,
     label: row.label,
     issuerType: row.issuerType,
@@ -139,5 +145,31 @@ export async function listCrawlableSourcesFromMysql(
     fetchConfig: parseFetchConfig(row.fetchConfig),
     lastSuccessAt: row.lastSuccessAt ?? null,
     consecutiveFailures: Number(row.consecutiveFailures ?? 0),
-  }));
+  };
+}
+
+export async function listCrawlableSourcesFromMysql(
+  pool: MysqlSourceStore,
+): Promise<CrawlableSource[]> {
+  const rows = await mysqlSelectMany<MysqlSourceRow>(
+    pool,
+    `
+      SELECT ${MYSQL_SOURCE_COLUMNS}
+      FROM data_sources
+      WHERE is_enabled = 1
+        AND (approved_for_ingestion IS NULL OR approved_for_ingestion = 1)
+        AND (approval_status IS NULL OR approval_status = 'approved')
+        AND (legal_review_status IS NULL OR legal_review_status IN ('approved_public', 'approved'))
+    `,
+  );
+
+  return rows.map(toCrawlableSourceFromMysqlRow);
+}
+
+/**
+ * MySQL twin of listAllSources above — every `data_sources` row, no governance gate.
+ */
+export async function listAllSourcesFromMysql(pool: MysqlSourceStore): Promise<CrawlableSource[]> {
+  const rows = await mysqlSelectMany<MysqlSourceRow>(pool, `SELECT ${MYSQL_SOURCE_COLUMNS} FROM data_sources`);
+  return rows.map(toCrawlableSourceFromMysqlRow);
 }
