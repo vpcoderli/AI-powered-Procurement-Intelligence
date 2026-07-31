@@ -2,8 +2,7 @@ from apsi_crawler.adapters.registry import DEDICATED_ADAPTERS, PLATFORM_ADAPTERS
 
 
 def test_every_provider_family_used_by_migration_has_an_adapter():
-    # migrate-source-registry.ts only ever writes out these two provider_family values.
-    for provider_family in ("bidnet", "generic"):
+    for provider_family in ("bidnet", "generic", "bonfire"):
         assert provider_family in PLATFORM_ADAPTERS
 
 

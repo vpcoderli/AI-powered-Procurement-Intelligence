@@ -126,3 +126,48 @@ def test_resolved_bidnet_adapter_raises_without_a_base_url():
     adapter = resolve_adapter(source.id, "bidnet")
     with pytest.raises(ValueError, match="fetch_config.base_url"):
         adapter(source, fixture_html=str(FIXTURES_DIR / "co_bidnet_open_bids.html"))
+
+
+def test_resolved_bonfire_adapter_fetches_and_normalizes_from_a_fixture():
+    source = task_source_from_payload(
+        {
+            "task_id": "t1",
+            "source_id": "bonfire_ky_louisville",
+            "label": "Louisville KY (Bonfire)",
+            "state_code": "KY",
+            "provider_family": "bonfire",
+            "jurisdiction_level": "city",
+            "fetch_config": {
+                "tenant": "louisvilleky",
+                "base_url": "https://louisvilleky.bonfirehub.com/portal/",
+            },
+        }
+    )
+
+    adapter = resolve_adapter(source.id, "bonfire")
+    bids = adapter(
+        source,
+        limit=5,
+        fixture_json=str(FIXTURES_DIR / "bonfire_sample.json"),
+    )
+
+    assert len(bids) == 2
+    assert bids[0]["source_bid_id"] == "RFP-2026-042"
+    assert bids[0]["state_code"] == "KY"
+
+
+def test_resolved_bonfire_adapter_raises_without_tenant():
+    source = task_source_from_payload(
+        {
+            "task_id": "t3",
+            "source_id": "bonfire_ky_louisville",
+            "label": "Louisville",
+            "state_code": "KY",
+            "provider_family": "bonfire",
+            "fetch_config": {},
+        }
+    )
+
+    adapter = resolve_adapter(source.id, "bonfire")
+    with pytest.raises(ValueError, match="fetch_config.tenant"):
+        adapter(source, fixture_json=str(FIXTURES_DIR / "bonfire_sample.json"))
