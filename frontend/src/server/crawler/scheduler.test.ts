@@ -145,4 +145,43 @@ describe("selectDueSources", () => {
     const ordered = selectDueSources([y1, x1, x2], NOW).map((s) => s.id);
     expect(ordered).toEqual(["x1", "y1", "x2"]);
   });
+
+  it("caps each provider_family to the platform concurrency limit", () => {
+    const sources = Array.from({ length: 15 }, (_, i) =>
+      source({ id: `bidnet_${i}`, providerFamily: "bidnet" }),
+    );
+    const result = selectDueSources(sources, NOW);
+    expect(result).toHaveLength(10);
+    expect(result.every((s) => s.providerFamily === "bidnet")).toBe(true);
+  });
+
+  it("applies the cap independently per provider_family", () => {
+    const bidnets = Array.from({ length: 12 }, (_, i) =>
+      source({ id: `bidnet_${i}`, providerFamily: "bidnet" }),
+    );
+    const bonfires = Array.from({ length: 8 }, (_, i) =>
+      source({ id: `bonfire_${i}`, providerFamily: "bonfire" }),
+    );
+    const result = selectDueSources([...bidnets, ...bonfires], NOW);
+    const bidnetCount = result.filter((s) => s.providerFamily === "bidnet").length;
+    const bonfireCount = result.filter((s) => s.providerFamily === "bonfire").length;
+    expect(bidnetCount).toBe(10);
+    expect(bonfireCount).toBe(8);
+  });
+
+  it("does not cap dedicated sources (null providerFamily)", () => {
+    const dedicated = Array.from({ length: 15 }, (_, i) =>
+      source({ id: `dedicated_${i}`, providerFamily: null }),
+    );
+    const result = selectDueSources(dedicated, NOW);
+    expect(result).toHaveLength(15);
+  });
+
+  it("accepts a custom cap via options", () => {
+    const sources = Array.from({ length: 20 }, (_, i) =>
+      source({ id: `bidnet_${i}`, providerFamily: "bidnet" }),
+    );
+    const result = selectDueSources(sources, NOW, { platformConcurrencyCap: 5 });
+    expect(result).toHaveLength(5);
+  });
 });

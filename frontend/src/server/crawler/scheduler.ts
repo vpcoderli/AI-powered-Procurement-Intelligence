@@ -1,5 +1,10 @@
 import type { CrawlableSource } from "./source-registry";
 
+export interface SchedulerOptions {
+  platformConcurrencyCap?: number;
+}
+
+const DEFAULT_PLATFORM_CONCURRENCY_CAP = 10;
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -77,7 +82,11 @@ function interleaveByProviderFamily(sources: CrawlableSource[]): CrawlableSource
   return result;
 }
 
-export function selectDueSources(sources: CrawlableSource[], now: Date): CrawlableSource[] {
+export function selectDueSources(
+  sources: CrawlableSource[],
+  now: Date,
+  options?: SchedulerOptions,
+): CrawlableSource[] {
   const nowMs = now.getTime();
 
   const due = sources.filter((source) => {
@@ -110,7 +119,19 @@ export function selectDueSources(sources: CrawlableSource[], now: Date): Crawlab
     else byLevel.set(rank, [source]);
   }
 
-  return [...byLevel.keys()]
+  const interleaved = [...byLevel.keys()]
     .sort((a, b) => a - b)
     .flatMap((rank) => interleaveByProviderFamily(byLevel.get(rank)!));
+
+  // Apply per-platform concurrency cap: limit each provider_family to N sources,
+  // but never cap dedicated sources (null providerFamily).
+  const cap = options?.platformConcurrencyCap ?? DEFAULT_PLATFORM_CONCURRENCY_CAP;
+  const familyCounts = new Map<string, number>();
+  return interleaved.filter((s) => {
+    if (s.providerFamily === null) return true;
+    const count = familyCounts.get(s.providerFamily) ?? 0;
+    if (count >= cap) return false;
+    familyCounts.set(s.providerFamily, count + 1);
+    return true;
+  });
 }
