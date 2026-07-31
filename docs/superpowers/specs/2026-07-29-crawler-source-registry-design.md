@@ -195,6 +195,34 @@ DEDICATED_ADAPTERS = {
 
 `lib/state-crawler-sources.ts` 退役，治理元数据迁入 `data_sources`，仅保留「州码 ↔ 名称」静态查表供 UI 使用。
 
+### 范围修订 (2026-07-31)
+
+> 本节与 §4.8/§5 原定的「治理元数据迁入 `data_sources`」「删除 `state-crawler-sources.ts`
+> 与 `state_sources.py`」在执行 Task 14 时被迫收窄，未按上述设计完成。grep 出的真实消费面
+> （16 个文件）比任务 briefs 列出的清单大三倍，其中两簇需要独立设计决策而非机械改动：
+>
+> 1. **治理/有效性元数据在 `data_sources` 里没有列可落。** `sourceAuthority` /
+>    `trustStatus` / `evidenceMode` / `validityNotes` 及 `adapterKind` / `maturity` /
+>    `capabilities` 均不是 `dataSources` 表的列。`src/server/risk/checklist.ts`（即
+>    `npm run risk:check`，CI 合并门禁之一）、`state-data-quality.ts`、
+>    `live-source-health.ts`、`admin/data-sources-repository.ts` 四个模块直接依赖这些字段，
+>    部分还用作 `data_sources` 治理列为空时的兜底默认值。删除即静默收窄风险门禁覆盖面；
+>    要接住则需新增 schema 列并扩展迁移脚本——这本身是需要单独立项的设计决策。
+> 2. **admin 手动运行入口当时仍依赖 `fetch-state`。** `/api/crawler/state/run` 经
+>    `state-runner.ts` 走 `fetch-state` 的 argv 路径。若先删 `state_sources.py`/
+>    `fetch-state` 而不同步迁移该路由，admin 控制台"立即运行"按钮会静默失效，且没有任何
+>    现有测试或 `npm run build` 能捕获。
+>
+> 详见 `.superpowers/sdd/2026-07-29-crawler-source-registry-phase1/task-14-report.md`
+> （状态 BLOCKED）。实际落地（5d14479、7587b89、7ab9f49）将退役范围收窄为**仅退役
+> `fetch-state` CLI 子命令及其 argv 路径**：`state-runner.ts`/`/api/crawler/state/run`
+> 已切到 `fetch-task` JSON 契约，`cli.py` 的 `fetch_state`/argv 拼装已删除。
+> `state-crawler-sources.ts` 的治理元数据类型别名与 `STATE_CRAWLER_SOURCES` 常量，以及
+> `crawler/apsi_crawler/sources/state_sources.py` 整个文件**均未删除**，仍是运行时依赖
+> （部分只读 id/label/stateCode/baseUrl 的消费者已迁移到 `STATE_CRAWLER_SOURCE_DEFINITIONS`，
+> 其余留待后续阶段）。§4.8 步骤 3 与 §5 验收项 1 因此顺延为阶段 1 之后的独立工作，本文档
+> 其余部分保持原样，不代表已发生的事实。
+
 ### 4.6 调度逻辑
 
 ```

@@ -2715,6 +2715,18 @@ git commit -m "feat(db): migrate the 50 state sources into the data_sources regi
 
 ## Task 14: 退役旧 registry
 
+> **范围修订 (2026-07-31)：** 本任务下方描述的核心删除动作——治理元数据迁入
+> `data_sources`、删除 `state-crawler-sources.ts` 的治理类型与 `STATE_CRAWLER_SOURCES`、
+> `git rm apsi_crawler/sources/state_sources.py`——**未按原计划完成**：实际 grep 出的消费面
+> 比下方「Files」清单大三倍，其中 `npm run risk:check`（CI 合并门禁）等四个模块依赖
+> `data_sources` 中不存在的治理/有效性列，且 admin"立即运行"端点当时仍依赖即将删除的
+> `fetch-state`，两者都需要独立设计决策而非机械改动（详见
+> `.superpowers/sdd/2026-07-29-crawler-source-registry-phase1/task-14-report.md`，状态
+> BLOCKED）。实际落地（5d14479、7587b89、7ab9f49）把退役范围收窄为仅
+> `fetch-state` CLI 子命令及其 argv 路径；`state-crawler-sources.ts`/`state_sources.py`
+> 的完整退役顺延为独立后续工作。下方步骤保留原文，作为该未竟工作的参考，不代表已发生的
+> 事实。
+
 **Files:**
 - Modify: `frontend/src/lib/state-crawler-sources.ts`
 - Modify: `frontend/src/lib/state-crawler-sources.test.ts`

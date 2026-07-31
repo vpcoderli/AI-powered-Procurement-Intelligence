@@ -9,7 +9,7 @@ APSi (AI-powered Procurement Intelligence) is a monorepo with two subsystems:
 - **`frontend/`** — Full-stack Next.js 16 app (TypeScript, React 19, Tailwind CSS v4, shadcn/ui, Drizzle ORM). Serves the web UI, all API routes, and the background worker scripts.
 - **`crawler/`** — Python bid aggregation engine: 50 state portal sources plus a SAM.gov adapter. Only stdlib + `requests` + `pytest` (see `crawler/requirements.txt`).
 
-The frontend is the primary active subsystem. It **invokes the crawler as a subprocess** (`python3 -m apsi_crawler.cli fetch-state ...` from `frontend/src/server/crawler/state-runner.ts`), so the two are coupled at the CLI boundary, not just via the database. The crawler CLI can also be run standalone.
+The frontend is the primary active subsystem. It **invokes the crawler as a subprocess** (`python3 -m apsi_crawler.cli fetch-task`, fed a JSON task payload on stdin by `frontend/src/server/crawler/state-runner.ts` — not `fetch-state`/argv, which was retired), so the two are coupled at the JSON task-contract boundary, not just via the database. The crawler CLI can also be run standalone.
 
 ## Frontend Commands
 
@@ -64,14 +64,14 @@ cd crawler
 pip install -r requirements.txt
 pytest                                              # All tests
 PYTHONPATH=. pytest tests/test_generic_state.py     # One test file
-python -m apsi_crawler.cli fetch-state --source ca_caleprocure --limit 25 --database ../frontend/data/apsi.sqlite
-python -m apsi_crawler.cli fetch-state --source ca_caleprocure --output-json    # stdout JSON instead of DB write
+echo '{"task_id":"t1","source_id":"ca_caleprocure","label":"California Cal eProcure","state_code":"CA","provider_family":null,"fetch_config":{"base_url":"https://caleprocure.ca.gov"},"limit":25,"query":null}' \
+  | python -m apsi_crawler.cli fetch-task           # reads a JSON task payload from stdin, writes a JSON result to stdout
 python -m apsi_crawler.cli fetch-sam-gov --posted-from 2026-07-01 --posted-to 2026-07-28
 python -m apsi_crawler.cli validate-state-live --source ca_caleprocure          # repeatable; defaults to all beta sources
 python -m apsi_crawler.cli import-fixture --database <path> --fixture <path>
 ```
 
-Those four subcommands are the complete CLI surface (`build_parser()` in `crawler/apsi_crawler/cli.py`).
+Those four subcommands — `import-fixture`, `fetch-sam-gov`, `validate-state-live`, `fetch-task` — are the complete CLI surface (`build_parser()` in `crawler/apsi_crawler/cli.py`).
 
 ## Architecture
 
@@ -146,11 +146,11 @@ Client side: `useFeature` (`src/lib/features/useFeature.ts`).
 - `crawler/apsi_crawler/sources/state_sources.py` defines `STATE_SOURCES` (50 entries); `sources/registry.py` merges it with the SAM.gov source.
 - `crawler/apsi_crawler/spiders/` — one module per dedicated portal (`ca_caleprocure.py`, `tx_esbd.py`, …); `generic_state.py` backs the remaining states, and `state_bidnet.py` maps every BidNet Direct-hosted state onto the shared `co_bidnet` fetcher.
 - `normalizers/` converts raw portal payloads to normalized bid records; `storage/sqlite.py` upserts them and writes crawler logs; `storage/archive.py` downloads attachments.
-- Live fetches can fall back to committed fixtures (`--fallback-fixture`, `tests/fixtures/`), which keeps tests hermetic.
+- Fixtures (`tests/fixtures/`) back hermetic pytest coverage only — passed directly to spiders via `fixture_html=`/fixture-loader test helpers. There is no production fallback flag; a live `fetch-task` run either fetches for real or fails (no silent fixture replay).
 
-**Cross-subsystem contract:** source IDs in `crawler/apsi_crawler/sources/state_sources.py` must exactly match `STATE_CRAWLER_SOURCE_DEFINITIONS` in `frontend/src/lib/state-crawler-sources.ts` (50 on each side) — the frontend passes the ID straight through as `--source`. The frontend registry additionally carries governance/validity metadata (approval status, legal review, access pattern, trust status) consumed by `risk:check` and the admin console.
+**Cross-subsystem contract:** the source id travels in the `fetch-task` JSON payload's `source_id` field (built by `buildCrawlTaskPayload` in `state-runner.ts` from a `data_sources` row), not as a `--source` argv flag — `data_sources` is the runtime id universe for crawler execution, not the two hardcoded per-language files. `crawler/apsi_crawler/sources/state_sources.py` and `frontend/src/lib/state-crawler-sources.ts` still exist and still carry governance/validity metadata (approval status, legal review, access pattern, trust status) consumed by `risk:check`, the admin console, and `validate-state-live` — but they are no longer on the `fetch-task` execution path. See `docs/superpowers/specs/2026-07-29-crawler-source-registry-design.md`'s 2026-07-31 scope amendment for why their full retirement was descoped from phase 1.
 
-**MySQL crawler flow:** under MySQL, `state-runner.ts` runs the Python CLI with `--output-json` and pipes the result through `mysql-json-importer.ts` instead of letting Python write SQLite directly.
+**MySQL crawler flow:** `state-runner.ts`'s `runCrawlTask` always invokes the Python CLI's `fetch-task` (stdin JSON in, stdout JSON out) the same way regardless of dialect — there is no `--output-json`/`--database` branch left on this path. Dialect branching happens on the TS side, in `persistCrawlTaskResult` (`crawl-task-persistence.ts`): it pipes the parsed result through `mysql-json-importer.ts` when a MySQL pool is present, or `sqlite-json-importer.ts` otherwise.
 
 ### Workers
 
