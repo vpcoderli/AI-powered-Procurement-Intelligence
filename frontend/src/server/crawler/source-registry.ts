@@ -73,7 +73,16 @@ export function listCrawlableSources(db: AppDatabase): CrawlableSource[] {
       and(
         eq(dataSources.isEnabled, 1),
         or(isNull(dataSources.approvedForIngestion), eq(dataSources.approvedForIngestion, 1)),
-        or(isNull(dataSources.approvalStatus), eq(dataSources.approvalStatus, "approved")),
+        or(
+          eq(dataSources.approvalStatus, "approved"),
+          and(
+            isNull(dataSources.approvalStatus),
+            or(
+              isNull(dataSources.jurisdictionLevel),
+              inArray(dataSources.jurisdictionLevel, ["federal", "state"]),
+            ),
+          ),
+        ),
         or(
           isNull(dataSources.legalReviewStatus),
           inArray(dataSources.legalReviewStatus, LEGAL_REVIEW_ALLOWED),
@@ -158,7 +167,13 @@ export async function listCrawlableSourcesFromMysql(
       FROM data_sources
       WHERE is_enabled = 1
         AND (approved_for_ingestion IS NULL OR approved_for_ingestion = 1)
-        AND (approval_status IS NULL OR approval_status = 'approved')
+        AND (
+          approval_status = 'approved'
+          OR (
+            approval_status IS NULL
+            AND (jurisdiction_level IS NULL OR jurisdiction_level IN ('federal', 'state'))
+          )
+        )
         AND (legal_review_status IS NULL OR legal_review_status IN ('approved_public', 'approved'))
     `,
   );

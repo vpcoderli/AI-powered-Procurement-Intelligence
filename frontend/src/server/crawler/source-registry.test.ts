@@ -104,6 +104,74 @@ describe("listCrawlableSources", () => {
     testDb.db.insert(dataSources).values(sourceRow({ id: "broken", fetchConfig: "{not json" })).run();
     expect(listCrawlableSources(testDb.db)[0].fetchConfig).toEqual({});
   });
+
+  it("excludes county sources whose approval_status is NULL (bulk-registered, pending review)", () => {
+    testDb.db
+      .insert(dataSources)
+      .values(sourceRow({
+        id: "bidnet_co_denver",
+        issuerType: "county",
+        jurisdictionLevel: "county",
+        approvedForIngestion: null,
+        approvalStatus: null,
+        legalReviewStatus: null,
+      }))
+      .run();
+
+    expect(listCrawlableSources(testDb.db)).toHaveLength(0);
+  });
+
+  it("includes county sources with explicit approval_status = approved", () => {
+    testDb.db
+      .insert(dataSources)
+      .values(sourceRow({
+        id: "bidnet_co_denver",
+        issuerType: "county",
+        jurisdictionLevel: "county",
+        approvedForIngestion: 1,
+        approvalStatus: "approved",
+        legalReviewStatus: "approved_public",
+      }))
+      .run();
+
+    expect(listCrawlableSources(testDb.db)).toHaveLength(1);
+    expect(listCrawlableSources(testDb.db)[0].id).toBe("bidnet_co_denver");
+  });
+
+  it("still allows state sources with NULL approval_status for backward compatibility", () => {
+    testDb.db
+      .insert(dataSources)
+      .values(sourceRow({
+        id: "sam_gov",
+        issuerType: "federal",
+        jurisdictionLevel: "federal",
+        approvedForIngestion: null,
+        approvalStatus: null,
+        legalReviewStatus: null,
+      }))
+      .run();
+
+    const sources = listCrawlableSources(testDb.db);
+    expect(sources).toHaveLength(1);
+    expect(sources[0].id).toBe("sam_gov");
+  });
+
+  it("still allows state sources with NULL jurisdiction_level and NULL approval for backward compat", () => {
+    // Legacy rows from seed that have no jurisdiction_level yet
+    testDb.db
+      .insert(dataSources)
+      .values(sourceRow({
+        id: "legacy_state",
+        issuerType: "state",
+        jurisdictionLevel: null,
+        approvedForIngestion: null,
+        approvalStatus: null,
+        legalReviewStatus: null,
+      }))
+      .run();
+
+    expect(listCrawlableSources(testDb.db)).toHaveLength(1);
+  });
 });
 
 describe("listAllSources", () => {
@@ -172,6 +240,20 @@ describe("listCrawlableSourcesFromMysql", () => {
     expect(sources[0].fipsCode).toBe("48");
     expect(sources[0].fetchConfig).toEqual({ tenant: "tx" });
     expect(sources[0].consecutiveFailures).toBe(2);
+  });
+
+  it("captures the tightened governance gate in the MySQL query", async () => {
+    let capturedSql = "";
+    const pool = {
+      query: async (sql: string) => {
+        capturedSql = sql;
+        return [[]] as [unknown[], unknown?];
+      },
+    };
+
+    await listCrawlableSourcesFromMysql(pool);
+    expect(capturedSql).toMatch(/approval_status = 'approved'/);
+    expect(capturedSql).toMatch(/jurisdiction_level IS NULL OR jurisdiction_level IN/);
   });
 });
 
