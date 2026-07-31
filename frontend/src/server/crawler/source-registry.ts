@@ -24,14 +24,14 @@ export interface MysqlSourceStore {
 }
 
 /**
- * Governance gating semantics must match orchestrator.ts's blockedReasonFor exactly:
- * a source is excluded only on an EXPLICIT denial. NULL means "never reviewed", not
- * "denied".
+ * Two-level governance gate:
+ * - State/federal (and legacy NULL jurisdiction): NULL approval_status is allowed
+ *   (orchestrator.ts's blockedReasonFor treats NULL as "never reviewed, not denied").
+ * - County/city: NULL approval_status is EXCLUDED — bulk-registered sub-state sources
+ *   must receive explicit approval_status = 'approved' before their first crawl.
  *
- * Production data as of 2026-07-29: 45 beta state sources have approved_for_ingestion=0
- * (explicitly denied, correctly excluded), 5 verified sources have 1, and 6 rows have all
- * three governance columns NULL — including sam_gov. Treating NULL as denied would
- * silently stop crawling SAM.gov.
+ * The manual admin run route (listAllSources) bypasses this gate entirely so admins
+ * can trigger a test run of unapproved sources.
  */
 const LEGAL_REVIEW_ALLOWED = ["approved_public", "approved"];
 
