@@ -4,7 +4,7 @@ import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
 import { bidAttachments, bids, dataSources } from "@/server/db/schema";
 import type { AppDatabase } from "@/server/db/client";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { createRiskChecklistReport, formatRiskChecklistReport } from "./checklist";
+import { createRiskChecklistReport, createRiskChecklistReportFromMysql, formatRiskChecklistReport } from "./checklist";
 
 let testDb: TestDatabase | null = null;
 
@@ -217,5 +217,32 @@ describe("risk checklist", () => {
 
     expect(report.ok).toBe(true);
     expect(formatRiskChecklistReport(report)).toContain("Risk checklist PASS");
+  });
+});
+
+describe("risk checklist MySQL source governance query", () => {
+  it("selects the phase-1 jurisdiction and fetch-config columns added to data_sources", async () => {
+    let capturedDataSourcesSql = "";
+    const mysql = {
+      query: async (sql: string) => {
+        if (sql.includes("FROM data_sources")) {
+          capturedDataSourcesSql = sql;
+          return [[], undefined] as [unknown[], unknown?];
+        }
+        if (sql.includes("FROM bids")) {
+          return [[], undefined] as [unknown[], unknown?];
+        }
+        throw new Error(`Unexpected SQL: ${sql}`);
+      },
+    };
+
+    await createRiskChecklistReportFromMysql(mysql as never, new Date("2026-05-31T00:00:00.000Z"));
+
+    // Regression guard for the phase-1 dialect-parity gap: the row mapper has always read
+    // these fields, but the SELECT never listed them, so MySQL silently returned null forever.
+    expect(capturedDataSourcesSql).toContain("jurisdiction_level AS jurisdictionLevel");
+    expect(capturedDataSourcesSql).toContain("jurisdiction_name AS jurisdictionName");
+    expect(capturedDataSourcesSql).toContain("fips_code AS fipsCode");
+    expect(capturedDataSourcesSql).toContain("fetch_config AS fetchConfig");
   });
 });

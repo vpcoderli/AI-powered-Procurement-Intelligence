@@ -457,11 +457,20 @@ function createMysqlQualityStore(options: {
     },
   ];
 
+  const capturedSql: { bids?: string; dataSources?: string } = {};
+
   return {
+    capturedSql,
     query: async (sql: string) => {
-      if (sql.includes("FROM bids")) return [bidsRows, undefined];
+      if (sql.includes("FROM bids")) {
+        capturedSql.bids = sql;
+        return [bidsRows, undefined];
+      }
       if (sql.includes("FROM bid_attachments")) return [attachmentRows, undefined];
-      if (sql.includes("FROM data_sources")) return [dataSourceRows, undefined];
+      if (sql.includes("FROM data_sources")) {
+        capturedSql.dataSources = sql;
+        return [dataSourceRows, undefined];
+      }
       if (sql.includes("FROM crawler_logs")) return [crawlerRows, undefined];
       if (sql.includes("FROM risk_check_snapshots")) return [riskRows, undefined];
       if (sql.includes("FROM source_health_snapshots")) return [sourceHealthRows, undefined];
@@ -579,5 +588,22 @@ describe("50-state data quality gate MySQL runtime", () => {
     });
     expect(reasonCodesForState(report, "CA")).toContain("attachment_download_note");
     expect(reasonCodesForState(report, "CA")).not.toContain("attachment_archive_invalid");
+  });
+
+  it("selects the phase-1 jurisdiction, fips, and fetch-config columns in the bids and data_sources queries", async () => {
+    const store = createMysqlQualityStore();
+
+    await createStateDataQualityReportFromMysql(store as never, new Date(NOW));
+
+    // Regression guard for the phase-1 dialect-parity gap: the row mappers have always read
+    // these fields, but the SELECTs never listed them, so MySQL silently returned null forever.
+    expect(store.capturedSql.bids).toContain("jurisdiction_level AS jurisdictionLevel");
+    expect(store.capturedSql.bids).toContain("jurisdiction_name AS jurisdictionName");
+    expect(store.capturedSql.bids).toContain("fips_code AS fipsCode");
+
+    expect(store.capturedSql.dataSources).toContain("jurisdiction_level AS jurisdictionLevel");
+    expect(store.capturedSql.dataSources).toContain("jurisdiction_name AS jurisdictionName");
+    expect(store.capturedSql.dataSources).toContain("fips_code AS fipsCode");
+    expect(store.capturedSql.dataSources).toContain("fetch_config AS fetchConfig");
   });
 });

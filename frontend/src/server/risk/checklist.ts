@@ -343,6 +343,10 @@ async function sourceGovernanceFailuresFromMysql(mysql: Pool, options: { require
         last_success_at AS lastSuccessAt,
         last_failure_at AS lastFailureAt,
         consecutive_failures AS consecutiveFailures,
+        jurisdiction_level AS jurisdictionLevel,
+        jurisdiction_name AS jurisdictionName,
+        fips_code AS fipsCode,
+        fetch_config AS fetchConfig,
         created_at AS createdAt,
         updated_at AS updatedAt
       FROM data_sources
