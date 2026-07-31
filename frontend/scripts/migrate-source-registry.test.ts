@@ -45,6 +45,27 @@ describe("buildSourceRegistryRows", () => {
     expect(counts.bidnet).toBe(19); // BIDNET_FALLBACK_SOURCE_IDS
     expect(counts.generic).toBe(26); // remaining states (50 - 5 - 19)
   });
+
+  it("routes every bidnet-family source's fetch_config.base_url through the BidNet Direct aggregator", () => {
+    // fetch_bidnet_platform (crawler/apsi_crawler/adapters/registry.py) reads
+    // fetch_config.base_url as the page it scrapes. If this were left as the official portal
+    // URL (like every non-bidnet source), the bidnet parser would run against the wrong page
+    // shape and find zero rows.
+    const bidnetRows = buildSourceRegistryRows().filter((row) => row.providerFamily === "bidnet");
+    expect(bidnetRows).toHaveLength(19);
+    for (const row of bidnetRows) {
+      expect(JSON.parse(row.fetchConfig).base_url).toMatch(/bidnetdirect\.com/i);
+    }
+  });
+
+  it("sets al_state_procurement's fetch_config.base_url to the exact URL from state_bidnet.py's BIDNET_STATE_URLS", () => {
+    const alabama = buildSourceRegistryRows().find((row) => row.id === "al_state_procurement");
+    expect(JSON.parse(alabama!.fetchConfig).base_url).toBe(
+      "https://www.bidnetdirect.com/alabama/solicitations/open-bids",
+    );
+    // The display/governance column must stay the official portal, unlike fetch_config.
+    expect(alabama!.baseUrl).not.toMatch(/bidnetdirect\.com/i);
+  });
 });
 
 describe("upsertSourceRegistry", () => {

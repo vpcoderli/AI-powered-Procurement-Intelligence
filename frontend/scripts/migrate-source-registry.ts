@@ -69,12 +69,48 @@ function providerFamilyFor(id: string): string | null {
   return "generic";
 }
 
+/**
+ * fetch_bidnet_platform(crawler/apsi_crawler/adapters/registry.py)读取
+ * fetch_config.base_url 作为它抓取的 BidNet Direct 聚合页面地址——不是
+ * data_sources.base_url(那一列记录官方门户,用于展示/合规,两者刻意不同)。
+ * 这 19 个 URL 逐字复制自 Python 侧权威常量,而非 import(脚本必须自包含,
+ * 理由同上面 BIDNET_FALLBACK_SOURCE_IDS 的注释):
+ *   - 17 项来自 crawler/apsi_crawler/spiders/state_bidnet.py 的 BIDNET_STATE_URLS
+ *   - co_state_procurement 来自 spiders/co_bidnet.py 的 CO_BIDNET_URL
+ *   - wv_state_procurement 来自 spiders/wv_bidnet.py 的 WV_BIDNET_URL
+ */
+const BIDNET_AGGREGATOR_URLS: Record<string, string> = {
+  al_state_procurement: "https://www.bidnetdirect.com/alabama/solicitations/open-bids",
+  ak_state_procurement: "https://www.bidnetdirect.com/alaska/solicitations/open-bids",
+  az_state_procurement: "https://www.bidnetdirect.com/arizona/solicitations/open-bids",
+  co_state_procurement: "https://www.bidnetdirect.com/colorado/solicitations/open-bids?selectedContent=BUYER",
+  id_state_procurement: "https://www.bidnetdirect.com/idaho/solicitations/open-bids",
+  ky_state_procurement: "https://www.bidnetdirect.com/kentucky/solicitations/open-bids",
+  la_state_procurement: "https://www.bidnetdirect.com/louisiana/solicitations/open-bids",
+  md_state_procurement: "https://www.bidnetdirect.com/maryland/solicitations/open-bids",
+  mi_state_procurement: "https://www.bidnetdirect.com/mitn/solicitations/open-bids",
+  mn_state_procurement: "https://www.bidnetdirect.com/minnesota/solicitations/open-bids",
+  nc_state_procurement: "https://www.bidnetdirect.com/north-carolina/solicitations/open-bids",
+  nd_state_procurement: "https://www.bidnetdirect.com/north-dakota/solicitations/open-bids",
+  ne_state_procurement: "https://www.bidnetdirect.com/nebraska/solicitations/open-bids",
+  nh_state_procurement: "https://www.bidnetdirect.com/new-hampshire/solicitations/open-bids",
+  oh_state_procurement: "https://www.bidnetdirect.com/ohio/solicitations/open-bids",
+  sc_state_procurement: "https://www.bidnetdirect.com/south-carolina/solicitations/open-bids",
+  vt_state_procurement: "https://www.bidnetdirect.com/vermont/solicitations/open-bids",
+  wi_state_procurement: "https://www.bidnetdirect.com/wisconsin/solicitations/open-bids",
+  wv_state_procurement: "https://www.bidnetdirect.com/west-virginia/solicitations/open-bids",
+};
+
 export function buildSourceRegistryRows(): SourceRegistryRow[] {
   return STATE_CRAWLER_SOURCE_DEFINITIONS.map((source) => {
     const fips = fipsForStateCode(source.stateCode);
     if (!fips) {
       throw new Error(`No FIPS code for state ${source.stateCode} (source ${source.id})`);
     }
+
+    // Bidnet-family sources fetch through the BidNet Direct aggregator, not the official
+    // portal recorded in `baseUrl`/the `base_url` column below — see BIDNET_AGGREGATOR_URLS.
+    const fetchBaseUrl = BIDNET_AGGREGATOR_URLS[source.id] ?? source.baseUrl;
 
     return {
       id: source.id,
@@ -85,7 +121,7 @@ export function buildSourceRegistryRows(): SourceRegistryRow[] {
       jurisdictionLevel: "state",
       jurisdictionName: source.label,
       fipsCode: fips,
-      fetchConfig: JSON.stringify({ base_url: source.baseUrl }),
+      fetchConfig: JSON.stringify({ base_url: fetchBaseUrl }),
       providerFamily: providerFamilyFor(source.id),
     };
   });

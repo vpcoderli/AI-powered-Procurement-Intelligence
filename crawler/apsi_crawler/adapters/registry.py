@@ -18,9 +18,27 @@ class AdapterNotFoundError(Exception):
     pass
 
 
+def fetch_bidnet_platform(source, query=None, limit=25, **kwargs):
+    """bidnet 平台适配器包装。
+
+    fetch_task 统一以 adapter(source, query=query, limit=limit) 调用注册表里的每个
+    适配器(见 cli.py)。但 fetch_bidnet_opportunities 的真实签名要求位置参数
+    url,直接把它绑进 PLATFORM_ADAPTERS 会在每次 bidnet 源调用时抛
+    `TypeError: fetch_bidnet_opportunities() missing 1 required positional
+    argument: 'url'`。这里从 source.fetch_config.base_url 取 BidNet Direct 聚合页
+    地址再转发,使其符合统一调用约定;**kwargs 继续透传 fixture_html/session/
+    timeout 等可选参数。
+    """
+    url = source.fetch_config.get("base_url")
+    if not url:
+        raise ValueError(f"bidnet source {source.id} has no fetch_config.base_url")
+
+    return fetch_bidnet_opportunities(source, url, query=query, limit=limit, **kwargs)
+
+
 # 商业平台:一个适配器服务 N 个租户。阶段 3 在此追加 bonfire / ionwave 等。
 PLATFORM_ADAPTERS = {
-    "bidnet": fetch_bidnet_opportunities,
+    "bidnet": fetch_bidnet_platform,
     "generic": fetch_generic_state_opportunities,
 }
 
