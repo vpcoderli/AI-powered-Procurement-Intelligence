@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { bids, crawlerLogs } from "@/server/db/schema";
+import { bidAttachments, bids, crawlerLogs } from "@/server/db/schema";
 import type { CrawlableSource } from "./source-registry";
 import type { CrawlerJsonRunPayload } from "./mysql-json-importer";
 import { importCrawlerJsonRunIntoSqlite, stampJurisdiction } from "./sqlite-json-importer";
@@ -169,6 +169,170 @@ describe("crawler JSON SQLite importer", () => {
       fetchedCount: 0,
       failedCount: 1,
     });
+  });
+
+  // Task final-wave I2: the MySQL twin (mysql-json-importer.ts) has always persisted
+  // bid_attachments via a delete-then-insert per bid; the SQLite importer silently dropped them
+  // entirely. il_bidbuy (approved, attachments-capable) hits this path today under the default
+  // SQLite deployment.
+  it("persists bid attachments from the payload, preserving sort order", () => {
+    const payload: CrawlerJsonRunPayload = {
+      source: "il_bidbuy",
+      runId: "sqlite_run_attachments",
+      status: "success",
+      startedAt: NOW,
+      bids: [
+        {
+          id: "sqlite_bid_attach",
+          source: "il_bidbuy",
+          dedupe_key: "il_bidbuy:1",
+          title: "Bid with attachments",
+          description: "d",
+          issuer_name: "Issuer",
+          issuer_type: "state",
+          state_code: "IL",
+          source_url: "https://example.com/attach",
+          attachments: [
+            {
+              name: "Second.pdf",
+              url: "https://example.com/second.pdf",
+              original_url: "https://example.com/second.pdf",
+              storage_path: "/tmp/second.pdf",
+              byte_size: 99,
+              content_type: "application/pdf",
+              checksum_sha256: "second-checksum",
+              fetched_at: NOW,
+              archive_status: "archived",
+              size_label: "99 B",
+              mime_type: "application/pdf",
+              sort_order: 1,
+            },
+            {
+              id: "custom-attachment-id",
+              name: "First.pdf",
+              url: "https://example.com/first.pdf",
+              sort_order: 0,
+            },
+          ],
+        },
+      ],
+    };
+
+    importCrawlerJsonRunIntoSqlite(testDb.db, payload);
+
+    const attachmentRows = testDb.db
+      .select()
+      .from(bidAttachments)
+      .where(eq(bidAttachments.bidId, "sqlite_bid_attach"))
+      .all()
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+
+    expect(attachmentRows).toHaveLength(2);
+    expect(attachmentRows[0]).toMatchObject({
+      id: "custom-attachment-id",
+      bidId: "sqlite_bid_attach",
+      name: "First.pdf",
+      url: "https://example.com/first.pdf",
+      sortOrder: 0,
+      archiveStatus: "not_archived",
+    });
+    expect(attachmentRows[1]).toMatchObject({
+      id: "sqlite_bid_attach:attachment:1",
+      bidId: "sqlite_bid_attach",
+      name: "Second.pdf",
+      byteSize: 99,
+      contentType: "application/pdf",
+      archiveStatus: "archived",
+      sortOrder: 1,
+    });
+  });
+
+  it("replaces attachments on re-import rather than duplicating them", () => {
+    const firstPayload: CrawlerJsonRunPayload = {
+      source: "il_bidbuy",
+      runId: "sqlite_run_attach_a",
+      status: "success",
+      startedAt: NOW,
+      bids: [
+        {
+          id: "sqlite_bid_replace",
+          source: "il_bidbuy",
+          dedupe_key: "il_bidbuy:replace",
+          title: "Bid",
+          description: "d",
+          issuer_name: "Issuer",
+          issuer_type: "state",
+          state_code: "IL",
+          source_url: "https://example.com/replace",
+          attachments: [
+            { name: "Old1.pdf", url: "https://example.com/old1.pdf" },
+            { name: "Old2.pdf", url: "https://example.com/old2.pdf" },
+          ],
+        },
+      ],
+    };
+    importCrawlerJsonRunIntoSqlite(testDb.db, firstPayload);
+    expect(
+      testDb.db.select().from(bidAttachments).where(eq(bidAttachments.bidId, "sqlite_bid_replace")).all(),
+    ).toHaveLength(2);
+
+    const secondPayload: CrawlerJsonRunPayload = {
+      source: "il_bidbuy",
+      runId: "sqlite_run_attach_b",
+      status: "success",
+      startedAt: NOW,
+      bids: [
+        {
+          id: "sqlite_bid_replace",
+          source: "il_bidbuy",
+          dedupe_key: "il_bidbuy:replace",
+          title: "Bid",
+          description: "d",
+          issuer_name: "Issuer",
+          issuer_type: "state",
+          state_code: "IL",
+          source_url: "https://example.com/replace",
+          attachments: [{ name: "New.pdf", url: "https://example.com/new.pdf" }],
+        },
+      ],
+    };
+    importCrawlerJsonRunIntoSqlite(testDb.db, secondPayload);
+
+    const attachmentRows = testDb.db
+      .select()
+      .from(bidAttachments)
+      .where(eq(bidAttachments.bidId, "sqlite_bid_replace"))
+      .all();
+    expect(attachmentRows).toHaveLength(1);
+    expect(attachmentRows[0]).toMatchObject({ name: "New.pdf", url: "https://example.com/new.pdf" });
+  });
+
+  it("leaves no attachment rows for a bid with no attachments", () => {
+    const payload: CrawlerJsonRunPayload = {
+      source: "il_bidbuy",
+      runId: "sqlite_run_no_attach",
+      status: "success",
+      startedAt: NOW,
+      bids: [
+        {
+          id: "sqlite_bid_no_attach",
+          source: "il_bidbuy",
+          dedupe_key: "il_bidbuy:no_attach",
+          title: "Bid without attachments",
+          description: "d",
+          issuer_name: "Issuer",
+          issuer_type: "state",
+          state_code: "IL",
+          source_url: "https://example.com/no-attach",
+        },
+      ],
+    };
+
+    importCrawlerJsonRunIntoSqlite(testDb.db, payload);
+
+    expect(
+      testDb.db.select().from(bidAttachments).where(eq(bidAttachments.bidId, "sqlite_bid_no_attach")).all(),
+    ).toHaveLength(0);
   });
 });
 

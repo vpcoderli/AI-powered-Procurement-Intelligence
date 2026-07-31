@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
-import { bids, crawlerLogs } from "@/server/db/schema";
+import { bidAttachments, bids, crawlerLogs } from "@/server/db/schema";
 import type { CrawlerJsonImportResult, CrawlerJsonRunPayload } from "./mysql-json-importer";
 import type { CrawlableSource } from "./source-registry";
 
@@ -81,6 +81,49 @@ function bidUpdateValues(row: JsonRecord, fallbackTimestamp: string) {
   };
 }
 
+/**
+ * Field-for-field mirror of mysql-json-importer.ts's attachmentRowsForBid: same column set,
+ * same fallback defaults (id/name synthesized from index, archive_status defaults to
+ * "not_archived", sort_order falls back to array index).
+ */
+function attachmentRowsForBid(row: JsonRecord, bidId: string, fallbackTimestamp: string) {
+  const attachments = Array.isArray(row.attachments) ? (row.attachments as JsonRecord[]) : [];
+  return attachments.map((attachment, index) => ({
+    id: stringValue(attachment.id, `${bidId}:attachment:${index + 1}`),
+    bidId,
+    name: stringValue(attachment.name, `Attachment ${index + 1}`),
+    url: stringValue(attachment.url),
+    originalUrl: optionalString(attachment.original_url),
+    storagePath: optionalString(attachment.storage_path),
+    byteSize: optionalNumber(attachment.byte_size),
+    contentType: optionalString(attachment.content_type),
+    checksumSha256: optionalString(attachment.checksum_sha256),
+    fetchedAt: optionalString(attachment.fetched_at),
+    archiveStatus: stringValue(attachment.archive_status, "not_archived"),
+    archiveError: optionalString(attachment.archive_error),
+    sizeLabel: optionalString(attachment.size_label),
+    mimeType: optionalString(attachment.mime_type),
+    sortOrder: optionalNumber(attachment.sort_order) ?? index,
+    createdAt: stringValue(attachment.created_at, fallbackTimestamp),
+  }));
+}
+
+/**
+ * SQLite twin of mysql-json-importer.ts's replaceAttachments: DELETE+INSERT per bid so a bid's
+ * persisted attachment set always matches the latest crawl (an attachment removed upstream must
+ * disappear on re-import, not accumulate alongside the new set). This only persists whatever
+ * archive metadata the JSON payload already carries -- attachment DOWNLOADING/archiving (the
+ * crawler's `--archive-documents` path) is out of scope here and stays deferred to a later
+ * phase.
+ */
+function replaceAttachments(db: AppDatabase, row: JsonRecord, bidId: string, fallbackTimestamp: string) {
+  db.delete(bidAttachments).where(eq(bidAttachments.bidId, bidId)).run();
+
+  for (const attachmentRow of attachmentRowsForBid(row, bidId, fallbackTimestamp)) {
+    db.insert(bidAttachments).values(attachmentRow).run();
+  }
+}
+
 function upsertBid(db: AppDatabase, row: JsonRecord, fallbackTimestamp: string): "inserted" | "updated" {
   const id = normalizedBidId(row);
   const updateValues = bidUpdateValues(row, fallbackTimestamp);
@@ -130,11 +173,11 @@ function insertCrawlerLog(
 /**
  * SQLite twin of `importCrawlerJsonRunIntoMysql` (mysql-json-importer.ts) — the JSON task
  * contract's Drizzle-backed importer. Upserts every bid in the payload by `id`
- * (onConflictDoUpdate) and writes exactly one `crawler_logs` row per call, success or failure.
+ * (onConflictDoUpdate), replaces its `bid_attachments` (delete + re-insert from the payload),
+ * and writes exactly one `crawler_logs` row per call, success or failure.
  *
- * Unlike the MySQL twin, this does not replicate `bid_attachments` and does not reject a
- * successful run with zero bid rows — neither is part of this module's contract; see the task
- * report for the reasoning.
+ * Unlike the MySQL twin, this does not reject a successful run with zero bid rows — that is not
+ * part of this module's contract; see the task report for the reasoning.
  */
 export function importCrawlerJsonRunIntoSqlite(
   db: AppDatabase,
@@ -149,6 +192,7 @@ export function importCrawlerJsonRunIntoSqlite(
     const status = upsertBid(db, row, payload.startedAt);
     if (status === "inserted") insertedCount += 1;
     else updatedCount += 1;
+    replaceAttachments(db, row, normalizedBidId(row), payload.startedAt);
   }
 
   insertCrawlerLog(db, payload, {
