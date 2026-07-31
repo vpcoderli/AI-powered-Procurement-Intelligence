@@ -1,0 +1,24 @@
+{
+  "success": 1,
+  "message": "Success",
+  "payload": {
+    "projects": {
+      "300001": {
+        "ProjectID": "300001",
+        "PrivateProjectID": "abc123def456",
+        "ReferenceID": "RFP-2026-042",
+        "ProjectName": "Louisville Metro Road Resurfacing Program 2026",
+        "DateClose": "2026-08-15 16:00:00",
+        "DepartmentID": "20100"
+      },
+      "300002": {
+        "ProjectID": "300002",
+        "PrivateProjectID": "xyz789ghi012",
+        "ReferenceID": "IFB-2026-088",
+        "ProjectName": "Emergency Vehicle Fleet Maintenance Services",
+        "DateClose": "2026-09-01 14:00:00",
+        "DepartmentID": "20200"
+      }
+    }
+  }
+}

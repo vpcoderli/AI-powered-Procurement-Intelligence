@@ -5,6 +5,7 @@
 察觉哪些源没有在运行。
 """
 
+from apsi_crawler.spiders.bonfire import fetch_bonfire_opportunities
 from apsi_crawler.spiders.ca_caleprocure import fetch_ca_caleprocure_opportunities
 from apsi_crawler.spiders.co_bidnet import fetch_bidnet_opportunities
 from apsi_crawler.spiders.fl_mfmp import fetch_fl_mfmp_opportunities
@@ -36,10 +37,11 @@ def fetch_bidnet_platform(source, query=None, limit=25, **kwargs):
     return fetch_bidnet_opportunities(source, url, query=query, limit=limit, **kwargs)
 
 
-# 商业平台:一个适配器服务 N 个租户。阶段 3 在此追加 bonfire / ionwave 等。
+# 商业平台:一个适配器服务 N 个租户。阶段 2a 追加 bonfire;ionwave 等仍待办。
 PLATFORM_ADAPTERS = {
     "bidnet": fetch_bidnet_platform,
     "generic": fetch_generic_state_opportunities,
+    "bonfire": fetch_bonfire_opportunities,  # Phase 2a
 }
 
 # 自建门户:一源一适配器,仅大型行政区值得。
