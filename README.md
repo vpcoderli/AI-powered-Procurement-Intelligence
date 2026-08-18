@@ -40,7 +40,7 @@ APSi GovBid 是一个致力于帮助供应商（特别是中小企业）高效�
 
 本项目前端和本地后端采用现代 Web 技术栈构建：
 
-- **框架**: [Next.js 15](https://nextjs.org/) (App Router) + React 19
+- **框架**: [Next.js 16](https://nextjs.org/) (App Router, 固定版本 16.2.6) + React 19
 - **样式**: Tailwind CSS v4 + 极简主义设计规范
 - **组件库**: [shadcn/ui](https://ui.shadcn.com/) (基于 Radix UI)
 - **图标**: Lucide React
@@ -53,7 +53,7 @@ APSi GovBid 是一个致力于帮助供应商（特别是中小企业）高效�
 
 ### 环境要求
 
-- Node.js 18+ 
+- Node.js 20+（CI 与 `frontend/Dockerfile` 均使用 Node 20）
 - npm 或 pnpm 或 yarn
 
 ### 安装与运行
@@ -81,10 +81,16 @@ APSi GovBid 是一个致力于帮助供应商（特别是中小企业）高效�
 frontend/
 ├── src/
 │   ├── app/               # Next.js App Router 页面和布局
+│   │   └── api/           # 服务端 API routes（所有数据访问的唯一入口）
+│   ├── server/            # 仅服务端代码：DB 查询、认证、计费、通知、爬虫编排、
+│   │                      #   意向/响应工作区、报价、风控、来源治理等业务域
 │   ├── components/        # React 组件 (包含 UI 基础组件和业务组件)
 │   ├── context/           # 全局状态管理 (如 SavedBidsContext)
-│   ├── lib/               # 工具函数、Mock 数据、i18n 字典
+│   ├── lib/               # 工具函数、类型定义、i18n 字典 (en/zh)
 │   └── hooks/             # 自定义 React Hooks
+├── scripts/               # 迁移、seed、三个 worker、质量门禁与运维脚本
+├── drizzle/               # Drizzle 迁移文件
+├── data/                  # 本地 SQLite 数据库与本地对象存储
 ├── public/                # 静态资源
 └── package.json           # 项目依赖和脚本
 ```
