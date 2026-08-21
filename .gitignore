@@ -1,5 +1,8 @@
 # Local operations evidence and release dry-run artifacts.
 ops-evidence/
 
+# Stray tool caches at the repo root (real dependencies live in frontend/node_modules).
+node_modules/
+
 # Subagent-driven development scratch (ledger, briefs, review packages).
 .superpowers/

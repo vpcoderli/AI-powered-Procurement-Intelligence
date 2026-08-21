@@ -83,6 +83,7 @@ import {
 } from "@/lib/api/admin";
 import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlements";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import { JurisdictionBatchRunPanel } from "@/components/admin/JurisdictionBatchRunPanel";
 import { stateCrawlerSourceIdForAdminSource } from "@/lib/state-crawler-sources";
 
 type SectionLoadStatus = "loading" | "error" | "ready";
@@ -383,7 +384,12 @@ function displayStatusTone(status: AdminBidQaDisplayStatus) {
 }
 
 function stateCrawlerSourceIdFor(source: AdminDataSource) {
-  return source.crawlerSourceId ?? stateCrawlerSourceIdForAdminSource(source);
+  // County/city/special-district registry rows have no legacy per-state crawler metadata;
+  // since the data_sources migration they run through /api/crawler/state/run by their own row
+  // id (the route resolves every non-federal data_sources id — see listAllSources).
+  const subStateSourceId =
+    source.issuerType !== "state" && source.issuerType !== "federal" ? source.id : null;
+  return source.crawlerSourceId ?? stateCrawlerSourceIdForAdminSource(source) ?? subStateSourceId;
 }
 
 function formatDate(value: string | null) {
@@ -3719,6 +3725,16 @@ export default function AdminPage() {
               {t("admin.sources")}
             </div>
           </div>
+          {/* No onCompleted → load(): a full section refresh flips dataSources to "loading",
+              unmounting this panel and wiping the per-source batch report the admin is reading.
+              The sources table refreshes via the header Refresh button instead. */}
+          {canRunOperations && (
+            <JurisdictionBatchRunPanel
+              sources={allSources}
+              crawlerSourceIdFor={stateCrawlerSourceIdFor}
+              disabled={isRunning || runningSourceId !== null}
+            />
+          )}
           <div className="border-b border-slate-100 px-4 py-3">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-medium text-slate-600">{t("admin.sourceHealthClassificationFilter")}</span>

@@ -9,5 +9,6 @@
     "base_url": "https://caleprocure.ca.gov"
   },
   "limit": 25,
-  "query": null
+  "query": null,
+  "date_range": null
 }

@@ -471,6 +471,29 @@ export async function runMysqlMigrations(pool: Pool = createMysqlPool()): Promis
     }
   }
 
+  // Fix columns that were originally created as LONGTEXT but now need to be indexed.
+  // MySQL cannot index LONGTEXT without a prefix length, so narrow them to VARCHAR(191) first.
+  for (const indexMigration of mysqlIndexMigrations) {
+    for (const column of indexMigration.columns) {
+      assertMysqlIdentifier(indexMigration.tableName);
+      assertMysqlIdentifier(column);
+      try {
+        const [rows] = await pool.query(
+          `SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+          [indexMigration.tableName, column],
+        );
+        const dataType = Array.isArray(rows) && rows.length > 0 ? String((rows[0] as Record<string, unknown>).DATA_TYPE).toLowerCase() : "";
+        if (dataType === "longtext" || dataType === "text" || dataType === "mediumtext") {
+          await pool.query(`ALTER TABLE ${indexMigration.tableName} MODIFY COLUMN ${column} VARCHAR(191) NOT NULL`);
+          appliedStatements += 1;
+        }
+      } catch {
+        // Column may not exist yet on a fresh database — the index migration will still work
+        // because mysqlMigrationStatements already sized the column to VARCHAR(191).
+      }
+    }
+  }
+
   // Runs after the column migrations above so the indexed columns are guaranteed to exist,
   // whether this is a brand-new database (columns came from mysqlMigrationStatements) or an
   // existing one (columns just got added by the loop above).

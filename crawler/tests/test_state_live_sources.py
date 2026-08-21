@@ -133,10 +133,11 @@ def test_registry_reports_unsupported_live_state_sources(monkeypatch):
 
 
 def test_fetch_ny_contract_reporter_opportunities_normalizes_live_response():
-    fixture_path = FIXTURES_DIR / "ny_contract_reporter_live_response.json"
-    with fixture_path.open() as fixture:
-        payload = json.load(fixture)
-    session = FakeSession(FakeResponse(payload=payload))
+    fixture_path = FIXTURES_DIR / "ny_ads_search_live_response.html"
+    html = fixture_path.read_text(encoding="utf-8")
+    session = FakeSession(
+        FakeResponse(text=html, headers={"Content-Type": "text/html; charset=utf-8"})
+    )
 
     bids = fetch_ny_contract_reporter_opportunities(
         get_source("ny_contract_reporter"),
@@ -146,24 +147,31 @@ def test_fetch_ny_contract_reporter_opportunities_normalizes_live_response():
         timeout=10,
     )
 
-    assert session.calls[0]["url"] == "https://www.nyscr.ny.gov/home/contracts"
-    assert session.calls[0]["params"] == {"query": "records", "limit": 5}
+    assert session.calls[0]["url"] == "https://www.nyscr.ny.gov/Ads/Search"
+    assert session.calls[0]["params"] == {"Top": 5, "Skip": 0, "Sort": "-DateIssued"}
     assert session.calls[0]["timeout"] == 10
-    assert len(bids) == 1
+    assert len(bids) == 2
     bid = bids[0]
-    assert bid["dedupe_key"] == "ny_contract_reporter:NYSCR-LIVE-2026-310"
-    assert bid["title"] == "Digital records archive"
-    assert bid["issuer_name"] == "New York State Archives"
+    assert bid["dedupe_key"] == "ny_contract_reporter:2137788"
+    assert bid["title"] == "ABB Supplies & Repair of Parts"
+    assert bid["issuer_name"] == "MTA - Metro-North Railroad"
     assert bid["issuer_type"] == "state"
     assert bid["state_code"] == "NY"
-    assert (
-        bid["source_url"]
-        == "https://www.nyscr.ny.gov/adsOpen.cfm?ID=NYSCR-LIVE-2026-310"
+    assert bid["published_date"] == "8/20/2026"
+    assert bid["deadline_date"] == "9/10/2026"
+    assert bid["original_category"] == "Transportation, Bus, Rail, Marine & Aviation"
+    assert bid["source_url"] == "https://www.nyscr.ny.gov/Ads/Details/2137788"
+    assert bids[1]["dedupe_key"] == "ny_contract_reporter:2137875"
+    assert bids[1]["issuer_name"] == "Unified Court System, NYS"
+
+
+def test_fetch_ny_contract_reporter_opportunities_raises_when_page_has_no_items():
+    session = FakeSession(
+        FakeResponse(
+            text="<html><body><div class='maintenance'>No listings markup</div></body></html>",
+            headers={"Content-Type": "text/html; charset=utf-8"},
+        )
     )
-
-
-def test_fetch_ny_contract_reporter_opportunities_raises_on_unexpected_payload_shape():
-    session = FakeSession(FakeResponse(payload={"error": "changed"}))
 
     with pytest.raises(NyContractReporterError) as error:
         fetch_ny_contract_reporter_opportunities(
@@ -175,27 +183,36 @@ def test_fetch_ny_contract_reporter_opportunities_raises_on_unexpected_payload_s
         )
 
     assert str(error.value) == (
-        "NY Contract Reporter response did not contain opportunities or results"
+        "NY Contract Reporter response did not contain opportunities"
     )
 
 
-def test_fetch_ny_contract_reporter_opportunities_raises_when_record_is_not_object():
-    session = FakeSession(FakeResponse(payload={"opportunities": [None]}))
+def test_fetch_ny_contract_reporter_opportunities_raises_when_record_is_not_object(tmp_path):
+    fixture = tmp_path / "ny_records.json"
+    fixture.write_text(json.dumps({"opportunities": [None]}))
 
     with pytest.raises(NyContractReporterError) as error:
         fetch_ny_contract_reporter_opportunities(
             get_source("ny_contract_reporter"),
             query="records",
             limit=5,
-            session=session,
-            timeout=10,
+            fixture_json=str(fixture),
         )
 
     assert str(error.value) == "NY Contract Reporter record was not an object"
 
 
 def test_fetch_ny_contract_reporter_opportunities_raises_when_record_missing_source_id():
-    session = FakeSession(FakeResponse(payload={"opportunities": [{"title": "Records"}]}))
+    html = (
+        '<html><body>'
+        '<div class="opp-list-item" data-ad-id="">'
+        '<div>Title:</div><div>Missing id opportunity</div>'
+        '</div>'
+        '</body></html>'
+    )
+    session = FakeSession(
+        FakeResponse(text=html, headers={"Content-Type": "text/html; charset=utf-8"})
+    )
 
     with pytest.raises(NyContractReporterError) as error:
         fetch_ny_contract_reporter_opportunities(
@@ -209,10 +226,11 @@ def test_fetch_ny_contract_reporter_opportunities_raises_when_record_missing_sou
     assert str(error.value) == "NY Contract Reporter record is missing source id"
 
 
-def test_fetch_ny_contract_reporter_opportunities_preserves_normalized_aliases():
-    session = FakeSession(
-        FakeResponse(
-            payload=[
+def test_fetch_ny_contract_reporter_opportunities_preserves_normalized_aliases(tmp_path):
+    fixture = tmp_path / "ny_aliases.json"
+    fixture.write_text(
+        json.dumps(
+            [
                 {
                     "source_bid_id": "NY-NORMALIZED-001",
                     "title": "Normalized records services",
@@ -229,8 +247,7 @@ def test_fetch_ny_contract_reporter_opportunities_preserves_normalized_aliases()
         get_source("ny_contract_reporter"),
         query="records",
         limit=5,
-        session=session,
-        timeout=10,
+        fixture_json=str(fixture),
     )
 
     assert len(bids) == 1
@@ -243,10 +260,11 @@ def test_fetch_ny_contract_reporter_opportunities_preserves_normalized_aliases()
     assert bid["issuer_name"] == "New York State Archives"
 
 
-def test_fetch_ny_contract_reporter_opportunities_uses_ny_title_and_category_precedence():
-    session = FakeSession(
-        FakeResponse(
-            payload=[
+def test_fetch_ny_contract_reporter_opportunities_uses_ny_title_and_category_precedence(tmp_path):
+    fixture = tmp_path / "ny_precedence.json"
+    fixture.write_text(
+        json.dumps(
+            [
                 {
                     "source_bid_id": "NY-ALIAS-001",
                     "title": "Title wins",
@@ -276,8 +294,7 @@ def test_fetch_ny_contract_reporter_opportunities_uses_ny_title_and_category_pre
         get_source("ny_contract_reporter"),
         query="records",
         limit=5,
-        session=session,
-        timeout=10,
+        fixture_json=str(fixture),
     )
 
     assert bids[0]["title"] == "Title wins"
@@ -305,8 +322,13 @@ def test_fetch_ny_contract_reporter_opportunities_raises_on_http_error():
     )
 
 
-def test_fetch_ny_contract_reporter_opportunities_raises_on_invalid_http_json():
-    session = FakeSession(FakeResponse(json_error=ValueError("not json")))
+def test_fetch_ny_contract_reporter_opportunities_rejects_non_listing_body():
+    session = FakeSession(
+        FakeResponse(
+            text='{"unexpected": "json body instead of the listing page"}',
+            headers={"Content-Type": "application/json"},
+        )
+    )
 
     with pytest.raises(NyContractReporterError) as error:
         fetch_ny_contract_reporter_opportunities(
@@ -317,7 +339,9 @@ def test_fetch_ny_contract_reporter_opportunities_raises_on_invalid_http_json():
             timeout=10,
         )
 
-    assert str(error.value) == "NY Contract Reporter response was not valid JSON"
+    assert str(error.value) == (
+        "NY Contract Reporter response did not contain opportunities"
+    )
 
 
 def test_fetch_ny_contract_reporter_opportunities_wraps_request_errors():
@@ -483,17 +507,29 @@ def test_fetch_tx_esbd_opportunities_normalizes_live_response():
         timeout=10,
     )
 
-    assert session.calls[0]["url"] == "https://www.txsmartbuy.gov/esbd"
-    assert session.calls[0]["params"] == {"query": "data", "limit": 5}
+    assert session.calls[0]["url"] == (
+        "https://www.txsmartbuy.gov/app/extensions/CPA/CPAMain/1.0.0/services/ESBD.Service.ss"
+        "?c=852252&n=2"
+    )
+    assert session.calls[0]["json"] == {
+        "status": "1",
+        "solicitations": "solicitations",
+        "page": 1,
+        "keyword": "data",
+    }
     assert session.calls[0]["timeout"] == 10
-    assert len(bids) == 1
+    assert len(bids) == 2
     bid = bids[0]
-    assert bid["dedupe_key"] == "tx_esbd:ESBD-LIVE-2026-77"
-    assert bid["title"] == "Statewide data catalog services"
-    assert bid["issuer_name"] == "Texas Department of Information Resources"
+    assert bid["dedupe_key"] == "tx_esbd:HHS0017709"
+    assert bid["title"] == "HHS0017709 Custom Wheelchairs for Clients"
+    assert bid["issuer_name"] == "Health & Human Services Commission - 529"
     assert bid["issuer_type"] == "state"
     assert bid["state_code"] == "TX"
-    assert bid["source_url"] == "https://www.txsmartbuy.gov/esbd/ESBD-LIVE-2026-77"
+    assert bid["published_date"] == "8/20/2026"
+    assert bid["deadline_date"] == "9/11/2026 10:30 AM"
+    assert bid["source_url"] == "https://www.txsmartbuy.gov/esbd/552036"
+    assert bids[1]["dedupe_key"] == "tx_esbd:TAMUS-RFP-02-3470"
+    assert bids[1]["source_url"] == "https://www.txsmartbuy.gov/esbd/552035"
 
 
 def test_fetch_tx_esbd_opportunities_raises_on_unexpected_payload_shape():
@@ -509,7 +545,7 @@ def test_fetch_tx_esbd_opportunities_raises_on_unexpected_payload_shape():
         )
 
     assert str(error.value) == (
-        "Texas ESBD response did not contain opportunities or results"
+        "Texas ESBD response did not contain solicitation lines"
     )
 
 
@@ -877,8 +913,8 @@ def test_fetch_tx_esbd_opportunities_replays_adapter_fixture_json():
         fixture_json=str(FIXTURES_DIR / "tx_esbd_live_response.json"),
     )
 
-    assert len(bids) == 1
-    assert bids[0]["dedupe_key"] == "tx_esbd:ESBD-LIVE-2026-77"
+    assert len(bids) == 2
+    assert bids[0]["dedupe_key"] == "tx_esbd:HHS0017709"
 
 
 def test_fetch_fl_mfmp_opportunities_normalizes_live_response():

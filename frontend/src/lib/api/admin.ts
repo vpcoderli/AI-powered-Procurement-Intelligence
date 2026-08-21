@@ -497,24 +497,65 @@ export async function reconcileAdminSubscriptions(input: { pastDueGraceDays?: nu
   return parseResponse<AdminSubscriptionReconcileResponse>(response);
 }
 
-export async function runSamGovCrawlerNow() {
-  const response = await fetch("/api/crawler/sam-gov/run", { method: "POST" });
-
-  return parseResponse<unknown>(response);
+export interface CrawlerRunWindowOptions {
+  /** ISO yyyy-mm-dd published-date window (inclusive), passed through to the crawler. */
+  postedFrom?: string;
+  postedTo?: string;
 }
 
-export async function runStateCrawlersNow(sourceIds?: string[]) {
-  const hasSelectedSources = sourceIds && sourceIds.length > 0;
+/** Per-source result entry from /api/crawler/state/run (see orchestrator.ts's union). */
+export interface StateCrawlerRunResultEntry {
+  source: string;
+  ok: boolean;
+  status: string;
+  reason?: string;
+  runner?: {
+    fetchedCount?: number;
+    errorCode?: string | null;
+    payload?: { metadata?: { dateFilter?: { kept?: number; dropped?: number; unparsed?: number } } } | null;
+  };
+}
+
+export interface StateCrawlerRunResponse {
+  ok: boolean;
+  status: string;
+  results: StateCrawlerRunResultEntry[];
+  errors?: Array<{ source: string; code: string; message: string }>;
+}
+
+export async function runSamGovCrawlerNow(options: CrawlerRunWindowOptions = {}) {
+  const hasBody = Boolean(options.postedFrom || options.postedTo);
   const response = await fetch(
-    "/api/crawler/state/run",
-    hasSelectedSources
+    "/api/crawler/sam-gov/run",
+    hasBody
       ? {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sources: sourceIds }),
+          body: JSON.stringify(options),
         }
       : { method: "POST" },
   );
 
   return parseResponse<unknown>(response);
+}
+
+export async function runStateCrawlersNow(sourceIds?: string[], options: CrawlerRunWindowOptions = {}) {
+  const hasSelectedSources = sourceIds && sourceIds.length > 0;
+  const hasWindow = Boolean(options.postedFrom || options.postedTo);
+  const response = await fetch(
+    "/api/crawler/state/run",
+    hasSelectedSources || hasWindow
+      ? {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...(hasSelectedSources ? { sources: sourceIds } : {}),
+            ...(options.postedFrom ? { postedFrom: options.postedFrom } : {}),
+            ...(options.postedTo ? { postedTo: options.postedTo } : {}),
+          }),
+        }
+      : { method: "POST" },
+  );
+
+  return parseResponse<StateCrawlerRunResponse>(response);
 }

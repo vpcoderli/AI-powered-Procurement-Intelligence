@@ -55,20 +55,20 @@ interface StateCrawlerRunRouteDependencies {
 /**
  * Resolves run candidates from `data_sources` the same way the configured (scheduled) runner
  * does, via `listCrawlableSources`/`listCrawlableSourcesFromMysql` — which already applies the
- * NULL-tolerant governance gate (see source-registry.ts). Narrowed to `issuerType === "state"`
- * because this route is specifically the state-crawler trigger; SAM.gov has its own sibling
- * route (`/api/crawler/sam-gov/run`) and its own runner. Used only for the "no ids requested"
- * (run everything) path below.
+ * NULL-tolerant governance gate (see source-registry.ts). Every fetch-task-runnable issuer
+ * type is included (state, county, city, special_district); only `federal` is excluded,
+ * because SAM.gov has its own sibling route (`/api/crawler/sam-gov/run`) and its own runner.
+ * Used only for the "no ids requested" (run everything) path below.
  */
 async function defaultListSources(database: AppDatabase, mysql?: MysqlCrawlerLockStore): Promise<CrawlableSource[]> {
   const sources = mysql ? await listCrawlableSourcesFromMysql(mysql) : listCrawlableSources(database);
-  return sources.filter((source) => source.issuerType === "state");
+  return sources.filter((source) => source.issuerType !== "federal");
 }
 
 /**
- * Same shape as defaultListSources but WITHOUT the governance gate — every `data_sources` state
- * row, approved or not. Used only to resolve explicitly-requested source ids: a blocked or
- * needs_review source must still be *found* here so it gets dispatched through
+ * Same shape as defaultListSources but WITHOUT the governance gate — every non-federal
+ * `data_sources` row, approved or not. Used only to resolve explicitly-requested source ids: a
+ * blocked or needs_review source must still be *found* here so it gets dispatched through
  * runCrawlerSourceOnce and comes back with its real governance "blocked" result, instead of
  * being treated as "not requested" — which used to silently fall back to running every other
  * approved source instead (the bug this route was rewritten to fix).
@@ -78,7 +78,7 @@ async function defaultListAllSources(
   mysql?: MysqlCrawlerLockStore,
 ): Promise<CrawlableSource[]> {
   const sources = mysql ? await listAllSourcesFromMysql(mysql) : listAllSources(database);
-  return sources.filter((source) => source.issuerType === "state");
+  return sources.filter((source) => source.issuerType !== "federal");
 }
 
 function tokenFromRequest(request: Request) {
@@ -111,6 +111,20 @@ interface ParsedRequestBody {
   requestedIds: string[] | null;
   query?: string;
   limit?: number;
+  postedFrom?: string;
+  postedTo?: string;
+}
+
+export class InvalidDateRangeError extends Error {}
+
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function parseIsoDateField(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || !ISO_DATE_PATTERN.test(value) || Number.isNaN(Date.parse(value))) {
+    throw new InvalidDateRangeError(`${field} must be an ISO date (yyyy-mm-dd).`);
+  }
+  return value;
 }
 
 async function parseRequestBody(request: Request): Promise<ParsedRequestBody> {
@@ -123,16 +137,26 @@ async function parseRequestBody(request: Request): Promise<ParsedRequestBody> {
     sources?: unknown;
     query?: unknown;
     limit?: unknown;
+    postedFrom?: unknown;
+    postedTo?: unknown;
   };
 
   const requestedIds = Array.isArray(body.sources)
     ? body.sources.filter((source): source is string => typeof source === "string")
     : null;
 
+  const postedFrom = parseIsoDateField(body.postedFrom, "postedFrom");
+  const postedTo = parseIsoDateField(body.postedTo, "postedTo");
+  if (postedFrom && postedTo && postedFrom > postedTo) {
+    throw new InvalidDateRangeError("postedFrom must not be after postedTo.");
+  }
+
   return {
     requestedIds: requestedIds && requestedIds.length > 0 ? requestedIds : null,
     ...(typeof body.query === "string" && body.query ? { query: body.query } : {}),
     ...(typeof body.limit === "number" ? { limit: body.limit } : {}),
+    ...(postedFrom ? { postedFrom } : {}),
+    ...(postedTo ? { postedTo } : {}),
   };
 }
 
@@ -166,8 +190,7 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
 
   async function dispatch(
     source: CrawlableSource,
-    query: string | undefined,
-    limit: number | undefined,
+    body: ParsedRequestBody,
     now: Date,
   ): Promise<RunCrawlerSourceOnceResult> {
     return dependencies.runCrawlerSourceOnce(dependencies.database, {
@@ -182,8 +205,10 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
       runner: async () => {
         const taskResult = await runCrawlTask(source, {
           taskId: `tsk_${source.id}_${now.getTime()}`,
-          limit,
-          query: query ?? null,
+          limit: body.limit,
+          query: body.query ?? null,
+          postedFrom: body.postedFrom ?? null,
+          postedTo: body.postedTo ?? null,
         });
         return persistCrawlTaskResult(dependencies.database, dependencies.mysql, source, taskResult);
       },
@@ -205,7 +230,20 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
       );
     }
 
-    const { requestedIds, query, limit } = await parseRequestBody(request);
+    let parsedBody: ParsedRequestBody;
+    try {
+      parsedBody = await parseRequestBody(request);
+    } catch (error) {
+      if (error instanceof InvalidDateRangeError) {
+        return NextResponse.json(
+          { error: { code: "INVALID_DATE_RANGE", message: error.message } },
+          { status: 400 },
+        );
+      }
+      throw error;
+    }
+
+    const { requestedIds } = parsedBody;
     const now = dependencies.now();
     const results: RunCrawlerSourceOnceResult[] = [];
     const errors: UnknownSourceError[] = [];
@@ -215,10 +253,10 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
       // before.
       const allSources = await dependencies.listSources(dependencies.database, dependencies.mysql);
       for (const source of allSources) {
-        results.push(await dispatch(source, query, limit, now));
+        results.push(await dispatch(source, parsedBody, now));
       }
     } else {
-      // Specific ids requested: resolve against EVERY known state source, not just the
+      // Specific ids requested: resolve against EVERY known non-federal source, not just the
       // governance-filtered list, so a blocked/needs_review id is still found and dispatched
       // (and reported "blocked" by the orchestrator) instead of being dropped and triggering a
       // run-all fallback.
@@ -235,7 +273,7 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
           });
           continue;
         }
-        results.push(await dispatch(source, query, limit, now));
+        results.push(await dispatch(source, parsedBody, now));
       }
     }
 

@@ -11,6 +11,7 @@ from uuid import uuid4
 from apsi_crawler.adapters.registry import AdapterNotFoundError, resolve_adapter
 from apsi_crawler.adapters.task import task_source_from_payload
 from apsi_crawler.config import DEFAULT_SOURCE
+from apsi_crawler.date_window import apply_date_window
 from apsi_crawler.live_validation import (
     BETA_DEDICATED_STATE_SOURCES,
     validate_state_live_sources,
@@ -303,6 +304,7 @@ def fetch_task(payload):
     source_id = payload.get("source_id")
     limit = int(payload.get("limit") or 25)
     query = payload.get("query")
+    date_range = payload.get("date_range")
     metadata = {"mode": "live", "query": query, "limit": limit, "task_id": task_id}
 
     try:
@@ -311,7 +313,12 @@ def fetch_task(payload):
         metadata["adapter"] = getattr(adapter, "__name__", "unknown")
 
         bids = adapter(source, query=query, limit=limit)
+        # Liveness check runs BEFORE the window filter: an adapter that fetched real
+        # rows must count as a live source even when the window then drops them all.
         _require_non_empty_bids(bids, source.id)
+        bids, date_filter_stats = apply_date_window(bids, date_range)
+        if date_filter_stats is not None:
+            metadata["dateFilter"] = date_filter_stats
 
         finished_at = now_iso()
         duration_ms = int((perf_counter() - started) * 1000)

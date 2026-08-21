@@ -1,14 +1,49 @@
 {
-  "opportunities": [
+  "agencies": [
     {
-      "solicitationId": "ESBD-LIVE-2026-77",
-      "solicitationTitle": "Statewide data catalog services",
-      "description": "Implement a statewide data catalog.",
-      "classItem": "Technology",
-      "postedDate": "2026-05-02",
-      "dueDate": "2026-06-12T14:00:00-05:00",
-      "agency": "Texas Department of Information Resources",
-      "link": "https://www.txsmartbuy.gov/esbd/ESBD-LIVE-2026-77"
+      "agencyname": "1st Court Of Appeals - 221",
+      "agencyId": "7942"
     }
-  ]
+  ],
+  "lines": [
+    {
+      "internalid": "552036",
+      "title": "HHS0017709 Custom Wheelchairs for Clients",
+      "solicitationId": "HHS0017709",
+      "responseDue": "9/11/2026",
+      "responseTime": "10:30 AM",
+      "agencyNumber": "529",
+      "agencyName": "Health & Human Services Commission - 529",
+      "status": "1",
+      "statusName": "Posted",
+      "postingDate": "8/20/2026",
+      "cancelledDate": "",
+      "created": "8/20/2026 7:41 pm",
+      "lastModified": "8/20/2026 8:11 pm",
+      "nigpCodes": "47080-Wheelchairs (Including Mobile Treatment Chairs);\n47081-Wheelchair Lifting Devices And Accessories (Other Than Vehicle Type);\n55790-Wheelchair Lifts And Accessories;\n94874-Professional Medical Services (Including Physicians, Pharmacists, And All Specialties);\n96944-Professional Services, Subcontractor and Contractor &gt;$25,000;",
+      "repostURL": "",
+      "url": ""
+    },
+    {
+      "internalid": "552035",
+      "title": "CMAR RFP - Cyclotron Institute Expansion - College Station, Texas",
+      "solicitationId": "TAMUS-RFP-02-3470",
+      "responseDue": "9/17/2026",
+      "responseTime": "2:00 PM",
+      "agencyNumber": "710",
+      "agencyName": "Texas A&M University System - 710",
+      "status": "1",
+      "statusName": "Posted",
+      "postingDate": "8/20/2026",
+      "cancelledDate": "",
+      "created": "8/20/2026 4:58 pm",
+      "lastModified": "8/20/2026 5:51 pm",
+      "nigpCodes": "90903-Administration Of Contracts: Summary Of Work, Quality Control, Project Closeout, Etc.;\n91148-C.I.P., Preconstruction Services;\n91151-C.I.P., Project Management and Administration;\n95826-Construction Management Services;\n90927-Building Construction, Educational;",
+      "repostURL": "",
+      "url": ""
+    }
+  ],
+  "page": 1,
+  "recordsPerPage": 24,
+  "totalRecordsFound": 654
 }

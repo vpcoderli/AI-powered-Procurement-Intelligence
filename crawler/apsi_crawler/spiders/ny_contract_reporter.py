@@ -1,18 +1,162 @@
 import json
+from html.parser import HTMLParser
 
 import requests
 
 from apsi_crawler.normalizers.state_bids import normalize_state_opportunity
 
 
-NY_CONTRACT_REPORTER_SEARCH_URL = "https://www.nyscr.ny.gov/home/contracts"
+# nyscr.ny.gov renders the public opportunity list server-side; there is no public
+# JSON API. /Ads/Search accepts plain GET query params (Top = page size 5/10/25/50,
+# Skip = offset, Sort). Ad detail pages require a free account, so source_url points
+# at the canonical /Ads/Details/<id> address, which anonymous users reach via login.
+NY_CONTRACT_REPORTER_SEARCH_URL = "https://www.nyscr.ny.gov/Ads/Search"
+NY_CONTRACT_REPORTER_DETAIL_URL_TEMPLATE = "https://www.nyscr.ny.gov/Ads/Details/{ad_id}"
+NY_CONTRACT_REPORTER_PAGE_SIZES = (5, 10, 25, 50)
+NY_CONTRACT_REPORTER_SORT = "-DateIssued"
+
+_FIELD_LABELS = frozenset(
+    (
+        "Title:",
+        "CR#:",
+        "Agency:",
+        "Division:",
+        "Issue date:",
+        "Due date:",
+        "Ad end date:",
+        "Category:",
+        "Location:",
+        "Ad type:",
+        "Note:",
+    )
+)
+_IGNORED_CHUNKS = frozenset(("Log in or sign up to view this opportunity",))
 
 
 class NyContractReporterError(Exception):
     pass
 
 
-def _records_from_payload(payload):
+def _normalize_space(value):
+    return " ".join(str(value or "").replace("\xa0", " ").split())
+
+
+class _NyAdsSearchParser(HTMLParser):
+    """Collects text chunks per `div.opp-list-item[data-ad-id]` listing card."""
+
+    def __init__(self):
+        super().__init__()
+        self.items = []
+        self._div_depth = 0
+        self._item_depth = None
+        self._current = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag != "div":
+            return
+        self._div_depth += 1
+        if self._current is not None:
+            return
+        attrs_dict = dict(attrs)
+        classes = (attrs_dict.get("class") or "").split()
+        if "opp-list-item" in classes:
+            self._current = {"ad_id": attrs_dict.get("data-ad-id"), "chunks": []}
+            self._item_depth = self._div_depth
+
+    def handle_endtag(self, tag):
+        if tag != "div":
+            return
+        if self._current is not None and self._div_depth == self._item_depth:
+            self.items.append(self._current)
+            self._current = None
+            self._item_depth = None
+        if self._div_depth > 0:
+            self._div_depth -= 1
+
+    def handle_data(self, data):
+        if self._current is None:
+            return
+        text = _normalize_space(data)
+        if text:
+            self._current["chunks"].append(text)
+
+
+def _fields_from_chunks(chunks):
+    fields = {}
+    label = None
+    values = []
+    for chunk in chunks:
+        if chunk in _FIELD_LABELS:
+            if label is not None and values:
+                fields[label] = " ".join(values)
+            label = chunk
+            values = []
+        elif chunk in _IGNORED_CHUNKS:
+            continue
+        elif label is not None:
+            values.append(chunk)
+    if label is not None and values:
+        fields[label] = " ".join(values)
+    return fields
+
+
+def _record_from_item(item):
+    fields = _fields_from_chunks(item["chunks"])
+    ad_id = _normalize_space(item.get("ad_id")) or None
+    source_bid_id = fields.get("CR#:") or ad_id
+    if not source_bid_id:
+        raise NyContractReporterError("NY Contract Reporter record is missing source id")
+
+    return {
+        "source_bid_id": source_bid_id,
+        "title": fields.get("Title:"),
+        "description": fields.get("Note:"),
+        "original_category": fields.get("Category:"),
+        "published_date": fields.get("Issue date:"),
+        "deadline_date": fields.get("Due date:") or fields.get("Ad end date:"),
+        "issuer_name": fields.get("Agency:"),
+        "source_url": NY_CONTRACT_REPORTER_DETAIL_URL_TEMPLATE.format(
+            ad_id=ad_id or source_bid_id
+        ),
+    }
+
+
+def _parse_search_html(html):
+    parser = _NyAdsSearchParser()
+    parser.feed(html)
+    return parser.items
+
+
+def _page_size_for_limit(limit):
+    for size in NY_CONTRACT_REPORTER_PAGE_SIZES:
+        if limit <= size:
+            return size
+    return NY_CONTRACT_REPORTER_PAGE_SIZES[-1]
+
+
+def _fetch_search_page(client, top, skip, timeout):
+    try:
+        response = client.get(
+            NY_CONTRACT_REPORTER_SEARCH_URL,
+            params={"Top": top, "Skip": skip, "Sort": NY_CONTRACT_REPORTER_SORT},
+            timeout=timeout,
+        )
+    except requests.RequestException as error:
+        raise NyContractReporterError(
+            f"NY Contract Reporter request failed: {error}"
+        ) from error
+
+    if response.status_code != 200:
+        raise NyContractReporterError(
+            "NY Contract Reporter request failed with status "
+            f"{response.status_code}: {response.text}"
+        )
+
+    return _parse_search_html(response.text)
+
+
+# Legacy JSON-record replay support for import-fixture and hermetic tests.
+def _records_from_json_payload(payload):
     if isinstance(payload, list):
         return payload
     if isinstance(payload, dict):
@@ -33,7 +177,7 @@ def _first_present(record, keys):
     return None
 
 
-def _normalize_record(record):
+def _normalize_json_record(record):
     if not isinstance(record, dict):
         raise NyContractReporterError("NY Contract Reporter record was not an object")
 
@@ -74,45 +218,50 @@ def fetch_ny_contract_reporter_opportunities(
     session=None,
     timeout=30,
     fixture_json=None,
+    fixture_html=None,
 ):
     limit_count = int(limit)
+
     if fixture_json:
         with open(fixture_json) as fixture:
             payload = json.load(fixture)
+        records = [
+            _normalize_json_record(record)
+            for record in _records_from_json_payload(payload)[:limit_count]
+        ]
+        return [normalize_state_opportunity(record, source) for record in records]
+
+    if fixture_html:
+        with open(fixture_html, encoding="utf-8") as fixture:
+            items = _parse_search_html(fixture.read())
+        if not items:
+            raise NyContractReporterError(
+                "NY Contract Reporter response did not contain opportunities"
+            )
     else:
         client = session or requests.Session()
         close_client = session is None
-        params = {"query": query or "", "limit": limit_count}
+        items = []
+        top = _page_size_for_limit(limit_count)
+        skip = 0
         try:
-            try:
-                response = client.get(
-                    NY_CONTRACT_REPORTER_SEARCH_URL,
-                    params=params,
-                    timeout=timeout,
-                )
-            except requests.RequestException as error:
-                raise NyContractReporterError(
-                    f"NY Contract Reporter request failed: {error}"
-                ) from error
-
-            if response.status_code != 200:
-                raise NyContractReporterError(
-                    "NY Contract Reporter request failed with status "
-                    f"{response.status_code}: {response.text}"
-                )
-
-            try:
-                payload = response.json()
-            except ValueError as error:
-                raise NyContractReporterError(
-                    "NY Contract Reporter response was not valid JSON"
-                ) from error
+            while len(items) < limit_count:
+                page_items = _fetch_search_page(client, top, skip, timeout)
+                if not page_items:
+                    if skip == 0:
+                        raise NyContractReporterError(
+                            "NY Contract Reporter response did not contain opportunities"
+                        )
+                    break
+                items.extend(page_items)
+                if len(page_items) < top:
+                    break
+                skip += top
         finally:
             if close_client:
                 client.close()
 
-    records = _records_from_payload(payload)[:limit_count]
     return [
-        normalize_state_opportunity(_normalize_record(record), source)
-        for record in records
+        normalize_state_opportunity(_record_from_item(item), source)
+        for item in items[:limit_count]
     ]

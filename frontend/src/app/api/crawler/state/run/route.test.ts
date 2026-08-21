@@ -448,6 +448,101 @@ describe("POST /api/crawler/state/run", () => {
       taskId: `tsk_il_bidbuy_${now.getTime()}`,
       limit: 9,
       query: "roads",
+      postedFrom: null,
+      postedTo: null,
+    });
+  });
+
+  describe("published-date window (jurisdiction batch run spec)", () => {
+    it("rejects a malformed postedFrom with 400 INVALID_DATE_RANGE before dispatching anything", async () => {
+      insertSource("il_bidbuy");
+      const POST = createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce });
+
+      const response = await POST(
+        new Request("http://localhost/api/crawler/state/run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sources: ["il_bidbuy"], postedFrom: "08/01/2026" }),
+        }),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(body.error.code).toBe("INVALID_DATE_RANGE");
+      expect(runCrawlerSourceOnce).not.toHaveBeenCalled();
+    });
+
+    it("rejects postedFrom after postedTo with 400 INVALID_DATE_RANGE", async () => {
+      insertSource("il_bidbuy");
+      const POST = createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce });
+
+      const response = await POST(
+        new Request("http://localhost/api/crawler/state/run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sources: ["il_bidbuy"], postedFrom: "2026-08-21", postedTo: "2026-08-01" }),
+        }),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(body.error.code).toBe("INVALID_DATE_RANGE");
+      expect(runCrawlerSourceOnce).not.toHaveBeenCalled();
+    });
+
+    it("passes the validated window through to runCrawlTask", async () => {
+      insertSource("il_bidbuy");
+      const now = new Date(NOW);
+      const POST = createStateCrawlerRunPost({
+        database: testDb.db,
+        now: () => now,
+        runCrawlerSourceOnce: (async (_database, options) => {
+          await options.runner();
+          return { ok: true, source: options.source, status: "success" };
+        }) as never,
+      });
+
+      await POST(
+        new Request("http://localhost/api/crawler/state/run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sources: ["il_bidbuy"], postedFrom: "2026-08-01", postedTo: "2026-08-21" }),
+        }),
+      );
+
+      expect(mockedRunCrawlTask).toHaveBeenCalledTimes(1);
+      const [, taskOptions] = mockedRunCrawlTask.mock.calls[0];
+      expect(taskOptions).toEqual({
+        taskId: `tsk_il_bidbuy_${now.getTime()}`,
+        limit: undefined,
+        query: null,
+        postedFrom: "2026-08-01",
+        postedTo: "2026-08-21",
+      });
+    });
+
+    it("resolves an explicitly requested county source (non-state jurisdiction) and dispatches it", async () => {
+      insertSource("tx_harris_county", {
+        issuerType: "county",
+        stateCode: "TX",
+        jurisdictionLevel: "county",
+        jurisdictionName: "Harris County",
+      });
+      const POST = createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce });
+
+      const response = await POST(
+        new Request("http://localhost/api/crawler/state/run", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ sources: ["tx_harris_county"] }),
+        }),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.errors).toBeUndefined();
+      expect(runCrawlerSourceOnce).toHaveBeenCalledTimes(1);
+      expect(runCrawlerSourceOnce.mock.calls[0][1].source).toBe("tx_harris_county");
     });
   });
 

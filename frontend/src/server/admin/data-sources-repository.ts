@@ -54,6 +54,8 @@ export interface AdminDataSource {
   baseUrl: string | null;
   isEnabled: boolean;
   cadence: string;
+  jurisdictionLevel: string | null;
+  jurisdictionName: string | null;
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
   consecutiveFailures: number;
@@ -541,6 +543,8 @@ function toAdminSource(
     baseUrl: row.baseUrl,
     isEnabled: row.isEnabled === 1,
     cadence: row.cadence,
+    jurisdictionLevel: row.jurisdictionLevel ?? null,
+    jurisdictionName: row.jurisdictionName ?? null,
     lastSuccessAt: row.lastSuccessAt,
     lastFailureAt: row.lastFailureAt,
     consecutiveFailures: row.consecutiveFailures,
@@ -616,6 +620,8 @@ function dataSourceSelectSql(where = "") {
       base_url AS baseUrl,
       is_enabled AS isEnabled,
       cadence,
+      jurisdiction_level AS jurisdictionLevel,
+      jurisdiction_name AS jurisdictionName,
       provider_family AS providerFamily,
       access_mode AS accessMode,
       source_type AS sourceType,

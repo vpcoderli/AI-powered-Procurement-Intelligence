@@ -40,6 +40,7 @@ def test_contract_carries_every_field_the_worker_needs():
         "fetch_config",
         "limit",
         "query",
+        "date_range",
     ):
         assert key in payload, f"contract fixture is missing {key}"
 

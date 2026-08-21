@@ -7,6 +7,11 @@ function crawlerDirectory() {
   return path.resolve(process.cwd(), "..", "crawler");
 }
 
+export interface CrawlTaskDateRange {
+  from: string | null;
+  to: string | null;
+}
+
 export interface CrawlTaskPayload {
   task_id: string;
   source_id: string;
@@ -17,12 +22,16 @@ export interface CrawlTaskPayload {
   fetch_config: Record<string, unknown>;
   limit: number;
   query: string | null;
+  /** Published-date window (ISO yyyy-mm-dd, inclusive). Python filters fail-open. */
+  date_range: CrawlTaskDateRange | null;
 }
 
 export interface CrawlTaskOptions {
   taskId: string;
   limit?: number;
   query?: string | null;
+  postedFrom?: string | null;
+  postedTo?: string | null;
 }
 
 export function buildCrawlTaskPayload(
@@ -34,6 +43,9 @@ export function buildCrawlTaskPayload(
     fetchConfig.base_url = source.baseUrl;
   }
 
+  const postedFrom = options.postedFrom ?? null;
+  const postedTo = options.postedTo ?? null;
+
   return {
     task_id: options.taskId,
     source_id: source.id,
@@ -44,6 +56,7 @@ export function buildCrawlTaskPayload(
     fetch_config: fetchConfig,
     limit: options.limit ?? 25,
     query: options.query ?? null,
+    date_range: postedFrom || postedTo ? { from: postedFrom, to: postedTo } : null,
   };
 }
 

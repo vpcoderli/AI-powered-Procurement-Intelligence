@@ -41,7 +41,26 @@ describe("buildCrawlTaskPayload", () => {
       fetch_config: { base_url: "https://caleprocure.ca.gov" },
       limit: 25,
       query: null,
+      date_range: null,
     });
+  });
+
+  it("carries a published-date window into date_range when options provide one", () => {
+    const payload = buildCrawlTaskPayload(source(), {
+      taskId: "tsk_win",
+      postedFrom: "2026-08-01",
+      postedTo: "2026-08-21",
+    });
+    expect(payload.date_range).toEqual({ from: "2026-08-01", to: "2026-08-21" });
+  });
+
+  it("supports open-ended windows (from-only and to-only)", () => {
+    expect(
+      buildCrawlTaskPayload(source(), { taskId: "tsk_from", postedFrom: "2026-08-01" }).date_range,
+    ).toEqual({ from: "2026-08-01", to: null });
+    expect(
+      buildCrawlTaskPayload(source(), { taskId: "tsk_to", postedTo: "2026-08-21" }).date_range,
+    ).toEqual({ from: null, to: "2026-08-21" });
   });
 
   it("defaults fetch_config.base_url from the source base URL when absent", () => {
