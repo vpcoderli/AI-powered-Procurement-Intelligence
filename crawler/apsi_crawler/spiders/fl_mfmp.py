@@ -127,7 +127,11 @@ def fetch_fl_mfmp_opportunities(
         payload = {
             "pageSize": limit_count,
             "type": [],
-            "status": [],
+            # The MFMP search API stopped treating an empty status filter as "all"
+            # (verified live 2026-08-21: status [] returns an empty list, status
+            # ["OPEN"] returns the open advertisements). Open solicitations are the
+            # only rows this aggregator ingests, so request them explicitly.
+            "status": ["OPEN"],
             "agency": [],
             "adNumber": "",
             "agencyAdvertisementNumber": "",

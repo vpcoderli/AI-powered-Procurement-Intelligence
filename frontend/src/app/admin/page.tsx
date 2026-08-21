@@ -1335,8 +1335,10 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
                           none
                         </Badge>
                       ) : (
-                        reasonCodes.map((reasonCode) => (
-                          <Badge key={`${row.stateCode}-${reasonCode}`} variant="outline" className="border-slate-200 bg-slate-50 text-slate-700">
+                        reasonCodes.map((reasonCode, reasonIndex) => (
+                          // A state can report the same reason code from several sources, so the
+                          // code alone is not a unique key.
+                          <Badge key={`${row.stateCode}-${reasonCode}-${reasonIndex}`} variant="outline" className="border-slate-200 bg-slate-50 text-slate-700">
                             {reasonCode}
                           </Badge>
                         ))

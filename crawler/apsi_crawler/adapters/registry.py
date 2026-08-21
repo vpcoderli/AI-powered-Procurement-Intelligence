@@ -5,6 +5,7 @@
 察觉哪些源没有在运行。
 """
 
+from apsi_crawler.sources.state_sources import SPECIAL_FETCHERS
 from apsi_crawler.spiders.bonfire import fetch_bonfire_opportunities
 from apsi_crawler.spiders.ca_caleprocure import fetch_ca_caleprocure_opportunities
 from apsi_crawler.spiders.co_bidnet import fetch_bidnet_opportunities
@@ -44,8 +45,14 @@ PLATFORM_ADAPTERS = {
     "bonfire": fetch_bonfire_opportunities,  # Phase 2a
 }
 
-# 自建门户:一源一适配器,仅大型行政区值得。
+# 自建门户:一源一适配器。SPECIAL_FETCHERS(sources/state_sources.py)覆盖全部 50 个州级
+# 源 — 5 个大州专用爬虫加上 BidNet/Bonfire/PeopleSoft 等包装。fetch-task 迁移最初只
+# 接了 5 个大州,其余 45 州的 data_sources 行 provider_family='state_portal' 在
+# PLATFORM_ADAPTERS 里没有条目,任何运行都直接 AdapterNotFoundError(2026-08-21 定位),
+# 此前记录的 403/超时健康分类全部来自迁移前的旧执行路径。这里整表并入,恢复执行链路;
+# 显式条目保留在前以便单独覆盖(当前与 SPECIAL_FETCHERS 同值)。
 DEDICATED_ADAPTERS = {
+    **SPECIAL_FETCHERS,
     "ca_caleprocure": fetch_ca_caleprocure_opportunities,
     "tx_esbd": fetch_tx_esbd_opportunities,
     "ny_contract_reporter": fetch_ny_contract_reporter_opportunities,

@@ -105,41 +105,65 @@ def _cell_link(row, index):
     return links[0] if links else ""
 
 
-def _bid_calendar_record_from_table(table, source):
-    if not table:
-        return None
+# Matches both the current BidCalendar markup ("Ref#:32756", no spaces, description text
+# following in the same cell — live format as of 2026-08-21) and the older one
+# ("... Ref #: 32756" at the end of the cell).
+_BID_CALENDAR_REF_PATTERN = re.compile(
+    r"(?P<title>.*?)\s*Ref\s*#\s*:\s*(?P<ref>\S+)\s*(?P<description>.*)$"
+)
 
-    first_row = table[0]
-    if len(first_row) < 2:
-        return None
 
-    title_ref_text = _cell_text(first_row, 1)
-    match = re.search(r"(?P<title>.*?)\s+Ref #:\s*(?P<ref>.+)$", title_ref_text)
-    if not match:
-        return None
+def _bid_calendar_records_from_table(table, source):
+    """One record per table row: the BidCalendar now renders a single grid whose second
+    column holds "<title> Ref#:<id> <description>" (previously each bid was its own
+    mini-table, which this row scan still parses — its first row has the same shape)."""
+    records = []
+    matched_rows = []
+    inline_descriptions = []
+    for row_index, row in enumerate(table):
+        if len(row) < 2:
+            continue
+        match = _BID_CALENDAR_REF_PATTERN.search(_cell_text(row, 1))
+        if not match:
+            continue
 
-    description = ""
-    if len(table) > 1:
-        description = " ".join(_cell_text(cell_row, 0) for cell_row in table[1:])
+        deadline_tokens = _cell_text(row, 0).split()
+        inline_description = match.group("description").strip()
+        matched_rows.append(row_index)
+        inline_descriptions.append(inline_description)
+        records.append(
+            {
+                "source_bid_id": match.group("ref").strip(),
+                "title": match.group("title").strip(),
+                "description": inline_description or match.group("title").strip(),
+                "issuer_name": "Washington Department of Enterprise Services",
+                "published_date": None,
+                # Column 0 is "Close Date / Amendment Date"; the first token is the close date.
+                "deadline_date": deadline_tokens[0] if deadline_tokens else None,
+                "original_category": None,
+                "source_url": absolute_url(source.base_url, _cell_link(row, 1)),
+                "attachments": [],
+            }
+        )
 
-    return {
-        "source_bid_id": match.group("ref").strip(),
-        "title": match.group("title").strip(),
-        "description": description.strip() or match.group("title").strip(),
-        "issuer_name": "Washington Department of Enterprise Services",
-        "published_date": None,
-        "deadline_date": _cell_text(first_row, 0),
-        "original_category": None,
-        "source_url": absolute_url(source.base_url, _cell_link(first_row, 1)),
-        "attachments": [],
-    }
+    # Legacy per-bid mini-table shape: the bid sits alone in the table's first row with no
+    # inline description, and the follow-up single-cell rows carry the description text.
+    if len(records) == 1 and matched_rows == [0] and not inline_descriptions[0] and len(table) > 1:
+        legacy_description = " ".join(_cell_text(row, 0) for row in table[1:]).strip()
+        if legacy_description:
+            records[0]["description"] = legacy_description
+
+    return records
 
 
 def _records_from_bid_calendar_html(html, source):
     records = []
+    seen = set()
     for table in extract_html_tables(html):
-        record = _bid_calendar_record_from_table(table, source)
-        if record:
+        for record in _bid_calendar_records_from_table(table, source):
+            if record["source_bid_id"] in seen:
+                continue
+            seen.add(record["source_bid_id"])
             records.append(record)
     if not records:
         raise WaDesError("Washington DES BidCalendar page did not contain opportunities")

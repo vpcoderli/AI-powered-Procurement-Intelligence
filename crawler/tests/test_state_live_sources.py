@@ -371,96 +371,106 @@ def test_fetch_ny_contract_reporter_opportunities_replays_adapter_fixture_json()
     assert bids[0]["dedupe_key"] == "ny_contract_reporter:NYSCR-LIVE-2026-310"
 
 
-def test_fetch_ca_caleprocure_opportunities_normalizes_live_response():
-    fixture_path = FIXTURES_DIR / "ca_caleprocure_live_response.json"
-    with fixture_path.open() as fixture:
-        payload = json.load(fixture)
-    session = FakeSession(FakeResponse(payload=payload))
-
+def test_fetch_ca_caleprocure_opportunities_parses_live_grid_fixture():
     bids = fetch_ca_caleprocure_opportunities(
         get_source("ca_caleprocure"),
-        query="cloud",
         limit=5,
-        session=session,
-        timeout=10,
+        fixture_html=str(FIXTURES_DIR / "ca_caleprocure_live_response.html"),
     )
 
-    assert session.calls[0]["params"] == {"query": "cloud", "limit": 5}
-    assert session.calls[0]["timeout"] == 10
-    assert len(bids) == 1
+    assert len(bids) == 3
     bid = bids[0]
-    assert bid["dedupe_key"] == "ca_caleprocure:CA-LIVE-2026-001"
-    assert bid["title"] == "Cloud data warehouse modernization"
-    assert bid["issuer_name"] == "Department of Technology"
+    assert bid["dedupe_key"] == "ca_caleprocure:26-099"
+    assert "Janitorial Services" in bid["title"]
+    assert bid["issuer_name"] == "Department of Motor Vehicles"
     assert bid["issuer_type"] == "state"
     assert bid["state_code"] == "CA"
-    assert bid["source_url"] == "https://caleprocure.ca.gov/event/CA-LIVE-2026-001"
+    assert bid["deadline_date"] == "08/20/2026 11:59PM PDT"
+    assert bid["original_category"] == "RFx"
+    assert bid["source_url"] == "https://caleprocure.ca.gov/event/2740/26-099"
 
 
-def test_fetch_ca_caleprocure_opportunities_raises_on_unexpected_payload_shape():
-    session = FakeSession(FakeResponse(payload={"error": "changed"}))
+def test_fetch_ca_caleprocure_opportunities_applies_query_and_limit():
+    fixture = str(FIXTURES_DIR / "ca_caleprocure_live_response.html")
+    source = get_source("ca_caleprocure")
 
-    with pytest.raises(CalEProcureError) as error:
-        fetch_ca_caleprocure_opportunities(
-            get_source("ca_caleprocure"),
-            query="cloud",
-            limit=5,
-            session=session,
-            timeout=10,
-        )
+    janitorial = fetch_ca_caleprocure_opportunities(source, query="janitorial", limit=5, fixture_html=fixture)
+    assert [bid["source_bid_id"] for bid in janitorial] == ["26-099"]
 
-    assert str(error.value) == (
-        "Cal eProcure response did not contain opportunities or results"
-    )
+    limited = fetch_ca_caleprocure_opportunities(source, limit=1, fixture_html=fixture)
+    assert len(limited) == 1
 
 
-def test_fetch_ca_caleprocure_opportunities_raises_when_record_missing_source_id():
-    session = FakeSession(FakeResponse(payload={"opportunities": [{"title": "Cloud"}]}))
-
-    with pytest.raises(CalEProcureError) as error:
-        fetch_ca_caleprocure_opportunities(
-            get_source("ca_caleprocure"),
-            query="cloud",
-            limit=5,
-            session=session,
-            timeout=10,
-        )
-
-    assert str(error.value) == "Cal eProcure record is missing source id"
-
-
-def test_fetch_ca_caleprocure_opportunities_preserves_normalized_aliases():
-    session = FakeSession(
-        FakeResponse(
-            payload=[
-                {
-                    "source_bid_id": "CA-NORMALIZED-001",
-                    "title": "Normalized cloud services",
-                    "source_url": "https://caleprocure.ca.gov/event/CA-NORMALIZED-001",
-                    "published_date": "2026-05-18",
-                    "deadline_date": "2026-06-10",
-                    "issuer_name": "Department of General Services",
-                }
-            ]
-        )
-    )
+def test_fetch_ca_caleprocure_opportunities_fetches_grid_with_browser_headers():
+    fixture = FIXTURES_DIR / "ca_caleprocure_live_response.html"
+    session = FakeSession(FakeResponse(text=fixture.read_text()))
 
     bids = fetch_ca_caleprocure_opportunities(
         get_source("ca_caleprocure"),
-        query="cloud",
         limit=5,
         session=session,
         timeout=10,
     )
 
-    assert len(bids) == 1
-    bid = bids[0]
-    assert bid["source_bid_id"] == "CA-NORMALIZED-001"
-    assert bid["dedupe_key"] == "ca_caleprocure:CA-NORMALIZED-001"
-    assert bid["source_url"] == "https://caleprocure.ca.gov/event/CA-NORMALIZED-001"
-    assert bid["published_date"] == "2026-05-18"
-    assert bid["deadline_date"] == "2026-06-10"
-    assert bid["issuer_name"] == "Department of General Services"
+    assert len(session.calls) == 1
+    call = session.calls[0]
+    assert call["url"] == (
+        "https://caleprocure.ca.gov/psc/psfpd1/SUPPLIER/ERP/c/AUC_MANAGE_BIDS.AUC_RESP_INQ_AUC.GBL"
+    )
+    # The portal rejects default library User-Agents with 403, so the spider must send
+    # standard browser headers for this public, no-login page.
+    assert "Mozilla/5.0" in call["headers"]["User-Agent"]
+    assert call["timeout"] == 10
+    assert len(bids) == 3
+
+
+def test_fetch_ca_caleprocure_opportunities_retries_once_when_first_response_lacks_grid():
+    fixture = FIXTURES_DIR / "ca_caleprocure_live_response.html"
+
+    class SequenceSession:
+        def __init__(self, responses):
+            self.responses = list(responses)
+            self.calls = []
+
+        def get(self, url, params=None, headers=None, timeout=None):
+            self.calls.append({"url": url, "headers": headers, "timeout": timeout})
+            return self.responses.pop(0)
+
+    # First response is the PeopleSoft cookie-check bounce (no grid); the retry on the
+    # now-primed session returns the real page.
+    session = SequenceSession(
+        [
+            FakeResponse(text="<html>ckreq</html>"),
+            FakeResponse(text=fixture.read_text()),
+        ]
+    )
+
+    bids = fetch_ca_caleprocure_opportunities(
+        get_source("ca_caleprocure"),
+        limit=5,
+        session=session,
+        timeout=10,
+    )
+
+    assert len(session.calls) == 2
+    assert len(bids) == 3
+
+
+def test_fetch_ca_caleprocure_opportunities_raises_when_grid_missing():
+    session = FakeSession(FakeResponse(text="<html>You are not authorized for this page.</html>"))
+
+    with pytest.raises(CalEProcureError) as error:
+        fetch_ca_caleprocure_opportunities(
+            get_source("ca_caleprocure"),
+            limit=5,
+            session=session,
+            timeout=10,
+        )
+
+    assert len(session.calls) == 2
+    assert str(error.value) == (
+        "Cal eProcure response did not contain the public event grid"
+    )
 
 
 def test_fetch_ca_caleprocure_opportunities_raises_on_http_error():
@@ -937,7 +947,9 @@ def test_fetch_fl_mfmp_opportunities_normalizes_live_response():
     assert session.calls[0]["json"] == {
         "pageSize": 5,
         "type": [],
-        "status": [],
+        # The MFMP API returns an empty list for an empty status filter (verified live
+        # 2026-08-21), so the spider must request OPEN advertisements explicitly.
+        "status": ["OPEN"],
         "agency": [],
         "adNumber": "",
         "agencyAdvertisementNumber": "",

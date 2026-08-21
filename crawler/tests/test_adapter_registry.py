@@ -29,7 +29,9 @@ def test_falls_back_to_platform_adapter(monkeypatch):
 
     monkeypatch.setitem(registry.PLATFORM_ADAPTERS, "bidnet", platform)
 
-    assert resolve_adapter("al_state_procurement", "bidnet") is platform
+    # A county row has no dedicated per-source adapter (every state-level id now does, via
+    # SPECIAL_FETCHERS), so resolution falls through to its provider family.
+    assert resolve_adapter("bidnet_co_denver", "bidnet") is platform
 
 
 def test_raises_when_neither_matches():
@@ -112,12 +114,14 @@ def test_resolved_bidnet_adapter_fetches_and_normalizes_from_a_fixture():
 
 
 def test_resolved_bidnet_adapter_raises_without_a_base_url():
+    # A county id: state-level ids now resolve to dedicated SPECIAL_FETCHERS entries with
+    # their own hardcoded aggregator URLs, so only family-resolved rows hit this guard.
     source = task_source_from_payload(
         {
             "task_id": "t2",
-            "source_id": "al_state_procurement",
-            "label": "Alabama",
-            "state_code": "AL",
+            "source_id": "bidnet_co_denver",
+            "label": "Denver County, CO (BidNet)",
+            "state_code": "CO",
             "provider_family": "bidnet",
             "fetch_config": {},
         }

@@ -8,6 +8,19 @@ class HtmlPageError(Exception):
     pass
 
 
+# Several state portals answer 403 to default HTTP-library User-Agents while serving the
+# same public, no-login pages normally to standard browser headers (verified live on Cal
+# eProcure, 2026-08-21). No CAPTCHA or authentication is involved — this is plain header
+# filtering on public data.
+BROWSER_REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml",
+}
+
+
 def read_html_fixture(path):
     with open(path, encoding="utf-8") as fixture:
         return fixture.read()
@@ -29,7 +42,7 @@ def fetch_html(url, session=None, timeout=30, params=None):
             response = client.get(
                 url,
                 params=params,
-                headers={"Accept": "text/html,application/xhtml+xml"},
+                headers=BROWSER_REQUEST_HEADERS,
                 timeout=timeout,
             )
         except requests.RequestException as error:
