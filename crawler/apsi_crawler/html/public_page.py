@@ -49,9 +49,13 @@ def fetch_html(url, session=None, timeout=30, params=None):
             raise HtmlPageError(f"HTML request failed: {error}") from error
 
         if response.status_code != 200:
-            raise HtmlPageError(
+            error = HtmlPageError(
                 f"HTML request failed with status {response.status_code}: {response.text}"
             )
+            # Callers can branch on the status without parsing the message (e.g. the BidNet
+            # fetcher classifying an AWS WAF 202 challenge).
+            error.status_code = response.status_code
+            raise error
 
         content_type = response.headers.get("Content-Type", "")
         if "html" not in content_type.lower():

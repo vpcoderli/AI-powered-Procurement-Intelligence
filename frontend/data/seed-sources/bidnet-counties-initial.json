@@ -1,17 +1,17 @@
 [
   {
     "id": "bidnet_co_denver",
-    "label": "Denver County, CO (BidNet)",
+    "label": "City and County of Denver General Services Purchasing (BidNet)",
     "issuerType": "county",
     "stateCode": "CO",
-    "baseUrl": "https://www.bidnetdirect.com/denver-county/solicitations/open-bids",
+    "baseUrl": "https://www.bidnetdirect.com/colorado/city-and-county-of-denver-general-services-purchasing/solicitations/open-bids",
     "jurisdictionLevel": "county",
     "jurisdictionName": "Denver County",
     "fipsCode": "08031",
     "providerFamily": "bidnet",
     "cadence": "daily",
     "fetchConfig": {
-      "base_url": "https://www.bidnetdirect.com/denver-county/solicitations/open-bids"
+      "base_url": "https://www.bidnetdirect.com/colorado/city-and-county-of-denver-general-services-purchasing/solicitations/open-bids"
     }
   },
   {
@@ -19,14 +19,14 @@
     "label": "Boulder County, CO (BidNet)",
     "issuerType": "county",
     "stateCode": "CO",
-    "baseUrl": "https://www.bidnetdirect.com/boulder-county/solicitations/open-bids",
+    "baseUrl": "https://www.bidnetdirect.com/colorado/boulder-county/solicitations/open-bids",
     "jurisdictionLevel": "county",
     "jurisdictionName": "Boulder County",
     "fipsCode": "08013",
     "providerFamily": "bidnet",
     "cadence": "daily",
     "fetchConfig": {
-      "base_url": "https://www.bidnetdirect.com/boulder-county/solicitations/open-bids"
+      "base_url": "https://www.bidnetdirect.com/colorado/boulder-county/solicitations/open-bids"
     }
   },
   {
@@ -34,44 +34,14 @@
     "label": "Jefferson County, CO (BidNet)",
     "issuerType": "county",
     "stateCode": "CO",
-    "baseUrl": "https://www.bidnetdirect.com/jefferson-county-co/solicitations/open-bids",
+    "baseUrl": "https://www.bidnetdirect.com/colorado/jefferson-county/solicitations/open-bids",
     "jurisdictionLevel": "county",
     "jurisdictionName": "Jefferson County",
     "fipsCode": "08059",
     "providerFamily": "bidnet",
     "cadence": "daily",
     "fetchConfig": {
-      "base_url": "https://www.bidnetdirect.com/jefferson-county-co/solicitations/open-bids"
-    }
-  },
-  {
-    "id": "bidnet_oh_cuyahoga",
-    "label": "Cuyahoga County, OH (BidNet)",
-    "issuerType": "county",
-    "stateCode": "OH",
-    "baseUrl": "https://www.bidnetdirect.com/cuyahoga-county/solicitations/open-bids",
-    "jurisdictionLevel": "county",
-    "jurisdictionName": "Cuyahoga County",
-    "fipsCode": "39035",
-    "providerFamily": "bidnet",
-    "cadence": "daily",
-    "fetchConfig": {
-      "base_url": "https://www.bidnetdirect.com/cuyahoga-county/solicitations/open-bids"
-    }
-  },
-  {
-    "id": "bidnet_oh_franklin",
-    "label": "Franklin County, OH (BidNet)",
-    "issuerType": "county",
-    "stateCode": "OH",
-    "baseUrl": "https://www.bidnetdirect.com/franklin-county-oh/solicitations/open-bids",
-    "jurisdictionLevel": "county",
-    "jurisdictionName": "Franklin County",
-    "fipsCode": "39049",
-    "providerFamily": "bidnet",
-    "cadence": "daily",
-    "fetchConfig": {
-      "base_url": "https://www.bidnetdirect.com/franklin-county-oh/solicitations/open-bids"
+      "base_url": "https://www.bidnetdirect.com/colorado/jefferson-county/solicitations/open-bids"
     }
   },
   {
@@ -94,29 +64,14 @@
     "label": "Erie County, NY (BidNet)",
     "issuerType": "county",
     "stateCode": "NY",
-    "baseUrl": "https://www.bidnetdirect.com/erie-county/solicitations/open-bids",
+    "baseUrl": "https://www.bidnetdirect.com/new-york/erie-county/solicitations/open-bids",
     "jurisdictionLevel": "county",
     "jurisdictionName": "Erie County",
     "fipsCode": "36029",
     "providerFamily": "bidnet",
     "cadence": "daily",
     "fetchConfig": {
-      "base_url": "https://www.bidnetdirect.com/erie-county/solicitations/open-bids"
-    }
-  },
-  {
-    "id": "bidnet_wy_laramie",
-    "label": "Laramie County, WY (BidNet)",
-    "issuerType": "county",
-    "stateCode": "WY",
-    "baseUrl": "https://www.bidnetdirect.com/laramie-county/solicitations/open-bids",
-    "jurisdictionLevel": "county",
-    "jurisdictionName": "Laramie County",
-    "fipsCode": "56021",
-    "providerFamily": "bidnet",
-    "cadence": "daily",
-    "fetchConfig": {
-      "base_url": "https://www.bidnetdirect.com/laramie-county/solicitations/open-bids"
+      "base_url": "https://www.bidnetdirect.com/new-york/erie-county/solicitations/open-bids"
     }
   },
   {
@@ -132,21 +87,6 @@
     "cadence": "weekly",
     "fetchConfig": {
       "base_url": "https://www.bidnetdirect.com/city-of-aurora/solicitations/open-bids"
-    }
-  },
-  {
-    "id": "bidnet_oh_city_columbus",
-    "label": "City of Columbus, OH (BidNet)",
-    "issuerType": "city",
-    "stateCode": "OH",
-    "baseUrl": "https://www.bidnetdirect.com/city-of-columbus/solicitations/open-bids",
-    "jurisdictionLevel": "city",
-    "jurisdictionName": "Columbus",
-    "fipsCode": "3918000",
-    "providerFamily": "bidnet",
-    "cadence": "weekly",
-    "fetchConfig": {
-      "base_url": "https://www.bidnetdirect.com/city-of-columbus/solicitations/open-bids"
     }
   }
 ]

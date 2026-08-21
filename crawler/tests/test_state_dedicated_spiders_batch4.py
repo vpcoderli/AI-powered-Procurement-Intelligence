@@ -85,6 +85,46 @@ def test_nm_spd_html_fixture_extracts_active_procurements():
     assert bid["original_category"] == "SOLE SOURCE"
 
 
+def test_bidnet_politeness_delay_spaces_out_live_requests():
+    from apsi_crawler.spiders.co_bidnet import bidnet_politeness_delay_seconds
+
+    # First-ever request: no wait.
+    assert bidnet_politeness_delay_seconds(100.0, 0.0, min_interval=3.0) == 0.0
+    # 1s since the previous BidNet request: wait the remaining 2s.
+    assert bidnet_politeness_delay_seconds(101.0, 100.0, min_interval=3.0) == 2.0
+    # Interval already elapsed: no wait.
+    assert bidnet_politeness_delay_seconds(104.0, 100.0, min_interval=3.0) == 0.0
+
+
+def test_bidnet_202_waf_challenge_raises_dedicated_challenge_error(monkeypatch):
+    import pytest
+
+    from apsi_crawler.spiders import co_bidnet
+    from apsi_crawler.spiders.co_bidnet import BidNetChallengeError
+
+    class ChallengeResponse:
+        status_code = 202
+        text = ""
+        headers = {"Content-Type": "text/html", "x-amzn-waf-action": "challenge"}
+
+    class ChallengeSession:
+        def get(self, url, params=None, headers=None, timeout=None):
+            return ChallengeResponse()
+
+    monkeypatch.setattr(co_bidnet, "_last_live_request_at", 0.0)
+
+    with pytest.raises(BidNetChallengeError) as error:
+        fetch_co_bidnet_opportunities(
+            get_source("co_state_procurement"),
+            limit=5,
+            session=ChallengeSession(),
+            timeout=10,
+        )
+
+    assert "AWS WAF bot challenge" in str(error.value)
+    assert "never bypassed" in str(error.value)
+
+
 def test_co_bidnet_html_fixture_extracts_open_solicitations():
     bids = fetch_co_bidnet_opportunities(
         get_source("co_state_procurement"),

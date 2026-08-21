@@ -1,15 +1,65 @@
 import re
+import time
 from html import unescape
 
-from apsi_crawler.html.public_page import absolute_url, fetch_html, read_html_fixture
+from apsi_crawler.html.public_page import (
+    HtmlPageError,
+    absolute_url,
+    fetch_html,
+    read_html_fixture,
+)
 from apsi_crawler.normalizers.state_bids import normalize_state_opportunity
 
 
 CO_BIDNET_URL = "https://www.bidnetdirect.com/colorado/solicitations/open-bids?selectedContent=BUYER"
 
+# bidnetdirect.com fronts every state/county tenant page with AWS WAF Bot Control. Rapid
+# back-to-back sweeps (dozens of tenant pages within seconds — verified 2026-08-21 after
+# three same-day full sweeps) trigger a JavaScript challenge: HTTP 202 with
+# `x-amzn-waf-action: challenge`, which then blocks automated access for a while. We never
+# bypass the challenge; instead every live BidNet request in this process is spaced out to
+# keep the access pattern polite, and a challenge is surfaced as its own error class so
+# source health can classify it as "throttled, retry later" rather than a parser failure.
+BIDNET_MIN_REQUEST_INTERVAL_SECONDS = 3.0
+_last_live_request_at = 0.0
+
 
 class CoBidnetError(Exception):
     pass
+
+
+class BidNetChallengeError(CoBidnetError):
+    pass
+
+
+def bidnet_politeness_delay_seconds(
+    now,
+    last_request_at,
+    min_interval=BIDNET_MIN_REQUEST_INTERVAL_SECONDS,
+):
+    """Seconds to wait before the next live BidNet request (0 when enough time passed)."""
+    if last_request_at <= 0:
+        return 0.0
+    return max(0.0, min_interval - (now - last_request_at))
+
+
+def _fetch_bidnet_html(url, session, timeout):
+    global _last_live_request_at
+    delay = bidnet_politeness_delay_seconds(time.monotonic(), _last_live_request_at)
+    if delay > 0:
+        time.sleep(delay)
+    try:
+        return fetch_html(url, session=session, timeout=timeout)
+    except HtmlPageError as error:
+        if getattr(error, "status_code", None) == 202:
+            raise BidNetChallengeError(
+                "BidNet is serving an AWS WAF bot challenge (HTTP 202): the platform is "
+                "temporarily rate-limiting automated access. Re-run this source later at a "
+                "lower frequency — challenges are never bypassed."
+            ) from error
+        raise
+    finally:
+        _last_live_request_at = time.monotonic()
 
 
 def _strip_tags(value):
@@ -60,7 +110,7 @@ def fetch_bidnet_opportunities(
     if fixture_html:
         html = read_html_fixture(fixture_html)
     else:
-        html = fetch_html(url, session=session, timeout=timeout)
+        html = _fetch_bidnet_html(url, session=session, timeout=timeout)
 
     records = _records_from_html(html, issuer_name or source.source_label)
     if not records:

@@ -21,24 +21,29 @@ describe("initial BidNet county/city source registration", () => {
     await testDb.cleanup();
   });
 
-  it("validates all 10 candidates without errors", () => {
+  // 2026-08-21: the seed set shrank from 10 to 6 after live URL verification — Cuyahoga,
+  // Franklin, Columbus, and Laramie have no dedicated BidNet member listing page (their bids
+  // arrive through the statewide feeds the state-level sources already crawl; Franklin runs
+  // its own non-BidNet portal), so their guessed seed URLs were removed instead of kept 404ing.
+  it("validates all 6 candidates without errors", () => {
+    expect(candidates).toHaveLength(6);
     for (const c of candidates) {
       expect(validateCandidate(c)).toEqual([]);
     }
   });
 
-  it("registers all 10 sources with correct metadata", () => {
+  it("registers all 6 sources with correct metadata", () => {
     const result = registerSources(testDb.db, candidates, "2026-07-31T00:00:00.000Z");
-    expect(result.inserted).toBe(10);
+    expect(result.inserted).toBe(6);
     expect(result.errors).toHaveLength(0);
 
     const rows = testDb.db.select().from(dataSources).all();
-    expect(rows).toHaveLength(10);
+    expect(rows).toHaveLength(6);
 
     const counties = rows.filter((r) => r.jurisdictionLevel === "county");
     const cities = rows.filter((r) => r.jurisdictionLevel === "city");
-    expect(counties).toHaveLength(8);
-    expect(cities).toHaveLength(2);
+    expect(counties).toHaveLength(5);
+    expect(cities).toHaveLength(1);
   });
 
   it("newly registered county/city sources are NOT crawlable until approved (governance gate)", () => {
@@ -62,7 +67,8 @@ describe("initial BidNet county/city source registration", () => {
     expect(crawlable[0].providerFamily).toBe("bidnet");
     expect(crawlable[0].jurisdictionLevel).toBe("county");
     expect(crawlable[0].fetchConfig).toEqual({
-      base_url: "https://www.bidnetdirect.com/denver-county/solicitations/open-bids",
+      base_url:
+        "https://www.bidnetdirect.com/colorado/city-and-county-of-denver-general-services-purchasing/solicitations/open-bids",
     });
   });
 });
