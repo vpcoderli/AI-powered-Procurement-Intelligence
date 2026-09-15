@@ -9,9 +9,15 @@
 
 ## 启动
 
-- 本机：`services/scrapling-extractor/run-local.sh`；`frontend/.env.local` 设 `SCRAPLING_EXTRACTOR_URL=http://localhost:8091`。
-- compose：`docker compose up -d scrapling-extractor`（app 自动注入 URL）。
-- 健康检查：`curl -s http://localhost:8091/health` → `{"ok": true, "scrapling": "0.4.15"}`。
+- **本机（宿主机跑 `npm run dev` 时的标准路径）**：`services/scrapling-extractor/run-local.sh`；
+  `frontend/.env.local` 设 `SCRAPLING_EXTRACTOR_URL=http://localhost:8091`。
+  健康检查：`curl -s http://localhost:8091/health` → `{"ok": true, "scrapling": "0.4.15"}`。
+- **compose：sidecar 只在 compose 网络内可达，不发布宿主机端口**（`docker-compose.yml` 里没有
+  `ports:`）。`docker compose up -d scrapling-extractor` 后由 `app` 容器通过 compose DNS 访问
+  `http://scrapling-extractor:8091`（URL 已自动注入）；宿主机不要去连 `localhost:8091`，要验健康
+  就进容器：`docker compose exec scrapling-extractor python -c "import urllib.request;
+  print(urllib.request.urlopen('http://127.0.0.1:8091/health').read())"`。
+  sidecar 没有任何鉴权，**永远不要对外暴露**；需要从宿主机直接调用时改用 `run-local.sh`。
 
 ## 观测
 
@@ -137,5 +143,8 @@ status = success, fetched_count = 25
 - 登录后才能看的详情页不抓取；发现某个源的详情页 302 到登录页，正确做法是把该源的补全关掉。补全阶段本身也会拦截这类跳转：抓取后比对最终 URL，出现"换了 host / 路径新增 `/login`、`/signin`、`/sign-in`、`/account/login`、`/auth` 标记 / 跳转后丢掉了原路径末段（详情 id）"三者之一，就判定抓到的不是目标详情页，**不调用解析器、不合并任何字段**，直接计 `failed` 并向 stderr 打印 `RedirectedOffTarget: final url …`。这是拦截，不是绕过 —— 项目不会为登录墙做任何绕过。
 - 补全只填空值；关闭补全后的运行不会覆盖已补全数据（importer 保护式 upsert）。反过来说，
   补全写错的值也不会被自动修正，所以上线新源前应先用少量样本核对选择器。
+  **保护范围有限**：importer 只在传入值为空、或 `description` 恰好等于标题时才保留已补全的值；
+  如果某个源的列表页本身带有一段真实的简短说明，关闭补全后的复跑仍会用这段列表页文案刷新
+  `description`（IL 的复跑之所以完全等价，是因为它的列表页描述恰好等于标题）。
 - sidecar 只做解析：它不发起外部请求，HTML 由 crawler 自己按既有礼貌策略（默认 3 秒间隔、
   每源每次最多 25 条详情页）抓取后 POST 进去。

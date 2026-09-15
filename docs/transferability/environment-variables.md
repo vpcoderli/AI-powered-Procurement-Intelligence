@@ -197,7 +197,7 @@ See `frontend/src/server/ai/prompt-registry.ts`, `frontend/src/server/ai/confide
 | Variable | Local boundary | Production boundary |
 |---|---|---|
 | `SAM_API_KEY` | Optional test/developer key for SAM.gov API checks. | Secret manager only; respect SAM.gov terms. |
-| `SCRAPLING_EXTRACTOR_URL` | `http://localhost:8091` when running `services/scrapling-extractor/run-local.sh`; `http://scrapling-extractor:8091` under docker compose. Unset = detail enrichment skipped (`reason: extractor_not_configured`). | Private network address of the extractor service; never expose publicly. |
+| `SCRAPLING_EXTRACTOR_URL` | `http://localhost:8091` when running `services/scrapling-extractor/run-local.sh`; `http://scrapling-extractor:8091` under docker compose (compose publishes no host port for it — the sidecar is reachable only from the compose network). Unset = detail enrichment skipped (`reason: extractor_not_configured`). | Private network address of the extractor service; never expose publicly. |
 | `STATE_CRAWLER_LIMIT` | Small local batch size. | Explicit operational limit. |
 | `CRAWLER_OWNER` | Optional owner label. | Required owner/process label for auditability. |
 | `CRAWLER_WORKER_INTERVAL_MS` | Optional local tuning. | Set explicitly for scheduled worker. |

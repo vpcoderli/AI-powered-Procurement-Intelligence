@@ -21,8 +21,10 @@ services:
     build:
       context: ./services/scrapling-extractor
     image: apsi-scrapling-extractor:local
-    ports:
-      - "8091:8091"
+    # Deliberately no `ports:` mapping. The sidecar has no authentication and parses whatever
+    # HTML it is handed, so it must stay on the compose network only — `app` reaches it at
+    # http://scrapling-extractor:8091 via compose DNS. To drive it from a host-run dev server,
+    # start it outside compose instead: services/scrapling-extractor/run-local.sh.
     volumes:
       # Scrapling's adaptive-selector store (SQLite) survives restarts.
       - scrapling-data:/data/scrapling
