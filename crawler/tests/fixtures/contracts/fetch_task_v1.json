@@ -9,7 +9,13 @@
     "base_url": "https://caleprocure.ca.gov",
     "enrichment": {
       "enabled": false,
-      "fields": ["description", "attachments", "category", "contact", "published_date"],
+      "fields": [
+        "description",
+        "attachments",
+        "category",
+        "contact",
+        "published_date"
+      ],
       "max_details_per_run": 25,
       "min_interval_seconds": 3,
       "timeout_seconds": 20,

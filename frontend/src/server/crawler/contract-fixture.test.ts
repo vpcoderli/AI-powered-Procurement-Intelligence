@@ -25,7 +25,18 @@ const SOURCE: CrawlableSource = {
   jurisdictionLevel: "state",
   jurisdictionName: "California",
   fipsCode: "06",
-  fetchConfig: { base_url: "https://caleprocure.ca.gov" },
+  fetchConfig: {
+    base_url: "https://caleprocure.ca.gov",
+    enrichment: {
+      enabled: false,
+      fields: ["description", "attachments", "category", "contact", "published_date"],
+      max_details_per_run: 25,
+      min_interval_seconds: 3,
+      timeout_seconds: 20,
+      detail_selectors: {},
+      attachment_url_template: null,
+    },
+  },
   lastSuccessAt: null,
   consecutiveFailures: 0,
 };
