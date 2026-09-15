@@ -62,7 +62,7 @@
 **Interfaces:**
 - Produces: `extract(html: str, url: str, fields: list[str], selectors: dict[str, str] | None = None) -> dict` 返回 `{"fields": {...7 键...}, "attachments": [...], "diagnostics": {...}}`；`SUPPORTED_FIELDS = ("description", "attachments", "category", "contact", "published_date")`；`class ExtractError(ValueError)`。
 
-- [ ] **Step 1: 建 venv 与依赖文件**
+- [x] **Step 1: 建 venv 与依赖文件**
 
 ```bash
 mkdir -p services/scrapling-extractor/tests/fixtures
@@ -71,7 +71,7 @@ cd services/scrapling-extractor && /opt/homebrew/bin/python3.12 -m venv .venv &&
 ```
 Expected: 列表只含 `scrapling 0.4.15`、`lxml`、`orjson`、`pytest`（无 curl_cffi/playwright）。在仓库根 `.gitignore` 追加一行 `services/scrapling-extractor/.venv/`。
 
-- [ ] **Step 2: 写合成详情页 fixture**
+- [x] **Step 2: 写合成详情页 fixture**
 
 `services/scrapling-extractor/tests/fixtures/synthetic_detail.html`：
 ```html
@@ -97,7 +97,7 @@ Expected: 列表只含 `scrapling 0.4.15`、`lxml`、`orjson`、`pytest`（无 c
 </body></html>
 ```
 
-- [ ] **Step 3: 写失败测试**
+- [x] **Step 3: 写失败测试**
 
 `services/scrapling-extractor/tests/test_extractors.py`：
 ```python
@@ -185,12 +185,12 @@ def test_description_falls_back_to_largest_text_block_without_label():
     assert result["fields"]["description"].startswith("Scope of work sentence.")
 ```
 
-- [ ] **Step 4: 运行确认失败**
+- [x] **Step 4: 运行确认失败**
 
 Run: `cd services/scrapling-extractor && .venv/bin/python -m pytest tests/test_extractors.py -v`
 Expected: FAIL，`ModuleNotFoundError: No module named 'extractors'`。
 
-- [ ] **Step 5: 实现 `extractors.py`**
+- [x] **Step 5: 实现 `extractors.py`**
 
 ```python
 """Field extraction on top of Scrapling's parser (base package only — no fetchers)."""
@@ -382,12 +382,12 @@ def extract(html, url, fields, selectors=None):
     return {"fields": out, "attachments": attachments, "diagnostics": diagnostics}
 ```
 
-- [ ] **Step 6: 运行测试直到通过**
+- [x] **Step 6: 运行测试直到通过**
 
 Run: `cd services/scrapling-extractor && .venv/bin/python -m pytest tests/test_extractors.py -v`
 Expected: 8 passed。若 `_label_value` 对合成表格的 `match.next` 返回的是文本节点而非 `<td>`，把 `following = match.next` 改为 `following = match.next if getattr(match.next, "tag", None) else match.parent.next`，重跑直到通过。
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add .gitignore services/scrapling-extractor/extractors.py services/scrapling-extractor/requirements.txt services/scrapling-extractor/tests
@@ -406,7 +406,7 @@ git commit -m "feat(extractor): add Scrapling-based detail field extractor with 
 - Consumes: Task 1 的 `extract()`、`ExtractError`。
 - Produces: `GET /health` → `{"ok": true, "scrapling": "0.4.15"}`；`POST /extract` 请求体 `{"url","html","fields","selectors"}` → `{"fields","attachments","diagnostics"}`；错误 `{"error": {"code","message"}}`；环境变量 `EXTRACTOR_PORT`（默认 8091）、`SCRAPLING_STORAGE_DIR`（默认 `/data/scrapling`，不存在时回退当前目录）；`MAX_HTML_BYTES = 2 * 1024 * 1024`；`create_server(port) -> ThreadingHTTPServer`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 import json
@@ -487,12 +487,12 @@ def test_unknown_path_is_404(base_url):
         assert error.code == 404
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd services/scrapling-extractor && .venv/bin/python -m pytest tests/test_server.py -v`
 Expected: FAIL，`No module named 'server'`。
 
-- [ ] **Step 3: 实现 `server.py`**
+- [x] **Step 3: 实现 `server.py`**
 
 ```python
 """Minimal JSON HTTP sidecar exposing extractors.extract(). stdlib only."""
@@ -601,12 +601,12 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `cd services/scrapling-extractor && .venv/bin/python -m pytest tests -v`
 Expected: 14 passed。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add services/scrapling-extractor/server.py services/scrapling-extractor/tests/test_server.py
