@@ -152,6 +152,8 @@ Client side: `useFeature` (`src/lib/features/useFeature.ts`).
 
 **MySQL crawler flow:** `state-runner.ts`'s `runCrawlTask` always invokes the Python CLI's `fetch-task` (stdin JSON in, stdout JSON out) the same way regardless of dialect — there is no `--output-json`/`--database` branch left on this path. Dialect branching happens on the TS side, in `persistCrawlTaskResult` (`crawl-task-persistence.ts`): it pipes the parsed result through `mysql-json-importer.ts` when a MySQL pool is present, or `sqlite-json-importer.ts` otherwise.
 
+**Detail enrichment (optional):** `fetch-task` runs `apsi_crawler/enrichment.py` after the liveness check when a source's `fetch_config.enrichment.enabled` is true: it fetches each bid's `source_url` on the crawler's own requests path and POSTs the HTML to the `services/scrapling-extractor` sidecar (`SCRAPLING_EXTRACTOR_URL`; Scrapling 0.4.15 parser only — no fetchers, no anti-bot tooling, never bypasses WAF challenges). It only fills empty fields, never fails the run (`metadata.enrichment` reports stats), and both JSON importers use enrichment-preserving upserts so a later list-page-only run cannot clobber enriched values. Admins edit `fetch_config`/`cadence`/`base_url` per source in `/admin` (PATCH `/api/admin/data-sources/[id]`). Operations guide and measured MySQL baseline: `docs/operations/detail-enrichment.md`.
+
 ### Workers
 
 Three long-running scripts in `frontend/scripts/`, each supporting a `--check` flag for a non-blocking health probe:

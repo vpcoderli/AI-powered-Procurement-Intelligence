@@ -31,6 +31,7 @@ APSi GovBid 是一个致力于帮助供应商（特别是中小企业）高效�
 - **统一检索**：支持对招标标题和描述进行全文模糊搜索。
 - **50 州 + 联邦数据采集**：50 个州级门户 + SAM.gov 联邦招标，41 个专用 spider 模块（含 BidNet、Bonfire 等平台适配器），deterministic release gate 覆盖 50/50 州。
 - **数据源注册表（`data_sources`）**：所有爬虫执行由数据库驱动的 `data_sources` 表调度，支持 cadence 排期、source health 自动降级、治理门禁（县市级源需显式审批）和 BidNet 县市级扩展。
+- **详情补全（Scrapling sidecar）**：按源可开关的详情页补全，补齐描述、附件、分类、联系人、发布日期；仅解析、不绕过任何反爬机制；管理端可配置字段、上限、间隔与选择器。
 - **账号、角色、套餐权限**：支持普通用户注册登录、Admin/普通用户分离、Free / Pro / Business / Enterprise 功能 gate、locked/upgrade 状态和本地 paid smoke。
 - **采购意向工作台**：支持 Intent 创建、资格评估、Compliance、Submission、Pursue / No-Bid、Response Workspace、Artifact Vault、Quote Workspace、Deadline Reminders。
 - **响应包与材料库**：支持 Markdown/ZIP/PDF/DOCX 本地导出、导出审核状态、版本历史、对比、材料替换/version、checksum/byte-size 校验。
