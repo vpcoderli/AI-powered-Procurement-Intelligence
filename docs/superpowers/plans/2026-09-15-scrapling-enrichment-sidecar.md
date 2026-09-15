@@ -628,7 +628,7 @@ git commit -m "feat(extractor): add stdlib HTTP sidecar with /health and /extrac
 - Consumes: Task 1 `extract()`；crawler 的 `fetch-task`（取当前真实 bid 的 `source_url`）。
 - Produces: 三个真实页面样本 + 每个源在真实页面上"启发式能拿到什么、哪些字段需要选择器"的记录（写入 README，并作为 Task 11 配置选择器的依据）。
 
-- [ ] **Step 1: 取三条真实详情页 URL 并抓取**
+- [x] **Step 1: 取三条真实详情页 URL 并抓取**
 
 ```bash
 cd crawler
@@ -651,7 +651,7 @@ curl -sSL "<URL>" -H "User-Agent: $UA" --max-time 30 -o services/scrapling-extra
 ```
 判定规则：`grep -c "<title\|Description\|Attachments" <file>` 若页面正文不含该招标的标题/描述文字（只有 `<app-root>`/脚本引用等 SPA 壳），说明门户是纯 JS 渲染——把该源记入 README 的"需要浏览器渲染（二期）"并**不**为它写抽取测试；FL（Angular 门户）大概率如此，此时用 NY 作为第三个样本。每个保留的 fixture 用 Python 把 `<script>` 块删掉以缩小体积（`re.sub(r"<script.*?</script>", "", html, flags=re.S)`），保留其余标记原样。
 
-- [ ] **Step 2: 写测试（期望值来自你刚抓到的页面）**
+- [x] **Step 2: 写测试（期望值来自你刚抓到的页面）**
 
 `tests/test_live_fixtures.py`：
 ```python
@@ -697,12 +697,12 @@ def test_live_page_yields_expected_fields(case):
 ```
 先用空 `selectors` 运行；对 `not_found` 的字段，用 Scrapling shell 或 Python 交互式（`Selector(html).css(...)`）找到稳定选择器填入 `selectors`，直至测试通过。把每个源最终使用的选择器同步写进 README（Task 11 配置管理端时直接复用）。
 
-- [ ] **Step 3: 运行**
+- [x] **Step 3: 运行**
 
 Run: `cd services/scrapling-extractor && .venv/bin/python -m pytest tests/test_live_fixtures.py -v`
 Expected: 每个保留的 fixture 一个 PASS。
 
-- [ ] **Step 4: 写 README 并提交**
+- [x] **Step 4: 写 README 并提交**
 
 `fixtures/live/README.md` 记录：抓取日期、每个 fixture 的来源 URL、启发式命中的字段、需要的选择器、被判定为 JS 渲染的门户（列出，标注"二期：浏览器渲染"）。
 
@@ -726,7 +726,7 @@ git commit -m "test(extractor): live detail-page fixtures with per-source expect
 **Interfaces:**
 - Produces: 环境变量 `SCRAPLING_EXTRACTOR_URL`（crawler 读取，Task 4）；compose 服务名 `scrapling-extractor`，端口 8091。
 
-- [ ] **Step 1: Dockerfile**
+- [x] **Step 1: Dockerfile**
 
 ```dockerfile
 FROM python:3.12-slim
@@ -742,7 +742,7 @@ HEALTHCHECK --interval=15s --timeout=3s --retries=5 CMD python -c "import urllib
 CMD ["python", "server.py"]
 ```
 
-- [ ] **Step 2: `run-local.sh`（可执行）**
+- [x] **Step 2: `run-local.sh`（可执行）**
 
 ```bash
 #!/usr/bin/env bash
@@ -758,7 +758,7 @@ exec .venv/bin/python server.py
 ```
 `chmod +x services/scrapling-extractor/run-local.sh`；`.gitignore` 追加 `services/scrapling-extractor/.data/`。
 
-- [ ] **Step 3: compose**
+- [x] **Step 3: compose**
 
 在 `docker-compose.yml` 的 `services:` 下、`app:` 之前插入：
 ```yaml
@@ -790,7 +790,7 @@ exec .venv/bin/python server.py
     driver: local
 ```
 
-- [ ] **Step 4: 环境变量与本地配置**
+- [x] **Step 4: 环境变量与本地配置**
 
 `frontend/.env.local` 追加 `SCRAPLING_EXTRACTOR_URL=http://localhost:8091`。
 `docs/transferability/environment-variables.md` 在 `SAM_API_KEY` 行后追加：
@@ -809,12 +809,12 @@ Parser-only sidecar (Scrapling 0.4.15 base package, no fetchers) that turns a bi
 - Tests: `.venv/bin/python -m pytest tests`
 ```
 
-- [ ] **Step 5: 验证镜像与 compose**
+- [x] **Step 5: 验证镜像与 compose**
 
 Run: `docker compose build scrapling-extractor && docker compose up -d scrapling-extractor && sleep 5 && curl -s http://localhost:8091/health`
 Expected: `{"ok": true, "scrapling": "0.4.15"}`。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add services/scrapling-extractor docker-compose.yml docs/transferability/environment-variables.md .gitignore
@@ -840,7 +840,7 @@ git commit -m "build(extractor): Dockerfile, local runner, compose service, and 
   - `resolve_attachment_url(raw_href, source_bid_id, template) -> str | None`
   - `merge_enrichment(bid, extracted, template) -> bool`（是否改动了任何字段）
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `crawler/tests/test_enrichment.py`：
 ```python
@@ -1084,12 +1084,12 @@ def test_extractor_client_posts_json_and_maps_errors():
         ExtractorClient("http://localhost:8091", session=PostSession(status=500, payload={"error": {"code": "EXTRACT_FAILED", "message": "x"}})).extract("<p/>", "https://x/1", ["description"], None)
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd crawler && python3 -m pytest tests/test_enrichment.py -v`
 Expected: FAIL，`ModuleNotFoundError: No module named 'apsi_crawler.enrichment'`。
 
-- [ ] **Step 3: 实现 `apsi_crawler/enrichment.py`**
+- [x] **Step 3: 实现 `apsi_crawler/enrichment.py`**
 
 ```python
 """Optional detail-page enrichment stage for fetch-task.
@@ -1334,12 +1334,12 @@ def enrich_bids(bids, source, fetch_config, *, extractor=None, session=None, sle
     return bids, stats
 ```
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `cd crawler && python3 -m pytest tests/test_enrichment.py -v`
 Expected: 15 passed。若 `test_enriches_records_respecting_cap_and_throttle` 的 `sleeps` 断言不等于 `[2.5]`，检查 `monotonic()` 的调用次数与 `clock` 序列一致（每条记录调用两次：节流判断与 `last_request_at`），调整 `clock` 序列而非实现。
 
-- [ ] **Step 5: 全量 crawler 测试并提交**
+- [x] **Step 5: 全量 crawler 测试并提交**
 
 Run: `cd crawler && python3 -m pytest -q`
 Expected: 全部通过（现有 239 + 新增 15）。
@@ -1363,7 +1363,7 @@ git commit -m "feat(crawler): add fail-open detail enrichment stage backed by th
 - Consumes: Task 4 `enrich_bids(bids, source, fetch_config)`。
 - Produces: `metadata["enrichment"]` 恒存在于成功载荷（禁用时为 `{"attempted":0,...,"reason":"disabled"}`）；TS 侧 `CrawlerJsonRunPayload.metadata.enrichment` 可选。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `crawler/tests/test_fetch_task_cli.py` 末尾追加：
 ```python
@@ -1413,12 +1413,12 @@ def test_enrichment_failure_never_fails_the_run(monkeypatch, capsys):
     assert result["metadata"]["enrichment"]["reason"] == "enrichment_crashed"
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd crawler && python3 -m pytest tests/test_fetch_task_cli.py -v -k enrichment`
 Expected: 3 FAIL（`KeyError: 'enrichment'`）。
 
-- [ ] **Step 3: 修改 `cli.py`**
+- [x] **Step 3: 修改 `cli.py`**
 
 导入区追加 `from apsi_crawler.enrichment import enrich_bids`。在 `fetch_task` 中把
 ```python
@@ -1442,7 +1442,7 @@ Expected: 3 FAIL（`KeyError: 'enrichment'`）。
         bids, date_filter_stats = apply_date_window(bids, date_range)
 ```
 
-- [ ] **Step 4: 契约 fixture 与守卫测试**
+- [x] **Step 4: 契约 fixture 与守卫测试**
 
 `tests/fixtures/contracts/fetch_task_v1.json` 的 `fetch_config` 改为：
 ```json
@@ -1472,12 +1472,12 @@ def test_contract_enrichment_block_parses_to_disabled_defaults():
 ```
 （文件顶部已有 `import json`；若没有则补上。）
 
-- [ ] **Step 5: 运行全量测试**
+- [x] **Step 5: 运行全量测试**
 
 Run: `cd crawler && python3 -m pytest -q`
 Expected: 全部通过（含 3 个新 CLI 测试与 1 个契约测试）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add crawler/apsi_crawler/cli.py crawler/tests/test_fetch_task_cli.py crawler/tests/fixtures/contracts/fetch_task_v1.json crawler/tests/test_contract_compatibility.py
@@ -1495,7 +1495,7 @@ git commit -m "feat(crawler): wire fail-open enrichment into fetch-task and exte
 **Interfaces:**
 - Produces: 导出 `enrichmentPreservingUpdateSet(updateValues, row)`（返回传给 `onConflictDoUpdate({ set })` 的对象）——Task 7 的 MySQL 实现遵循同一规则但用 SQL 表达。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `sqlite-json-importer.test.ts` 的 `describe` 内追加（复用文件顶部已有的 `NOW`、`testDb`、`importCrawlerJsonRunIntoSqlite`、`bids`、`bidAttachments` 导入；若 `bidAttachments`/`eq` 未导入则从 `@/server/db/schema`、`drizzle-orm` 导入）：
 ```typescript
@@ -1543,12 +1543,12 @@ git commit -m "feat(crawler): wire fail-open enrichment into fetch-task and exte
   });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd frontend && npx vitest run src/server/crawler/sqlite-json-importer.test.ts`
 Expected: 3 个新测试 FAIL（描述被覆盖为 "Road Repair"；附件被清空）。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 在 `sqlite-json-importer.ts` 顶部 `import { eq } from "drizzle-orm"` 改为 `import { eq, sql } from "drizzle-orm"`。新增导出：
 ```typescript
@@ -1595,12 +1595,12 @@ export function enrichmentPreservingUpdateSet(updateValues: ReturnType<typeof bi
 ```
 （替换原函数体；更新函数上方注释的最后一句为"empty payload lists are ignored, see below"。）注意 Drizzle 的 `sql.raw("description")` 在 `ON CONFLICT DO UPDATE SET description = description` 语境下引用的是**现有行**的列值——正是所需语义。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `cd frontend && npx vitest run src/server/crawler/sqlite-json-importer.test.ts src/server/crawler/configured-runner.test.ts src/app/api/crawler/state/run/route.test.ts`
 Expected: 全部通过。SQLite 的 `ON CONFLICT DO UPDATE SET col = <expr>` 中，裸列名 `description` 指**现有行**的值，`excluded.description` 才是传入值——`sql.raw("description")` 正是"保留现值"。若 Drizzle 生成的 SQL 让 SQLite 报 "ambiguous column"/"no such column"，改为显式限定 `sql\`"bids"."description"\``（其余列同理）后重跑。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add frontend/src/server/crawler/sqlite-json-importer.ts frontend/src/server/crawler/sqlite-json-importer.test.ts
@@ -1618,7 +1618,7 @@ git commit -m "fix(importer): enrichment-preserving upsert for the SQLite JSON i
 **Interfaces:**
 - Produces: 导出 `bidUpdateAssignment(column: string): string`，返回 `ON DUPLICATE KEY UPDATE` 片段。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 在 `mysql-json-importer.test.ts` 顶部导入 `bidUpdateAssignment`，追加：
 ```typescript
@@ -1660,12 +1660,12 @@ git commit -m "fix(importer): enrichment-preserving upsert for the SQLite JSON i
   });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd frontend && npx vitest run src/server/crawler/mysql-json-importer.test.ts`
 Expected: 3 FAIL（`bidUpdateAssignment` 未导出；DELETE 被执行）。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 在 `mysql-json-importer.ts` 的 `bidUpdateColumns` 定义后追加：
 ```typescript
@@ -1709,17 +1709,17 @@ export function bidUpdateAssignment(column: string) {
     }
 ```
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run: `cd frontend && npx vitest run src/server/crawler/mysql-json-importer.test.ts src/server/crawler/mysql-importer.test.ts src/server/crawler/configured-runner.test.ts`
 Expected: 全部通过。
 
-- [ ] **Step 5: 真实 MySQL 冒烟**
+- [x] **Step 5: 真实 MySQL 冒烟**
 
 Run: `cd frontend && set -a && source .env.local && set +a && npm run db:mysql:smoke`
 Expected: `MySQL smoke passed`（importer 改动不影响 schema）。
 
-- [ ] **Step 6: 提交**
+- [x] **Step 6: 提交**
 
 ```bash
 git add frontend/src/server/crawler/mysql-json-importer.ts frontend/src/server/crawler/mysql-json-importer.test.ts
@@ -1741,7 +1741,7 @@ git commit -m "fix(importer): enrichment-preserving upsert for the MySQL JSON im
   - `crawler-config.ts`：`CADENCES = ["hourly","daily","weekly","manual"] as const`；`type Cadence`；`ENRICHMENT_FIELDS = ["description","attachments","category","contact","published_date"] as const`；`interface EnrichmentConfig { enabled: boolean; fields: EnrichmentField[]; maxDetailsPerRun: number; minIntervalSeconds: number; timeoutSeconds: number; detailSelectors: Partial<Record<EnrichmentField,string>>; attachmentUrlTemplate: string | null }`；`DEFAULT_ENRICHMENT_CONFIG`；`parseEnrichmentConfig(fetchConfig: Record<string,unknown>): EnrichmentConfig`；`validateCrawlerConfigInput(input: { fetchConfig?: unknown; cadence?: unknown; baseUrl?: unknown }): { ok: true; value: { fetchConfig?: Record<string,unknown>; cadence?: Cadence; baseUrl?: string | null } } | { ok: false; message: string }`；`serializeEnrichmentConfig(config: EnrichmentConfig): Record<string, unknown>`（转成 snake_case 的 `enrichment` 块）。
   - `AdminDataSource.fetchConfig: Record<string, unknown>`；`UpdateAdminDataSourceInput` 增加 `fetchConfig?: Record<string, unknown>; cadence?: Cadence; baseUrl?: string | null`；审计事件名 `data_source.crawler_config_updated`。
 
-- [ ] **Step 1: 写校验函数失败测试**
+- [x] **Step 1: 写校验函数失败测试**
 
 `crawler-config.test.ts`：
 ```typescript
@@ -1797,12 +1797,12 @@ describe("validateCrawlerConfigInput", () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd frontend && npx vitest run src/server/admin/crawler-config.test.ts`
 Expected: FAIL（模块不存在）。
 
-- [ ] **Step 3: 实现 `crawler-config.ts`**
+- [x] **Step 3: 实现 `crawler-config.ts`**
 
 ```typescript
 export const CADENCES = ["hourly", "daily", "weekly", "manual"] as const;
@@ -1953,12 +1953,12 @@ export function validateCrawlerConfigInput(input: { fetchConfig?: unknown; caden
 }
 ```
 
-- [ ] **Step 4: 运行校验测试**
+- [x] **Step 4: 运行校验测试**
 
 Run: `cd frontend && npx vitest run src/server/admin/crawler-config.test.ts`
 Expected: 6 passed。
 
-- [ ] **Step 5: 写仓库层失败测试**
+- [x] **Step 5: 写仓库层失败测试**
 
 在 `data-sources-repository.test.ts` 追加。文件顶部确保有这些导入（缺哪个补哪个）：`import { updateAdminDataSource, updateAdminDataSourceFromMysql } from "./data-sources-repository";`、`import { dataSources, eventLog } from "@/server/db/schema";`（`eventLog` 是 `schema.ts` 里 `event_log` 表的导出名；若实际导出名不同，以 `grep -n "event_log" src/server/db/schema.ts` 为准）、`import { eq } from "drizzle-orm";`：
 ```typescript
@@ -2001,12 +2001,12 @@ Expected: 6 passed。
   });
 ```
 
-- [ ] **Step 6: 运行确认失败**
+- [x] **Step 6: 运行确认失败**
 
 Run: `cd frontend && npx vitest run src/server/admin/data-sources-repository.test.ts`
 Expected: 2 FAIL（`fetchConfig` 未暴露/未更新）。
 
-- [ ] **Step 7: 实现仓库层**
+- [x] **Step 7: 实现仓库层**
 
 在 `data-sources-repository.ts`：
 1. 导入 `import { writeAuditEvent, writeAuditEventFromMysql } from "@/server/events/event-log";` 与 `import type { Cadence } from "./crawler-config";`。
@@ -2089,12 +2089,12 @@ function nextFetchConfig(existingRaw: unknown, input: UpdateAdminDataSourceInput
    在 MySQL 的 `if (hasGovernanceUpdate(input)) {...}` 块之后追加与 SQLite 相同内容的 `await writeAuditEventFromMysql(mysql, {...})`（`existing`/`updated` 为 `DataSourceRow`，字段同名）。
    若 `writeAuditEvent` 的 `WriteEventInput.actorType` 枚举不含 `"user"`，改用 `event-log.ts` 中 `EventActorType` 的实际值（查看该类型定义并替换）。
 
-- [ ] **Step 8: 运行测试**
+- [x] **Step 8: 运行测试**
 
 Run: `cd frontend && npx vitest run src/server/admin/data-sources-repository.test.ts src/server/admin/crawler-config.test.ts src/app/api/admin/data-sources`
 Expected: 全部通过。
 
-- [ ] **Step 9: 提交**
+- [x] **Step 9: 提交**
 
 ```bash
 git add frontend/src/server/admin/crawler-config.ts frontend/src/server/admin/crawler-config.test.ts frontend/src/server/admin/data-sources-repository.ts frontend/src/server/admin/data-sources-repository.test.ts
@@ -2113,7 +2113,7 @@ git commit -m "feat(admin): crawler config validation and fetch_config/cadence/b
 - Consumes: Task 8 `validateCrawlerConfigInput`。
 - Produces: 400 `{ error: { code: "INVALID_CRAWLER_CONFIG", message } }`；成功响应 `source.fetchConfig`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 追加到 `describe("PATCH /api/admin/data-sources/[id]")`：
 ```typescript
@@ -2153,12 +2153,12 @@ git commit -m "feat(admin): crawler config validation and fetch_config/cadence/b
   });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd frontend && npx vitest run "src/app/api/admin/data-sources/[id]/route.test.ts"`
 Expected: 2 FAIL。
 
-- [ ] **Step 3: 实现**
+- [x] **Step 3: 实现**
 
 在 `route.ts` 导入 `import { validateCrawlerConfigInput } from "@/server/admin/crawler-config";`。新增错误类：
 ```typescript
@@ -2190,12 +2190,12 @@ class InvalidCrawlerConfigError extends Error {}
 ```
 `includesGovernanceUpdate` 保持不变（爬虫配置不触发 admin 二次校验）。
 
-- [ ] **Step 4: 运行测试与结构覆盖**
+- [x] **Step 4: 运行测试与结构覆盖**
 
 Run: `cd frontend && npx vitest run "src/app/api/admin/data-sources/[id]/route.test.ts" src/server/auth/role-route-coverage.test.ts src/server/db/mysql-route-coverage.test.ts src/server/auth/feature-gate-coverage.test.ts`
 Expected: 全部通过（未新增路由）。
 
-- [ ] **Step 5: 提交**
+- [x] **Step 5: 提交**
 
 ```bash
 git add "frontend/src/app/api/admin/data-sources/[id]/route.ts" "frontend/src/app/api/admin/data-sources/[id]/route.test.ts"
@@ -2217,7 +2217,7 @@ git commit -m "feat(admin): accept crawler config in the data source PATCH route
 - Consumes: `updateAdminDataSource(id, input)`（`@/lib/api/admin`）、`parseEnrichmentConfig`/`serializeEnrichmentConfig`/`ENRICHMENT_FIELDS`/`CADENCES`（`@/server/admin/crawler-config` 为纯 TS，无服务端依赖，可被客户端导入）。
 - Produces: `CrawlerConfigPanel({ source, onSaved, disabled })`；导出纯函数 `buildCrawlerConfigPatch(source, form) -> UpdateAdminDataSourceInput` 与 `formFromSource(source) -> CrawlerConfigForm`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 `CrawlerConfigPanel.test.ts`：
 ```typescript
@@ -2279,12 +2279,12 @@ describe("CrawlerConfigPanel wiring", () => {
 });
 ```
 
-- [ ] **Step 2: 运行确认失败**
+- [x] **Step 2: 运行确认失败**
 
 Run: `cd frontend && npx vitest run src/components/admin/CrawlerConfigPanel.test.ts`
 Expected: FAIL（模块不存在）。
 
-- [ ] **Step 3: i18n 文案**
+- [x] **Step 3: i18n 文案**
 
 `en.ts` 的 admin 区块（`batchRunWindowKept` 之后）追加：
 ```typescript
@@ -2345,7 +2345,7 @@ Expected: FAIL（模块不存在）。
     crawlerConfigSaveFailed: "保存爬虫配置失败：{message}",
 ```
 
-- [ ] **Step 4: 实现组件**
+- [x] **Step 4: 实现组件**
 
 `CrawlerConfigPanel.tsx`：
 ```tsx
@@ -2545,7 +2545,7 @@ export function CrawlerConfigPanel({ source, disabled = false, onSaved, onMessag
 }
 ```
 
-- [ ] **Step 5: 挂载到管理页**
+- [x] **Step 5: 挂载到管理页**
 
 `page.tsx`：在 `import { JurisdictionBatchRunPanel } ...` 之后加 `import { CrawlerConfigPanel } from "@/components/admin/CrawlerConfigPanel";`。在数据源表的 `canRunOperations` 操作单元格里（`runSourceNow` 按钮所在 `<TableCell className="text-right">` 内，按钮/`-` 之后）追加：
 ```tsx
@@ -2559,16 +2559,16 @@ export function CrawlerConfigPanel({ source, disabled = false, onSaved, onMessag
                       </div>
 ```
 
-- [ ] **Step 6: 运行测试与门禁**
+- [x] **Step 6: 运行测试与门禁**
 
 Run: `cd frontend && npx vitest run src/components/admin/CrawlerConfigPanel.test.ts src/app/admin/page.test.ts src/lib/api/admin.test.ts && npm run i18n:check && npm run lint && npm run build`
 Expected: 测试通过；`i18n:check` 无新 finding；lint 与 build 通过。若 `@/server/admin/crawler-config` 被客户端导入触发 Next 的 server-only 边界错误，把该文件移到 `src/lib/crawler-config.ts` 并更新 Task 8/9 的导入路径（文件本身无服务端依赖）。
 
-- [ ] **Step 7: 浏览器验证**
+- [x] **Step 7: 浏览器验证**
 
 `npm run dev` 后登录管理员，打开 `/admin` 数据源表，对 Illinois BidBuy 点击"爬虫配置"→ 勾选启用、字段全选、保存；刷新页面确认面板回填了保存的值；MySQL 查询 `SELECT fetch_config, cadence FROM data_sources WHERE id='il_bidbuy'` 应看到 `enrichment.enabled: true`。
 
-- [ ] **Step 8: 提交**
+- [x] **Step 8: 提交**
 
 ```bash
 git add frontend/src/components/admin/CrawlerConfigPanel.tsx frontend/src/components/admin/CrawlerConfigPanel.test.ts frontend/src/app/admin/page.tsx frontend/src/lib/i18n/dictionaries/en.ts frontend/src/lib/i18n/dictionaries/zh.ts
@@ -2587,7 +2587,7 @@ git commit -m "feat(admin): per-source crawler config panel for enrichment, cade
 **Interfaces:**
 - Consumes: 全部前序任务。
 
-- [ ] **Step 1: 起 sidecar 与 MySQL，记录基线**
+- [x] **Step 1: 起 sidecar 与 MySQL，记录基线**
 
 ```bash
 docker compose up -d scrapling-extractor && curl -s http://localhost:8091/health
@@ -2595,11 +2595,11 @@ docker exec winbids-mysql mysql -u winbids -pwinbids_dev_password winbids -e "SE
 ```
 把两组数字记入 `docs/operations/detail-enrichment.md` 的"基线"表。
 
-- [ ] **Step 2: 开启五源补全并运行**
+- [x] **Step 2: 开启五源补全并运行**
 
 在 `/admin` 对 CA / IL / FL / NY / TX 五源打开"爬虫配置"→ 启用补全、字段全选、IL 填附件模板 `https://www.bidbuy.illinois.gov/bso/external/bidDetail.sdo?downloadFileNbr={id}&docId={source_bid_id}&currentPage=1&mode=download&parentUrl=close` → 保存。在"按辖区批量运行"面板勾选这五个源运行（服务端已由 `.env.local` 的 `SCRAPLING_EXTRACTOR_URL` 指向 sidecar）。
 
-- [ ] **Step 3: 验证补全统计与数据**
+- [x] **Step 3: 验证补全统计与数据**
 
 ```bash
 docker exec winbids-mysql mysql -u winbids -pwinbids_dev_password winbids -e "SELECT source, status, fetched_count, JSON_EXTRACT(metadata, '$.enrichment') enrichment FROM crawler_logs ORDER BY started_at DESC LIMIT 5;"
@@ -2610,11 +2610,11 @@ docker exec winbids-mysql mysql -u winbids -pwinbids_dev_password winbids -e "SE
 ```
 逐条打开 `source_url` 对照门户页面，描述/分类/联系人必须与页面一致；不一致的字段记入文档"已知偏差"并在对应源的 `detail_selectors` 填入精确选择器后重跑。
 
-- [ ] **Step 4: 保护式 upsert 真实验证**
+- [x] **Step 4: 保护式 upsert 真实验证**
 
 对 IL 关闭补全（保存）后再运行一次 IL；重跑 Step 3 的抽查 SQL：`description`、`original_category`、附件数必须保持补全后的值。
 
-- [ ] **Step 5: 全量门禁**
+- [x] **Step 5: 全量门禁**
 
 ```bash
 cd frontend && set -a && source .env.local && set +a && npm run db:mysql:smoke && npm run risk:check && npx vitest run && npm run lint && npm run build && npm run i18n:check
@@ -2623,7 +2623,7 @@ cd ../services/scrapling-extractor && .venv/bin/python -m pytest -q
 ```
 Expected: 全部通过。
 
-- [ ] **Step 6: 文档**
+- [x] **Step 6: 文档**
 
 `docs/operations/detail-enrichment.md`：
 ```markdown
@@ -2667,7 +2667,7 @@ Expected: 全部通过。
 - **详情补全（Scrapling sidecar）**：按源可开关的详情页补全，补齐描述、附件、分类、联系人、发布日期；仅解析、不绕过任何反爬机制；管理端可配置字段、上限、间隔与选择器。
 ```
 
-- [ ] **Step 7: 提交**
+- [x] **Step 7: 提交**
 
 ```bash
 git add CLAUDE.md README.md docs/operations/detail-enrichment.md
