@@ -7,6 +7,16 @@ function crawlerDirectory() {
   return path.resolve(process.cwd(), "..", "crawler");
 }
 
+/**
+ * Cap on the child's accumulated stdout. Node's `execFile` default is 1 MiB, which a real
+ * fetch-task run can exceed on its own: the whole bid list is serialized to stdout, and detail
+ * enrichment fills `description` + `full_description` (each capped at 20 000 chars in the
+ * extractor) for up to 200 records per run — several MB. Past the limit Node SIGTERMs the child
+ * and returns ERR_CHILD_PROCESS_STDIO_MAXBUFFER with truncated stdout, so JSON.parse throws and
+ * a perfectly good run is recorded as a failure with zero bids imported.
+ */
+const CRAWLER_STDOUT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+
 export interface CrawlTaskDateRange {
   from: string | null;
   to: string | null;
@@ -87,7 +97,11 @@ export async function runCrawlTask(
     const child = execFile(
       "python3",
       ["-m", "apsi_crawler.cli", "fetch-task"],
-      { cwd: crawlerDirectory(), env: process.env },
+      {
+        cwd: crawlerDirectory(),
+        env: process.env,
+        maxBuffer: CRAWLER_STDOUT_MAX_BUFFER_BYTES,
+      },
       (error, stdout, stderr) => {
         // Python 侧 _json_run_payload 输出 camelCase 键,不是 snake_case。
         let parsed: { status?: string; bids?: unknown[]; errorCode?: string | null } = {};

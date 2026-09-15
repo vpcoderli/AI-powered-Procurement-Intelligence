@@ -195,6 +195,52 @@ describe("runCrawlTask", () => {
     expect(result.status).toBe("failure");
   });
 
+  it("reads a stdout payload larger than Node's default 1 MiB execFile buffer", async () => {
+    // Enrichment writes `description` + `full_description` (each capped at 20 000 chars) for up
+    // to 200 records per run, so a real fetch-task stdout can easily exceed the 1 MiB default
+    // `maxBuffer`. When it does, Node SIGTERMs the child and hands back TRUNCATED stdout plus
+    // ERR_CHILD_PROCESS_STDIO_MAXBUFFER — JSON.parse then throws and the whole run is recorded
+    // as a failure with zero bids. The mock below reproduces exactly that Node behaviour so the
+    // explicit maxBuffer on the execFile options is what keeps this test green.
+    const bid = { id: "bid_big", description: "x".repeat(20_000), fullDescription: "y".repeat(20_000) };
+    const runPayload = {
+      source: "ca_caleprocure",
+      runId: "run_big",
+      status: "success",
+      startedAt: "2026-09-15T00:00:00.000Z",
+      finishedAt: "2026-09-15T00:00:01.000Z",
+      durationMs: 1000,
+      metadata: {},
+      bids: Array.from({ length: 30 }, (_, index) => ({ ...bid, id: `bid_${index}` })),
+      errorCode: null,
+      errorMessage: null,
+      errorStack: null,
+      taskId: "tsk_big",
+    };
+    const stdout = JSON.stringify(runPayload);
+    expect(Buffer.byteLength(stdout)).toBeGreaterThan(1024 * 1024);
+
+    mockedExecFile.mockImplementationOnce(((_command, _args, options, callback) => {
+      const maxBuffer = (options as { maxBuffer?: number }).maxBuffer ?? 1024 * 1024;
+      if (Buffer.byteLength(stdout) > maxBuffer) {
+        const error = Object.assign(new Error("stdout maxBuffer length exceeded"), {
+          code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+        });
+        callback(error, stdout.slice(0, maxBuffer), "");
+      } else {
+        callback(null, stdout, "");
+      }
+      return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+
+    const result = await runCrawlTask(source(), { taskId: "tsk_big" });
+
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe("success");
+    expect(result.fetchedCount).toBe(30);
+    expect(result.payload).toEqual(runPayload);
+  });
+
   it("sets payload to null when stdout parses but carries no status field", async () => {
     mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
       callback(null, JSON.stringify({ unrelated: true }), "");
