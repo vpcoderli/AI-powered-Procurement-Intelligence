@@ -10,7 +10,8 @@ SUPPORTED_FIELDS = ("description", "attachments", "category", "contact", "publis
 
 _LABELS = {
     "description": ("Description", "Summary", "Scope of Work", "Scope", "Details"),
-    "category": ("Category", "Commodity", "NAICS", "UNSPSC", "Classification"),
+    # "NIGP Code" is the commodity classification BuySpeed portals (IL BidBuy, OregonBuys) print.
+    "category": ("Category", "Commodity", "NIGP Code", "NAICS", "UNSPSC", "Classification"),
     "contact": ("Contact", "Buyer", "Procurement Officer", "Point of Contact"),
     "published_date": ("Posted Date", "Published", "Publish Date", "Issue Date", "Post Date", "Posted"),
     "attachments": ("File Attachments", "Attachments", "Documents", "Bid Documents", "Files"),
@@ -90,7 +91,14 @@ def _attachments(page, url, selector=None):
         if container is not None:
             anchors = list(container.css("a[href]"))
         if not anchors:
-            anchors = [a for a in page.css("a[href]") if _mime_for(a.attrib.get("href", ""))]
+            # Match on the href path OR the link text: download handlers such as
+            # `FileDownload.aspx?file=x/Solicitation_1.pdf` (PA eMarketplace) carry the document
+            # extension only in the query string / anchor text, never in the URL path.
+            anchors = [
+                a
+                for a in page.css("a[href]")
+                if _mime_for(a.attrib.get("href", "")) or _mime_for(_clean(a.text) or "")
+            ]
     results, seen = [], set()
     for anchor in anchors:
         raw_href = (anchor.attrib.get("href") or "").strip()
@@ -136,8 +144,32 @@ def _contact(page, selector=None):
     name = text
     for token in filter(None, (email, phone)):
         name = name.replace(token, "")
-    name = _clean(name)
+    name = _clean_contact_name(name)
     return name, email, phone
+
+
+_CONTACT_LEAD_RE = re.compile(
+    r"^(?:contact(?: information| info| person)?|buyer|procurement officer|point of contact)\s*[:\-–]?\s*",
+    re.I,
+)
+_CONTACT_TRAIL_RE = re.compile(r"\s*(?:\bat\b|[:\-–,(]|\bphone\b|\bemail\b)+\s*$", re.I)
+
+
+def _clean_contact_name(text):
+    """Turn label-adjacent contact text ("Contact Amanda Olinger at (217) …") into a bare name.
+
+    Strips the leading label word and the trailing connector left behind once the phone/email
+    tokens were removed. Returns None when nothing name-like remains or the remainder is a long
+    paragraph rather than a name."""
+    name = _clean(text)
+    if not name:
+        return None
+    name = _CONTACT_LEAD_RE.sub("", name)
+    name = _CONTACT_TRAIL_RE.sub("", name)
+    name = _clean(name)
+    if not name or len(name) > 120:
+        return None
+    return name
 
 
 def extract(html, url, fields, selectors=None):

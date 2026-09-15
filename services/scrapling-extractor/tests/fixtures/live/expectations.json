@@ -1,0 +1,43 @@
+[
+  {
+    "fixture": "il_bidbuy_detail.html",
+    "url": "https://www.bidbuy.illinois.gov/bso/external/bidDetail.sda?docId=27-493ISP-ADMIN-B-54102&external=true&parentUrl=close",
+    "expect": {
+      "description": "ISP Temporary Services for ISP Defined Positions",
+      "original_category": "962-69",
+      "contact_name": "Amanda Olinger",
+      "contact_phone": "(217) 524-8437"
+    },
+    "min_attachments": 1,
+    "selectors": {}
+  },
+  {
+    "fixture": "or_oregonbuys_detail.html",
+    "url": "https://oregonbuys.gov/bso/external/bidDetail.sda?docId=S-X24129-00017971&external=true&parentUrl=close",
+    "expect": {
+      "description": "Medical Third-Party Administration Services",
+      "original_category": "948-07",
+      "contact_name": "Steve Norman"
+    },
+    "min_attachments": 1,
+    "selectors": {
+      "contact": "//td[normalize-space(.)='Purchaser:']/following-sibling::td[1]"
+    }
+  },
+  {
+    "fixture": "pa_emarketplace_detail.html",
+    "url": "https://www.emarketplace.state.pa.us/Solicitations.aspx?SID=6100066394-1",
+    "expect": {
+      "description": "supplement solicitation to Invitation to bid (IFB) 6100061271",
+      "original_category": "IFB",
+      "published_date": "09/14/26",
+      "contact_email": "ldavilarey@pa.gov"
+    },
+    "min_attachments": 5,
+    "selectors": {
+      "category": "#ctl00_MainBody_lblTypes",
+      "published_date": "#ctl00_MainBody_lblDatePre",
+      "contact": "#ctl00_MainBody_lblEmail"
+    }
+  }
+]
