@@ -51,8 +51,12 @@ def fetch_page(url, session=None, timeout=30, params=None):
 
     Returns a `FetchedPage(html, final_url, redirected)`. `final_url` comes from
     `response.url` (requests follows redirects by default) and falls back to the requested
-    URL when a caller's stub response does not carry one; `redirected` is True when
-    `response.history` is non-empty or the final URL differs from the requested one.
+    URL when a caller's stub response does not carry one; `redirected` is True only when
+    `response.history` is non-empty.
+
+    `final_url != url` is deliberately NOT part of `redirected`: requests re-quotes the URL
+    while preparing the request, so a detail path containing a space comes back as
+    `.../RFP%2026-101` with an empty history and no redirect at all.
     """
     client = session or requests.Session()
     close_client = session is None
@@ -86,7 +90,7 @@ def fetch_page(url, session=None, timeout=30, params=None):
             raise HtmlPageError("HTML response was empty")
 
         final_url = getattr(response, "url", None) or url
-        redirected = bool(getattr(response, "history", None)) or final_url != url
+        redirected = bool(getattr(response, "history", None))
         return FetchedPage(response.text, final_url, redirected)
     finally:
         if close_client:

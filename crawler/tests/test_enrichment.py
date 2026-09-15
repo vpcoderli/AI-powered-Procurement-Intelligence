@@ -358,3 +358,57 @@ def test_extractor_client_posts_json_and_maps_errors():
     assert session.calls[0]["json"] == {"html": "<p/>", "url": "https://x/1", "fields": ["description"], "selectors": {"description": "p"}}
     with pytest.raises(ExtractorError):
         ExtractorClient("http://localhost:8091", session=PostSession(status=500, payload={"error": {"code": "EXTRACT_FAILED", "message": "x"}})).extract("<p/>", "https://x/1", ["description"], None)
+
+
+def test_requests_re_quoting_the_url_is_not_treated_as_an_off_target_redirect():
+    detail = "https://x.gov/bid/RFP 26-101"
+    quoted = "https://x.gov/bid/RFP%2026-101"
+    # No redirect ran: `requests` merely percent-encoded the space while preparing the request.
+    assert detect_off_target_redirect(detail, quoted, False) is None
+    # And a real redirect that keeps the id is still on target once both paths are unquoted.
+    assert detect_off_target_redirect(detail, quoted, True) is None
+
+
+def test_login_markers_match_whole_path_segments_only():
+    # `/authority/...` merely CONTAINS "/auth"; it is not a login bounce.
+    assert detect_off_target_redirect("https://x.gov/bid/7", "https://x.gov/authority/bid/7", True) is None
+    assert detect_off_target_redirect("https://x.gov/bid/7", "https://x.gov/loginpage/7", True) is None
+    # the real markers still fire, including the two-segment /account/login
+    assert detect_off_target_redirect("https://x.gov/bid/7", "https://x.gov/auth/bid/7", True) == "login page"
+    assert detect_off_target_redirect("https://x.gov/bid/7", "https://x.gov/account/login", True) == "login page"
+    assert detect_off_target_redirect("https://x.gov/bid/7", "https://x.gov/sign-in", True) == "login page"
+
+
+def test_space_in_the_detail_path_still_enriches_end_to_end():
+    extractor = FakeExtractor(result=ENRICHED)
+    detail_url = "https://portal.example.gov/bid/RFP 26-101"
+    session = FakeSession(
+        # requests answers with the percent-encoded URL and an EMPTY history: no redirect ran.
+        {detail_url: FakeResponse("<html>bid</html>", url="https://portal.example.gov/bid/RFP%2026-101")}
+    )
+    out, stats = enrich_bids(
+        [_bid(source_url=detail_url)], _source(), {"enrichment": {"enabled": True, "min_interval_seconds": 0}},
+        extractor=extractor, session=session, sleep=lambda s: None,
+    )
+    assert stats["enriched"] == 1 and stats["failed"] == 0
+    assert out[0]["description"] == "Full scope text"
+    assert len(extractor.calls) == 1
+
+
+def test_real_redirect_keeping_a_quoted_id_still_enriches():
+    extractor = FakeExtractor(result=ENRICHED)
+    detail_url = "https://portal.example.gov/bid/RFP 26-101"
+    session = FakeSession(
+        {
+            detail_url: FakeResponse(
+                "<html>bid</html>",
+                url="https://portal.example.gov/bid/RFP%2026-101?tab=docs",
+                history=[FakeResponse(status_code=301)],
+            )
+        }
+    )
+    _, stats = enrich_bids(
+        [_bid(source_url=detail_url)], _source(), {"enrichment": {"enabled": True, "min_interval_seconds": 0}},
+        extractor=extractor, session=session, sleep=lambda s: None,
+    )
+    assert stats["enriched"] == 1 and stats["failed"] == 0

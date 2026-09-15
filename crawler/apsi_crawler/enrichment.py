@@ -10,7 +10,7 @@ import os
 import re
 import sys
 import time
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import requests
 
@@ -35,6 +35,27 @@ _QUOTED_DIGITS = re.compile(r"['\"](\d+)['\"]")
 # extractor: the heuristics would happily turn the login navigation bar into a "description".
 # We detect that and count the record as failed. Nothing here bypasses a login.
 _LOGIN_PATH_MARKERS = ("/login", "/signin", "/sign-in", "/account/login", "/auth")
+_LOGIN_MARKER_SEGMENTS = tuple(
+    tuple(segment for segment in marker.split("/") if segment) for marker in _LOGIN_PATH_MARKERS
+)
+
+
+def _path_segments(path):
+    return [segment for segment in unquote(path or "").lower().split("/") if segment]
+
+
+def _has_login_marker(segments):
+    """True when the path contains a login marker as WHOLE segments.
+
+    Substring matching would flag a portal path like `/authority/bid/7` (contains "/auth") or
+    `/loginpage/7` as a login bounce and silently disable enrichment for that source.
+    """
+    for marker in _LOGIN_MARKER_SEGMENTS:
+        width = len(marker)
+        for start in range(len(segments) - width + 1):
+            if tuple(segments[start:start + width]) == marker:
+                return True
+    return False
 
 
 class ExtractorError(Exception):
@@ -62,17 +83,17 @@ def detect_off_target_redirect(requested_url, final_url, redirected):
     if final.netloc.lower() != requested.netloc.lower():
         return "host is not the requested host"
 
-    requested_path = (requested.path or "").lower()
-    final_path = (final.path or "").lower()
-    if any(marker in final_path for marker in _LOGIN_PATH_MARKERS) and not any(
-        marker in requested_path for marker in _LOGIN_PATH_MARKERS
-    ):
+    # Both paths are percent-decoded before comparison: `requests` re-quotes the URL when
+    # preparing it, so a requested `/bid/RFP 26-101` comes back as `/bid/RFP%2026-101` and a
+    # raw comparison would "lose" the id that is plainly still there.
+    requested_segments = _path_segments(requested.path)
+    final_segments = _path_segments(final.path)
+    if _has_login_marker(final_segments) and not _has_login_marker(requested_segments):
         return "login page"
 
     if redirected:
-        segments = [segment for segment in requested_path.split("/") if segment]
-        last_segment = segments[-1] if segments else ""
-        if last_segment and last_segment not in final_path:
+        last_segment = requested_segments[-1] if requested_segments else ""
+        if last_segment and last_segment not in "/".join(final_segments):
             return "redirected away from the requested detail path"
     return None
 

@@ -388,3 +388,17 @@ def test_extract_table_rows_raises_when_required_headers_are_missing():
         extract_table_rows(html, required_headers=("Bid Solicitation #", "Description"))
 
     assert str(error.value) == "HTML table was missing required headers: Bid Solicitation #"
+
+
+def test_fetch_page_does_not_report_a_redirect_when_requests_only_re_quotes_the_url():
+    """`requests` percent-encodes the URL while preparing it, so `response.url` can differ from
+    the requested string with no redirect involved. Treating that as a redirect made
+    `detect_off_target_redirect` drop enrichment for every source whose detail path holds a
+    space (or any other re-quoted character)."""
+    requested = "https://x.gov/bid/RFP 26-101"
+    session = FakeSession(FakeResponse(text="<html>bid</html>", url="https://x.gov/bid/RFP%2026-101"))
+
+    page = fetch_page(requested, session=session)
+
+    assert page.final_url == "https://x.gov/bid/RFP%2026-101"
+    assert page.redirected is False
