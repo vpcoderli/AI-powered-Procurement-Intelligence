@@ -105,40 +105,50 @@ interface CrawlerConfigPanelProps {
   source: AdminDataSource;
   disabled?: boolean;
   onSaved: (source: AdminDataSource) => void;
-  onMessage?: (message: string) => void;
+}
+
+interface CrawlerConfigStatus {
+  kind: "success" | "error";
+  text: string;
 }
 
 const inputClass =
   "h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none";
 
-export function CrawlerConfigPanel({ source, disabled = false, onSaved, onMessage }: CrawlerConfigPanelProps) {
+export function CrawlerConfigPanel({ source, disabled = false, onSaved }: CrawlerConfigPanelProps) {
   const { t } = useLanguage();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<CrawlerConfigForm>(() => formFromSource(source));
   const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<CrawlerConfigStatus | null>(null);
 
-  const update = <K extends keyof CrawlerConfigForm>(key: K, value: CrawlerConfigForm[K]) =>
+  const update = <K extends keyof CrawlerConfigForm>(key: K, value: CrawlerConfigForm[K]) => {
+    setStatus(null);
     setForm((current) => ({ ...current, [key]: value }));
+  };
 
-  const toggleField = (field: EnrichmentField) =>
+  const toggleField = (field: EnrichmentField) => {
+    setStatus(null);
     setForm((current) => ({
       ...current,
       fields: current.fields.includes(field)
         ? current.fields.filter((item) => item !== field)
         : [...current.fields, field],
     }));
+  };
 
   const save = () => {
     setSaving(true);
+    setStatus(null);
     updateAdminDataSource(source.id, buildCrawlerConfigPatch(source, form))
       .then(({ source: updated }) => {
         onSaved(updated);
         setForm(formFromSource(updated));
-        onMessage?.(t("admin.crawlerConfigSaved").replace("{source}", source.label));
+        setStatus({ kind: "success", text: t("admin.crawlerConfigSaved").replace("{source}", source.label) });
       })
       .catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
-        onMessage?.(t("admin.crawlerConfigSaveFailed").replace("{message}", message));
+        setStatus({ kind: "error", text: t("admin.crawlerConfigSaveFailed").replace("{message}", message) });
       })
       .finally(() => setSaving(false));
   };
@@ -285,7 +295,17 @@ export function CrawlerConfigPanel({ source, disabled = false, onSaved, onMessag
         />
       </label>
 
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-2">
+        {status?.kind === "success" && (
+          <p role="status" className="text-xs text-emerald-600">
+            {status.text}
+          </p>
+        )}
+        {status?.kind === "error" && (
+          <p role="alert" className="text-xs text-rose-600">
+            {status.text}
+          </p>
+        )}
         <Button
           type="button"
           size="sm"

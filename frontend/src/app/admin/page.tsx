@@ -4263,7 +4263,6 @@ export default function AdminPage() {
                           source={source}
                           disabled={isRunning || runningSourceId !== null}
                           onSaved={replaceSource}
-                          onMessage={setRunMessage}
                         />
                       </div>
                     </TableCell>
