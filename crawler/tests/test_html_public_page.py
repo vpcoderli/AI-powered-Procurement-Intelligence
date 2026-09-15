@@ -7,16 +7,20 @@ from apsi_crawler.html.public_page import (
     extract_html_tables,
     extract_table_rows,
     fetch_html,
+    fetch_page,
     normalize_space,
     read_html_fixture,
 )
 
 
 class FakeResponse:
-    def __init__(self, status_code=200, text="", headers=None):
+    def __init__(self, status_code=200, text="", headers=None, url=None, history=()):
         self.status_code = status_code
         self.text = text
         self.headers = headers or {"Content-Type": "text/html; charset=utf-8"}
+        # `requests` exposes the FINAL url and the redirect chain on every response.
+        self.url = url
+        self.history = list(history)
 
 
 class FakeSession:
@@ -82,6 +86,32 @@ def test_fetch_html_uses_session_and_returns_html_text():
         }
     ]
     assert session.closed is False
+
+
+def test_fetch_page_reports_the_final_url_after_a_redirect():
+    session = FakeSession(
+        FakeResponse(
+            text="<html>Login</html>",
+            url="https://www.nyscr.ny.gov/Account/Login?ReturnUrl=%2FAds%2FDetails%2F1",
+            history=[FakeResponse(status_code=302)],
+        )
+    )
+
+    page = fetch_page("https://www.nyscr.ny.gov/Ads/Details/1", session=session, timeout=9)
+
+    assert page.html == "<html>Login</html>"
+    assert page.final_url == "https://www.nyscr.ny.gov/Account/Login?ReturnUrl=%2FAds%2FDetails%2F1"
+    assert page.redirected is True
+    assert session.calls[0]["timeout"] == 9
+    assert session.closed is False
+
+
+def test_fetch_page_falls_back_to_the_requested_url_when_not_redirected():
+    session = FakeSession(FakeResponse(text="<html>Open Bids</html>"))
+
+    page = fetch_page("https://www.bidbuy.illinois.gov/bso/", session=session)
+
+    assert page == ("<html>Open Bids</html>", "https://www.bidbuy.illinois.gov/bso/", False)
 
 
 def test_fetch_html_closes_owned_session(monkeypatch):

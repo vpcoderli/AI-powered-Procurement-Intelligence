@@ -3,6 +3,7 @@ import json
 
 from apsi_crawler import cli
 from apsi_crawler.adapters import registry
+from apsi_crawler.html.public_page import FetchedPage
 
 
 def _run(payload, monkeypatch, capsys):
@@ -219,7 +220,13 @@ def test_fetch_task_runs_enrichment_when_enabled(monkeypatch, capsys):
     from apsi_crawler import enrichment
 
     monkeypatch.setitem(registry.DEDICATED_ADAPTERS, "rich_source", lambda source, **kwargs: [{"id": "rich_source:1", "title": "T", "description": "T", "source": "Rich", "source_url": "https://portal.example.gov/bid/1", "attachments": []}])
-    monkeypatch.setattr(enrichment, "fetch_html", lambda url, session=None, timeout=30: "<html>detail</html>")
+    # The stage fetches through `fetch_page` so it can see the FINAL url and reject a detail
+    # page that bounced to a login screen; this stub answers on-target (no redirect).
+    monkeypatch.setattr(
+        enrichment,
+        "fetch_page",
+        lambda url, session=None, timeout=30: FetchedPage("<html>detail</html>", url, False),
+    )
 
     class Extractor:
         def health(self, timeout=3.0):

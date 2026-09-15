@@ -5,6 +5,7 @@ from apsi_crawler.enrichment import (
     ENRICHMENT_FIELDS,
     ExtractorClient,
     ExtractorError,
+    detect_off_target_redirect,
     enrich_bids,
     merge_enrichment,
     parse_enrichment_config,
@@ -59,10 +60,14 @@ class FakeSession:
 
 
 class FakeResponse:
-    def __init__(self, text="<html></html>", status_code=200, content_type="text/html"):
+    def __init__(self, text="<html></html>", status_code=200, content_type="text/html", url=None, history=()):
         self.text = text
         self.status_code = status_code
         self.headers = {"Content-Type": content_type}
+        # `requests` always exposes the FINAL url plus the redirect chain; url=None here means
+        # "no redirect", and fetch_page falls back to the requested url.
+        self.url = url
+        self.history = list(history)
 
 
 ENRICHED = {
@@ -216,6 +221,111 @@ def test_records_already_complete_for_requested_fields_are_skipped():
     _, stats = enrich_bids([complete], _source(), {"enrichment": {"enabled": True, "fields": ["description", "attachments", "category"]}}, extractor=extractor, session=FakeSession({}), sleep=lambda s: None)
     assert stats == {"attempted": 0, "enriched": 0, "failed": 0, "skipped": 1, "reason": None, "extractor": "0.4.15"}
     assert extractor.calls == []
+
+
+def test_detect_off_target_redirect_covers_host_login_and_dropped_id():
+    detail = "https://www.nyscr.ny.gov/Ads/Details/2139024"
+    # (1) host changed
+    assert detect_off_target_redirect(detail, "https://sso.example.com/Ads/Details/2139024", True)
+    # (2) login marker appeared in the final path
+    assert detect_off_target_redirect(detail, "https://www.nyscr.ny.gov/Account/Login?ReturnUrl=%2FAds%2FDetails%2F2139024", True)
+    assert detect_off_target_redirect(detail, "https://www.nyscr.ny.gov/SignIn", True)
+    # (3) redirected away from the requested ad id
+    assert detect_off_target_redirect(detail, "https://www.nyscr.ny.gov/Ads/Search", True)
+    # on-target answers stay on target
+    assert detect_off_target_redirect(detail, detail, False) is None
+    assert detect_off_target_redirect(detail, detail + "/", True) is None
+    assert detect_off_target_redirect(detail, "https://www.nyscr.ny.gov/Ads/Details/2139024?tab=docs", True) is None
+    # a source whose own detail path is under /auth is not mistaken for a login bounce
+    assert detect_off_target_redirect("https://x.gov/auth/bid/7", "https://x.gov/auth/bid/7", False) is None
+
+
+def test_redirect_to_login_page_counts_failed_without_calling_extractor(capsys):
+    extractor = FakeExtractor(result=ENRICHED)
+    detail_url = "https://www.nyscr.ny.gov/Ads/Details/2139024"
+    session = FakeSession(
+        {
+            detail_url: FakeResponse(
+                "<html>New York State Contract Reporter Find Bids Advertise Bids Business Registry</html>",
+                url="https://www.nyscr.ny.gov/Account/Login?ReturnUrl=%2FAds%2FDetails%2F2139024",
+                history=[FakeResponse(status_code=302)],
+            )
+        }
+    )
+    bid = _bid(source_url=detail_url)
+    out, stats = enrich_bids([bid], _source(), {"enrichment": {"enabled": True, "min_interval_seconds": 0}}, extractor=extractor, session=session, sleep=lambda s: None)
+    assert stats == {"attempted": 1, "enriched": 0, "failed": 1, "skipped": 0, "reason": None, "extractor": "0.4.15"}
+    assert extractor.calls == []                       # the login page never reaches the extractor
+    assert out[0]["description"] == "Road Repair"      # and nothing is merged
+    assert "detail_fetched_at" not in out[0]
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "RedirectedOffTarget: final url https://www.nyscr.ny.gov/Account/Login" in captured.err
+
+
+def test_redirect_to_another_host_counts_failed():
+    extractor = FakeExtractor(result=ENRICHED)
+    session = FakeSession(
+        {
+            "https://portal.example.gov/bid/1": FakeResponse(
+                "<html>elsewhere</html>", url="https://cdn.example.com/bid/1", history=[FakeResponse(status_code=302)]
+            )
+        }
+    )
+    _, stats = enrich_bids([_bid()], _source(), {"enrichment": {"enabled": True, "min_interval_seconds": 0}}, extractor=extractor, session=session, sleep=lambda s: None)
+    assert stats["failed"] == 1 and stats["enriched"] == 0 and extractor.calls == []
+
+
+def test_redirect_dropping_the_requested_id_counts_failed():
+    extractor = FakeExtractor(result=ENRICHED)
+    session = FakeSession(
+        {
+            "https://portal.example.gov/bid/1": FakeResponse(
+                "<html>search</html>", url="https://portal.example.gov/bids/search", history=[FakeResponse(status_code=302)]
+            )
+        }
+    )
+    _, stats = enrich_bids([_bid()], _source(), {"enrichment": {"enabled": True, "min_interval_seconds": 0}}, extractor=extractor, session=session, sleep=lambda s: None)
+    assert stats["failed"] == 1 and stats["enriched"] == 0 and extractor.calls == []
+
+
+def test_benign_redirect_that_keeps_the_detail_path_still_enriches():
+    extractor = FakeExtractor(result=ENRICHED)
+    session = FakeSession(
+        {
+            "https://portal.example.gov/bid/1": FakeResponse(
+                "<html>1</html>", url="https://portal.example.gov/bid/1/", history=[FakeResponse(status_code=301)]
+            )
+        }
+    )
+    out, stats = enrich_bids([_bid()], _source(), {"enrichment": {"enabled": True, "min_interval_seconds": 0}}, extractor=extractor, session=session, sleep=lambda s: None)
+    assert stats["enriched"] == 1 and stats["failed"] == 0
+    assert out[0]["description"] == "Full scope text"
+
+
+def test_extractor_success_that_writes_nothing_counts_skipped_not_enriched():
+    # CA shape: the extractor answered, but every value it returned is already present, so
+    # merge_enrichment writes nothing. That is a skip, not an enrichment.
+    extractor = FakeExtractor(
+        result={
+            "fields": {"description": "Real scope text", "full_description": "Real scope text", "original_category": "Construction"},
+            "attachments": [],
+            "diagnostics": {"description": "selector", "contact": "not_found", "published_date": "not_found"},
+        }
+    )
+    session = FakeSession({"https://portal.example.gov/bid/1": FakeResponse("<html>1</html>")})
+    bid = _bid(
+        description="Real scope text", full_description="Real scope text", original_category="Construction",
+        attachments=[{"name": "A.pdf", "url": "https://x/a.pdf", "size_label": None, "mime_type": None, "sort_order": 0}],
+    )
+    out, stats = enrich_bids(
+        [bid], _source(), {"enrichment": {"enabled": True, "min_interval_seconds": 0}},
+        extractor=extractor, session=session, sleep=lambda s: None, now=lambda: "2026-09-15T00:00:00+00:00",
+    )
+    assert stats == {"attempted": 1, "enriched": 0, "failed": 0, "skipped": 1, "reason": None, "extractor": "0.4.15"}
+    assert extractor.calls != []                       # the extractor really ran (not the pre-fetch skip path)
+    assert out[0]["detail_fetched_at"] == "2026-09-15T00:00:00+00:00"   # the page was fetched
+    assert out[0]["raw_payload"]["enrichment"] == {"fields": {"description": "selector", "contact": "not_found", "published_date": "not_found"}}
 
 
 def test_extractor_client_posts_json_and_maps_errors():

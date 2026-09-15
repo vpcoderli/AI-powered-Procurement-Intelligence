@@ -1,3 +1,4 @@
+from collections import namedtuple
 from html.parser import HTMLParser
 from urllib.parse import urljoin
 
@@ -6,6 +7,12 @@ import requests
 
 class HtmlPageError(Exception):
     pass
+
+
+# `fetch_html` deliberately keeps returning just the HTML string (every spider depends on that).
+# Callers that must know WHERE the HTML actually came from — e.g. the enrichment stage, which has
+# to reject a detail page that bounced to a login screen — use `fetch_page` instead.
+FetchedPage = namedtuple("FetchedPage", ("html", "final_url", "redirected"))
 
 
 # Several state portals answer 403 to default HTTP-library User-Agents while serving the
@@ -35,6 +42,18 @@ def absolute_url(base_url, href):
 
 
 def fetch_html(url, session=None, timeout=30, params=None):
+    """Fetch a public page and return its HTML text (unchanged contract for every spider)."""
+    return fetch_page(url, session=session, timeout=timeout, params=params).html
+
+
+def fetch_page(url, session=None, timeout=30, params=None):
+    """Same request as `fetch_html`, but also reports the final URL and whether a redirect ran.
+
+    Returns a `FetchedPage(html, final_url, redirected)`. `final_url` comes from
+    `response.url` (requests follows redirects by default) and falls back to the requested
+    URL when a caller's stub response does not carry one; `redirected` is True when
+    `response.history` is non-empty or the final URL differs from the requested one.
+    """
     client = session or requests.Session()
     close_client = session is None
     try:
@@ -66,7 +85,9 @@ def fetch_html(url, session=None, timeout=30, params=None):
         if not response.text.strip():
             raise HtmlPageError("HTML response was empty")
 
-        return response.text
+        final_url = getattr(response, "url", None) or url
+        redirected = bool(getattr(response, "history", None)) or final_url != url
+        return FetchedPage(response.text, final_url, redirected)
     finally:
         if close_client:
             client.close()

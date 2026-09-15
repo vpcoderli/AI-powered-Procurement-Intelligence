@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from apsi_crawler.html.public_page import fetch_html
+from apsi_crawler.html.public_page import fetch_page
 from apsi_crawler.storage.sqlite import now_iso
 
 ENRICHMENT_FIELDS = ("description", "attachments", "category", "contact", "published_date")
@@ -30,10 +30,51 @@ _MAX_HTML_BYTES = 2 * 1024 * 1024
 # Only digits inside quotes count as an id argument (e.g. downloadFile('998877')) — a bare
 # digit inside unquoted parens (e.g. void(0)) is not a call argument we can trust.
 _QUOTED_DIGITS = re.compile(r"['\"](\d+)['\"]")
+# Portals that require a vendor account answer a detail URL with 302 → login page + HTTP 200.
+# The HTML that comes back is a login screen, not bid content, so it must never reach the
+# extractor: the heuristics would happily turn the login navigation bar into a "description".
+# We detect that and count the record as failed. Nothing here bypasses a login.
+_LOGIN_PATH_MARKERS = ("/login", "/signin", "/sign-in", "/account/login", "/auth")
 
 
 class ExtractorError(Exception):
     pass
+
+
+class RedirectedOffTarget(Exception):
+    """The fetched page is not the requested detail page (login wall / bounce to a list page)."""
+
+
+def detect_off_target_redirect(requested_url, final_url, redirected):
+    """Return a short reason string when `final_url` is not the requested detail page, else None.
+
+    Three cheap, deterministic rules (no page-content sniffing):
+      1. the final host differs from the requested host;
+      2. the final path picked up a login marker the requested path did not have;
+      3. a redirect ran AND the final path no longer carries the requested path's last segment
+         (typically the ad id), i.e. we landed on some other page of the same portal.
+    """
+    requested = urlparse(requested_url or "")
+    final = urlparse(final_url or "")
+    if not final.netloc:
+        return None
+
+    if final.netloc.lower() != requested.netloc.lower():
+        return "host is not the requested host"
+
+    requested_path = (requested.path or "").lower()
+    final_path = (final.path or "").lower()
+    if any(marker in final_path for marker in _LOGIN_PATH_MARKERS) and not any(
+        marker in requested_path for marker in _LOGIN_PATH_MARKERS
+    ):
+        return "login page"
+
+    if redirected:
+        segments = [segment for segment in requested_path.split("/") if segment]
+        last_segment = segments[-1] if segments else ""
+        if last_segment and last_segment not in final_path:
+            return "redirected away from the requested detail path"
+    return None
 
 
 def _clamp(value, low, high, default, cast):
@@ -227,13 +268,25 @@ def enrich_bids(bids, source, fetch_config, *, extractor=None, session=None, sle
             stats["attempted"] += 1
             last_request_at = monotonic()
             try:
-                html = fetch_html(bid["source_url"], session=client, timeout=config["timeout_seconds"])
-                if len(html.encode("utf-8", errors="ignore")) > _MAX_HTML_BYTES:
+                page = fetch_page(bid["source_url"], session=client, timeout=config["timeout_seconds"])
+                off_target = detect_off_target_redirect(bid["source_url"], page.final_url, page.redirected)
+                if off_target:
+                    # Bail out before the extractor: the HTML is some other page (usually a login
+                    # wall), and merging it would write portal chrome into the bid record.
+                    raise RedirectedOffTarget(f"final url {page.final_url} — {off_target}")
+                if len(page.html.encode("utf-8", errors="ignore")) > _MAX_HTML_BYTES:
                     raise ExtractorError("detail page exceeds 2 MB")
-                extracted = extractor.extract(html, bid["source_url"], config["fields"], config["detail_selectors"])
-                merge_enrichment(bid, extracted, config["attachment_url_template"])
+                extracted = extractor.extract(page.html, bid["source_url"], config["fields"], config["detail_selectors"])
+                changed = merge_enrichment(bid, extracted, config["attachment_url_template"])
                 bid["detail_fetched_at"] = now()
-                stats["enriched"] += 1
+                # `enriched` counts WRITES, not parses: an extractor call that returned only
+                # values the record already had (or nothing at all) changed no field, so the
+                # record is a skip. Otherwise a source that answers with an empty SPA shell
+                # reports enriched == attempted while filling in nothing.
+                if changed:
+                    stats["enriched"] += 1
+                else:
+                    stats["skipped"] += 1
             except Exception as error:  # noqa: BLE001 - fail-open by contract: never propagate to the caller
                 stats["failed"] += 1
                 # The stats dict shape is fixed by contract (fetch-task's stdout is parsed JSON),

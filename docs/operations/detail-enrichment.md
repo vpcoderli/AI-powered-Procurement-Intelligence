@@ -17,7 +17,7 @@
 
 - `crawler_logs.metadata.enrichment`：`{attempted, enriched, failed, skipped, reason, extractor}`；`reason` 取值 `disabled | extractor_not_configured | extractor_unavailable | enrichment_crashed | null`。
 - `bids.detail_fetched_at`、`bids.raw_payload.enrichment.fields`（每字段 `selector` / `heuristic` / `not_found`）。
-- 注意语义：`enriched` 统计的是"详情页抓取 + 解析 + 合并成功"的记录条数，**不是**实际写入了字段的条数。某个源 `enriched` 很高但字段全是 `not_found`（例如客户端渲染的 SPA 外壳），说明抓到的是空壳页面 —— 判断实际收益要看 `raw_payload.enrichment.fields` 与库内字段，而不是 `enriched`。
+- 注意语义：`enriched` 统计的是**实际写入了至少一个字段**的记录条数（2026-09-15 修正；此前它统计的是"抓取 + 解析成功"，CA 那种全 `not_found` 的 SPA 外壳会虚报 `enriched: 24`）。详情页抓到了、解析器也答了，但没有任何字段被写入（返回值全为 `not_found`，或都已存在）的记录现在计入 `skipped`，`attempted` 含义不变。因此 `attempted = enriched + failed + (本次抓取但未写入的 skipped)`，逐字段收益仍以 `raw_payload.enrichment.fields` 为准。
 
 常用 SQL：
 
@@ -134,7 +134,7 @@ status = success, fetched_count = 25
 ## 边界
 
 - 详情页 403 / WAF 挑战 / TLS 重置只计 `failed`，不重试、不绕过、不做浏览器渲染、不解验证码。
-- 登录后才能看的详情页不抓取；发现某个源的详情页 302 到登录页，正确做法是把该源的补全关掉。
+- 登录后才能看的详情页不抓取；发现某个源的详情页 302 到登录页，正确做法是把该源的补全关掉。补全阶段本身也会拦截这类跳转：抓取后比对最终 URL，出现"换了 host / 路径新增 `/login`、`/signin`、`/sign-in`、`/account/login`、`/auth` 标记 / 跳转后丢掉了原路径末段（详情 id）"三者之一，就判定抓到的不是目标详情页，**不调用解析器、不合并任何字段**，直接计 `failed` 并向 stderr 打印 `RedirectedOffTarget: final url …`。这是拦截，不是绕过 —— 项目不会为登录墙做任何绕过。
 - 补全只填空值；关闭补全后的运行不会覆盖已补全数据（importer 保护式 upsert）。反过来说，
   补全写错的值也不会被自动修正，所以上线新源前应先用少量样本核对选择器。
 - sidecar 只做解析：它不发起外部请求，HTML 由 crawler 自己按既有礼貌策略（默认 3 秒间隔、
