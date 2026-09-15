@@ -54,7 +54,14 @@ function daysBetween(fromDate: Date, toDate: Date) {
 function matchesKeyword(bid: Bid, q: string) {
   if (q === "") return true;
 
-  return [bid.title, bid.description, bid.issuerName, bid.originalCategory, ...bid.tags]
+  return [
+    bid.title,
+    bid.description,
+    bid.fullDescription ?? "",
+    bid.issuerName,
+    bid.originalCategory,
+    ...bid.tags,
+  ]
     .join(" ")
     .toLowerCase()
     .includes(q);

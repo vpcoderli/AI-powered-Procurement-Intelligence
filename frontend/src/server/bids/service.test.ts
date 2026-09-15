@@ -77,6 +77,7 @@ describe("bid service", () => {
 
     expect(result.bids.map((bid) => bid.title)).toEqual([
       "Enterprise Cloud Migration Services",
+      "Healthcare Data Analytics Platform",
     ]);
     expect(repositoryListBids).toHaveBeenCalledWith(injectedDb);
   });
@@ -88,6 +89,7 @@ describe("bid service", () => {
 
     expect(result.bids.map((bid) => bid.title)).toEqual([
       "Enterprise Cloud Migration Services",
+      "Healthcare Data Analytics Platform",
     ]);
     expect(repositoryListBidsFromMysql).toHaveBeenCalledWith(mysql);
   });
@@ -97,7 +99,25 @@ describe("bid service", () => {
 
     expect(result.bids.map((bid) => bid.title)).toEqual([
       "Enterprise Cloud Migration Services",
+      "Healthcare Data Analytics Platform",
     ]);
+  });
+
+  it("matches keywords that only appear in the full description", async () => {
+    const fullDescriptionOnlyBid: Bid = {
+      ...cloneBids()[0],
+      id: "full-desc-only",
+      title: "Unrelated Title",
+      description: "Short lead text that does not mention the term.",
+      fullDescription: "Deep within the verbatim detail text is the phrase zephyrgrove-compliance.",
+      tags: [],
+    };
+    repositoryListBids.mockImplementation(async () => [fullDescriptionOnlyBid]);
+    repositoryListBidsFromMysql.mockImplementation(async () => [fullDescriptionOnlyBid]);
+
+    const result = await query({ q: "zephyrgrove-compliance" });
+
+    expect(result.bids.map((bid) => bid.id)).toEqual(["full-desc-only"]);
   });
 
   it("filters bids by state or federal source id", async () => {
