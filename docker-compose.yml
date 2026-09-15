@@ -39,8 +39,10 @@ services:
       dockerfile: Dockerfile
     image: apsi-frontend:local
     depends_on:
+      # Detail enrichment is fail-open (unset/unreachable extractor = enrichment skipped), so the
+      # web app must never be gated on the sidecar being healthy — only on it having been started.
       scrapling-extractor:
-        condition: service_healthy
+        condition: service_started
     ports:
       - "3000:3000"
     env_file:
