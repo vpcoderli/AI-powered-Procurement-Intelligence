@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdminAccess, AdminAuthError, type AdminAccessPrincipal } from "@/server/admin/auth";
+import { validateCrawlerConfigInput } from "@/server/admin/crawler-config";
 import {
   AdminDataSourceNotFoundError,
   updateAdminDataSource,
@@ -11,6 +12,8 @@ import type { AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import type { SourceApprovalStatus, SourceLegalReviewStatus } from "@/lib/state-crawler-sources";
 import { csrfRejectedResponse, verifyCsrfSafe } from "@/server/security/csrf";
+
+class InvalidCrawlerConfigError extends Error {}
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -141,6 +144,16 @@ async function parsePatchBody(request: Request): Promise<UpdateAdminDataSourceIn
     input.complianceNotes = value;
   }
 
+  if (Object.hasOwn(body, "fetchConfig") || Object.hasOwn(body, "cadence") || Object.hasOwn(body, "baseUrl")) {
+    const validation = validateCrawlerConfigInput({
+      fetchConfig: body.fetchConfig,
+      cadence: body.cadence,
+      baseUrl: body.baseUrl,
+    });
+    if (!validation.ok) throw new InvalidCrawlerConfigError(validation.message);
+    Object.assign(input, validation.value);
+  }
+
   return Object.keys(input).length > 0 ? input : null;
 }
 
@@ -184,7 +197,15 @@ export function createAdminDataSourcePatch(database?: AppDatabase, mysql?: Mysql
       const resolvedDb = await resolveDatabase(database);
       const access = await requireAdminAccess(resolvedDb, request, { roles: ["admin", "operator"] });
 
-      const input = await parsePatchBody(request);
+      let input: UpdateAdminDataSourceInput | null;
+      try {
+        input = await parsePatchBody(request);
+      } catch (error) {
+        if (error instanceof InvalidCrawlerConfigError) {
+          return errorResponse("INVALID_CRAWLER_CONFIG", error.message, 400);
+        }
+        throw error;
+      }
       if (!input) {
         return errorResponse("INVALID_REQUEST", "Request body must include a valid data source update.", 400);
       }

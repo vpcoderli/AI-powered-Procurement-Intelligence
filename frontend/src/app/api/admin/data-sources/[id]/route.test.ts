@@ -206,4 +206,39 @@ describe("PATCH /api/admin/data-sources/[id]", () => {
       roles: ["admin"],
     });
   });
+
+  it("updates crawler config (fetchConfig, cadence, baseUrl) for operators", async () => {
+    const PATCH = createAdminDataSourcePatch(testDb.db);
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/data-sources/sam_gov", {
+        method: "PATCH",
+        body: JSON.stringify({ fetchConfig: { enrichment: { enabled: true, fields: ["description", "attachments"] } }, cadence: "weekly", baseUrl: "https://sam.gov/opportunities" }),
+      }),
+      { params: Promise.resolve({ id: "sam_gov" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.source.cadence).toBe("weekly");
+    expect(body.source.baseUrl).toBe("https://sam.gov/opportunities");
+    expect(body.source.fetchConfig).toEqual({ enrichment: { enabled: true, fields: ["description", "attachments"] }, base_url: "https://sam.gov/opportunities" });
+    // crawler config is an operator action, not a governance change: no admin re-check
+    expect(adminAuth.requireAdminAccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects invalid crawler config with INVALID_CRAWLER_CONFIG", async () => {
+    const PATCH = createAdminDataSourcePatch(testDb.db);
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/data-sources/sam_gov", {
+        method: "PATCH",
+        body: JSON.stringify({ fetchConfig: { enrichment: { max_details_per_run: 999 } } }),
+      }),
+      { params: Promise.resolve({ id: "sam_gov" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("INVALID_CRAWLER_CONFIG");
+    expect(body.error.message).toBe("enrichment.max_details_per_run must be between 1 and 200.");
+  });
 });
