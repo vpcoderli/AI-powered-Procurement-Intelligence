@@ -596,4 +596,30 @@ describe("admin API client", () => {
     });
     await expect(promise).rejects.toBeInstanceOf(AdminApiError);
   });
+
+  it("surfaces INVALID_CRAWLER_CONFIG validation messages from the data source PATCH route", async () => {
+    // The crawler config panel shows error.message verbatim, so the code must survive the
+    // isAdminErrorResponse guard — otherwise every range violation degrades to "Request failed".
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error: {
+            code: "INVALID_CRAWLER_CONFIG",
+            message: "enrichment.max_details_per_run must be between 1 and 200.",
+          },
+        },
+        { status: 400 },
+      ),
+    );
+
+    const promise = updateAdminDataSource("il_bidbuy", { cadence: "daily" });
+
+    await expect(promise).rejects.toMatchObject({
+      name: "AdminApiError",
+      status: 400,
+      code: "INVALID_CRAWLER_CONFIG",
+      message: "enrichment.max_details_per_run must be between 1 and 200.",
+    });
+    await expect(promise).rejects.toBeInstanceOf(AdminApiError);
+  });
 });

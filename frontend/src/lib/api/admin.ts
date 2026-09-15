@@ -113,6 +113,7 @@ type AdminApiErrorCode =
   | "EMAIL_EXISTS"
   | "INVALID_REQUEST"
   | "INVALID_CONFIG"
+  | "INVALID_CRAWLER_CONFIG"
   | "CONFIG_NOT_FOUND"
   | "DATA_SOURCE_NOT_FOUND"
   | "BID_NOT_FOUND"
@@ -218,6 +219,7 @@ function isAdminErrorResponse(body: unknown): body is { error: { code: AdminApiE
       code === "EMAIL_EXISTS" ||
       code === "INVALID_REQUEST" ||
       code === "INVALID_CONFIG" ||
+      code === "INVALID_CRAWLER_CONFIG" ||
       code === "CONFIG_NOT_FOUND" ||
       code === "DATA_SOURCE_NOT_FOUND" ||
       code === "BID_NOT_FOUND" ||

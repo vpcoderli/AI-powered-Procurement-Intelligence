@@ -29,9 +29,11 @@ describe("formFromSource", () => {
       baseUrl: "https://www.bidbuy.illinois.gov",
       enabled: true,
       fields: ["description", "attachments"],
-      maxDetailsPerRun: 10,
-      minIntervalSeconds: 2,
-      timeoutSeconds: 15,
+      // Numeric fields live in the form as raw strings so a half-typed or momentarily empty
+      // input stays empty instead of snapping to 0; they are coerced in buildCrawlerConfigPatch.
+      maxDetailsPerRun: "10",
+      minIntervalSeconds: "2",
+      timeoutSeconds: "15",
       detailSelectors: { description: "div.x" },
       attachmentUrlTemplate: "https://x/{id}",
     });
@@ -51,6 +53,9 @@ describe("formFromSource", () => {
     expect(hydrated.enabled).toBe(false);
     expect(hydrated.fields).toEqual(["description", "attachments", "category", "contact", "published_date"]);
     expect(hydrated.attachmentUrlTemplate).toBe("");
+    expect(hydrated.maxDetailsPerRun).toBe("25");
+    expect(hydrated.minIntervalSeconds).toBe("3");
+    expect(hydrated.timeoutSeconds).toBe("20");
   });
 });
 
@@ -103,6 +108,51 @@ describe("buildCrawlerConfigPatch", () => {
     expect(patch.baseUrl).toBeNull();
     expect(enrichment.detail_selectors).toEqual({ description: "div.x" });
     expect(enrichment.attachment_url_template).toBe("https://x/{id}");
+  });
+
+  it("keeps the row's saved numbers when a numeric input is cleared, never sending 0", () => {
+    const patch = buildCrawlerConfigPatch(source, {
+      ...formFromSource(source),
+      maxDetailsPerRun: "",
+      minIntervalSeconds: "   ",
+      timeoutSeconds: "",
+    });
+    const enrichment = (patch.fetchConfig as { enrichment: Record<string, unknown> }).enrichment;
+
+    // An emptied field means "leave this one alone": it falls back to the value currently saved
+    // on the row, so a cleared input can never post an out-of-range 0.
+    expect(enrichment.max_details_per_run).toBe(10);
+    expect(enrichment.min_interval_seconds).toBe(2);
+    expect(enrichment.timeout_seconds).toBe(15);
+  });
+
+  it("falls back to the shared defaults when the row itself has no saved enrichment numbers", () => {
+    const bare = { ...source, fetchConfig: {} } as unknown as AdminDataSource;
+    const patch = buildCrawlerConfigPatch(bare, {
+      ...formFromSource(bare),
+      maxDetailsPerRun: "",
+      minIntervalSeconds: "",
+      timeoutSeconds: "abc",
+    });
+    const enrichment = (patch.fetchConfig as { enrichment: Record<string, unknown> }).enrichment;
+
+    expect(enrichment.max_details_per_run).toBe(25);
+    expect(enrichment.min_interval_seconds).toBe(3);
+    expect(enrichment.timeout_seconds).toBe(20);
+  });
+
+  it("coerces edited numeric strings, including a fractional interval", () => {
+    const patch = buildCrawlerConfigPatch(source, {
+      ...formFromSource(source),
+      maxDetailsPerRun: "200",
+      minIntervalSeconds: "1.5",
+      timeoutSeconds: "60",
+    });
+    const enrichment = (patch.fetchConfig as { enrichment: Record<string, unknown> }).enrichment;
+
+    expect(enrichment.max_details_per_run).toBe(200);
+    expect(enrichment.min_interval_seconds).toBe(1.5);
+    expect(enrichment.timeout_seconds).toBe(60);
   });
 });
 
