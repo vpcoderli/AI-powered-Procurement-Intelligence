@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { bidAttachments, bids, crawlerLogs } from "@/server/db/schema";
 import type { CrawlerJsonImportResult, CrawlerJsonRunPayload } from "./mysql-json-importer";
@@ -109,17 +109,49 @@ function attachmentRowsForBid(row: JsonRecord, bidId: string, fallbackTimestamp:
 }
 
 /**
+ * Enrichment-preserving update set: a list-page-only run must not clobber detail-page data
+ * written by an earlier enriched run. `description` is only replaced when the incoming value
+ * is a real description (non-empty and different from the incoming title); the other
+ * enrichable columns only when the incoming value is non-empty. Everything else keeps the
+ * plain overwrite semantics.
+ */
+export function enrichmentPreservingUpdateSet(updateValues: ReturnType<typeof bidUpdateValues>, row: JsonRecord) {
+  const incomingDescription = stringValue(row.description, "");
+  const incomingTitle = stringValue(row.title, "Untitled opportunity");
+  const realDescription = incomingDescription.trim() !== "" && incomingDescription !== incomingTitle;
+  const keepIfEmpty = <K extends keyof typeof updateValues>(key: K, column: string) =>
+    updateValues[key] === null || updateValues[key] === ""
+      ? sql.raw(column)
+      : updateValues[key];
+
+  return {
+    ...updateValues,
+    description: realDescription ? updateValues.description : sql.raw("description"),
+    fullDescription: keepIfEmpty("fullDescription", "full_description"),
+    originalCategory: keepIfEmpty("originalCategory", "original_category"),
+    contactName: keepIfEmpty("contactName", "contact_name"),
+    contactEmail: keepIfEmpty("contactEmail", "contact_email"),
+    contactPhone: keepIfEmpty("contactPhone", "contact_phone"),
+    publishedDate: keepIfEmpty("publishedDate", "published_date"),
+    detailFetchedAt: keepIfEmpty("detailFetchedAt", "detail_fetched_at"),
+  };
+}
+
+/**
  * SQLite twin of mysql-json-importer.ts's replaceAttachments: DELETE+INSERT per bid so a bid's
  * persisted attachment set always matches the latest crawl (an attachment removed upstream must
  * disappear on re-import, not accumulate alongside the new set). This only persists whatever
  * archive metadata the JSON payload already carries -- attachment DOWNLOADING/archiving (the
  * crawler's `--archive-documents` path) is out of scope here and stays deferred to a later
- * phase.
+ * phase; empty payload lists are ignored, see below.
  */
 function replaceAttachments(db: AppDatabase, row: JsonRecord, bidId: string, fallbackTimestamp: string) {
+  const incoming = attachmentRowsForBid(row, bidId, fallbackTimestamp);
+  // An empty incoming list means "this run learned nothing about attachments" (list-page-only
+  // crawl), not "the portal removed them" — keep whatever an enriched run already stored.
+  if (incoming.length === 0) return;
   db.delete(bidAttachments).where(eq(bidAttachments.bidId, bidId)).run();
-
-  for (const attachmentRow of attachmentRowsForBid(row, bidId, fallbackTimestamp)) {
+  for (const attachmentRow of incoming) {
     db.insert(bidAttachments).values(attachmentRow).run();
   }
 }
@@ -138,7 +170,10 @@ function upsertBid(db: AppDatabase, row: JsonRecord, fallbackTimestamp: string):
 
   const existing = db.select({ id: bids.id }).from(bids).where(eq(bids.id, id)).get();
 
-  db.insert(bids).values(insertValues).onConflictDoUpdate({ target: bids.id, set: updateValues }).run();
+  db.insert(bids)
+    .values(insertValues)
+    .onConflictDoUpdate({ target: bids.id, set: enrichmentPreservingUpdateSet(updateValues, row) })
+    .run();
 
   return existing ? "updated" : "inserted";
 }

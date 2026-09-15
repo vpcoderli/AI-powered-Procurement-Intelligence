@@ -334,6 +334,49 @@ describe("crawler JSON SQLite importer", () => {
       testDb.db.select().from(bidAttachments).where(eq(bidAttachments.bidId, "sqlite_bid_no_attach")).all(),
     ).toHaveLength(0);
   });
+
+  function payloadWith(bid: Record<string, unknown>) {
+    return {
+      source: "il_bidbuy", runId: `run_${Math.random().toString(16).slice(2)}`, status: "success" as const,
+      startedAt: NOW, finishedAt: NOW, durationMs: 5, metadata: {}, bids: [bid], errorCode: null, errorMessage: null, errorStack: null,
+    };
+  }
+
+  const baseBid = {
+    id: "il_bidbuy:1", source: "Illinois BidBuy", source_bid_id: "1", dedupe_key: "il_bidbuy:1", title: "Road Repair",
+    issuer_name: "IDOT", issuer_type: "state", state_code: "IL", source_url: "https://portal.example.gov/bid/1",
+  };
+
+  it("keeps an enriched description when a later run only carries the title again", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Full scope of work", full_description: "Full scope of work", original_category: "Construction", published_date: "08/14/2026", contact_email: "jane@example.gov", detail_fetched_at: NOW }));
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Road Repair", full_description: null, original_category: "", published_date: null, contact_email: null, detail_fetched_at: null }));
+
+    const row = testDb.db.select().from(bids).where(eq(bids.id, "il_bidbuy:1")).get();
+    expect(row?.description).toBe("Full scope of work");
+    expect(row?.fullDescription).toBe("Full scope of work");
+    expect(row?.originalCategory).toBe("Construction");
+    expect(row?.publishedDate).toBe("08/14/2026");
+    expect(row?.contactEmail).toBe("jane@example.gov");
+    expect(row?.detailFetchedAt).toBe(NOW);
+  });
+
+  it("still overwrites enriched fields with newer non-empty values", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Old scope", original_category: "Old" }));
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "New scope", original_category: "New" }));
+
+    const row = testDb.db.select().from(bids).where(eq(bids.id, "il_bidbuy:1")).get();
+    expect(row?.description).toBe("New scope");
+    expect(row?.originalCategory).toBe("New");
+  });
+
+  it("keeps existing attachments when a later run carries an empty attachment list", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, attachments: [{ name: "Spec.pdf", url: "https://portal.example.gov/spec.pdf", sort_order: 0 }] }));
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, attachments: [] }));
+    expect(testDb.db.select().from(bidAttachments).where(eq(bidAttachments.bidId, "il_bidbuy:1")).all()).toHaveLength(1);
+
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, attachments: [{ name: "A.pdf", url: "https://x/a.pdf", sort_order: 0 }, { name: "B.pdf", url: "https://x/b.pdf", sort_order: 1 }] }));
+    expect(testDb.db.select().from(bidAttachments).where(eq(bidAttachments.bidId, "il_bidbuy:1")).all().map((a) => a.name)).toEqual(["A.pdf", "B.pdf"]);
+  });
 });
 
 describe("stampJurisdiction", () => {
