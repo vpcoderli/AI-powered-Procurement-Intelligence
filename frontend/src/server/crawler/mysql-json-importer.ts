@@ -84,18 +84,39 @@ const preserveWhenEmptyColumns = new Set([
   "full_description", "original_category", "contact_name", "contact_email", "contact_phone", "published_date", "detail_fetched_at",
 ]);
 
+/** SQL fragment that is `''` when `valueSql` is NULL or trims to `''`, non-empty otherwise. */
+function isBlankSql(valueSql: string) {
+  return `TRIM(COALESCE(${valueSql}, '')) = ''`;
+}
+
+/** SQL fragment for a whitespace-trimmed, case-folded comparison value. */
+function normalizedSql(valueSql: string) {
+  return `LOWER(TRIM(COALESCE(${valueSql}, '')))`;
+}
+
 /**
  * ON DUPLICATE KEY UPDATE assignment for one column. Detail-page enrichment (see
  * crawler/apsi_crawler/enrichment.py) writes richer values than a list-page crawl; a later
  * list-page-only run must not clobber them. MySQL twin of sqlite-json-importer.ts's
  * enrichmentPreservingUpdateSet.
+ *
+ * "Empty" means NULL or a value that trims to `''` — a whitespace-only incoming value does not
+ * count as real content, so it never overwrites an existing (possibly enriched) value. For
+ * `description`, an incoming value that equals the title once both sides are trimmed and
+ * case-folded is a title echo, not a real description, and is treated the same as blank; an
+ * existing description that is itself a title echo is not otherwise protected, so a real
+ * incoming description still overwrites it.
  */
 export function bidUpdateAssignment(column: string) {
   if (column === "description") {
-    return "description = IF(VALUES(description) <> '' AND VALUES(description) <> VALUES(title), VALUES(description), description)";
+    return (
+      `description = IF(${isBlankSql("VALUES(description)")} ` +
+      `OR ${normalizedSql("VALUES(description)")} = ${normalizedSql("VALUES(title)")}, ` +
+      `description, VALUES(description))`
+    );
   }
   if (preserveWhenEmptyColumns.has(column)) {
-    return `${column} = COALESCE(NULLIF(VALUES(${column}), ''), ${column})`;
+    return `${column} = IF(${isBlankSql(`VALUES(${column})`)}, ${column}, VALUES(${column}))`;
   }
   return `${column} = VALUES(${column})`;
 }

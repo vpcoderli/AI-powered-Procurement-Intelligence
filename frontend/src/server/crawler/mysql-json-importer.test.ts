@@ -214,10 +214,14 @@ describe("crawler JSON MySQL importer", () => {
 
   it("builds enrichment-preserving ON DUPLICATE KEY UPDATE assignments", () => {
     expect(bidUpdateAssignment("description")).toBe(
-      "description = IF(VALUES(description) <> '' AND VALUES(description) <> VALUES(title), VALUES(description), description)",
+      "description = IF(TRIM(COALESCE(VALUES(description), '')) = '' " +
+        "OR LOWER(TRIM(COALESCE(VALUES(description), ''))) = LOWER(TRIM(COALESCE(VALUES(title), ''))), " +
+        "description, VALUES(description))",
     );
     for (const column of ["full_description", "original_category", "contact_name", "contact_email", "contact_phone", "published_date", "detail_fetched_at"]) {
-      expect(bidUpdateAssignment(column)).toBe(`${column} = COALESCE(NULLIF(VALUES(${column}), ''), ${column})`);
+      expect(bidUpdateAssignment(column)).toBe(
+        `${column} = IF(TRIM(COALESCE(VALUES(${column}), '')) = '', ${column}, VALUES(${column}))`,
+      );
     }
     expect(bidUpdateAssignment("title")).toBe("title = VALUES(title)");
     expect(bidUpdateAssignment("deadline_date")).toBe("deadline_date = VALUES(deadline_date)");
@@ -233,8 +237,50 @@ describe("crawler JSON MySQL importer", () => {
       errorCode: null, errorMessage: null, errorStack: null,
     });
     const upsert = executed.find((sql) => sql.includes("INSERT INTO bids"));
-    expect(upsert).toContain("description = IF(VALUES(description) <> '' AND VALUES(description) <> VALUES(title), VALUES(description), description)");
-    expect(upsert).toContain("original_category = COALESCE(NULLIF(VALUES(original_category), ''), original_category)");
+    expect(upsert).toContain(bidUpdateAssignment("description"));
+    expect(upsert).toContain(bidUpdateAssignment("original_category"));
+  });
+
+  it("treats a whitespace-only incoming value as blank so it does not overwrite an enriched value", async () => {
+    const mysql = createFakeMysql();
+    const executed: string[] = [];
+    const recording = { ...mysql, execute: async (sql: string, values: unknown[] = []) => { executed.push(sql); return mysql.execute(sql, values); } };
+    await importCrawlerJsonRunIntoMysql(recording as typeof mysql, {
+      source: "il_bidbuy", runId: "run_ws", status: "success", startedAt: NOW, finishedAt: NOW, durationMs: 1, metadata: {},
+      bids: [{
+        id: "il_bidbuy:1", source: "Illinois BidBuy", source_bid_id: "1", dedupe_key: "il_bidbuy:1",
+        title: "T", description: "T", contact_email: "   ", state_code: "IL", source_url: "https://x/1",
+      }],
+      errorCode: null, errorMessage: null, errorStack: null,
+    });
+    const upsert = executed.find((sql) => sql.includes("INSERT INTO bids"));
+    // The assignment SQL itself (not the TS layer) decides blankness via TRIM(COALESCE(...)) —
+    // a whitespace-only "   " bound as the contact_email parameter trims to '' in MySQL, so this
+    // fragment keeps the existing column value instead of overwriting it with whitespace.
+    expect(upsert).toContain(
+      "contact_email = IF(TRIM(COALESCE(VALUES(contact_email), '')) = '', contact_email, VALUES(contact_email))",
+    );
+  });
+
+  it("treats an incoming description that is a title echo (differing only by case/whitespace) as blank", async () => {
+    const mysql = createFakeMysql();
+    const executed: string[] = [];
+    const recording = { ...mysql, execute: async (sql: string, values: unknown[] = []) => { executed.push(sql); return mysql.execute(sql, values); } };
+    await importCrawlerJsonRunIntoMysql(recording as typeof mysql, {
+      source: "il_bidbuy", runId: "run_echo", status: "success", startedAt: NOW, finishedAt: NOW, durationMs: 1, metadata: {},
+      bids: [{
+        id: "il_bidbuy:1", source: "Illinois BidBuy", source_bid_id: "1", dedupe_key: "il_bidbuy:1",
+        title: "Road Resurfacing Project", description: "  ROAD resurfacing project  ",
+        state_code: "IL", source_url: "https://x/1",
+      }],
+      errorCode: null, errorMessage: null, errorStack: null,
+    });
+    const upsert = executed.find((sql) => sql.includes("INSERT INTO bids"));
+    // LOWER(TRIM(...)) on both sides means MySQL — not the TS layer — decides this incoming
+    // description is a title echo (same text modulo case/whitespace) and keeps the existing one.
+    expect(upsert).toContain(
+      "LOWER(TRIM(COALESCE(VALUES(description), ''))) = LOWER(TRIM(COALESCE(VALUES(title), '')))",
+    );
   });
 
   it("does not delete existing attachments when the payload carries an empty list", async () => {
