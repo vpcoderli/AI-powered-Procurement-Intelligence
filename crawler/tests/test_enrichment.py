@@ -192,6 +192,18 @@ def test_extractor_error_counts_failed_never_raises():
     assert stats == {"attempted": 1, "enriched": 0, "failed": 1, "skipped": 0, "reason": None, "extractor": "0.4.15"}
 
 
+def test_failed_record_emits_diagnostic_line_to_stderr_not_stdout(capsys):
+    extractor = FakeExtractor(error=ExtractorError("boom"))
+    session = FakeSession({"https://portal.example.gov/bid/1": FakeResponse()})
+    source = _source()
+    enrich_bids([_bid()], source, {"enrichment": {"enabled": True, "min_interval_seconds": 0}}, extractor=extractor, session=session, sleep=lambda s: None)
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert source.id in captured.err
+    assert "https://portal.example.gov/bid/1" in captured.err
+    assert "ExtractorError: boom" in captured.err
+
+
 def test_records_without_detail_url_are_skipped():
     extractor = FakeExtractor(result=ENRICHED)
     _, stats = enrich_bids([_bid(source_url=""), _bid(source_url="https://portal.example.gov/list")], _source(base_url="https://portal.example.gov/list"), {"base_url": "https://portal.example.gov/list", "enrichment": {"enabled": True}}, extractor=extractor, session=FakeSession({}), sleep=lambda s: None)

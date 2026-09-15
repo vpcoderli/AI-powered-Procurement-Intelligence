@@ -8,6 +8,7 @@ never raises into fetch_task (fail-open), and reports transparent stats.
 
 import os
 import re
+import sys
 import time
 from urllib.parse import urlparse
 
@@ -233,8 +234,17 @@ def enrich_bids(bids, source, fetch_config, *, extractor=None, session=None, sle
                 merge_enrichment(bid, extracted, config["attachment_url_template"])
                 bid["detail_fetched_at"] = now()
                 stats["enriched"] += 1
-            except Exception:  # noqa: BLE001 - fail-open by contract: never propagate to the caller
+            except Exception as error:  # noqa: BLE001 - fail-open by contract: never propagate to the caller
                 stats["failed"] += 1
+                # The stats dict shape is fixed by contract (fetch-task's stdout is parsed JSON),
+                # so failure detail can't live there. Emit it to stderr instead — never stdout,
+                # which carries only the JSON result — so an operator can still tell a portal 403
+                # apart from a sidecar 500 or a genuine bug in merge_enrichment.
+                print(
+                    f"enrichment failed source={source.id} url={bid.get('source_url')}: "
+                    f"{type(error).__name__}: {error}",
+                    file=sys.stderr,
+                )
     finally:
         if close_client:
             client.close()
