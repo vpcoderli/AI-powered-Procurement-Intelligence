@@ -17,11 +17,30 @@
 # the app has zero-config SQLite defaults.
 
 services:
+  scrapling-extractor:
+    build:
+      context: ./services/scrapling-extractor
+    image: apsi-scrapling-extractor:local
+    ports:
+      - "8091:8091"
+    volumes:
+      # Scrapling's adaptive-selector store (SQLite) survives restarts.
+      - scrapling-data:/data/scrapling
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8091/health', timeout=2).status == 200 else 1)"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   app:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     image: apsi-frontend:local
+    depends_on:
+      scrapling-extractor:
+        condition: service_healthy
     ports:
       - "3000:3000"
     env_file:
@@ -36,6 +55,8 @@ services:
       BILLING_PROVIDER: local
       NOTIFICATION_PROVIDER: file
       ADMIN_UI_LOCAL_BYPASS: "true"
+      # Detail-enrichment sidecar (services/scrapling-extractor); unset = enrichment skipped.
+      SCRAPLING_EXTRACTOR_URL: http://scrapling-extractor:8091
     volumes:
       # Persists the SQLite database and local attachment/object-storage
       # state across container restarts. Matches frontend/data/.gitkeep
@@ -45,4 +66,6 @@ services:
 
 volumes:
   apsi-data:
+    driver: local
+  scrapling-data:
     driver: local
