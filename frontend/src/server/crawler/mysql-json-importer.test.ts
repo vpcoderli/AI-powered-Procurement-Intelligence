@@ -212,15 +212,23 @@ describe("crawler JSON MySQL importer", () => {
     expect(capturedValues.at(-1)).toBeNull();
   });
 
+  // Both `TRIM(...)` calls below must strip the same whitespace class as JS's `String.trim()`
+  // (tab/newline/CR/NBSP included), not just the plain space MySQL's bare TRIM() strips by
+  // default — hence the REPLACE chain feeding every TRIM.
+  const normalizeWhitespace = (valueSql: string) =>
+    `REPLACE(REPLACE(REPLACE(REPLACE(${valueSql}, '\\t', ' '), '\\n', ' '), '\\r', ' '), CHAR(0xC2A0 USING utf8mb4), ' ')`;
+  const isBlank = (valueSql: string) => `TRIM(${normalizeWhitespace(`COALESCE(${valueSql}, '')`)}) = ''`;
+  const normalized = (valueSql: string) => `LOWER(TRIM(${normalizeWhitespace(`COALESCE(${valueSql}, '')`)}))`;
+
   it("builds enrichment-preserving ON DUPLICATE KEY UPDATE assignments", () => {
     expect(bidUpdateAssignment("description")).toBe(
-      "description = IF(TRIM(COALESCE(VALUES(description), '')) = '' " +
-        "OR LOWER(TRIM(COALESCE(VALUES(description), ''))) = LOWER(TRIM(COALESCE(VALUES(title), ''))), " +
+      `description = IF(${isBlank("VALUES(description)")} ` +
+        `OR ${normalized("VALUES(description)")} = ${normalized("VALUES(title)")}, ` +
         "description, VALUES(description))",
     );
     for (const column of ["full_description", "original_category", "contact_name", "contact_email", "contact_phone", "published_date", "detail_fetched_at"]) {
       expect(bidUpdateAssignment(column)).toBe(
-        `${column} = IF(TRIM(COALESCE(VALUES(${column}), '')) = '', ${column}, VALUES(${column}))`,
+        `${column} = IF(${isBlank(`VALUES(${column})`)}, ${column}, VALUES(${column}))`,
       );
     }
     expect(bidUpdateAssignment("title")).toBe("title = VALUES(title)");
@@ -254,12 +262,10 @@ describe("crawler JSON MySQL importer", () => {
       errorCode: null, errorMessage: null, errorStack: null,
     });
     const upsert = executed.find((sql) => sql.includes("INSERT INTO bids"));
-    // The assignment SQL itself (not the TS layer) decides blankness via TRIM(COALESCE(...)) —
-    // a whitespace-only "   " bound as the contact_email parameter trims to '' in MySQL, so this
+    // The assignment SQL itself (not the TS layer) decides blankness via TRIM(...) — a
+    // whitespace-only "   " bound as the contact_email parameter trims to '' in MySQL, so this
     // fragment keeps the existing column value instead of overwriting it with whitespace.
-    expect(upsert).toContain(
-      "contact_email = IF(TRIM(COALESCE(VALUES(contact_email), '')) = '', contact_email, VALUES(contact_email))",
-    );
+    expect(upsert).toContain(bidUpdateAssignment("contact_email"));
   });
 
   it("treats an incoming description that is a title echo (differing only by case/whitespace) as blank", async () => {
@@ -278,9 +284,48 @@ describe("crawler JSON MySQL importer", () => {
     const upsert = executed.find((sql) => sql.includes("INSERT INTO bids"));
     // LOWER(TRIM(...)) on both sides means MySQL — not the TS layer — decides this incoming
     // description is a title echo (same text modulo case/whitespace) and keeps the existing one.
-    expect(upsert).toContain(
-      "LOWER(TRIM(COALESCE(VALUES(description), ''))) = LOWER(TRIM(COALESCE(VALUES(title), '')))",
-    );
+    expect(upsert).toContain(`${normalized("VALUES(description)")} = ${normalized("VALUES(title)")}`);
+  });
+
+  it("normalizes tab/newline/CR/NBSP whitespace, not just plain spaces, when deciding blankness and title-echo", async () => {
+    const mysql = createFakeMysql();
+    let capturedSql = "";
+    let capturedValues: unknown[] = [];
+    const recording = {
+      ...mysql,
+      execute: async (sql: string, values: unknown[] = []) => {
+        if (sql.includes("INSERT INTO bids")) {
+          capturedSql = sql;
+          capturedValues = values;
+        }
+        return mysql.execute(sql, values);
+      },
+    };
+    const fullDescription = "\n\t ";
+    const description = "\n\tROAD RESURFACING PROJECT\r";
+    const title = "Road resurfacing project";
+    await importCrawlerJsonRunIntoMysql(recording as typeof mysql, {
+      source: "il_bidbuy", runId: "run_ws_class", status: "success", startedAt: NOW, finishedAt: NOW, durationMs: 1, metadata: {},
+      bids: [{
+        id: "il_bidbuy:1", source: "Illinois BidBuy", source_bid_id: "1", dedupe_key: "il_bidbuy:1",
+        title, description, full_description: fullDescription, state_code: "IL", source_url: "https://x/1",
+      }],
+      errorCode: null, errorMessage: null, errorStack: null,
+    });
+
+    // The generated SQL must normalize tab/newline/CR/NBSP to a plain space before TRIM — a
+    // bare TRIM() (space-only) would leave "\n\t " and a newline/tab-padded title echo
+    // unrecognized as blank, unlike sqlite-json-importer.ts's `value.trim() === ""`.
+    expect(capturedSql).toContain(bidUpdateAssignment("full_description"));
+    expect(capturedSql).toContain(`${normalized("VALUES(description)")} = ${normalized("VALUES(title)")}`);
+
+    // The bound parameters must carry the raw, un-normalized payload text — normalization is a
+    // MySQL-side decision inside the assignment SQL, not something the TS layer pre-processes.
+    // Positional indices per bidColumns in mysql-json-importer.ts: title=4, description=5,
+    // full_description=6 (id, source, source_bid_id, dedupe_key precede title).
+    expect(capturedValues[4]).toBe(title);
+    expect(capturedValues[5]).toBe(description);
+    expect(capturedValues[6]).toBe(fullDescription);
   });
 
   it("does not delete existing attachments when the payload carries an empty list", async () => {

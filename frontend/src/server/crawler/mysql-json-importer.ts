@@ -84,14 +84,29 @@ const preserveWhenEmptyColumns = new Set([
   "full_description", "original_category", "contact_name", "contact_email", "contact_phone", "published_date", "detail_fetched_at",
 ]);
 
-/** SQL fragment that is `''` when `valueSql` is NULL or trims to `''`, non-empty otherwise. */
+/**
+ * SQL fragment that rewrites `valueSql` so every whitespace character JS's `String.trim()`
+ * recognizes — not just the space MySQL's bare `TRIM()` strips by default — collapses to a
+ * plain space: tab, newline, carriage return, and non-breaking space (routine in HTML-scraped
+ * payloads). Feeds `isBlankSql`/`normalizedSql` below so `TRIM(...)` on the result matches
+ * sqlite-json-importer.ts's `value.trim() === ""` byte-for-byte instead of only stripping ASCII
+ * spaces.
+ */
+function normalizeWhitespaceSql(valueSql: string) {
+  return (
+    `REPLACE(REPLACE(REPLACE(REPLACE(${valueSql}, '\\t', ' '), '\\n', ' '), '\\r', ' '), ` +
+    `CHAR(0xC2A0 USING utf8mb4), ' ')`
+  );
+}
+
+/** SQL fragment that is `''` when `valueSql` is NULL or trims (all whitespace) to `''`. */
 function isBlankSql(valueSql: string) {
-  return `TRIM(COALESCE(${valueSql}, '')) = ''`;
+  return `TRIM(${normalizeWhitespaceSql(`COALESCE(${valueSql}, '')`)}) = ''`;
 }
 
 /** SQL fragment for a whitespace-trimmed, case-folded comparison value. */
 function normalizedSql(valueSql: string) {
-  return `LOWER(TRIM(COALESCE(${valueSql}, '')))`;
+  return `LOWER(TRIM(${normalizeWhitespaceSql(`COALESCE(${valueSql}, '')`)}))`;
 }
 
 /**
@@ -100,12 +115,12 @@ function normalizedSql(valueSql: string) {
  * list-page-only run must not clobber them. MySQL twin of sqlite-json-importer.ts's
  * enrichmentPreservingUpdateSet.
  *
- * "Empty" means NULL or a value that trims to `''` — a whitespace-only incoming value does not
- * count as real content, so it never overwrites an existing (possibly enriched) value. For
- * `description`, an incoming value that equals the title once both sides are trimmed and
- * case-folded is a title echo, not a real description, and is treated the same as blank; an
- * existing description that is itself a title echo is not otherwise protected, so a real
- * incoming description still overwrites it.
+ * "Empty" means NULL or a value that trims to `''` — a whitespace-only incoming value (tabs,
+ * newlines, CRs, NBSP included, not just plain spaces) does not count as real content, so it
+ * never overwrites an existing (possibly enriched) value. For `description`, an incoming value
+ * that equals the title once both sides are trimmed and case-folded is a title echo, not a real
+ * description, and is treated the same as blank; an existing description that is itself a title
+ * echo is not otherwise protected, so a real incoming description still overwrites it.
  */
 export function bidUpdateAssignment(column: string) {
   if (column === "description") {
