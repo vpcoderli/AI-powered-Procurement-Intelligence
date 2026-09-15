@@ -31,7 +31,9 @@ Status: approved (decisions confirmed with the user on 2026-09-15; awaiting writ
 | 补全字段（按顺序） | 描述正文 → 附件文档 → 分类/NAICS → 联系人 / 发布日期。一期全部实现 |
 | 浏览器渲染 | 不在本期范围（二期议题） |
 
-硬约束：Scrapling 要求 Python ≥ 3.10，本机与 worker 主机只有 3.9，CI 不跑 Python，生产镜像不含爬虫；Scrapling 依赖 lxml/orjson 等，与 crawler 包"仅 stdlib + requests"约束冲突。Sidecar 方案同时解决这两点：crawler 包零新依赖。
+硬约束：Scrapling 要求 Python ≥ 3.10；系统 Python 是 3.9，CI 不跑 Python，生产镜像不含爬虫；Scrapling 依赖 lxml/orjson 等，与 crawler 包"仅 stdlib + requests"约束冲突。Sidecar 方案同时解决这两点：crawler 包零新依赖。
+
+环境补充（2026-09-15 实测）：本机已有 Homebrew 7.0.1，已安装 `python@3.12`（3.12.14）。`pip install scrapling==0.4.15` 基础包只引入 `lxml 6.1.3` 与 `orjson 3.12.0`——**不含** curl_cffi / playwright / patchright / browserforge 等任何反检测组件；在真实 IL 详情页 fixture 上验证了 `Selector.css()`（含 `adaptive`）、`find_by_text()`、`find_similar()` 可用。因此 sidecar 同一份 `server.py` 支持两种运行方式：本地开发用 `python3.12 -m venv` 直接运行（无需 Docker），compose/部署用 Docker 镜像。
 
 ## 4. 架构
 
@@ -70,7 +72,8 @@ Next.js persistCrawlTaskResult → sqlite-json-importer / mysql-json-importer（
 - `GET /health` → `{"ok": true, "scrapling": "<version>"}`
 - `POST /extract`
   - 请求：`{"url": str, "html": str, "fields": ["description","attachments","category","contact","published_date"], "selectors": {field: css-or-xpath} | null}`
-  - 响应：`{"fields": {"description": str|null, "full_description": str|null, "original_category": str|null, "contact_name": str|null, "contact_email": str|null, "contact_phone": str|null, "published_date": str|null}, "attachments": [{"name": str, "url": str(绝对), "size_label": str|null, "mime_type": str|null, "sort_order": int}], "diagnostics": {field: "selector"|"heuristic"|"not_found"}}`
+  - 响应：`{"fields": {"description": str|null, "full_description": str|null, "original_category": str|null, "contact_name": str|null, "contact_email": str|null, "contact_phone": str|null, "published_date": str|null}, "attachments": [{"name": str, "url": str|null, "raw_href": str, "size_label": str|null, "mime_type": str|null, "sort_order": int}], "diagnostics": {field: "selector"|"heuristic"|"not_found"}}`
+  - 附件 `url` 只在 `raw_href` 能解析为绝对 http(s) 地址时给出；`javascript:` 等非 http 链接（实测 IL BidBuy 为 `javascript:downloadFile('1703214')`）保留 `raw_href`、`url` 为 null，由 crawler 侧按源配置的 `attachment_url_template` 解析（见 4.3），无模板则不导入该附件并计入 diagnostics——**绝不伪造下载地址**。
   - 错误：非 200 + `{"error": {"code": "INVALID_REQUEST"|"EXTRACT_FAILED", "message": str}}`
 - 抽取策略：显式 `selectors` 优先（Scrapling `Selector` 的 `adaptive=True` + `auto_save=True`，网站改版后自动重定位；自适应存储挂载在 compose volume `scrapling-data:/data/scrapling`）；无选择器时走启发式：描述取"Description/Summary/Scope"标签相邻或页面最大正文块（剔除导航/页脚），附件取文档后缀链接（pdf/doc/docx/xls/xlsx/zip）与"Attachments/Documents"容器内链接，分类取"Category/Commodity/NAICS/UNSPSC"标签相邻值，联系人取 `mailto:`/`tel:` 与"Contact"标签相邻文本，发布日期取"Posted/Published/Issue Date"标签相邻值。
 - 限制：HTML 上限 2 MB；单请求超时 10 s；返回文本截断 20,000 字符。
@@ -86,10 +89,13 @@ Next.js persistCrawlTaskResult → sqlite-json-importer / mysql-json-importer（
     "max_details_per_run": 25,
     "min_interval_seconds": 3,
     "timeout_seconds": 20,
-    "detail_selectors": { "description": "div.bid-body", "attachments": "//a[contains(@href,'.pdf')]" }
+    "detail_selectors": { "description": "div.bid-body", "attachments": "//a[contains(@href,'.pdf')]" },
+    "attachment_url_template": "https://www.bidbuy.illinois.gov/bso/external/bidDetail.sdo?downloadFileNbr={id}&docId={source_bid_id}&currentPage=1&mode=download&parentUrl=close"
   }
 }
 ```
+
+- `attachment_url_template` 可选：当 sidecar 返回的附件 `url` 为 null 时，crawler 用 `raw_href` 中的第一个数字串作为 `{id}`、记录的 `source_bid_id` 作为 `{source_bid_id}` 填充模板；模板必须是绝对 http(s) 地址。IL BidBuy 的现有蜘蛛已内置同样的拼接规则，该配置让其它门户无需改代码即可复用。
 
 - `enabled` 默认 `false`：未显式开启的源行为与今天完全一致（"现有逻辑不能出差"的第一道保证）。
 - `max_details_per_run` 默认 25（与默认抓取 limit 一致，一次运行内全部补全）。
@@ -128,7 +134,8 @@ Next.js persistCrawlTaskResult → sqlite-json-importer / mysql-json-importer（
 - `docker-compose.yml` 新增：
   - `scrapling-extractor`：`build: ./services/scrapling-extractor`，`ports: "8091:8091"`，`volumes: scrapling-data:/data/scrapling`，`healthcheck: GET /health`，`restart: unless-stopped`。
   - `app` 增加 `environment: SCRAPLING_EXTRACTOR_URL: http://scrapling-extractor:8091` 与 `depends_on`（`condition: service_healthy`）。
-- 本地开发：`frontend/.env.local` 设 `SCRAPLING_EXTRACTOR_URL=http://localhost:8091`；`docker compose up scrapling-extractor` 单独起 sidecar。state-runner 以 `env: process.env` 启动子进程，变量自然透传到 Python。
+- 本地开发：`frontend/.env.local` 设 `SCRAPLING_EXTRACTOR_URL=http://localhost:8091`。起 sidecar 二选一：`docker compose up scrapling-extractor`，或本机 venv（`services/scrapling-extractor/` 提供 `requirements.txt` 与 `run-local.sh`：`python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/python server.py`）。state-runner 以 `env: process.env` 启动子进程，变量自然透传到 Python。
+- Sidecar 的 pytest 在本机 venv 下直接可跑（不再只能在容器里跑）。
 - 文档：`docs/transferability/environment-variables.md`、`CLAUDE.md` 爬虫小节、README 功能列表同步。
 
 ## 5. 错误处理与安全边界
@@ -140,7 +147,7 @@ Next.js persistCrawlTaskResult → sqlite-json-importer / mysql-json-importer（
 
 ## 6. 测试
 
-- **Sidecar**（`services/scrapling-extractor/tests/`，pytest，需 scrapling 可导入，否则 skip）：健康检查；固定 3 个真实详情页 fixture（CA event、IL bidDetail、FL advertisement，裁剪）各字段抽取；选择器优先于启发式；超大 HTML / 非法 JSON 返回 4xx。
+- **Sidecar**（`services/scrapling-extractor/tests/`，pytest，需 scrapling 可导入，否则 skip）：健康检查；固定 3 个真实详情页 fixture（CA event、IL bidDetail、FL advertisement）各字段抽取——fixture 须在实施时从门户**现场抓取**并保留描述、分类、联系人、附件区块（现有 `il_bidbuy_detail.html` 只裁剪了附件区，不能复用为完整样本）；选择器优先于启发式；`javascript:` 附件链接返回 `url: null` + `raw_href`；超大 HTML / 非法 JSON 返回 4xx。
 - **Crawler**（`tests/test_enrichment.py`，离线）：禁用/未配置/不可达三种跳过路径；只填空值语义；节流函数；失败开放（sidecar 抛错、详情页 500、超时）；`fetch_task` 契约测试更新（`fetch_task_v1.json` 增加可选 `fetch_config.enrichment`；metadata 增加 `enrichment`）。
 - **Importer**（TS）：SQLite 用 `createTestDatabase` 真实验证保护式 upsert；MySQL 断言生成的 SQL 含 `COALESCE(NULLIF(...))` 并用 fake pool 验证参数。
 - **管理端**：PATCH 路由校验与双方言测试；`data-sources-repository` 双实现测试；`page.test.ts` 静态断言；`i18n:check`；`lint`、`build`、全量 `vitest`、全量 `pytest`。
