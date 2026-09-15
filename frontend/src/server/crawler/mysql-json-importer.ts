@@ -80,6 +80,26 @@ const bidUpdateColumns = bidColumns.filter((column) =>
   column !== "created_at"
 );
 
+const preserveWhenEmptyColumns = new Set([
+  "full_description", "original_category", "contact_name", "contact_email", "contact_phone", "published_date", "detail_fetched_at",
+]);
+
+/**
+ * ON DUPLICATE KEY UPDATE assignment for one column. Detail-page enrichment (see
+ * crawler/apsi_crawler/enrichment.py) writes richer values than a list-page crawl; a later
+ * list-page-only run must not clobber them. MySQL twin of sqlite-json-importer.ts's
+ * enrichmentPreservingUpdateSet.
+ */
+export function bidUpdateAssignment(column: string) {
+  if (column === "description") {
+    return "description = IF(VALUES(description) <> '' AND VALUES(description) <> VALUES(title), VALUES(description), description)";
+  }
+  if (preserveWhenEmptyColumns.has(column)) {
+    return `${column} = COALESCE(NULLIF(VALUES(${column}), ''), ${column})`;
+  }
+  return `${column} = VALUES(${column})`;
+}
+
 const attachmentColumns = [
   "id",
   "bid_id",
@@ -200,7 +220,7 @@ async function upsertBid(mysql: MysqlCrawlerImportStore, row: JsonRecord, fallba
       INSERT INTO bids (${bidColumns.join(", ")})
       VALUES (${bidColumns.map(() => "?").join(", ")})
       ON DUPLICATE KEY UPDATE
-        ${bidUpdateColumns.map((column) => `${column} = VALUES(${column})`).join(", ")}
+        ${bidUpdateColumns.map(bidUpdateAssignment).join(", ")}
     `,
     bidColumns.map((column) => valueByColumn(row, column, fallbackTimestamp)),
   );
@@ -237,9 +257,12 @@ async function replaceAttachments(mysql: MysqlCrawlerImportStore, bidRows: JsonR
   for (const row of bidRows) {
     const payloadBidId = stringValue(row.id);
     const mysqlBidId = bidIdByPayloadId.get(payloadBidId) ?? payloadBidId;
+    const incoming = attachmentRowsForBid(row, mysqlBidId, fallbackTimestamp);
+    // Empty list = this run learned nothing about attachments (list-page-only crawl); keep
+    // what an enriched run already stored. Non-empty lists still fully replace the set.
+    if (incoming.length === 0) continue;
     await mysqlExecute(mysql, "DELETE FROM bid_attachments WHERE bid_id = ?", [mysqlBidId]);
-
-    for (const attachment of attachmentRowsForBid(row, mysqlBidId, fallbackTimestamp)) {
+    for (const attachment of incoming) {
       await mysqlExecute(
         mysql,
         `

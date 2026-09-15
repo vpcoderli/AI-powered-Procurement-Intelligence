@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { importCrawlerJsonRunIntoMysql } from "./mysql-json-importer";
+import { bidUpdateAssignment, importCrawlerJsonRunIntoMysql } from "./mysql-json-importer";
 
 const NOW = "2026-06-01T00:00:00.000Z";
 
@@ -210,6 +210,43 @@ describe("crawler JSON MySQL importer", () => {
     expect(capturedValues.at(-3)).toBeNull();
     expect(capturedValues.at(-2)).toBeNull();
     expect(capturedValues.at(-1)).toBeNull();
+  });
+
+  it("builds enrichment-preserving ON DUPLICATE KEY UPDATE assignments", () => {
+    expect(bidUpdateAssignment("description")).toBe(
+      "description = IF(VALUES(description) <> '' AND VALUES(description) <> VALUES(title), VALUES(description), description)",
+    );
+    for (const column of ["full_description", "original_category", "contact_name", "contact_email", "contact_phone", "published_date", "detail_fetched_at"]) {
+      expect(bidUpdateAssignment(column)).toBe(`${column} = COALESCE(NULLIF(VALUES(${column}), ''), ${column})`);
+    }
+    expect(bidUpdateAssignment("title")).toBe("title = VALUES(title)");
+    expect(bidUpdateAssignment("deadline_date")).toBe("deadline_date = VALUES(deadline_date)");
+  });
+
+  it("uses the preserving assignments in the bids upsert SQL", async () => {
+    const mysql = createFakeMysql();
+    const executed: string[] = [];
+    const recording = { ...mysql, execute: async (sql: string, values: unknown[] = []) => { executed.push(sql); return mysql.execute(sql, values); } };
+    await importCrawlerJsonRunIntoMysql(recording as typeof mysql, {
+      source: "il_bidbuy", runId: "run_p", status: "success", startedAt: NOW, finishedAt: NOW, durationMs: 1, metadata: {},
+      bids: [{ id: "il_bidbuy:1", source: "Illinois BidBuy", source_bid_id: "1", dedupe_key: "il_bidbuy:1", title: "T", description: "T", state_code: "IL", source_url: "https://x/1" }],
+      errorCode: null, errorMessage: null, errorStack: null,
+    });
+    const upsert = executed.find((sql) => sql.includes("INSERT INTO bids"));
+    expect(upsert).toContain("description = IF(VALUES(description) <> '' AND VALUES(description) <> VALUES(title), VALUES(description), description)");
+    expect(upsert).toContain("original_category = COALESCE(NULLIF(VALUES(original_category), ''), original_category)");
+  });
+
+  it("does not delete existing attachments when the payload carries an empty list", async () => {
+    const mysql = createFakeMysql();
+    const executed: string[] = [];
+    const recording = { ...mysql, execute: async (sql: string, values: unknown[] = []) => { executed.push(sql); return mysql.execute(sql, values); } };
+    await importCrawlerJsonRunIntoMysql(recording as typeof mysql, {
+      source: "il_bidbuy", runId: "run_a", status: "success", startedAt: NOW, finishedAt: NOW, durationMs: 1, metadata: {},
+      bids: [{ id: "il_bidbuy:1", source: "Illinois BidBuy", source_bid_id: "1", dedupe_key: "il_bidbuy:1", title: "T", state_code: "IL", source_url: "https://x/1", attachments: [] }],
+      errorCode: null, errorMessage: null, errorStack: null,
+    });
+    expect(executed.some((sql) => sql.includes("DELETE FROM bid_attachments"))).toBe(false);
   });
 });
 
