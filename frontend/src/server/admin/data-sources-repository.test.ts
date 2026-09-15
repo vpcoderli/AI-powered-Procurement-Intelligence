@@ -1,5 +1,6 @@
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { crawlerLogs, dataSources, sourceApprovalEvents } from "@/server/db/schema";
+import { crawlerLogs, dataSources, eventLog, sourceApprovalEvents } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { recordLiveSourceHealthSnapshot } from "@/server/source-validity/health-snapshots";
 import {
@@ -731,6 +732,149 @@ describe("admin data sources repository", () => {
       liveHealthReviewedAt: "2026-06-11T00:00:00.000Z",
     });
   });
+
+  it("exposes fetchConfig on admin sources and updates crawler config with an audit event (SQLite)", async () => {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id: "il_bidbuy",
+        label: "Illinois BidBuy",
+        issuerType: "state",
+        stateCode: "IL",
+        baseUrl: "https://old.example.gov",
+        isEnabled: 1,
+        cadence: "daily",
+        fetchConfig: JSON.stringify({ base_url: "https://old.example.gov" }),
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+      .run();
+
+    const updated = await updateAdminDataSource(
+      testDb.db,
+      "il_bidbuy",
+      {
+        fetchConfig: { base_url: "https://old.example.gov", enrichment: { enabled: true, fields: ["description"] } },
+        cadence: "weekly",
+        baseUrl: "https://new.example.gov",
+      },
+      { actorUserId: "admin_1" },
+    );
+
+    expect(updated.cadence).toBe("weekly");
+    expect(updated.baseUrl).toBe("https://new.example.gov");
+    expect(updated.fetchConfig).toEqual({
+      base_url: "https://new.example.gov",
+      enrichment: { enabled: true, fields: ["description"] },
+    });
+
+    const stored = testDb.db.select().from(dataSources).where(eq(dataSources.id, "il_bidbuy")).get();
+    expect(stored?.fetchConfig).toBe(
+      JSON.stringify({ base_url: "https://new.example.gov", enrichment: { enabled: true, fields: ["description"] } }),
+    );
+
+    const events = testDb.db
+      .select()
+      .from(eventLog)
+      .all()
+      .filter((event) => event.eventName === "data_source.crawler_config_updated");
+    expect(events).toHaveLength(1);
+    expect(events[0].actorId).toBe("admin_1");
+    expect(events[0].targetId).toBe("il_bidbuy");
+    expect(JSON.parse(events[0].beforeAfterJson)).toEqual({
+      before: { fetchConfig: { base_url: "https://old.example.gov" }, cadence: "daily", baseUrl: "https://old.example.gov" },
+      after: {
+        fetchConfig: { base_url: "https://new.example.gov", enrichment: { enabled: true, fields: ["description"] } },
+        cadence: "weekly",
+        baseUrl: "https://new.example.gov",
+      },
+    });
+  });
+
+  it("leaves crawler config untouched when the update carries no crawler fields (SQLite)", async () => {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id: "il_bidbuy",
+        label: "Illinois BidBuy",
+        issuerType: "state",
+        stateCode: "IL",
+        baseUrl: "https://old.example.gov",
+        isEnabled: 1,
+        cadence: "daily",
+        fetchConfig: JSON.stringify({ base_url: "https://old.example.gov" }),
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+      .run();
+
+    const updated = await updateAdminDataSource(testDb.db, "il_bidbuy", { isEnabled: false });
+
+    expect(updated.cadence).toBe("daily");
+    expect(updated.fetchConfig).toEqual({ base_url: "https://old.example.gov" });
+    expect(
+      testDb.db
+        .select()
+        .from(eventLog)
+        .all()
+        .filter((event) => event.eventName === "data_source.crawler_config_updated"),
+    ).toHaveLength(0);
+  });
+
+  it("updates crawler config through the MySQL twin with the same SQL shape", async () => {
+    const executed: Array<{ sql: string; values: unknown[] }> = [];
+    const row = {
+      id: "il_bidbuy",
+      label: "Illinois BidBuy",
+      issuerType: "state",
+      stateCode: "IL",
+      baseUrl: "https://old.example.gov",
+      isEnabled: 1,
+      cadence: "daily",
+      fetchConfig: JSON.stringify({ base_url: "https://old.example.gov" }),
+      jurisdictionLevel: "state",
+      jurisdictionName: null,
+      approvedForIngestion: 1,
+      approvalStatus: "approved",
+      legalReviewStatus: "approved_public",
+      consecutiveFailures: 0,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+    const mysql = {
+      query: async (sql: string) => {
+        if (sql.includes("FROM data_sources")) return [[row]];
+        if (sql.includes("FROM event_log")) return [[fakeEventLogRow(executed)]];
+        return [[]];
+      },
+      execute: async (sql: string, values: unknown[] = []) => {
+        executed.push({ sql, values });
+        return [{ affectedRows: 1 }];
+      },
+    };
+
+    await updateAdminDataSourceFromMysql(
+      mysql as never,
+      "il_bidbuy",
+      { fetchConfig: { enrichment: { enabled: true } }, cadence: "hourly", baseUrl: null },
+      { actorUserId: "admin_1" },
+    );
+
+    const update = executed.find((call) => call.sql.startsWith("UPDATE data_sources SET"));
+    expect(update?.sql).toContain("fetch_config = ?");
+    expect(update?.sql).toContain("cadence = ?");
+    expect(update?.sql).toContain("base_url = ?");
+    expect(update?.values).toContain(JSON.stringify({ enrichment: { enabled: true } }));
+    expect(update?.values).toContain("hourly");
+    expect(update?.values).toContain(null);
+    expect(
+      executed.some(
+        (call) => call.sql.includes("INSERT INTO event_log") && call.values.includes("data_source.crawler_config_updated"),
+      ),
+    ).toBe(true);
+  });
 });
 
 function createFakeMysqlDataSourcesStore() {
@@ -874,4 +1018,35 @@ function createFakeMysqlDataSourcesStore() {
       return [{ affectedRows: 0 }];
     },
   };
+}
+
+const EVENT_LOG_INSERT_COLUMNS = [
+  "id",
+  "event_name",
+  "occurred_at",
+  "environment",
+  "organization_id",
+  "actor_type",
+  "actor_id",
+  "actor_role",
+  "target_type",
+  "target_id",
+  "source",
+  "outcome",
+  "severity",
+  "request_id",
+  "correlation_id",
+  "idempotency_key",
+  "metadata_json",
+  "before_after_json",
+  "retention_class",
+  "created_at",
+] as const;
+
+/** Replays the last `INSERT INTO event_log` a fake pool recorded as the row a read-back would return. */
+function fakeEventLogRow(executed: Array<{ sql: string; values: unknown[] }>) {
+  const insert = [...executed].reverse().find((call) => call.sql.includes("INSERT INTO event_log"));
+  if (!insert) throw new Error("No event_log insert was recorded.");
+
+  return Object.fromEntries(EVENT_LOG_INSERT_COLUMNS.map((column, index) => [column, insert.values[index]]));
 }

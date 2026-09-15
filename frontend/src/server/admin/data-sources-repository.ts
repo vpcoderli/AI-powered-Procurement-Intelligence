@@ -16,6 +16,7 @@ import {
 import type { AppDatabase } from "@/server/db/client";
 import { mysqlExecute, mysqlSelectMany, mysqlSelectOne } from "@/server/db/mysql-runtime";
 import { crawlerLogs, dataSources, sourceApprovalEvents } from "@/server/db/schema";
+import { writeAuditEvent, writeAuditEventFromMysql } from "@/server/events/event-log";
 import {
   latestLiveSourceHealthBySource,
   listLiveSourceHealthSnapshots,
@@ -24,6 +25,7 @@ import {
   sourceHealthTrendBySource,
   type SourceHealthTrend,
 } from "@/server/source-validity/health-snapshots";
+import type { Cadence } from "./crawler-config";
 
 export interface AdminCrawlerLog {
   id: string;
@@ -54,6 +56,7 @@ export interface AdminDataSource {
   baseUrl: string | null;
   isEnabled: boolean;
   cadence: string;
+  fetchConfig: Record<string, unknown>;
   jurisdictionLevel: string | null;
   jurisdictionName: string | null;
   lastSuccessAt: string | null;
@@ -214,6 +217,9 @@ export interface UpdateAdminDataSourceInput {
   legalOpinionReference?: string | null;
   complianceReviewDueAt?: string | null;
   complianceNotes?: string | null;
+  fetchConfig?: Record<string, unknown>;
+  cadence?: Cadence;
+  baseUrl?: string | null;
 }
 
 export interface UpdateAdminDataSourceOptions {
@@ -514,6 +520,43 @@ function booleanOverride(value: number | null, fallback: boolean) {
   return value === 1;
 }
 
+function parseFetchConfigJson(raw: unknown): Record<string, unknown> {
+  if (typeof raw !== "string" || raw.trim() === "") return {};
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function hasCrawlerConfigUpdate(input: UpdateAdminDataSourceInput) {
+  return input.fetchConfig !== undefined || input.cadence !== undefined || input.baseUrl !== undefined;
+}
+
+/** base_url lives both in the column and inside fetch_config.base_url; keep them in sync. */
+function nextFetchConfig(existingRaw: unknown, input: UpdateAdminDataSourceInput) {
+  const next = { ...(input.fetchConfig ?? parseFetchConfigJson(existingRaw)) };
+
+  if (input.baseUrl !== undefined) {
+    if (input.baseUrl === null) delete next.base_url;
+    else next.base_url = input.baseUrl;
+  }
+
+  return next;
+}
+
+function crawlerConfigSnapshot(row: DataSourceRow) {
+  return {
+    fetchConfig: parseFetchConfigJson(row.fetchConfig),
+    cadence: row.cadence,
+    baseUrl: row.baseUrl,
+  };
+}
+
 function toAdminSource(
   row: DataSourceRow,
   latestLog: AdminCrawlerLog | null,
@@ -543,6 +586,7 @@ function toAdminSource(
     baseUrl: row.baseUrl,
     isEnabled: row.isEnabled === 1,
     cadence: row.cadence,
+    fetchConfig: parseFetchConfigJson(row.fetchConfig),
     jurisdictionLevel: row.jurisdictionLevel ?? null,
     jurisdictionName: row.jurisdictionName ?? null,
     lastSuccessAt: row.lastSuccessAt,
@@ -620,6 +664,7 @@ function dataSourceSelectSql(where = "") {
       base_url AS baseUrl,
       is_enabled AS isEnabled,
       cadence,
+      fetch_config AS fetchConfig,
       jurisdiction_level AS jurisdictionLevel,
       jurisdiction_name AS jurisdictionName,
       provider_family AS providerFamily,
@@ -808,6 +853,11 @@ export async function updateAdminDataSource(
       ...(input.complianceReviewDueAt !== undefined ? { complianceReviewDueAt: input.complianceReviewDueAt } : {}),
       ...(input.complianceNotes !== undefined ? { complianceNotes: input.complianceNotes } : {}),
       ...(hasComplianceLedgerUpdate(input) ? { tosReviewedAt } : {}),
+      ...(hasCrawlerConfigUpdate(input)
+        ? { fetchConfig: JSON.stringify(nextFetchConfig(existing.fetchConfig, input)) }
+        : {}),
+      ...(input.cadence !== undefined ? { cadence: input.cadence } : {}),
+      ...(input.baseUrl !== undefined ? { baseUrl: input.baseUrl } : {}),
       lastApprovalReviewedAt,
       updatedAt,
     })
@@ -837,6 +887,22 @@ export async function updateAdminDataSource(
         createdAt: updatedAt,
       })
       .run();
+  }
+
+  if (hasCrawlerConfigUpdate(input)) {
+    writeAuditEvent(db, {
+      eventName: "data_source.crawler_config_updated",
+      actorType: options.actorUserId ? "user" : "system",
+      actorId: options.actorUserId ?? null,
+      targetType: "data_source",
+      targetId: id,
+      outcome: "success",
+      beforeAfter: {
+        before: crawlerConfigSnapshot(existing),
+        after: crawlerConfigSnapshot(updated),
+      },
+      occurredAt: updatedAt,
+    });
   }
 
   const approvalHistory = approvalHistoryBySource(
@@ -938,6 +1004,18 @@ export async function updateAdminDataSourceFromMysql(
     fields.push("last_approval_reviewed_at = ?");
     values.push(updatedAt);
   }
+  if (hasCrawlerConfigUpdate(input)) {
+    fields.push("fetch_config = ?");
+    values.push(JSON.stringify(nextFetchConfig(existing.fetchConfig, input)));
+  }
+  if (input.cadence !== undefined) {
+    fields.push("cadence = ?");
+    values.push(input.cadence);
+  }
+  if (input.baseUrl !== undefined) {
+    fields.push("base_url = ?");
+    values.push(input.baseUrl);
+  }
 
   fields.push("updated_at = ?");
   values.push(updatedAt, id);
@@ -993,6 +1071,22 @@ export async function updateAdminDataSourceFromMysql(
         updatedAt,
       ],
     );
+  }
+
+  if (hasCrawlerConfigUpdate(input)) {
+    await writeAuditEventFromMysql(mysql, {
+      eventName: "data_source.crawler_config_updated",
+      actorType: options.actorUserId ? "user" : "system",
+      actorId: options.actorUserId ?? null,
+      targetType: "data_source",
+      targetId: id,
+      outcome: "success",
+      beforeAfter: {
+        before: crawlerConfigSnapshot(existing),
+        after: crawlerConfigSnapshot(updated),
+      },
+      occurredAt: updatedAt,
+    });
   }
 
   const approvalHistory = approvalHistoryBySource(await listSourceApprovalEventsFromMysql(mysql, id));
