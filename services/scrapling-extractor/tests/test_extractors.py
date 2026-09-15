@@ -206,3 +206,15 @@ def test_fallback_still_extracts_a_real_paragraph_inside_main():
     result = extract(html, URL, ["description"])
     assert result["fields"]["description"].startswith("The county will award a contract")
     assert result["diagnostics"]["description"] == "heuristic"
+
+
+def test_fallback_reaches_a_paragraph_wrapped_in_a_page_level_form():
+    """BuySpeed / ASP.NET WebForms portals wrap the entire body in one <form> (viewstate
+    postback). Treating `form` as chrome the same as nav/header/footer/aside made the
+    largest-text-block fallback unreachable on those portals: everything on the page,
+    including the real bid description, is nested inside that page-level form."""
+    paragraph = "The county will award a contract for snow removal services at twelve facilities. " * 3
+    html = f"<html><body><form><div>{paragraph}</div></form></body></html>"
+    result = extract(html, URL, ["description"])
+    assert result["fields"]["description"].startswith("The county will award a contract")
+    assert result["diagnostics"]["description"] == "heuristic"

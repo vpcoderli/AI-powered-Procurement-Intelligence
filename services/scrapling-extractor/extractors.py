@@ -21,7 +21,7 @@ _DOCUMENT_EXTENSIONS = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".csv"
 # Chrome containers. The fallback below walks ANCESTORS against this set: the CSS selector it
 # iterates can never return a <nav> itself, but it happily returns the <div> inside one — which
 # is exactly how a portal's navigation bar became the description of 14 NY bids.
-_NOISE_ANCESTOR_TAGS = frozenset(("nav", "header", "footer", "aside", "form"))
+_NOISE_ANCESTOR_TAGS = frozenset(("nav", "header", "footer", "aside"))
 # Quality floor for the fallback (the label heuristics are precise; the fallback is a guess).
 _MIN_FALLBACK_CHARS = 150
 _MIN_FALLBACK_WORDS = 25
