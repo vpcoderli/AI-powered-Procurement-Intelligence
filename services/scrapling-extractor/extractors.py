@@ -18,10 +18,20 @@ _LABELS = {
     "attachments": ("File Attachments", "Attachments", "Documents", "Bid Documents", "Files"),
 }
 _DOCUMENT_EXTENSIONS = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".csv", ".ppt", ".pptx", ".txt")
-_NOISE_TAGS = ("nav", "header", "footer", "script", "style", "noscript")
+# Chrome containers. The fallback below walks ANCESTORS against this set: the CSS selector it
+# iterates can never return a <nav> itself, but it happily returns the <div> inside one — which
+# is exactly how a portal's navigation bar became the description of 14 NY bids.
+_NOISE_ANCESTOR_TAGS = frozenset(("nav", "header", "footer", "aside", "form"))
+# Quality floor for the fallback (the label heuristics are precise; the fallback is a guess).
+_MIN_FALLBACK_CHARS = 150
+_MIN_FALLBACK_WORDS = 25
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _PHONE_RE = re.compile(r"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}")
 _MAX_TEXT = 20_000
+# `description` is the short, list-facing field; `full_description` carries the whole text and
+# is only populated when it would actually differ from the short one (see `_split_description`).
+_MAX_DESCRIPTION = 500
+_MIN_DESCRIPTION_CUT = 80
 # Scrapling keys its adaptive-selector store by an absolute file path handed to the storage
 # class; with no `storage_args` it defaults to `<site-packages>/scrapling/elements_storage.db`
 # (scrapling/parser.py `__DEFAULT_DB_FILE__`) and has no environment override of its own.
@@ -68,13 +78,58 @@ def _select(page, selector):
     return page.css(selector, identifier=selector, adaptive=True, auto_save=True)
 
 
+def _split_description(text):
+    """Return `(description, full_description)` for one extracted block of text.
+
+    There is a single source text per page, so duplicating it into both fields doubles what
+    fetch-task serializes to stdout and what the importer writes. `full_description` is
+    therefore None whenever the text already fits the short field; past that the full text goes
+    to `full_description` and `description` keeps the leading sentence(s), cut on a sentence
+    boundary when one is available inside the budget and on a word boundary otherwise.
+    """
+    if not text:
+        return None, None
+    if len(text) <= _MAX_DESCRIPTION:
+        return text, None
+    head = text[:_MAX_DESCRIPTION]
+    cut = max(head.rfind(". "), head.rfind("。"))
+    if cut >= _MIN_DESCRIPTION_CUT:
+        return head[: cut + 1].strip(), text
+    space = head.rfind(" ")
+    short = head[:space] if space >= _MIN_DESCRIPTION_CUT else head
+    return short.rstrip() + "…", text
+
+
+def _has_noise_ancestor(element):
+    current = element.parent
+    while current is not None:
+        if current.tag in _NOISE_ANCESTOR_TAGS:
+            return True
+        current = current.parent
+    return False
+
+
+def _is_prose(text):
+    """Cheap floor keeping portal chrome (menus, breadcrumbs, button strips) out of a bid field."""
+    if len(text) < _MIN_FALLBACK_CHARS:
+        return False
+    return "." in text or "。" in text or len(text.split()) >= _MIN_FALLBACK_WORDS
+
+
 def _largest_text_block(page):
+    """Longest prose-looking block outside the page chrome, or None when nothing qualifies.
+
+    Returning None on a page with no real body text is the point: the field then stays
+    `not_found` instead of writing a navigation bar into a bid's description.
+    """
     best, best_len = None, 0
     for element in page.css("main, article, section, div, td, p"):
-        if element.tag in _NOISE_TAGS:
+        if _has_noise_ancestor(element):
             continue
         text = _element_text(element)
-        if text and len(text) > best_len and len(element.css("div, section, table")) <= 3:
+        if not text or len(text) <= best_len or not _is_prose(text):
+            continue
+        if len(element.css("div, section, table")) <= 3:
             best, best_len = text, len(text)
     return best
 
@@ -229,8 +284,7 @@ def extract(html, url, fields, selectors=None, storage_dir=None):
             diagnostics[field] = "heuristic" if value else "not_found"
 
         if field == "description":
-            out["description"] = value
-            out["full_description"] = value
+            out["description"], out["full_description"] = _split_description(value)
         elif field == "category":
             out["original_category"] = value
         elif field == "published_date":

@@ -22,7 +22,9 @@ def test_heuristics_extract_every_field_from_label_table():
     result = extract(_html(), URL, list(SUPPORTED_FIELDS))
     fields = result["fields"]
     assert fields["description"].startswith("The Department seeks a contractor")
-    assert fields["full_description"] == fields["description"]
+    # Short text lives in `description` alone; `full_description` stays None rather than
+    # repeating the same bytes (see test_short_description_is_not_duplicated_into_full_description).
+    assert fields["full_description"] is None
     assert fields["original_category"] == "Construction Services"
     assert fields["contact_name"] == "Jane Buyer"
     assert fields["contact_email"] == "jane.buyer@example.gov"
@@ -137,3 +139,70 @@ def test_contact_selector_reads_email_and_phone_from_anchor_hrefs(monkeypatch):
     assert result["fields"]["contact_phone"] == "555-0100"
     assert "Jane Buyer" in result["fields"]["contact_name"]
     assert calls == [".buyer-card"], "the contact selector must be evaluated exactly once"
+
+
+def test_short_description_is_not_duplicated_into_full_description():
+    """A description that already fits in one field must not be stored twice: the pair is
+    serialized to fetch-task's stdout and written to two DB columns."""
+    result = extract(_html(), URL, ["description"])
+    assert result["fields"]["description"].startswith("The Department seeks a contractor")
+    assert result["fields"]["full_description"] is None
+
+
+def test_long_description_keeps_the_full_text_and_a_short_summary():
+    body = "The Department seeks a contractor for deck repair on Bridge 41. " * 20
+    html = (
+        "<html><body><main><table>"
+        f"<tr><td class='label'>Description</td><td>{body}</td></tr>"
+        "</table></main></body></html>"
+    )
+    fields = extract(html, URL, ["description"])["fields"]
+    assert len(fields["full_description"]) > 500
+    assert fields["full_description"].startswith("The Department seeks a contractor")
+    assert fields["description"] != fields["full_description"]
+    assert len(fields["description"]) <= 500
+    assert fields["description"].startswith(
+        "The Department seeks a contractor for deck repair on Bridge 41."
+    )
+
+
+def test_fallback_skips_blocks_nested_inside_navigation_chrome():
+    """The NY login-page regression: a `div` inside `<nav>` is still navigation text, and the
+    old `element.tag in _NOISE_TAGS` guard could never see it (the CSS selector never returns
+    a nav/header/footer element itself)."""
+    menu = "Find Bids Advertise Bids Business Registry Help Contact Us Sign In " * 5
+    html = (
+        f"<html><body><nav><div class='menu'>{menu}</div></nav>"
+        "<main><p>Short.</p></main></body></html>"
+    )
+    result = extract(html, URL, ["description"])
+    assert result["fields"]["description"] is None
+    assert result["fields"]["full_description"] is None
+    assert result["diagnostics"]["description"] == "not_found"
+
+
+def test_fallback_rejects_a_block_below_the_quality_floor():
+    html = "<html><body><div id='body'>Bids close soon.</div></body></html>"
+    result = extract(html, URL, ["description"])
+    assert result["fields"]["description"] is None
+    assert result["diagnostics"]["description"] == "not_found"
+
+
+def test_fallback_rejects_a_long_block_without_any_sentence_feature():
+    # Over the 150-character floor, but no sentence punctuation and well under 25 words —
+    # a breadcrumb/menu strip, not prose.
+    html = "<html><body><div id='body'>" + ("Solicitation-Registration " * 8) + "</div></body></html>"
+    result = extract(html, URL, ["description"])
+    assert result["fields"]["description"] is None
+    assert result["diagnostics"]["description"] == "not_found"
+
+
+def test_fallback_still_extracts_a_real_paragraph_inside_main():
+    paragraph = "The county will award a contract for snow removal services at twelve facilities. " * 3
+    html = (
+        "<html><body><nav><div>Home Bids Help Contact Register</div></nav>"
+        f"<main><p>{paragraph}</p></main></body></html>"
+    )
+    result = extract(html, URL, ["description"])
+    assert result["fields"]["description"].startswith("The county will award a contract")
+    assert result["diagnostics"]["description"] == "heuristic"
