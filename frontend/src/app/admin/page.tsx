@@ -84,6 +84,7 @@ import {
 import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlements";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { JurisdictionBatchRunPanel } from "@/components/admin/JurisdictionBatchRunPanel";
+import { CrawlerConfigPanel } from "@/components/admin/CrawlerConfigPanel";
 import { stateCrawlerSourceIdForAdminSource } from "@/lib/state-crawler-sources";
 
 type SectionLoadStatus = "loading" | "error" | "ready";
@@ -4257,6 +4258,14 @@ export default function AdminPage() {
                       ) : (
                         <span className="text-slate-400">-</span>
                       )}
+                      <div className="mt-2 flex justify-end">
+                        <CrawlerConfigPanel
+                          source={source}
+                          disabled={isRunning || runningSourceId !== null}
+                          onSaved={replaceSource}
+                          onMessage={setRunMessage}
+                        />
+                      </div>
                     </TableCell>
                   )}
                   <TableCell className="text-right">
