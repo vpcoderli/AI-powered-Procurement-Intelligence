@@ -206,3 +206,49 @@ def test_null_date_range_keeps_existing_behavior(monkeypatch, capsys):
     assert exit_code == 0
     assert len(result["bids"]) == 1
     assert "dateFilter" not in result["metadata"]
+
+
+def test_fetch_task_reports_disabled_enrichment_by_default(monkeypatch, capsys):
+    monkeypatch.setitem(registry.DEDICATED_ADAPTERS, "plain_source", lambda source, **kwargs: [{"id": "plain_source:1", "title": "T", "source": "Plain"}])
+    exit_code, result = _run({"task_id": "tsk_e1", "source_id": "plain_source", "label": "Plain", "state_code": "CA", "fetch_config": {}}, monkeypatch, capsys)
+    assert exit_code == 0
+    assert result["metadata"]["enrichment"] == {"attempted": 0, "enriched": 0, "failed": 0, "skipped": 1, "reason": "disabled", "extractor": None}
+
+
+def test_fetch_task_runs_enrichment_when_enabled(monkeypatch, capsys):
+    from apsi_crawler import enrichment
+
+    monkeypatch.setitem(registry.DEDICATED_ADAPTERS, "rich_source", lambda source, **kwargs: [{"id": "rich_source:1", "title": "T", "description": "T", "source": "Rich", "source_url": "https://portal.example.gov/bid/1", "attachments": []}])
+    monkeypatch.setattr(enrichment, "fetch_html", lambda url, session=None, timeout=30: "<html>detail</html>")
+
+    class Extractor:
+        def health(self, timeout=3.0):
+            return "0.4.15"
+
+        def extract(self, html, url, fields, selectors, timeout=10.0):
+            return {"fields": {"description": "Long description"}, "attachments": [], "diagnostics": {"description": "heuristic"}}
+
+    monkeypatch.setattr(enrichment, "ExtractorClient", lambda base_url, session=None: Extractor())
+    monkeypatch.setenv("SCRAPLING_EXTRACTOR_URL", "http://extractor.test")
+
+    exit_code, result = _run({"task_id": "tsk_e2", "source_id": "rich_source", "label": "Rich", "state_code": "CA", "fetch_config": {"enrichment": {"enabled": True, "min_interval_seconds": 0}}}, monkeypatch, capsys)
+    assert exit_code == 0
+    assert result["bids"][0]["description"] == "Long description"
+    assert result["metadata"]["enrichment"]["enriched"] == 1
+
+
+def test_enrichment_failure_never_fails_the_run(monkeypatch, capsys):
+    from apsi_crawler import enrichment
+
+    monkeypatch.setitem(registry.DEDICATED_ADAPTERS, "fragile_source", lambda source, **kwargs: [{"id": "fragile_source:1", "title": "T", "source": "Fragile", "source_url": "https://portal.example.gov/bid/1"}])
+    monkeypatch.setenv("SCRAPLING_EXTRACTOR_URL", "http://extractor.test")
+
+    class Broken:
+        def health(self, timeout=3.0):
+            raise RuntimeError("health exploded")
+
+    monkeypatch.setattr(enrichment, "ExtractorClient", lambda base_url, session=None: Broken())
+    exit_code, result = _run({"task_id": "tsk_e3", "source_id": "fragile_source", "label": "Fragile", "state_code": "CA", "fetch_config": {"enrichment": {"enabled": True}}}, monkeypatch, capsys)
+    assert exit_code == 0
+    assert result["status"] == "success"
+    assert result["metadata"]["enrichment"]["reason"] == "enrichment_crashed"

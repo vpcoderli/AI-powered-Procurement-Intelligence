@@ -12,6 +12,7 @@ from apsi_crawler.adapters.registry import AdapterNotFoundError, resolve_adapter
 from apsi_crawler.adapters.task import task_source_from_payload
 from apsi_crawler.config import DEFAULT_SOURCE
 from apsi_crawler.date_window import apply_date_window
+from apsi_crawler.enrichment import enrich_bids
 from apsi_crawler.live_validation import (
     BETA_DEDICATED_STATE_SOURCES,
     validate_state_live_sources,
@@ -316,6 +317,17 @@ def fetch_task(payload):
         # Liveness check runs BEFORE the window filter: an adapter that fetched real
         # rows must count as a live source even when the window then drops them all.
         _require_non_empty_bids(bids, source.id)
+        # Optional detail-page enrichment (fetch_config.enrichment.enabled). Runs after the
+        # liveness check and before the date window so filtered-out rows are never fetched
+        # twice... but is ALWAYS fail-open: any crash here is recorded, never raised.
+        try:
+            bids, enrichment_stats = enrich_bids(bids, source, payload.get("fetch_config"))
+        except Exception as error:  # noqa: BLE001 - enrichment must never fail the run
+            enrichment_stats = {
+                "attempted": 0, "enriched": 0, "failed": 0, "skipped": len(bids),
+                "reason": "enrichment_crashed", "extractor": None, "error": f"{type(error).__name__}: {error}",
+            }
+        metadata["enrichment"] = enrichment_stats
         bids, date_filter_stats = apply_date_window(bids, date_range)
         if date_filter_stats is not None:
             metadata["dateFilter"] = date_filter_stats

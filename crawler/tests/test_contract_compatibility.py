@@ -141,3 +141,13 @@ def test_fetch_task_reads_every_directly_read_field_by_its_real_key(monkeypatch,
     assert seen["limit"] == 7
     assert seen["query"] == "road repair"
     assert seen["jurisdiction"] == "county"
+
+
+def test_contract_enrichment_block_parses_to_disabled_defaults():
+    from apsi_crawler.enrichment import parse_enrichment_config
+
+    payload = json.loads(CONTRACT_PATH.read_text())
+    config = parse_enrichment_config(payload["fetch_config"])
+    assert config["enabled"] is False
+    assert config["fields"] == ["description", "attachments", "category", "contact", "published_date"]
+    assert config["max_details_per_run"] == 25
