@@ -6,3 +6,6 @@ node_modules/
 
 # Subagent-driven development scratch (ledger, briefs, review packages).
 .superpowers/
+
+# Scrapling extractor sidecar's own Python virtualenv.
+services/scrapling-extractor/.venv/
