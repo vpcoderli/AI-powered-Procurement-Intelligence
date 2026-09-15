@@ -109,18 +109,36 @@ function attachmentRowsForBid(row: JsonRecord, bidId: string, fallbackTimestamp:
 }
 
 /**
+ * A value counts as "nothing learned" when it is null or trims to the empty string --
+ * whitespace-only input from a list-only crawl must not read as a real value. Task 7's MySQL
+ * twin mirrors this exact rule (in SQL) for the same column set.
+ */
+function isBlank(value: string | null): boolean {
+  return value === null || value.trim() === "";
+}
+
+/**
+ * True when `description` is just the title echoed back (a list-page-only crawl commonly fills
+ * `description` with the title), ignoring case and surrounding whitespace. Task 7's MySQL twin
+ * mirrors this exact rule.
+ */
+function isTitleEcho(description: string, title: string): boolean {
+  return description.trim().toLowerCase() === title.trim().toLowerCase();
+}
+
+/**
  * Enrichment-preserving update set: a list-page-only run must not clobber detail-page data
  * written by an earlier enriched run. `description` is only replaced when the incoming value
- * is a real description (non-empty and different from the incoming title); the other
- * enrichable columns only when the incoming value is non-empty. Everything else keeps the
- * plain overwrite semantics.
+ * is a real description (non-blank and not just the title echoed back); the other enrichable
+ * columns only when the incoming value is non-blank. Everything else keeps the plain overwrite
+ * semantics.
  */
 export function enrichmentPreservingUpdateSet(updateValues: ReturnType<typeof bidUpdateValues>, row: JsonRecord) {
   const incomingDescription = stringValue(row.description, "");
   const incomingTitle = stringValue(row.title, "Untitled opportunity");
-  const realDescription = incomingDescription.trim() !== "" && incomingDescription !== incomingTitle;
+  const realDescription = !isBlank(incomingDescription) && !isTitleEcho(incomingDescription, incomingTitle);
   const keepIfEmpty = <K extends keyof typeof updateValues>(key: K, column: string) =>
-    updateValues[key] === null || updateValues[key] === ""
+    isBlank(updateValues[key] as string | null)
       ? sql.raw(column)
       : updateValues[key];
 

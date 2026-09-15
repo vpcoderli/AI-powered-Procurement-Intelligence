@@ -369,6 +369,24 @@ describe("crawler JSON SQLite importer", () => {
     expect(row?.originalCategory).toBe("New");
   });
 
+  it("keeps enriched fields when a later run only carries whitespace-only values", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Full scope of work", full_description: "Full scope of work", contact_email: "jane@example.gov" }));
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "  ", full_description: "  ", contact_email: " " }));
+
+    const row = testDb.db.select().from(bids).where(eq(bids.id, "il_bidbuy:1")).get();
+    expect(row?.description).toBe("Full scope of work");
+    expect(row?.fullDescription).toBe("Full scope of work");
+    expect(row?.contactEmail).toBe("jane@example.gov");
+  });
+
+  it("keeps an enriched description when a later run echoes the title with different case and whitespace", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Full scope of work" }));
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "  ROAD REPAIR  " }));
+
+    const row = testDb.db.select().from(bids).where(eq(bids.id, "il_bidbuy:1")).get();
+    expect(row?.description).toBe("Full scope of work");
+  });
+
   it("keeps existing attachments when a later run carries an empty attachment list", () => {
     importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, attachments: [{ name: "Spec.pdf", url: "https://portal.example.gov/spec.pdf", sort_order: 0 }] }));
     importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, attachments: [] }));
