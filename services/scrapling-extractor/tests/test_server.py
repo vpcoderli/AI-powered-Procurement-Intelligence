@@ -1,4 +1,5 @@
 import json
+import os
 import pathlib
 import threading
 import urllib.error
@@ -8,14 +9,25 @@ import pytest
 
 pytest.importorskip("scrapling")
 
-from server import MAX_HTML_BYTES, create_server  # noqa: E402
+from server import (  # noqa: E402
+    MAX_HTML_BYTES,
+    REQUEST_TIMEOUT_SECONDS,
+    ExtractorHandler,
+    create_server,
+    resolve_storage_dir,
+)
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture(scope="module")
-def base_url():
-    server = create_server(0)
+def storage_dir(tmp_path_factory):
+    return tmp_path_factory.mktemp("scrapling-storage")
+
+
+@pytest.fixture(scope="module")
+def base_url(storage_dir):
+    server = create_server(0, storage_dir=str(storage_dir))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
@@ -97,3 +109,31 @@ def test_unknown_path_is_404(base_url):
         assert False, "expected 404"
     except urllib.error.HTTPError as error:
         assert error.code == 404
+
+
+def test_handler_has_a_connection_timeout():
+    # Without a timeout a half-sent request pins a worker thread on rfile.read() indefinitely.
+    assert ExtractorHandler.timeout == REQUEST_TIMEOUT_SECONDS
+    assert REQUEST_TIMEOUT_SECONDS > 0
+
+
+def test_extract_writes_the_adaptive_store_into_the_server_storage_dir(base_url, storage_dir):
+    html = (FIXTURES / "synthetic_detail.html").read_text(encoding="utf-8")
+    status, _ = _post(
+        base_url,
+        {"url": "https://example.gov/bids/26-101", "html": html, "fields": ["description"]},
+    )
+    assert status == 200
+    assert (storage_dir / "elements_storage.db").exists()
+
+
+def test_resolve_storage_dir_prefers_the_env_var(tmp_path, monkeypatch):
+    target = tmp_path / "nested" / "scrapling"
+    monkeypatch.setenv("SCRAPLING_STORAGE_DIR", str(target))
+    assert resolve_storage_dir() == str(target)
+    assert target.is_dir()
+
+
+def test_resolve_storage_dir_falls_back_when_the_target_is_unusable(monkeypatch):
+    monkeypatch.setenv("SCRAPLING_STORAGE_DIR", "/proc/definitely-not-creatable/scrapling")
+    assert resolve_storage_dir() == os.getcwd()

@@ -13,19 +13,34 @@ from extractors import ExtractError, extract  # noqa: E402
 MAX_HTML_BYTES = 2 * 1024 * 1024
 MAX_BODY_BYTES = MAX_HTML_BYTES + 64 * 1024
 DEFAULT_PORT = 8091
+DEFAULT_STORAGE_DIR = "/data/scrapling"
+# Seconds a single connection may stay idle mid-request before the handler gives up; without it a
+# client that sends headers and then stalls pins a server thread forever on rfile.read().
+REQUEST_TIMEOUT_SECONDS = 30
 
 
-def _configure_storage_dir():
-    storage_dir = os.environ.get("SCRAPLING_STORAGE_DIR", "/data/scrapling")
+def resolve_storage_dir():
+    """Directory to hold Scrapling's adaptive-selector SQLite store.
+
+    Scrapling writes that store to the absolute path it is handed through
+    `storage_args["storage_file"]` (default: inside site-packages) — it is not relative to the
+    process cwd and scrapling reads no environment variable of its own, so the resolved directory
+    has to be threaded explicitly into every `extract()` call. Falls back to the current directory
+    when SCRAPLING_STORAGE_DIR (default /data/scrapling) cannot be created or written.
+    """
+    storage_dir = os.environ.get("SCRAPLING_STORAGE_DIR") or DEFAULT_STORAGE_DIR
     try:
         os.makedirs(storage_dir, exist_ok=True)
-        os.chdir(storage_dir)  # Scrapling's adaptive SQLite store is created relative to cwd
     except OSError:
-        pass
+        return os.getcwd()
+    if not os.access(storage_dir, os.W_OK):
+        return os.getcwd()
+    return storage_dir
 
 
 class ExtractorHandler(BaseHTTPRequestHandler):
     server_version = "scrapling-extractor/1.0"
+    timeout = REQUEST_TIMEOUT_SECONDS  # honoured by BaseHTTPRequestHandler on the connection socket
 
     def log_message(self, format, *args):  # noqa: A002 - keep stdout quiet in tests
         if os.environ.get("EXTRACTOR_LOG") == "1":
@@ -78,7 +93,7 @@ class ExtractorHandler(BaseHTTPRequestHandler):
             self._error(400, "INVALID_REQUEST", "selectors must be an object or null")
             return
         try:
-            result = extract(html, url, fields, selectors)
+            result = extract(html, url, fields, selectors, storage_dir=self.server.storage_dir)
         except ExtractError as error:
             self._error(400, "INVALID_REQUEST", str(error))
             return
@@ -88,12 +103,13 @@ class ExtractorHandler(BaseHTTPRequestHandler):
         self._send(200, result)
 
 
-def create_server(port=DEFAULT_PORT):
-    return ThreadingHTTPServer(("0.0.0.0", port), ExtractorHandler)
+def create_server(port=DEFAULT_PORT, storage_dir=None):
+    server = ThreadingHTTPServer(("0.0.0.0", port), ExtractorHandler)
+    server.storage_dir = storage_dir if storage_dir is not None else resolve_storage_dir()
+    return server
 
 
 def main():
-    _configure_storage_dir()
     port = int(os.environ.get("EXTRACTOR_PORT", DEFAULT_PORT))
     server = create_server(port)
     print(f"scrapling-extractor listening on :{port} (scrapling {scrapling.__version__})", flush=True)

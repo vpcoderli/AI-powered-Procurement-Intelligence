@@ -80,3 +80,60 @@ def test_description_falls_back_to_largest_text_block_without_label():
     html = "<html><body><nav>menu</nav><div id='body'>" + ("Scope of work sentence. " * 30) + "</div><footer>foot</footer></body></html>"
     result = extract(html, URL, ["description"])
     assert result["fields"]["description"].startswith("Scope of work sentence.")
+
+
+def test_adaptive_store_is_written_under_the_requested_storage_dir(tmp_path):
+    storage_dir = tmp_path / "scrapling"
+    storage_dir.mkdir()
+    extract(_html(), URL, ["description"], storage_dir=str(storage_dir))
+    assert (storage_dir / "elements_storage.db").exists()
+
+
+def test_selector_that_matches_nothing_is_not_reported_as_selector():
+    result = extract(
+        _html(),
+        URL,
+        ["attachments", "contact"],
+        selectors={"attachments": ".no-such-block a", "contact": ".no-such-block"},
+    )
+    assert result["attachments"] == []
+    assert result["diagnostics"]["attachments"] == "not_found"
+    assert result["fields"]["contact_name"] is None
+    assert result["diagnostics"]["contact"] == "not_found"
+
+
+def test_matching_selector_is_reported_as_selector_for_attachments_and_contact():
+    result = extract(
+        _html(),
+        URL,
+        ["attachments", "contact"],
+        selectors={"attachments": "tr:last-child a", "contact": "//tr[td='Contact']/td[2]"},
+    )
+    assert result["diagnostics"]["attachments"] == "selector"
+    assert result["diagnostics"]["contact"] == "selector"
+
+
+CONTACT_BLOCK_HTML = """<html><body><main>
+<div class="buyer-card"><span class="who">Jane Buyer</span>
+<a href="mailto:jane.buyer@example.gov">Email this buyer</a>
+<a href="tel:555-0100">Call</a></div>
+</main></body></html>"""
+
+
+def test_contact_selector_reads_email_and_phone_from_anchor_hrefs(monkeypatch):
+    import extractors
+
+    calls = []
+    original = extractors._select
+
+    def counting_select(page, selector):
+        calls.append(selector)
+        return original(page, selector)
+
+    monkeypatch.setattr(extractors, "_select", counting_select)
+    result = extract(CONTACT_BLOCK_HTML, URL, ["contact"], selectors={"contact": ".buyer-card"})
+
+    assert result["fields"]["contact_email"] == "jane.buyer@example.gov"
+    assert result["fields"]["contact_phone"] == "555-0100"
+    assert "Jane Buyer" in result["fields"]["contact_name"]
+    assert calls == [".buyer-card"], "the contact selector must be evaluated exactly once"

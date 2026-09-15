@@ -1,6 +1,7 @@
 """Field extraction on top of Scrapling's parser (base package only — no fetchers)."""
 
 import mimetypes
+import os
 import re
 from urllib.parse import urljoin, urlparse
 
@@ -21,6 +22,10 @@ _NOISE_TAGS = ("nav", "header", "footer", "script", "style", "noscript")
 _EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _PHONE_RE = re.compile(r"\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}")
 _MAX_TEXT = 20_000
+# Scrapling keys its adaptive-selector store by an absolute file path handed to the storage
+# class; with no `storage_args` it defaults to `<site-packages>/scrapling/elements_storage.db`
+# (scrapling/parser.py `__DEFAULT_DB_FILE__`) and has no environment override of its own.
+STORAGE_FILE_NAME = "elements_storage.db"
 
 
 class ExtractError(ValueError):
@@ -124,8 +129,11 @@ def _attachments(page, url, selector=None):
 
 def _contact(page, selector=None):
     if selector:
-        text = _element_text(_select(page, selector).first) if _select(page, selector) else None
-        element = None
+        # Evaluate the selector once (each `_select` call writes to the adaptive store), and keep
+        # the matched element so the mailto:/tel: anchor extraction below runs on this path too.
+        selected = _select(page, selector)
+        element = selected.first if selected else None
+        text = _element_text(element)
     else:
         text, element = _label_value(page, _LABELS["contact"])
     if not text:
@@ -172,12 +180,22 @@ def _clean_contact_name(text):
     return name
 
 
-def extract(html, url, fields, selectors=None):
+def extract(html, url, fields, selectors=None, storage_dir=None):
+    """Extract `fields` from `html`.
+
+    `storage_dir` is the directory Scrapling's adaptive-selector SQLite store is written to; when
+    it is None the store falls back to scrapling's own default inside site-packages.
+    """
     unknown = [field for field in fields if field not in SUPPORTED_FIELDS]
     if unknown:
         raise ExtractError(f"unsupported fields: {unknown}")
     selectors = selectors or {}
-    page = Selector(html, url=url, adaptive=True)
+    storage_args = (
+        {"storage_file": os.path.join(storage_dir, STORAGE_FILE_NAME), "url": url}
+        if storage_dir
+        else None
+    )
+    page = Selector(html, url=url, adaptive=True, storage_args=storage_args)
     out = {
         "description": None, "full_description": None, "original_category": None,
         "contact_name": None, "contact_email": None, "contact_phone": None, "published_date": None,
@@ -189,12 +207,14 @@ def extract(html, url, fields, selectors=None):
         selector = selectors.get(field)
         if field == "attachments":
             attachments = _attachments(page, url, selector)
-            diagnostics[field] = "selector" if selector else ("heuristic" if attachments else "not_found")
+            # "selector"/"heuristic" only when the strategy actually produced a value.
+            diagnostics[field] = ("selector" if selector else "heuristic") if attachments else "not_found"
             continue
         if field == "contact":
             name, email, phone = _contact(page, selector)
             out["contact_name"], out["contact_email"], out["contact_phone"] = name, email, phone
-            diagnostics[field] = "selector" if selector else ("heuristic" if (name or email or phone) else "not_found")
+            found = bool(name or email or phone)
+            diagnostics[field] = ("selector" if selector else "heuristic") if found else "not_found"
             continue
 
         value = None
