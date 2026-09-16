@@ -85,6 +85,7 @@ import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlemen
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { JurisdictionBatchRunPanel } from "@/components/admin/JurisdictionBatchRunPanel";
 import { CrawlerConfigPanel } from "@/components/admin/CrawlerConfigPanel";
+import { SourcePrecheckPanel } from "@/components/admin/SourcePrecheckPanel";
 import { stateCrawlerSourceIdForAdminSource } from "@/lib/state-crawler-sources";
 
 type SectionLoadStatus = "loading" | "error" | "ready";
@@ -4039,6 +4040,14 @@ export default function AdminPage() {
                           </div>
                         ))}
                       </div>
+                    )}
+                    {canRunOperations && (
+                      <SourcePrecheckPanel
+                        source={source}
+                        reviewerEmail={user?.email ?? null}
+                        disabled={isRunning || runningSourceId !== null}
+                        onSourceUpdated={replaceSource}
+                      />
                     )}
                     {canManageUsers && (
                       <div className="mt-2 flex max-w-64 flex-wrap gap-2">

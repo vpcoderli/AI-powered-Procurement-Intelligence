@@ -15,6 +15,7 @@ import { ApiError, fetchBid } from "@/lib/api/bids";
 import { createIntent } from "@/lib/api/intents";
 import { fetchBidMatch } from "@/lib/api/match";
 import { bidIdFromRouteParam } from "@/lib/bid-routes";
+import { getBidDescription } from "@/lib/bid-description";
 import type { Bid } from "@/lib/mock-data";
 import type { IntentDetail } from "@/server/intents/types";
 import type { BidMatchResult } from "@/server/match/types";
@@ -100,6 +101,10 @@ function archiveLabelKey(file: DetailAttachment) {
 
 function attachmentStatusDescriptionKey(file: DetailAttachment) {
   if (attachmentIsArchivedOpenable(file)) return "detail.attachmentArchivedOpenableDescription";
+  // `unavailable` is terminal: the repair worker has stopped retrying this attachment (the
+  // portal needs an interactive download, the link is not public http(s), or the retry budget
+  // is spent), so the copy points the user at the original link instead of a WinBids file.
+  if (file.archiveStatus === "unavailable") return "detail.attachmentUnavailableDescription";
   if (file.archiveStatus === "failed") return "detail.attachmentFailedDescription";
   if (file.archiveStatus === "archived") return "detail.attachmentArchivedStatusDescription";
   return "detail.attachmentSourceNoteDescription";
@@ -600,7 +605,7 @@ export default function BidDetailsPage() {
         </CardHeader>
         <CardContent className="p-6 bg-slate-50/50">
           <div className="prose prose-slate max-w-none text-slate-700 whitespace-pre-wrap leading-relaxed">
-            {bid.fullDescription || bid.description}
+            {getBidDescription(bid)}
           </div>
         </CardContent>
       </Card>

@@ -36,6 +36,21 @@ describe("formFromSource", () => {
       timeoutSeconds: "15",
       detailSelectors: { description: "div.x" },
       attachmentUrlTemplate: "https://x/{id}",
+      // No `attachments` block on this row, so the shared attachment policy defaults apply.
+      attachmentsArchive: true,
+      attachmentsMode: "direct",
+      attachmentsMaxPerRun: "50",
+      attachmentsMinIntervalSeconds: "3",
+      attachmentsTimeoutSeconds: "30",
+      attachmentsMaxMb: "50",
+      attachmentsBrowserLinkSelector: "",
+      // No `list_extraction` block either, so the C1 defaults apply: Scrapling is the main path,
+      // no browser render, no per-source selectors.
+      listMode: "scrapling",
+      listRender: false,
+      listItemSelector: "",
+      listMaxItems: "200",
+      listSelectors: {},
     });
   });
 
@@ -56,6 +71,36 @@ describe("formFromSource", () => {
     expect(hydrated.maxDetailsPerRun).toBe("25");
     expect(hydrated.minIntervalSeconds).toBe("3");
     expect(hydrated.timeoutSeconds).toBe("20");
+    expect(hydrated.attachmentsArchive).toBe(true);
+    expect(hydrated.attachmentsMode).toBe("direct");
+    expect(hydrated.attachmentsMaxMb).toBe("50");
+    expect(hydrated.attachmentsBrowserLinkSelector).toBe("");
+  });
+
+  it("hydrates a saved attachments policy, showing the size cap in MB", () => {
+    const hydrated = formFromSource({
+      ...source,
+      fetchConfig: {
+        ...source.fetchConfig,
+        attachments: {
+          archive: false,
+          mode: "browser",
+          max_per_run: 10,
+          min_interval_seconds: 5,
+          timeout_seconds: 45,
+          max_bytes: 20971520,
+          browser_link_selector: "a.download",
+        },
+      },
+    } as unknown as AdminDataSource);
+
+    expect(hydrated.attachmentsArchive).toBe(false);
+    expect(hydrated.attachmentsMode).toBe("browser");
+    expect(hydrated.attachmentsMaxPerRun).toBe("10");
+    expect(hydrated.attachmentsMinIntervalSeconds).toBe("5");
+    expect(hydrated.attachmentsTimeoutSeconds).toBe("45");
+    expect(hydrated.attachmentsMaxMb).toBe("20");
+    expect(hydrated.attachmentsBrowserLinkSelector).toBe("a.download");
   });
 });
 
@@ -72,6 +117,22 @@ describe("buildCrawlerConfigPatch", () => {
       fetchConfig: {
         base_url: "https://www.bidbuy.illinois.gov",
         custom_flag: true,
+        list_extraction: {
+          mode: "scrapling",
+          render: false,
+          item_selector: null,
+          max_items: 200,
+          selectors: {},
+        },
+        attachments: {
+          archive: true,
+          mode: "direct",
+          max_per_run: 50,
+          min_interval_seconds: 3,
+          timeout_seconds: 30,
+          max_bytes: 52428800,
+          browser_link_selector: null,
+        },
         enrichment: {
           enabled: false,
           fields: ["description", "attachments"],
@@ -156,6 +217,133 @@ describe("buildCrawlerConfigPatch", () => {
   });
 });
 
+describe("buildCrawlerConfigPatch attachments policy", () => {
+  it("serializes the attachment group, converting the MB cap back into bytes", () => {
+    const patch = buildCrawlerConfigPatch(source, {
+      ...formFromSource(source),
+      attachmentsArchive: true,
+      attachmentsMode: "browser",
+      attachmentsMaxPerRun: "25",
+      attachmentsMinIntervalSeconds: "5",
+      attachmentsTimeoutSeconds: "45",
+      attachmentsMaxMb: "20",
+      attachmentsBrowserLinkSelector: "  a.download  ",
+    });
+
+    expect((patch.fetchConfig as { attachments: Record<string, unknown> }).attachments).toEqual({
+      archive: true,
+      mode: "browser",
+      max_per_run: 25,
+      min_interval_seconds: 5,
+      timeout_seconds: 45,
+      max_bytes: 20971520,
+      browser_link_selector: "a.download",
+    });
+  });
+
+  it("sends a blank browser selector as null and keeps saved numbers when inputs are cleared", () => {
+    const saved = {
+      ...source,
+      fetchConfig: {
+        ...source.fetchConfig,
+        attachments: { max_per_run: 10, min_interval_seconds: 5, timeout_seconds: 45, max_bytes: 20971520 },
+      },
+    } as unknown as AdminDataSource;
+
+    const patch = buildCrawlerConfigPatch(saved, {
+      ...formFromSource(saved),
+      attachmentsMaxPerRun: "",
+      attachmentsMinIntervalSeconds: "   ",
+      attachmentsTimeoutSeconds: "",
+      attachmentsMaxMb: "",
+      attachmentsBrowserLinkSelector: "   ",
+    });
+    const attachments = (patch.fetchConfig as { attachments: Record<string, unknown> }).attachments;
+
+    expect(attachments.max_per_run).toBe(10);
+    expect(attachments.min_interval_seconds).toBe(5);
+    expect(attachments.timeout_seconds).toBe(45);
+    expect(attachments.max_bytes).toBe(20971520);
+    expect(attachments.browser_link_selector).toBeNull();
+  });
+
+  it("turns archiving off without disturbing the rest of fetch_config", () => {
+    const patch = buildCrawlerConfigPatch(source, { ...formFromSource(source), attachmentsArchive: false });
+    const fetchConfig = patch.fetchConfig as Record<string, unknown>;
+
+    expect((fetchConfig.attachments as Record<string, unknown>).archive).toBe(false);
+    expect(fetchConfig.base_url).toBe("https://www.bidbuy.illinois.gov");
+    expect(fetchConfig.enrichment).toBeDefined();
+  });
+});
+
+describe("list extraction group", () => {
+  const configured = {
+    ...source,
+    fetchConfig: {
+      ...source.fetchConfig,
+      list_extraction: {
+        mode: "adapter",
+        render: true,
+        item_selector: "tr.mets-table-row",
+        max_items: 50,
+        selectors: { title: "a.link", source_bid_id: "td.id", nonsense: "ignored" },
+      },
+    },
+  } as unknown as AdminDataSource;
+
+  it("hydrates the form from the snake_case list_extraction block", () => {
+    const hydrated = formFromSource(configured);
+
+    expect(hydrated.listMode).toBe("adapter");
+    expect(hydrated.listRender).toBe(true);
+    expect(hydrated.listItemSelector).toBe("tr.mets-table-row");
+    expect(hydrated.listMaxItems).toBe("50");
+    // Unknown selector keys are dropped by the shared parser, not carried into the editor.
+    expect(hydrated.listSelectors).toEqual({ title: "a.link", source_bid_id: "td.id" });
+  });
+
+  it("serializes the group back, trimming selectors and dropping blank ones", () => {
+    const patch = buildCrawlerConfigPatch(source, {
+      ...formFromSource(source),
+      listMode: "scrapling",
+      listRender: false,
+      listItemSelector: "  li.result  ",
+      listMaxItems: "120",
+      listSelectors: { title: "  h3 a  ", deadline_date: "   ", url: "h3 a@href" },
+    });
+
+    expect((patch.fetchConfig as { list_extraction: Record<string, unknown> }).list_extraction).toEqual({
+      mode: "scrapling",
+      render: false,
+      item_selector: "li.result",
+      max_items: 120,
+      selectors: { title: "h3 a", url: "h3 a@href" },
+    });
+  });
+
+  it("sends a blank row selector as null and keeps the saved max when the input is cleared", () => {
+    const patch = buildCrawlerConfigPatch(configured, {
+      ...formFromSource(configured),
+      listItemSelector: "   ",
+      listMaxItems: "",
+    });
+    const listExtraction = (patch.fetchConfig as { list_extraction: Record<string, unknown> }).list_extraction;
+
+    expect(listExtraction.item_selector).toBeNull();
+    expect(listExtraction.max_items).toBe(50);
+  });
+
+  it("leaves the enrichment and attachment blocks untouched", () => {
+    const patch = buildCrawlerConfigPatch(source, { ...formFromSource(source), listMode: "adapter" });
+    const fetchConfig = patch.fetchConfig as Record<string, unknown>;
+
+    expect(fetchConfig.enrichment).toBeDefined();
+    expect(fetchConfig.attachments).toBeDefined();
+    expect(fetchConfig.base_url).toBe("https://www.bidbuy.illinois.gov");
+  });
+});
+
 describe("CrawlerConfigPanel wiring", () => {
   const component = readFileSync(new URL("CrawlerConfigPanel.tsx", import.meta.url), "utf8");
   const page = readFileSync(new URL("../../app/admin/page.tsx", import.meta.url), "utf8");
@@ -176,6 +364,58 @@ describe("CrawlerConfigPanel wiring", () => {
     expect(component).toContain("min={1} max={200}");
     expect(component).toContain("min={0} max={60}");
     expect(component).toContain("min={5} max={60}");
+  });
+
+  it("renders the attachment policy group entirely through i18n keys", () => {
+    expect(component).toContain('t("admin.crawlerConfigAttachmentsTitle")');
+    expect(component).toContain('t("admin.crawlerConfigAttachmentsDescription")');
+    expect(component).toContain('t("admin.crawlerConfigAttachmentsArchive")');
+    expect(component).toContain('t("admin.crawlerConfigAttachmentsMode")');
+    expect(component).toContain('t(`admin.crawlerConfigAttachmentsMode_${mode}`)');
+    expect(component).toContain('t("admin.crawlerConfigAttachmentsMaxPerRun")');
+    expect(component).toContain('t("admin.crawlerConfigAttachmentsMinInterval")');
+    expect(component).toContain('t("admin.crawlerConfigAttachmentsTimeout")');
+    expect(component).toContain('t("admin.crawlerConfigAttachmentsMaxMb")');
+    expect(component).toContain('t("admin.crawlerConfigAttachmentsSelector")');
+    expect(component).toContain('t("admin.crawlerConfigAttachmentsSelectorHelp")');
+    expect(component).toContain('t("admin.crawlerConfigAttachmentsModeHelp")');
+  });
+
+  it("keeps the attachment inputs inside the ranges the policy validator enforces", () => {
+    // maxPerRun 1..200, minIntervalSeconds 0..60, timeoutSeconds 5..120, maxBytes 1..200 MB.
+    expect(component).toContain("min={5} max={120}");
+    expect(component).toContain("ATTACHMENT_MODES.map");
+  });
+
+  it("renders the list extraction group entirely through i18n keys", () => {
+    for (const key of [
+      "admin.crawlerConfigListTitle",
+      "admin.crawlerConfigListDescription",
+      "admin.crawlerConfigListMode",
+      "admin.crawlerConfigListModeHelp",
+      "admin.crawlerConfigListRender",
+      "admin.crawlerConfigListRenderHelp",
+      "admin.crawlerConfigListItemSelector",
+      "admin.crawlerConfigListMaxItems",
+      "admin.crawlerConfigListSelectors",
+    ]) {
+      expect(component).toContain(`t("${key}")`);
+    }
+    expect(component).toContain("t(`admin.crawlerConfigListMode_${mode}`)");
+    expect(component).toContain("t(`admin.crawlerConfigListField_${field}`)");
+    expect(component).toContain("LIST_EXTRACTION_MODES.map");
+    expect(component).toContain("LIST_EXTRACTION_FIELDS.map");
+    // max_items is validated 1..500 server-side; the input carries the matching hints.
+    expect(component).toContain("min={1} max={500}");
+
+    const en = readFileSync(new URL("../../lib/i18n/dictionaries/en.ts", import.meta.url), "utf8");
+    const zh = readFileSync(new URL("../../lib/i18n/dictionaries/zh.ts", import.meta.url), "utf8");
+    for (const dictionary of [en, zh]) {
+      expect(dictionary).toContain("crawlerConfigListTitle:");
+      expect(dictionary).toContain("crawlerConfigListMode_scrapling:");
+      expect(dictionary).toContain("crawlerConfigListField_issuer_name:");
+    }
+    expect(zh).toContain("列表解析");
   });
 
   it("is mounted per data source row in the admin page", () => {

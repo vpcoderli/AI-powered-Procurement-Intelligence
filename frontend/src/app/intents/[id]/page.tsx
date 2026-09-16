@@ -59,6 +59,7 @@ import { lockedFeatureMessage, useFeature } from "@/lib/features/useFeature";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { generateWorkflowCoachCards } from "@/lib/knowledge/coach";
 import { safeKnowledgeSourceUrl } from "@/lib/knowledge/source-url";
+import { getBidDescription } from "@/lib/bid-description";
 import type { IntentDetail, IntentStatus } from "@/server/intents/types";
 import { INTENT_STATUSES } from "@/server/intents/types";
 import type { KnowledgeItem, KnowledgeRetrievalTrace, WorkflowCoachCard } from "@/server/knowledge/types";
@@ -371,7 +372,7 @@ function parseKnowledgeTags(value: string) {
 function knowledgeRetrievalTraceQuery(intent: IntentDetail) {
   return [
     intent.bid.title,
-    intent.bid.description,
+    getBidDescription(intent.bid),
     intent.generated.aiBidBrief,
     intent.match.explanation,
   ]

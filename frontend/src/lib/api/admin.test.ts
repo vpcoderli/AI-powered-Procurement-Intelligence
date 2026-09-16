@@ -19,6 +19,7 @@ import {
   runStateCrawlersNow,
   scheduleAdminBillingDunning,
   checkAdminDataSourceHealth,
+  precheckAdminDataSource,
   reconcileAdminSubscriptions,
   updateAdminConfigEntry,
   updateAdminUserFeatureOverride,
@@ -370,6 +371,57 @@ describe("admin API client", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ timeoutMs: 5000 }),
     });
+  });
+
+  it("runs the approval pre-check for one data source", async () => {
+    const body = {
+      sourceId: "bidnet_ny_erie",
+      checkedAt: "2026-09-16T00:00:00.000Z",
+      verdict: "empty",
+      reasons: ["Portal reports no open bids."],
+      robots: { status: "clear", flagged: false, flagReason: null },
+      fetch: {
+        status: "empty_verified",
+        items: 0,
+        sample: [],
+        listMethod: "adapter",
+        errorCode: null,
+        errorMessage: null,
+        httpStatus: 200,
+        wafChallenge: false,
+      },
+      suggestedBaseUrl: null,
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(precheckAdminDataSource("bidnet ny erie", { limit: 5 })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources/bidnet%20ny%20erie/precheck", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limit: 5 }),
+    });
+  });
+
+  it("surfaces the pre-check route's own error codes and messages verbatim", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ error: { code: "PRECHECK_FAILED", message: "Crawler runtime unavailable." } }, { status: 502 }),
+    );
+
+    // The message names which leg failed, so it must reach the panel unparaphrased.
+    await expect(precheckAdminDataSource("bidnet_ny_erie")).rejects.toMatchObject({
+      name: "AdminApiError",
+      status: 502,
+      code: "PRECHECK_FAILED",
+      message: "Crawler runtime unavailable.",
+    });
+  });
+
+  it("maps the pre-check route's 404 onto SOURCE_NOT_FOUND", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ error: { code: "SOURCE_NOT_FOUND", message: "Data source was not found." } }, { status: 404 }),
+    );
+
+    await expect(precheckAdminDataSource("nope")).rejects.toBeInstanceOf(AdminApiError);
   });
 
   it("batch updates admin data source approvals", async () => {

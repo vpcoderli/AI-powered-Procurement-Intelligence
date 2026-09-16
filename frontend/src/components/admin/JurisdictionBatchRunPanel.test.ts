@@ -6,10 +6,12 @@ import {
   SAM_GOV_ENTRY_KEY,
   batchJurisdictionLevelOf,
   batchStatusFromRunResult,
+  batchSuccessKind,
   blockedReasonHintKey,
   buildBatchRunEntries,
   chunkBatchKeys,
   countBatchEntriesByLevel,
+  deferredThrottleSourceId,
   filterBatchEntries,
   resolveBatchWindow,
   samGovDateFromIso,
@@ -187,6 +189,95 @@ describe("batchStatusFromRunResult", () => {
       }),
     ).toMatchObject({ status: "blocked", reason: "Source governance has not approved ingestion." });
   });
+
+  it("maps the platform-deferral status and its reason (C7)", () => {
+    expect(
+      batchStatusFromRunResult({
+        source: "bidnet_co_denver",
+        ok: false,
+        status: "deferred",
+        reason: "platform_throttled:bidnet_ny_erie",
+      }),
+    ).toMatchObject({ status: "deferred", reason: "platform_throttled:bidnet_ny_erie" });
+  });
+
+  it("carries the verified-empty-state marker off the run payload (C1)", () => {
+    expect(
+      batchStatusFromRunResult({
+        source: "bidnet_ny_erie",
+        ok: true,
+        status: "success",
+        runner: {
+          fetchedCount: 0,
+          payload: {
+            metadata: {
+              emptyState: {
+                verified: true,
+                marker: "There are no open bids at this time.",
+                tenant_confirmed: true,
+                method: "adapter",
+              },
+            },
+          },
+        },
+      }),
+    ).toMatchObject({
+      status: "success",
+      fetchedCount: 0,
+      emptyState: { verified: true, marker: "There are no open bids at this time." },
+    });
+  });
+
+  it("leaves emptyState off an ordinary run so nothing renders an empty badge by default", () => {
+    expect(batchStatusFromRunResult({ source: "x", ok: true, status: "success", runner: { fetchedCount: 4 } })).toEqual(
+      { phase: "done", status: "success", fetchedCount: 4, dateFilter: undefined },
+    );
+  });
+});
+
+describe("batchSuccessKind", () => {
+  it("calls a verified empty list what it is, not a zero-row success", () => {
+    expect(
+      batchSuccessKind({
+        phase: "done",
+        status: "success",
+        fetchedCount: 0,
+        emptyState: { verified: true, marker: "There are no open bids at this time." },
+      }),
+    ).toBe("verified_empty");
+  });
+
+  it("marks an unexplained zero-row success separately from a run that ingested rows", () => {
+    expect(batchSuccessKind({ phase: "done", status: "success", fetchedCount: 0 })).toBe("zero");
+    expect(batchSuccessKind({ phase: "done", status: "success", fetchedCount: 7 })).toBe("rows");
+  });
+
+  it("does not claim an empty state when the crawler could not verify one", () => {
+    expect(
+      batchSuccessKind({
+        phase: "done",
+        status: "success",
+        fetchedCount: 0,
+        emptyState: { verified: false, marker: null },
+      }),
+    ).toBe("zero");
+  });
+
+  it("is irrelevant for non-success and in-flight statuses", () => {
+    expect(batchSuccessKind({ phase: "done", status: "failure" })).toBe("rows");
+    expect(batchSuccessKind({ phase: "running" })).toBe("rows");
+  });
+});
+
+describe("deferredThrottleSourceId", () => {
+  it("names the source that tripped the platform throttle", () => {
+    expect(deferredThrottleSourceId("platform_throttled:bidnet_ny_erie")).toBe("bidnet_ny_erie");
+  });
+
+  it("returns null for any other reason shape, so the raw text is shown instead", () => {
+    expect(deferredThrottleSourceId("Source governance has not approved ingestion.")).toBeNull();
+    expect(deferredThrottleSourceId(undefined)).toBeNull();
+  });
 });
 
 describe("blockedReasonHintKey", () => {
@@ -220,6 +311,24 @@ describe("JurisdictionBatchRunPanel component wiring", () => {
     expect(component).toContain('t("admin.batchRunWindowInvalid")');
     expect(component).toContain('t(`admin.batchRunLevel_${level}`)');
     expect(component).toContain('t(`admin.batchRunWindow_${preset}`)');
+  });
+
+  it("renders the deferral and empty-state outcomes distinctly, through i18n", () => {
+    expect(component).toContain('t("admin.batchRunEmptyState")');
+    expect(component).toContain('t("admin.batchRunEmptyStateHint")');
+    expect(component).toContain('t("admin.batchRunZeroRows")');
+    expect(component).toContain('t("admin.batchRunDeferredHint")');
+
+    const en = readFileSync(new URL("../../lib/i18n/dictionaries/en.ts", import.meta.url), "utf8");
+    const zh = readFileSync(new URL("../../lib/i18n/dictionaries/zh.ts", import.meta.url), "utf8");
+    for (const dictionary of [en, zh]) {
+      expect(dictionary).toContain("batchRunStatus_deferred:");
+      expect(dictionary).toContain("batchRunEmptyState:");
+      expect(dictionary).toContain("batchRunZeroRows:");
+    }
+    expect(zh).toContain("平台限流，本批推迟");
+    expect(zh).toContain("空态：无开放招标");
+    expect(zh).toContain("成功（0 条）");
   });
 
   it("disables the run button while running, with nothing selected, or with an invalid window", () => {

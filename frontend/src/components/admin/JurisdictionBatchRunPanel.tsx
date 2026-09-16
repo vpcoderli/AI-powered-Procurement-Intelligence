@@ -46,12 +46,34 @@ export type BatchRunEntryStatus =
   | { phase: "running" }
   | {
       phase: "done";
-      status: "success" | "failure" | "blocked" | "locked" | "disabled" | "unknown";
+      status: "success" | "failure" | "blocked" | "locked" | "disabled" | "deferred" | "unknown";
       fetchedCount?: number;
       dateFilter?: { kept?: number; dropped?: number; unparsed?: number };
-      /** Orchestrator-provided blocked reason (governance / legal review), shown as a hint. */
+      /**
+       * Orchestrator-provided reason: the blocked governance/legal sentence, or, for `deferred`,
+       * `platform_throttled:<sourceId>` (C7).
+       */
       reason?: string;
+      /** Verified-empty-list marker from `metadata.emptyState` (C1), when the run reported one. */
+      emptyState?: { verified: boolean; marker: string | null };
     };
+
+/**
+ * How a zero-row success should read in the panel.
+ *
+ * - `verified_empty`: the crawler confirmed the tenant page and an explicit "no open bids"
+ *   phrase, so zero rows is the correct answer, not a silent parse failure.
+ * - `zero`: a success with nothing fetched and no empty-state evidence — still a success, but
+ *   worth showing as such rather than hiding behind a bare "Success" badge.
+ * - `rows`: the ordinary case.
+ */
+export type BatchSuccessKind = "verified_empty" | "zero" | "rows";
+
+export function batchSuccessKind(status: BatchRunEntryStatus): BatchSuccessKind {
+  if (status.phase !== "done" || status.status !== "success") return "rows";
+  if (status.emptyState?.verified) return "verified_empty";
+  return status.fetchedCount === 0 ? "zero" : "rows";
+}
 
 /**
  * Maps the orchestrator's blocked `reason` sentence onto an i18n hint key, so the panel can
@@ -64,6 +86,17 @@ export function blockedReasonHintKey(reason: string | undefined): string | null 
   if (reason.includes("legal review")) return "admin.batchRunBlockedLegal";
   if (reason.includes("governance")) return "admin.batchRunBlockedApproval";
   return null;
+}
+
+/**
+ * Extracts the offending source id from the C7 deferral reason (`platform_throttled:<sourceId>`)
+ * so the panel can name which source tripped the platform throttle. Returns null for any other
+ * shape, and the raw reason is shown instead.
+ */
+export function deferredThrottleSourceId(reason: string | undefined): string | null {
+  if (!reason) return null;
+  const match = /^platform_throttled:(.+)$/.exec(reason.trim());
+  return match ? match[1] : null;
 }
 
 export function batchJurisdictionLevelOf(source: Pick<AdminDataSource, "jurisdictionLevel" | "issuerType">): BatchJurisdictionLevel {
@@ -175,18 +208,23 @@ export function chunkBatchKeys(keys: string[], size = BATCH_RUN_CHUNK_SIZE): str
   return chunks;
 }
 
+const BATCH_DONE_STATUSES = ["success", "failure", "blocked", "locked", "disabled", "deferred"] as const;
+
 export function batchStatusFromRunResult(entry: StateCrawlerRunResultEntry): BatchRunEntryStatus {
-  const status =
-    entry.status === "success" || entry.status === "failure" || entry.status === "blocked" ||
-    entry.status === "locked" || entry.status === "disabled"
-      ? entry.status
-      : "unknown";
+  const status = (BATCH_DONE_STATUSES as readonly string[]).includes(entry.status)
+    ? (entry.status as (typeof BATCH_DONE_STATUSES)[number])
+    : "unknown";
+  const emptyState = entry.runner?.payload?.metadata?.emptyState;
+
   return {
     phase: "done",
     status,
     fetchedCount: entry.runner?.fetchedCount,
     dateFilter: entry.runner?.payload?.metadata?.dateFilter,
     ...(entry.reason ? { reason: entry.reason } : {}),
+    ...(emptyState
+      ? { emptyState: { verified: emptyState.verified === true, marker: emptyState.marker ?? null } }
+      : {}),
   };
 }
 
@@ -330,19 +368,33 @@ export function JurisdictionBatchRunPanel({
     if (status.phase === "running") {
       return <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">{t("admin.batchRunStatusRunning")}</Badge>;
     }
+    const successKind = batchSuccessKind(status);
     const tone =
       status.status === "success"
-        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+        ? successKind === "verified_empty"
+          ? "border-sky-200 bg-sky-50 text-sky-700"
+          : "border-emerald-200 bg-emerald-50 text-emerald-700"
         : status.status === "failure" || status.status === "unknown"
           ? "border-rose-200 bg-rose-50 text-rose-700"
           : "border-amber-200 bg-amber-50 text-amber-700";
     const blockedHintKey = status.status === "blocked" ? blockedReasonHintKey(status.reason) : null;
+    const throttledBy = status.status === "deferred" ? deferredThrottleSourceId(status.reason) : null;
     return (
       <span className="flex flex-wrap items-center justify-end gap-1">
         <Badge variant="outline" className={tone}>
-          {t(`admin.batchRunStatus_${status.status}`)}
+          {status.status === "success" && successKind === "verified_empty"
+            ? t("admin.batchRunEmptyState")
+            : t(`admin.batchRunStatus_${status.status}`)}
         </Badge>
-        {status.status === "success" && typeof status.fetchedCount === "number" && (
+        {status.status === "success" && successKind === "verified_empty" && (
+          <span className="text-xs text-slate-500" title={status.emptyState?.marker ?? undefined}>
+            {t("admin.batchRunEmptyStateHint")}
+          </span>
+        )}
+        {status.status === "success" && successKind === "zero" && (
+          <span className="text-xs text-slate-500">{t("admin.batchRunZeroRows")}</span>
+        )}
+        {status.status === "success" && successKind === "rows" && typeof status.fetchedCount === "number" && (
           <span className="text-xs text-slate-500">
             {t("admin.batchRunFetched").replace("{count}", String(status.fetchedCount))}
             {status.dateFilter
@@ -355,6 +407,13 @@ export function JurisdictionBatchRunPanel({
         {status.status === "blocked" && (
           <span className="text-xs text-slate-500">
             {blockedHintKey ? t(blockedHintKey) : status.reason ?? ""}
+          </span>
+        )}
+        {status.status === "deferred" && (
+          <span className="text-xs text-slate-500">
+            {throttledBy
+              ? t("admin.batchRunDeferredHint").replace("{source}", throttledBy)
+              : status.reason ?? t("admin.batchRunDeferredHintUnknown")}
           </span>
         )}
       </span>

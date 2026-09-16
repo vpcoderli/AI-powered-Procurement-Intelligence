@@ -8,25 +8,45 @@ import {
   recordSourceComplianceSnapshotFromMysql,
 } from "../src/server/source-validity/compliance-snapshots";
 import {
+  applyRobotsComplianceToDataSources,
+  applyRobotsComplianceToDataSourcesFromMysql,
+  listDataSourceComplianceInputs,
+  listDataSourceComplianceInputsFromMysql,
+} from "../src/server/source-validity/data-source-compliance";
+import {
   formatSourceComplianceReport,
   scanSourceCompliance,
 } from "../src/server/source-validity/robots-compliance-scan";
-import type { SourceComplianceReport } from "../src/server/source-validity/robots-compliance-scan";
+import { createCrawlerBackedRobotsFetch } from "../src/server/admin/crawler-robots-fetch";
+import type {
+  SourceComplianceInput,
+  SourceComplianceReport,
+} from "../src/server/source-validity/robots-compliance-scan";
 
 // Data-source compliance pre-check CLI (P1-2).
 //
-// This script fetches and hashes robots.txt for each active state source's
-// base URL and flags sources whose robots.txt appears to disallow crawling
-// entirely, or disallow paths that overlap with the paths APSI crawls.
+// This script fetches and hashes robots.txt for each enabled source's base URL
+// and flags sources whose robots.txt appears to disallow crawling entirely, or
+// disallow paths that overlap with the paths APSI crawls.
+//
+// The default registry is the runtime one (`data_sources`), so `--all` covers
+// county and city sources too — the population the local-source approval
+// workflow needs robots evidence for. `--state-definitions` keeps the original
+// behaviour of scanning the 50 hardcoded state source definitions, which needs
+// no database.
 //
 // IMPORTANT: this is a signal/triage tool, not a legal determination. It
 // does not read or evaluate Terms of Service text, and a "clear" result is
 // not authorization to crawl. See docs/operations/data-source-compliance-ledger.md
 // for the required human legal review process.
 
+export type ComplianceRegistry = "data-sources" | "state-definitions";
+
 interface CliOptions {
   sourceFilters: string[];
+  registry: ComplianceRegistry;
   timeoutMs: number;
+  nodeFetch: boolean;
   reportOnly: boolean;
   json: boolean;
   persist: boolean;
@@ -41,12 +61,15 @@ export function formatSourceComplianceScanHelp() {
     "  npm run source:compliance:scan -- --all --timeout-ms 10000 --report-only",
     "  npm run source:compliance:scan -- --source CA --report-only",
     "  npm run source:compliance:scan -- --all --persist",
+    "  npm run source:compliance:scan -- --state-definitions --all --report-only",
     "",
     "Options:",
-    "  --all                 Check the full state source registry (default).",
+    "  --all                 Check every enabled data source, county and city included (default).",
     "  --source <value>      Check one state code or source id. Can be repeated.",
+    "  --state-definitions   Scan the 50 hardcoded state source definitions instead of data_sources.",
+    "  --node-fetch          Fetch robots.txt with Node fetch instead of the Python crawler client (default: crawler).",
     "  --timeout-ms <value>  Per-request timeout from 1000 to 60000 ms. Default: 10000.",
-    "  --persist             Write the latest snapshot for Admin Data Sources in the current DB runtime.",
+    "  --persist             Write the snapshot and each source's robots_txt_* columns in the current DB runtime.",
     "  --write-snapshot      Alias for --persist.",
     "  --report-only         Print flagged results without exiting non-zero.",
     "  --json                Print raw JSON report.",
@@ -61,7 +84,9 @@ export function formatSourceComplianceScanHelp() {
 export function parseSourceComplianceScanArgs(argv: string[]): CliOptions {
   const options: CliOptions = {
     sourceFilters: [],
+    registry: "data-sources",
     timeoutMs: 10_000,
+    nodeFetch: false,
     reportOnly: false,
     json: false,
     persist: false,
@@ -80,8 +105,14 @@ export function parseSourceComplianceScanArgs(argv: string[]): CliOptions {
       }
       options.sourceFilters.push(value.trim());
       index += 1;
+    } else if (arg === "--node-fetch") {
+      options.nodeFetch = true;
     } else if (arg === "--all") {
       options.sourceFilters = [];
+    } else if (arg === "--state-definitions") {
+      options.registry = "state-definitions";
+    } else if (arg === "--data-sources") {
+      options.registry = "data-sources";
     } else if (arg.startsWith("--timeout-ms=")) {
       options.timeoutMs = Number(arg.slice("--timeout-ms=".length));
     } else if (arg === "--timeout-ms") {
@@ -113,11 +144,15 @@ export function parseSourceComplianceScanArgs(argv: string[]): CliOptions {
   return options;
 }
 
-function selectedSources(filters: string[]) {
-  if (filters.length === 0) return STATE_CRAWLER_SOURCE_DEFINITIONS;
+/** `--source` filters match either a state code or a source id, on both registries. */
+export function selectComplianceSources(
+  sources: readonly SourceComplianceInput[],
+  filters: string[],
+): SourceComplianceInput[] {
+  if (filters.length === 0) return [...sources];
 
   const normalized = new Set(filters.map((filter) => filter.toLowerCase()));
-  const selected = STATE_CRAWLER_SOURCE_DEFINITIONS.filter(
+  const selected = sources.filter(
     (source) => normalized.has(source.stateCode.toLowerCase()) || normalized.has(source.id.toLowerCase()),
   );
 
@@ -141,18 +176,27 @@ interface PersistSnapshotDeps {
   recordSqliteSnapshot?: typeof recordSourceComplianceSnapshot;
   createMysqlPoolForUrl?: (databaseUrl: string) => MysqlSnapshotPool;
   recordMysqlSnapshot?: typeof recordSourceComplianceSnapshotFromMysql;
+  /** Per-source `robots_txt_*` write-back; skipped for the state-definitions registry. */
+  applySqliteRobots?: typeof applyRobotsComplianceToDataSources;
+  applyMysqlRobots?: typeof applyRobotsComplianceToDataSourcesFromMysql;
 }
 
 export async function persistSourceComplianceSnapshot(
   report: SourceComplianceReport,
   env: NodeJS.ProcessEnv = process.env,
   deps: PersistSnapshotDeps = {},
+  options: { writeBackRobots?: boolean } = {},
 ) {
+  const writeBackRobots = options.writeBackRobots !== false;
+
   if (isMysqlDatabaseUrlConfigured(env)) {
     const pool = (deps.createMysqlPoolForUrl ?? createMysqlPool)(requireMysqlDatabaseUrl(env));
 
     try {
       await (deps.recordMysqlSnapshot ?? recordSourceComplianceSnapshotFromMysql)(pool, report);
+      if (writeBackRobots) {
+        await (deps.applyMysqlRobots ?? applyRobotsComplianceToDataSourcesFromMysql)(pool, report);
+      }
     } finally {
       await pool.end();
     }
@@ -164,11 +208,52 @@ export async function persistSourceComplianceSnapshot(
   try {
     (deps.runSqliteMigrations ?? runMigrations)(db);
     (deps.recordSqliteSnapshot ?? recordSourceComplianceSnapshot)(db, report);
+    if (writeBackRobots) {
+      (deps.applySqliteRobots ?? applyRobotsComplianceToDataSources)(db, report);
+    }
   } finally {
     db.$client.close();
   }
 
   return "sqlite";
+}
+
+interface LoadComplianceSourcesDeps {
+  createSqliteDatabase?: () => SqliteSnapshotDatabase;
+  runSqliteMigrations?: (db: SqliteSnapshotDatabase) => void;
+  listSqliteSources?: typeof listDataSourceComplianceInputs;
+  createMysqlPoolForUrl?: (databaseUrl: string) => MysqlSnapshotPool;
+  listMysqlSources?: typeof listDataSourceComplianceInputsFromMysql;
+}
+
+/** Resolves the scan population for a registry, applying `--source` filters. */
+export async function loadComplianceSources(
+  registry: ComplianceRegistry,
+  filters: string[],
+  env: NodeJS.ProcessEnv = process.env,
+  deps: LoadComplianceSourcesDeps = {},
+): Promise<SourceComplianceInput[]> {
+  if (registry === "state-definitions") {
+    return selectComplianceSources(STATE_CRAWLER_SOURCE_DEFINITIONS, filters);
+  }
+
+  if (isMysqlDatabaseUrlConfigured(env)) {
+    const pool = (deps.createMysqlPoolForUrl ?? createMysqlPool)(requireMysqlDatabaseUrl(env));
+    try {
+      const sources = await (deps.listMysqlSources ?? listDataSourceComplianceInputsFromMysql)(pool);
+      return selectComplianceSources(sources, filters);
+    } finally {
+      await pool.end();
+    }
+  }
+
+  const db = (deps.createSqliteDatabase ?? createDatabase)();
+  try {
+    (deps.runSqliteMigrations ?? runMigrations)(db);
+    return selectComplianceSources((deps.listSqliteSources ?? listDataSourceComplianceInputs)(db), filters);
+  } finally {
+    db.$client.close();
+  }
 }
 
 async function main() {
@@ -178,11 +263,18 @@ async function main() {
     return;
   }
 
-  const sources = selectedSources(options.sourceFilters);
-  const report = await scanSourceCompliance(sources, { timeoutMs: options.timeoutMs });
+  const sources = await loadComplianceSources(options.registry, options.sourceFilters);
+  // Default: fetch robots.txt through the Python crawler (same client, same UA the portals see;
+  // Node fetch is blocked by WAF-fronted portals such as BidNet). `--node-fetch` opts out.
+  const report = await scanSourceCompliance(sources, {
+    timeoutMs: options.timeoutMs,
+    ...(options.nodeFetch ? {} : { fetchImpl: createCrawlerBackedRobotsFetch({ timeoutMs: Math.max(options.timeoutMs, 15_000) }) }),
+  });
 
   if (options.persist) {
-    await persistSourceComplianceSnapshot(report);
+    await persistSourceComplianceSnapshot(report, process.env, {}, {
+      writeBackRobots: options.registry === "data-sources",
+    });
   }
 
   console.log(options.json ? JSON.stringify(report, null, 2) : formatSourceComplianceReport(report));
