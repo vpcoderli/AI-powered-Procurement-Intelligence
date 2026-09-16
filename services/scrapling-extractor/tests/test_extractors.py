@@ -218,3 +218,35 @@ def test_fallback_reaches_a_paragraph_wrapped_in_a_page_level_form():
     result = extract(html, URL, ["description"])
     assert result["fields"]["description"].startswith("The county will award a contract")
     assert result["diagnostics"]["description"] == "heuristic"
+
+
+def test_real_parser_login_prose_is_rejected_by_crawler_content_gate(monkeypatch):
+    # Exercise the actual parser, not a made-up response: login instructions satisfy the
+    # prose fallback, so the crawler's pre-extraction HTML gate must reject this page.
+    monkeypatch.syspath_prepend(str(pathlib.Path(__file__).resolve().parents[3] / "crawler"))
+    from apsi_crawler.content_quality import is_login_html
+
+    html = (FIXTURES / "login_wall.html").read_text(encoding="utf-8")
+    result = extract(html, URL, ["description"])
+    assert "Please log in to see the bid description" in result["fields"]["description"]
+    assert is_login_html(html) is True
+
+
+def test_real_parser_public_bid_with_login_widget_passes_content_gate(monkeypatch):
+    monkeypatch.syspath_prepend(str(pathlib.Path(__file__).resolve().parents[3] / "crawler"))
+    from apsi_crawler.content_quality import is_login_html
+
+    html = '<html><title>Public Bid Details</title><form id="bid"><table><tr><td>Description:</td><td>Repair all roadway surfaces and install new traffic signs.</td></tr></table></form><aside><form action="/login"><input type="password"><button>Sign in</button></form></aside></html>'
+    result = extract(html, URL, ["description"])
+    assert result["fields"]["description"] == "Repair all roadway surfaces and install new traffic signs."
+    assert is_login_html(html) is False
+
+
+def test_public_prose_without_a_label_can_coexist_with_a_login_widget(monkeypatch):
+    monkeypatch.syspath_prepend(str(pathlib.Path(__file__).resolve().parents[3] / "crawler"))
+    from apsi_crawler.content_quality import is_login_html
+
+    scope = "The county seeks a contractor to repair bridge decks and provide traffic management. " * 3
+    html = f'<html><title>Public Bid Details</title><main><form id="bid"><p>{scope}</p></form></main><form action="/login"><input type="password"><button>Sign in</button></form></html>'
+    assert extract(html, URL, ["description"])["fields"]["description"].startswith("The county seeks")
+    assert is_login_html(html) is False

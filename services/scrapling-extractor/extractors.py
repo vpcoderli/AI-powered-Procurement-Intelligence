@@ -241,10 +241,24 @@ def extract(html, url, fields, selectors=None, storage_dir=None):
     `storage_dir` is the directory Scrapling's adaptive-selector SQLite store is written to; when
     it is None the store falls back to scrapling's own default inside site-packages.
     """
-    unknown = [field for field in fields if field not in SUPPORTED_FIELDS]
+    if not isinstance(fields, list):
+        raise ExtractError("fields must be a list")
+    unknown = [field for field in fields if not isinstance(field, str) or field not in SUPPORTED_FIELDS]
     if unknown:
         raise ExtractError(f"unsupported fields: {unknown}")
-    selectors = selectors or {}
+    selectors = {} if selectors is None else selectors
+    if not isinstance(selectors, dict) or any(
+        key not in SUPPORTED_FIELDS or not isinstance(value, str) or not value.strip()
+        for key, value in selectors.items()
+    ):
+        raise ExtractError("selectors must map supported fields to nonempty selector strings")
+    try:
+        parsed_url = urlparse(url)
+        valid_url = parsed_url.scheme in ("http", "https") and bool(parsed_url.netloc)
+    except (ValueError, TypeError):
+        valid_url = False
+    if not valid_url:
+        raise ExtractError("url must be an absolute HTTP(S) URL")
     storage_args = (
         {"storage_file": os.path.join(storage_dir, STORAGE_FILE_NAME), "url": url}
         if storage_dir
