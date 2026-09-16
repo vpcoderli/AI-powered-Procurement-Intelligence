@@ -2,10 +2,12 @@ import re
 import time
 from html import unescape
 
+from apsi_crawler.content_quality import detect_empty_list
+from apsi_crawler.errors import VerifiedEmptyListError
 from apsi_crawler.html.public_page import (
     HtmlPageError,
     absolute_url,
-    fetch_html,
+    fetch_page,
     read_html_fixture,
 )
 from apsi_crawler.normalizers.state_bids import normalize_state_opportunity
@@ -43,13 +45,13 @@ def bidnet_politeness_delay_seconds(
     return max(0.0, min_interval - (now - last_request_at))
 
 
-def _fetch_bidnet_html(url, session, timeout):
+def _fetch_bidnet_page(url, session, timeout):
     global _last_live_request_at
     delay = bidnet_politeness_delay_seconds(time.monotonic(), _last_live_request_at)
     if delay > 0:
         time.sleep(delay)
     try:
-        return fetch_html(url, session=session, timeout=timeout)
+        return fetch_page(url, session=session, timeout=timeout)
     except HtmlPageError as error:
         if getattr(error, "status_code", None) == 202:
             raise BidNetChallengeError(
@@ -60,6 +62,20 @@ def _fetch_bidnet_html(url, session, timeout):
         raise
     finally:
         _last_live_request_at = time.monotonic()
+
+
+def _fetch_bidnet_html(url, session, timeout):
+    return _fetch_bidnet_page(url, session, timeout).html
+
+
+def fetch_bidnet_list_html(source, url, session=None, timeout=30):
+    """List-HTML fetcher for the scrapling list path: `(html, final_url, status_code)`.
+
+    Same request as the adapter makes — same politeness window, same WAF classification — so
+    routing a source through the sidecar never changes how we touch the portal.
+    """
+    page = _fetch_bidnet_page(url, session, timeout)
+    return page.html, page.final_url, 200
 
 
 def _strip_tags(value):
@@ -96,24 +112,16 @@ def _records_from_html(html, issuer_name):
     return records
 
 
-def fetch_bidnet_opportunities(
-    source,
-    url,
-    query=None,
-    limit=25,
-    session=None,
-    timeout=30,
-    fixture_html=None,
-    issuer_name=None,
-):
+def parse_bidnet_list_html(source, html, query=None, limit=25, issuer_name=None):
+    """Parse an already-fetched BidNet list page (also the scrapling path's fallback parser)."""
     limit_count = int(limit)
-    if fixture_html:
-        html = read_html_fixture(fixture_html)
-    else:
-        html = _fetch_bidnet_html(url, session=session, timeout=timeout)
-
     records = _records_from_html(html, issuer_name or source.source_label)
     if not records:
+        empty = detect_empty_list(html, source.source_label)
+        if empty["detected"]:
+            # Legitimate "nothing open right now" — the CLI decides whether the tenant proof is
+            # strong enough to call this a zero-row success.
+            raise VerifiedEmptyListError(empty["marker"], empty["tenant_confirmed"], method="adapter")
         raise CoBidnetError(f"{source.id} BidNet page did not contain open solicitations")
 
     if query:
@@ -125,6 +133,24 @@ def fetch_bidnet_opportunities(
         ]
 
     return [normalize_state_opportunity(record, source) for record in records[:limit_count]]
+
+
+def fetch_bidnet_opportunities(
+    source,
+    url,
+    query=None,
+    limit=25,
+    session=None,
+    timeout=30,
+    fixture_html=None,
+    issuer_name=None,
+):
+    if fixture_html:
+        html = read_html_fixture(fixture_html)
+    else:
+        html = _fetch_bidnet_html(url, session=session, timeout=timeout)
+
+    return parse_bidnet_list_html(source, html, query=query, limit=limit, issuer_name=issuer_name)
 
 
 def fetch_co_bidnet_opportunities(

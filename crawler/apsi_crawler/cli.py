@@ -8,18 +8,33 @@ from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
 
-from apsi_crawler.adapters.registry import AdapterNotFoundError, resolve_adapter
+from apsi_crawler.adapters.registry import (
+    AdapterNotFoundError,
+    resolve_adapter,
+    resolve_list_html_adapter,
+)
 from apsi_crawler.adapters.task import task_source_from_payload
 from apsi_crawler.config import DEFAULT_SOURCE
 from apsi_crawler.date_window import apply_date_window
 from apsi_crawler.enrichment import enrich_bids
+from apsi_crawler.errors import VerifiedEmptyListError
+from apsi_crawler.robots_fetch import InvalidRobotsRequestError, fetch_robots
+from apsi_crawler.list_extraction import (
+    resolve_list_extraction_config,
+    run_list_extraction,
+)
 from apsi_crawler.live_validation import (
     BETA_DEDICATED_STATE_SOURCES,
     validate_state_live_sources,
 )
+from apsi_crawler.tenant_discovery import InvalidDiscoveryRequestError, discover_tenant
 from apsi_crawler.sources.registry import get_fixture_loader
 from apsi_crawler.spiders.sam_gov_api import fetch_sam_gov_opportunities
 from apsi_crawler.storage.archive import archive_bid_documents
+from apsi_crawler.storage.archive_attachments import (
+    InvalidArchiveRequestError,
+    archive_attachments,
+)
 from apsi_crawler.storage.sqlite import now_iso, upsert_bid, write_crawler_log
 
 
@@ -292,6 +307,38 @@ def fetch_sam_gov(
             connection.close()
 
 
+def _adapter_list_stats(bids):
+    return {
+        "method": "adapter",
+        "items": len(bids),
+        "diagnostics": {},
+        "rendered": False,
+        "extractor": None,
+        "fallback_reason": None,
+    }
+
+
+def run_list_stage(source, adapter, payload, query, limit):
+    """Produce the list-stage bids plus `metadata.listExtraction` (contract C1).
+
+    Scrapling is the MAIN path whenever the sidecar is configured and the adapter can hand over
+    raw list HTML; otherwise (and on any sidecar problem) the adapter's own parser runs. Either
+    way exactly one list request reaches the portal.
+    """
+    fetch_config = payload.get("fetch_config")
+    list_adapter = resolve_list_html_adapter(source.id, payload.get("provider_family"))
+    config = resolve_list_extraction_config(
+        fetch_config,
+        os.environ.get("SCRAPLING_EXTRACTOR_URL", "").strip(),
+        list_adapter is not None,
+    )
+    if config["mode"] != "scrapling":
+        bids = adapter(source, query=query, limit=limit)
+        return bids, _adapter_list_stats(bids)
+
+    return run_list_extraction(source, list_adapter, config, query=query, limit=limit)
+
+
 def fetch_task(payload):
     """执行单个抓取任务。输入为任务 JSON,输出结果 JSON 到 stdout。
 
@@ -313,7 +360,38 @@ def fetch_task(payload):
         adapter = resolve_adapter(source.id, payload.get("provider_family"))
         metadata["adapter"] = getattr(adapter, "__name__", "unknown")
 
-        bids = adapter(source, query=query, limit=limit)
+        try:
+            bids, list_stats = run_list_stage(source, adapter, payload, query, limit)
+        except VerifiedEmptyListError as error:
+            if not error.tenant_confirmed:
+                # An empty phrase we could not tie to THIS tenant (404 shell, wrong slug,
+                # generic search chrome) must stay a failure — otherwise a broken source
+                # reports healthy forever.
+                raise EmptyCrawlerResultError(
+                    f"Crawler returned no opportunities for source: {source.id} "
+                    f"(empty-state marker {error.marker!r} could not be tied to the source label)"
+                ) from error
+            metadata["emptyState"] = error.as_metadata()
+            metadata["listExtraction"] = {
+                "method": error.method, "items": 0, "diagnostics": {}, "rendered": False,
+                "extractor": None, "fallback_reason": None,
+            }
+            finished_at = now_iso()
+            result = _json_run_payload(
+                source=source.id,
+                run_id=run_id,
+                status="success",
+                started_at=started_at,
+                finished_at=finished_at,
+                duration_ms=int((perf_counter() - started) * 1000),
+                metadata=metadata,
+                bids=[],
+            )
+            result["taskId"] = task_id
+            _print_json_payload(result)
+            return 0
+
+        metadata["listExtraction"] = list_stats
         # Liveness check runs BEFORE the window filter: an adapter that fetched real
         # rows must count as a live source even when the window then drops them all.
         _require_non_empty_bids(bids, source.id)
@@ -368,6 +446,84 @@ def fetch_task(payload):
         return 1
 
 
+def archive_attachments_command(stream=None):
+    """Contract C1: read one JSON request from stdin, write one JSON response to stdout.
+
+    Exit 0 whenever the request could be executed — per-item failures travel inside
+    `results`. Exit 2 (with `{"error": {...}}` on stdout) only when the request itself is
+    unusable. Every diagnostic line goes to stderr so stdout stays a single JSON document.
+    """
+    stream = stream if stream is not None else sys.stdin
+    try:
+        payload = json.load(stream)
+    except ValueError as error:
+        _print_json_payload({"error": {"code": "INVALID_REQUEST", "message": f"stdin was not valid JSON: {error}"}})
+        return 2
+
+    try:
+        response = archive_attachments(payload)
+    except InvalidArchiveRequestError as error:
+        _print_json_payload({"error": {"code": "INVALID_REQUEST", "message": str(error)}})
+        return 2
+    except Exception as error:  # noqa: BLE001 - stdout must still be exactly one JSON document
+        print(traceback.format_exc(), file=sys.stderr)
+        _print_json_payload(
+            {"error": {"code": type(error).__name__, "message": str(error)}}
+        )
+        return 2
+
+    _print_json_payload(response)
+    return 0
+
+
+def discover_tenant_command(stream=None):
+    """Contract C4: one JSON request on stdin, one JSON response on stdout.
+
+    Exit 0 when the probe ran (a fruitless probe is still a result); exit 2 only when the
+    request itself is unusable. Diagnostics go to stderr so stdout stays a single document.
+    """
+    stream = stream if stream is not None else sys.stdin
+    try:
+        payload = json.load(stream)
+    except ValueError as error:
+        _print_json_payload({"error": {"code": "INVALID_REQUEST", "message": f"stdin was not valid JSON: {error}"}})
+        return 2
+
+    try:
+        response = discover_tenant(payload)
+    except InvalidDiscoveryRequestError as error:
+        _print_json_payload({"error": {"code": "INVALID_REQUEST", "message": str(error)}})
+        return 2
+    except Exception as error:  # noqa: BLE001 - stdout must still be exactly one JSON document
+        print(traceback.format_exc(), file=sys.stderr)
+        _print_json_payload({"error": {"code": type(error).__name__, "message": str(error)}})
+        return 2
+
+    _print_json_payload(response)
+    return 0
+
+
+def fetch_robots_command(stream=None):
+    """One JSON request ({"base_url"}) on stdin, one JSON robots.txt document on stdout."""
+    stream = stream if stream is not None else sys.stdin
+    try:
+        payload = json.load(stream)
+    except ValueError as error:
+        _print_json_payload({"error": {"code": "INVALID_REQUEST", "message": f"stdin was not valid JSON: {error}"}})
+        return 2
+    try:
+        response = fetch_robots(payload)
+    except InvalidRobotsRequestError as error:
+        _print_json_payload({"error": {"code": "INVALID_REQUEST", "message": str(error)}})
+        return 2
+    except Exception as error:  # noqa: BLE001 - stdout must still be exactly one JSON document
+        print(traceback.format_exc(), file=sys.stderr)
+        _print_json_payload({"error": {"code": type(error).__name__, "message": str(error)}})
+        return 2
+    _print_json_payload(response)
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="apsi-crawler")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -393,6 +549,11 @@ def build_parser():
     fetch_sam_gov_parser.add_argument("--output-json", action="store_true")
 
     subparsers.add_parser("fetch-task")
+
+    subparsers.add_parser("archive-attachments")
+
+    subparsers.add_parser("discover-tenant")
+    subparsers.add_parser("fetch-robots")
 
     validate_state_live_parser = subparsers.add_parser("validate-state-live")
     validate_state_live_parser.add_argument(
@@ -455,6 +616,14 @@ def main(argv=None):
 
     if args.command == "fetch-task":
         return fetch_task(json.load(sys.stdin))
+
+    if args.command == "archive-attachments":
+        return archive_attachments_command()
+
+    if args.command == "fetch-robots":
+        return fetch_robots_command()
+    if args.command == "discover-tenant":
+        return discover_tenant_command()
 
     if args.command == "validate-state-live":
         result = validate_state_live_sources(

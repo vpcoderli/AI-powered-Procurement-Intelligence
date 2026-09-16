@@ -118,13 +118,16 @@ def test_merge_only_fills_empty_values_and_keeps_existing_richer_data():
     changed = merge_enrichment(bid, ENRICHED, None)
     assert changed is True
     assert bid["description"] == "Full scope text"          # was equal to title → filled
-    assert bid["full_description"] == "Full scope text"
+    assert bid["full_description"] is None                 # do not duplicate the short field
     assert bid["original_category"] == "Existing"           # non-empty → kept
     assert bid["published_date"] == "01/01/2026"            # non-empty → kept
     assert bid["contact_email"] == "jane@example.gov"
     assert [a["url"] for a in bid["attachments"]] == ["https://portal.example.gov/docs/spec.pdf"]  # javascript link dropped without template
     assert bid["attachments"][0] == {"name": "Spec.pdf", "url": "https://portal.example.gov/docs/spec.pdf", "size_label": None, "mime_type": "application/pdf", "sort_order": 0}
-    assert bid["raw_payload"]["enrichment"] == {"fields": {"description": "heuristic"}}
+    assert bid["raw_payload"]["enrichment"] == {
+        "fields": {"description": "heuristic"},
+        "applied_fields": ["description", "contact_name", "contact_email", "contact_phone", "attachments"],
+    }
 
 
 def test_merge_resolves_javascript_attachment_through_template():
@@ -134,10 +137,10 @@ def test_merge_resolves_javascript_attachment_through_template():
     assert bid["attachments"][1]["sort_order"] == 1
 
 
-def test_merge_does_not_replace_existing_attachments():
+def test_merge_appends_new_attachments_without_replacing_existing_ones():
     bid = _bid(attachments=[{"name": "Old.pdf", "url": "https://x/old.pdf", "size_label": None, "mime_type": None, "sort_order": 0}])
     merge_enrichment(bid, ENRICHED, None)
-    assert [a["name"] for a in bid["attachments"]] == ["Old.pdf"]
+    assert [a["name"] for a in bid["attachments"]] == ["Old.pdf", "Spec.pdf"]
 
 
 def test_disabled_config_skips_everything():
@@ -217,8 +220,8 @@ def test_records_without_detail_url_are_skipped():
 
 def test_records_already_complete_for_requested_fields_are_skipped():
     extractor = FakeExtractor(result=ENRICHED)
-    complete = _bid(description="Real scope text", original_category="Construction", attachments=[{"name": "A.pdf", "url": "https://x/a.pdf", "size_label": None, "mime_type": None, "sort_order": 0}])
-    _, stats = enrich_bids([complete], _source(), {"enrichment": {"enabled": True, "fields": ["description", "attachments", "category"]}}, extractor=extractor, session=FakeSession({}), sleep=lambda s: None)
+    complete = _bid(description="Real scope text", full_description="Existing full statement of work and delivery milestones.", original_category="Construction")
+    _, stats = enrich_bids([complete], _source(), {"enrichment": {"enabled": True, "fields": ["description", "category"]}}, extractor=extractor, session=FakeSession({}), sleep=lambda s: None)
     assert stats == {"attempted": 0, "enriched": 0, "failed": 0, "skipped": 1, "reason": None, "extractor": "0.4.15"}
     assert extractor.calls == []
 
@@ -325,7 +328,7 @@ def test_extractor_success_that_writes_nothing_counts_skipped_not_enriched():
     assert stats == {"attempted": 1, "enriched": 0, "failed": 0, "skipped": 1, "reason": None, "extractor": "0.4.15"}
     assert extractor.calls != []                       # the extractor really ran (not the pre-fetch skip path)
     assert out[0]["detail_fetched_at"] == "2026-09-15T00:00:00+00:00"   # the page was fetched
-    assert out[0]["raw_payload"]["enrichment"] == {"fields": {"description": "selector", "contact": "not_found", "published_date": "not_found"}}
+    assert out[0]["raw_payload"]["enrichment"] == {"fields": {"description": "selector", "contact": "not_found", "published_date": "not_found"}, "applied_fields": []}
 
 
 def test_extractor_client_posts_json_and_maps_errors():

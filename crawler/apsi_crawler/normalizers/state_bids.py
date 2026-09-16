@@ -1,5 +1,8 @@
 from datetime import datetime, timezone
 
+from apsi_crawler.content_quality import same_text, useful_text
+from apsi_crawler.date_window import normalize_published_date
+
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -53,7 +56,9 @@ def normalize_state_opportunity(raw, source):
     )
 
     description = _first_present(raw, ("description", "summary", "type"), title)
-    full_description = _first_present(raw, ("full_description", "description", "summary"), description)
+    full_description = _first_present(raw, ("full_description",))
+    if not useful_text(full_description, title) or same_text(full_description, description):
+        full_description = None
     source_url = _first_present(raw, ("source_url", "url", "link"), source.base_url)
     deadline_date = _first_present(raw, ("deadline_date", "due_date", "response_deadline"))
     timestamp = now_iso()
@@ -71,7 +76,7 @@ def normalize_state_opportunity(raw, source):
         "amount_min": raw.get("amount_min"),
         "amount_max": raw.get("amount_max"),
         "currency": raw.get("currency", "USD"),
-        "published_date": _first_present(raw, ("published_date", "posted_date", "postedDate")),
+        "published_date": normalize_published_date(_first_present(raw, ("published_date", "posted_date", "postedDate"))),
         "deadline_date": deadline_date,
         "issuer_name": _first_present(raw, ("issuer_name", "agency", "department"), "Unknown state agency"),
         "issuer_type": "state",

@@ -12,6 +12,10 @@ def _bid(bid_id, published_date):
 
 
 class TestParsePublishedDate:
+    @pytest.mark.parametrize("value", ["09/14/26", "9/14/26", "09/14/26 14:30:00", "09/14/26 02:30 PM"])
+    def test_parses_pa_two_digit_year(self, value):
+        assert parse_published_date(value).isoformat() == "2026-09-14"
+
     def test_parses_us_slash_dates(self):
         assert parse_published_date("8/20/2026").isoformat() == "2026-08-20"
         assert parse_published_date("06/05/2026").isoformat() == "2026-06-05"
@@ -95,3 +99,15 @@ class TestApplyDateWindow:
         filtered, stats = apply_date_window(bids, {})
         assert filtered == bids
         assert stats is None
+
+
+class TestFourDigitYearWithTwelveHourClock:
+    @pytest.mark.parametrize("value", ["06/30/2026 02:00 PM", "6/30/2026 2:00 AM"])
+    def test_parses_portal_am_pm_timestamps(self, value):
+        assert parse_published_date(value).isoformat() == "2026-06-30"
+
+    def test_window_actually_filters_am_pm_timestamps(self):
+        bids = [_bid("keep", "06/30/2026 02:00 PM"), _bid("drop", "01/05/2026 09:30 AM")]
+        kept, stats = apply_date_window(bids, {"from": "2026-06-01"})
+        assert [bid["source_bid_id"] for bid in kept] == ["keep"]
+        assert stats["dropped"] == 1 and stats["unparsed"] == 0

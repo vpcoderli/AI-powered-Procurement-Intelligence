@@ -8,14 +8,32 @@ make the effect transparent to the caller.
 """
 
 from datetime import date, datetime
+import re
 
 
 _DATE_FORMATS = (
+    "%m/%d/%y",
+    "%m/%d/%y %H:%M:%S",
+    "%m/%d/%y %H:%M",
+    "%m/%d/%y %I:%M %p",
     "%m/%d/%Y",
     "%m/%d/%Y %H:%M:%S",
     "%m/%d/%Y %H:%M",
+    # Portals that print a 12-hour clock are not limited to two-digit years (IL BidBuy writes
+    # "06/30/2026 02:00 PM"); without this twin such a row stays unparseable and the requested
+    # window silently keeps every record from that source.
+    "%m/%d/%Y %I:%M %p",
     "%Y-%m-%d",
 )
+
+
+def normalize_published_date(value):
+    """Resolve two-digit portal years; callers keep the original text as source evidence."""
+    if isinstance(value, str) and re.match(r"^\s*\d{1,2}/\d{1,2}/\d{2}(?:\s|$)", value):
+        parsed = parse_published_date(value)
+        if parsed:
+            return parsed.isoformat()
+    return value
 
 
 class DateWindowError(Exception):

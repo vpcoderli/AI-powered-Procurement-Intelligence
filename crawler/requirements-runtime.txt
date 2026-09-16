@@ -1,0 +1,2 @@
+# Runtime dependencies only (installed into the container images). Test tooling lives in requirements.txt.
+requests==2.32.3

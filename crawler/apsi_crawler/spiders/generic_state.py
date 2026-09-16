@@ -1,10 +1,12 @@
 import json
 
+from apsi_crawler.content_quality import detect_empty_list
+from apsi_crawler.errors import VerifiedEmptyListError
 from apsi_crawler.html.public_page import (
     HtmlPageError,
     absolute_url,
     extract_table_rows,
-    fetch_html,
+    fetch_page,
     read_html_fixture,
 )
 from apsi_crawler.normalizers.state_bids import normalize_state_opportunity
@@ -75,25 +77,13 @@ def _record_from_row(row, source):
     }
 
 
-def fetch_generic_state_opportunities(
-    source,
-    query=None,
-    limit=25,
-    session=None,
-    timeout=30,
-    fixture_html=None,
-    fixture_json=None,
-):
-    limit_count = int(limit)
-    if fixture_json:
-        records = _records_from_json(fixture_json)
-    else:
-        if fixture_html:
-            html = read_html_fixture(fixture_html)
-        else:
-            html = fetch_html(source.base_url, session=session, timeout=timeout)
-        records = [_record_from_row(row, source) for row in _rows_from_html(html)]
+def fetch_generic_state_list_html(source, url, session=None, timeout=30):
+    """List-HTML fetcher for the scrapling list path: `(html, final_url, status_code)`."""
+    page = fetch_page(url or source.base_url, session=session, timeout=timeout)
+    return page.html, page.final_url, 200
 
+
+def _filter_and_normalize(records, source, query, limit_count):
     records = [record for record in records if record.get("source_bid_id")]
     if query:
         query_text = query.lower()
@@ -107,3 +97,34 @@ def fetch_generic_state_opportunities(
         normalize_state_opportunity(record, source)
         for record in records[:limit_count]
     ]
+
+
+def parse_generic_state_list_html(source, html, query=None, limit=25):
+    """Parse an already-fetched generic list page (also the scrapling path's fallback parser)."""
+    records = [_record_from_row(row, source) for row in _rows_from_html(html)]
+    bids = _filter_and_normalize(records, source, query, int(limit))
+    if not bids and not records:
+        empty = detect_empty_list(html, source.source_label)
+        if empty["detected"]:
+            raise VerifiedEmptyListError(empty["marker"], empty["tenant_confirmed"], method="adapter")
+    return bids
+
+
+def fetch_generic_state_opportunities(
+    source,
+    query=None,
+    limit=25,
+    session=None,
+    timeout=30,
+    fixture_html=None,
+    fixture_json=None,
+):
+    if fixture_json:
+        return _filter_and_normalize(_records_from_json(fixture_json), source, query, int(limit))
+
+    if fixture_html:
+        html = read_html_fixture(fixture_html)
+    else:
+        html = fetch_generic_state_list_html(source, source.base_url, session=session, timeout=timeout)[0]
+
+    return parse_generic_state_list_html(source, html, query=query, limit=limit)
