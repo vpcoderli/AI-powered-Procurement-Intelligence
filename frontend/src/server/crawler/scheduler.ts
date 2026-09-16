@@ -25,7 +25,8 @@ export function cadenceIntervalMs(cadence: string): number | null {
 }
 
 export function nextDueAt(source: CrawlableSource): string | null {
-  if (!source.lastSuccessAt) return null;
+  const anchor = source.consecutiveFailures > 0 ? source.lastFailureAt ?? source.lastSuccessAt : source.lastSuccessAt;
+  if (!anchor) return null;
   const interval = cadenceIntervalMs(source.cadence);
   if (interval === null) return null;
 
@@ -35,7 +36,7 @@ export function nextDueAt(source: CrawlableSource): string | null {
   const factor = 2 ** Math.min(failures, 10);
   const effective = Math.min(interval * factor, MAX_BACKOFF_MS);
 
-  return new Date(new Date(source.lastSuccessAt).getTime() + effective).toISOString();
+  return new Date(new Date(anchor).getTime() + effective).toISOString();
 }
 
 function jurisdictionRank(level: string | null) {

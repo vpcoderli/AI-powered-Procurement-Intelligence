@@ -86,7 +86,7 @@ function defaultAttachmentDir() {
   return path.join(frontendRoot(), "data", "attachments");
 }
 
-function allowedAttachmentDirs() {
+export function allowedAttachmentDirs() {
   const configuredDirs = (process.env.CRAWLER_ATTACHMENT_DIR ?? "")
     .split(path.delimiter)
     .map((value) => value.trim())
@@ -95,7 +95,7 @@ function allowedAttachmentDirs() {
   return [defaultAttachmentDir(), ...configuredDirs].map((dir) => path.resolve(dir));
 }
 
-function relativeAttachmentPath(value: string) {
+export function relativeAttachmentPath(value: string) {
   const normalized = value.replace(/\\/g, "/").replace(/^\.?\//, "");
   const withoutDataPrefix = normalized.replace(/^data\/attachments\//, "");
   return withoutDataPrefix;
@@ -127,7 +127,7 @@ function isPathInside(parent: string, child: string) {
   return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
-async function resolveAllowedLocalPath(value: string) {
+export async function resolveAllowedLocalPath(value: string) {
   if (!isLocalAttachmentUrl(value) || isExternalAttachmentUrl(value)) {
     return undefined;
   }

@@ -39,6 +39,11 @@ describe("listCrawlableSources", () => {
     await testDb.cleanup();
   });
 
+  it("does not let an unreviewed county source bypass approval via missing jurisdiction metadata", () => {
+    testDb.db.insert(dataSources).values(sourceRow({ issuerType: "county", jurisdictionLevel: null, approvalStatus: null })).run();
+    expect(listCrawlableSources(testDb.db)).toEqual([]);
+  });
+
   it("returns approved and enabled sources", () => {
     testDb.db.insert(dataSources).values(sourceRow()).run();
     const sources = listCrawlableSources(testDb.db);
@@ -253,7 +258,7 @@ describe("listCrawlableSourcesFromMysql", () => {
 
     await listCrawlableSourcesFromMysql(pool);
     expect(capturedSql).toMatch(/approval_status = 'approved'/);
-    expect(capturedSql).toMatch(/jurisdiction_level IS NULL OR jurisdiction_level IN/);
+    expect(capturedSql).toMatch(/jurisdiction_level IS NULL AND issuer_type IN/);
   });
 });
 

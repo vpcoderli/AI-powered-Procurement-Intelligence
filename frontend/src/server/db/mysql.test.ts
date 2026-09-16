@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isMysqlDatabaseUrlConfigured,
   mysqlColumnMigrationStatements,
+  mysqlIndexColumnModification,
   mysqlIndexMigrationStatements,
   mysqlMigrationStatements,
   requireMysqlDatabaseUrl,
@@ -107,5 +108,44 @@ describe("mysql index migrations cover jurisdiction columns", () => {
 
     expect(bidsTable).toContain("fips_code VARCHAR(191)");
     expect(bidsTable).not.toContain("fips_code LONGTEXT");
+  });
+});
+
+describe("mysql migrations cover the attachment repair columns (C4)", () => {
+  it("adds verified_at / repair_attempts / next_repair_at / failure_kind to existing databases", () => {
+    const joined = mysqlColumnMigrationStatements().join("\n");
+
+    expect(joined).toContain("bid_attachments ADD COLUMN verified_at VARCHAR(191)");
+    expect(joined).toContain("bid_attachments ADD COLUMN repair_attempts INT NOT NULL DEFAULT 0");
+    expect(joined).toContain("bid_attachments ADD COLUMN next_repair_at VARCHAR(191)");
+    expect(joined).toContain("bid_attachments ADD COLUMN failure_kind VARCHAR(191)");
+  });
+
+  it("declares the repair index and sizes both of its columns as VARCHAR(191)", () => {
+    expect(mysqlIndexMigrationStatements().join("\n")).toContain(
+      "CREATE INDEX idx_bid_attachments_repair ON bid_attachments(archive_status, next_repair_at)",
+    );
+
+    const table = mysqlMigrationStatements().find((statement) =>
+      statement.includes("CREATE TABLE IF NOT EXISTS bid_attachments"),
+    );
+
+    expect(table).toContain("archive_status VARCHAR(191) NOT NULL DEFAULT 'not_archived'");
+    expect(table).toContain("next_repair_at VARCHAR(191)");
+    expect(table).toContain("repair_attempts INT NOT NULL DEFAULT 0");
+    expect(table).not.toContain("archive_status LONGTEXT");
+  });
+
+  it("preserves nullability and defaults when narrowing a text column for indexing", () => {
+    expect(mysqlIndexColumnModification({ dataType: "varchar", isNullable: "YES", columnDefault: null })).toBeNull();
+    expect(mysqlIndexColumnModification({ dataType: "longtext", isNullable: "YES", columnDefault: null })).toBe(
+      "VARCHAR(191) NULL",
+    );
+    expect(
+      mysqlIndexColumnModification({ dataType: "longtext", isNullable: "NO", columnDefault: "_utf8mb4\\'not_archived\\'" }),
+    ).toBe("VARCHAR(191) NOT NULL DEFAULT 'not_archived'");
+    expect(mysqlIndexColumnModification({ dataType: "text", isNullable: "NO", columnDefault: "draft" })).toBe(
+      "VARCHAR(191) NOT NULL DEFAULT 'draft'",
+    );
   });
 });

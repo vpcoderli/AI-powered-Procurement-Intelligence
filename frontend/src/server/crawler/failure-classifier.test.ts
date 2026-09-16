@@ -10,6 +10,13 @@ describe("classifyCrawlerFailure", () => {
   it("classifies timeouts and connection errors as network failures", () => {
     expect(classifyCrawlerFailure({ errorCode: "Timeout" })).toBe("network");
     expect(classifyCrawlerFailure({ errorCode: "ConnectionError" })).toBe("network");
+    // Remaining transient exception names `requests` raises mid-transfer or via a proxy.
+    for (const code of ["ChunkedEncodingError", "ProxyError", "RetryError", "ContentDecodingError", "RemoteDisconnected"]) {
+      expect(classifyCrawlerFailure({ errorCode: code })).toBe("network");
+    }
+    // Persistence and lease outcomes are never network failures, so the worker must not retry them.
+    expect(classifyCrawlerFailure({ errorCode: "CrawlerPersistenceError" })).toBe("unknown");
+    expect(classifyCrawlerFailure({ errorCode: "CrawlerLeaseLostError" })).toBe("unknown");
     expect(classifyCrawlerFailure({ errorCode: "HTTPError", errorMessage: "503 Service Unavailable" })).toBe(
       "network",
     );

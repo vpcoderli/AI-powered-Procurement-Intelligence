@@ -2,8 +2,12 @@
  * Crawler configuration helpers shared by the admin console UI and the admin API.
  *
  * Pure functions only (no server/database imports) so the editor components can import
- * the same validation rules the API enforces.
+ * the same validation rules the API enforces. `@/server/attachments/policy` is held to the
+ * same rule (pure, no server imports) so importing its validator here keeps this module
+ * client-safe.
  */
+
+import { validateAttachmentPolicyInput } from "@/server/attachments/policy";
 
 export const CADENCES = ["hourly", "daily", "weekly", "manual"] as const;
 export type Cadence = (typeof CADENCES)[number];
@@ -109,6 +113,127 @@ export function serializeEnrichmentConfig(config: EnrichmentConfig): Record<stri
   };
 }
 
+/**
+ * Contract C1 — `fetch_config.list_extraction`: how a source's *list* page is turned into bid
+ * rows. `mode: "scrapling"` sends the list HTML to the extractor sidecar (the main path);
+ * `"adapter"` keeps the dedicated Python parser. The crawler falls back to the adapter on its
+ * own when the sidecar is unreachable or returns nothing usable.
+ */
+export const LIST_EXTRACTION_MODES = ["scrapling", "adapter"] as const;
+export type ListExtractionMode = (typeof LIST_EXTRACTION_MODES)[number];
+
+export const LIST_EXTRACTION_FIELDS = [
+  "title",
+  "url",
+  "published_date",
+  "deadline_date",
+  "source_bid_id",
+  "issuer_name",
+] as const;
+export type ListExtractionField = (typeof LIST_EXTRACTION_FIELDS)[number];
+
+export interface ListExtractionConfig {
+  mode: ListExtractionMode;
+  render: boolean;
+  itemSelector: string | null;
+  maxItems: number;
+  selectors: Partial<Record<ListExtractionField, string>>;
+}
+
+const LIST_EXTRACTION_MAX_ITEMS_RANGE = [1, 500] as const;
+
+export const DEFAULT_LIST_EXTRACTION_CONFIG: ListExtractionConfig = {
+  mode: "scrapling",
+  render: false,
+  itemSelector: null,
+  maxItems: 200,
+  selectors: {},
+};
+
+function isListExtractionField(value: unknown): value is ListExtractionField {
+  return typeof value === "string" && (LIST_EXTRACTION_FIELDS as readonly string[]).includes(value);
+}
+
+/** Lenient reader for the admin editor — mirrors the crawler's own defaulting. */
+export function parseListExtractionConfig(fetchConfig: Record<string, unknown>): ListExtractionConfig {
+  const raw = isRecord(fetchConfig.list_extraction) ? fetchConfig.list_extraction : {};
+  const selectors: Partial<Record<ListExtractionField, string>> = {};
+
+  if (isRecord(raw.selectors)) {
+    for (const [key, value] of Object.entries(raw.selectors)) {
+      if (isListExtractionField(key) && typeof value === "string" && value.trim()) {
+        selectors[key] = value;
+      }
+    }
+  }
+
+  const itemSelector = raw.item_selector;
+
+  return {
+    mode: raw.mode === "adapter" ? "adapter" : DEFAULT_LIST_EXTRACTION_CONFIG.mode,
+    render: raw.render === true,
+    itemSelector: typeof itemSelector === "string" && itemSelector.trim() ? itemSelector : null,
+    maxItems: Math.round(
+      clampNumber(raw.max_items, LIST_EXTRACTION_MAX_ITEMS_RANGE, DEFAULT_LIST_EXTRACTION_CONFIG.maxItems),
+    ),
+    selectors,
+  };
+}
+
+/** Writes the snake_case `list_extraction` block the crawler reads off `fetch_config`. */
+export function serializeListExtractionConfig(config: ListExtractionConfig): Record<string, unknown> {
+  return {
+    mode: config.mode,
+    render: config.render,
+    item_selector: config.itemSelector,
+    max_items: config.maxItems,
+    selectors: config.selectors,
+  };
+}
+
+function validateListExtraction(listExtraction: unknown): string | null {
+  if (!isRecord(listExtraction)) return "list_extraction must be a JSON object.";
+
+  if (
+    listExtraction.mode !== undefined &&
+    (typeof listExtraction.mode !== "string" ||
+      !(LIST_EXTRACTION_MODES as readonly string[]).includes(listExtraction.mode))
+  ) {
+    return `list_extraction.mode must be one of ${LIST_EXTRACTION_MODES.join(", ")}.`;
+  }
+
+  if (listExtraction.render !== undefined && typeof listExtraction.render !== "boolean") {
+    return "list_extraction.render must be a boolean.";
+  }
+
+  if (listExtraction.item_selector !== undefined && listExtraction.item_selector !== null) {
+    if (typeof listExtraction.item_selector !== "string" || !listExtraction.item_selector.trim()) {
+      return "list_extraction.item_selector must be a non-empty string or null.";
+    }
+  }
+
+  if (listExtraction.max_items !== undefined) {
+    const [low, high] = LIST_EXTRACTION_MAX_ITEMS_RANGE;
+    const value = listExtraction.max_items;
+    if (typeof value !== "number" || !Number.isInteger(value) || value < low || value > high) {
+      return `list_extraction.max_items must be an integer between ${low} and ${high}.`;
+    }
+  }
+
+  if (listExtraction.selectors !== undefined) {
+    if (!isRecord(listExtraction.selectors)) return "list_extraction.selectors must be a JSON object.";
+    for (const [key, selector] of Object.entries(listExtraction.selectors)) {
+      if (!isListExtractionField(key)) return `list_extraction.selectors has an unsupported field: ${key}.`;
+      if (selector === null) continue;
+      if (typeof selector !== "string" || !selector.trim()) {
+        return `list_extraction.selectors.${key} must be a non-empty string.`;
+      }
+    }
+  }
+
+  return null;
+}
+
 export interface CrawlerConfigValue {
   fetchConfig?: Record<string, unknown>;
   cadence?: Cadence;
@@ -175,6 +300,20 @@ export function validateCrawlerConfigInput(input: {
 
     if (input.fetchConfig.enrichment !== undefined) {
       const message = validateEnrichment(input.fetchConfig.enrichment);
+      if (message) return { ok: false, message };
+    }
+
+    // Per-source attachment archiving policy (`fetch_config.attachments`), consumed by the
+    // attachment repair worker. The rules live with the policy module so the worker, the
+    // Python `archive-attachments` request builder and this admin editor cannot drift apart.
+    if (input.fetchConfig.attachments !== undefined) {
+      const message = validateAttachmentPolicyInput(input.fetchConfig.attachments);
+      if (message) return { ok: false, message };
+    }
+
+    // Per-source list parsing (`fetch_config.list_extraction`), contract C1.
+    if (input.fetchConfig.list_extraction !== undefined) {
+      const message = validateListExtraction(input.fetchConfig.list_extraction);
       if (message) return { ok: false, message };
     }
 

@@ -41,6 +41,15 @@ describe("cadenceIntervalMs", () => {
 });
 
 describe("nextDueAt", () => {
+  it("backs off a first failure from the failed attempt even without a prior success", () => {
+    const failed = source({ lastSuccessAt: null, lastFailureAt: "2026-07-29T11:00:00.000Z", consecutiveFailures: 1 });
+    expect(nextDueAt(failed)).toBe("2026-07-31T11:00:00.000Z");
+    expect(selectDueSources([failed], NOW)).toEqual([]);
+  });
+
+  it("anchors backoff to the latest failure rather than an old success", () => {
+    expect(nextDueAt(source({ lastSuccessAt: "2026-06-01T00:00:00.000Z", lastFailureAt: "2026-07-29T11:00:00.000Z", consecutiveFailures: 2 }))).toBe("2026-08-02T11:00:00.000Z");
+  });
   it("returns null for a source that never succeeded (due immediately)", () => {
     expect(nextDueAt(source({ lastSuccessAt: null }))).toBeNull();
   });

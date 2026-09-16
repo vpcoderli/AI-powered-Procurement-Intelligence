@@ -321,6 +321,10 @@ function mysqlAttachmentRow(row: Record<string, unknown>): BidAttachmentRow {
     mimeType: mysqlNullableString(row, "mime_type"),
     sortOrder: Number(row.sort_order ?? 0),
     createdAt: mysqlString(row, "created_at"),
+    verifiedAt: mysqlNullableString(row, "verified_at"),
+    repairAttempts: Number(row.repair_attempts ?? 0),
+    nextRepairAt: mysqlNullableString(row, "next_repair_at"),
+    failureKind: mysqlNullableString(row, "failure_kind"),
   };
 }
 

@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as notificationService from "@/server/notifications/service";
 import { createSamGovRunPost } from "./route";
 
+vi.mock("@/server/crawler/source-health-outcome", () => ({ recordSourceHealthOutcome: vi.fn() }));
+
 vi.mock("@/server/notifications/service", () => ({
   sendMatchedAlertNotifications: vi.fn(),
 }));
@@ -13,6 +15,7 @@ describe("POST /api/crawler/sam-gov/run", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+    vi.stubEnv("CRAWLER_ALLOW_UNAUTHENTICATED_LOCAL_RUN", "true");
     runCrawlerSourceOnce.mockResolvedValue({
       ok: true,
       source: "SAM.gov",
@@ -42,6 +45,23 @@ describe("POST /api/crawler/sam-gov/run", () => {
       skipped: 0,
       failed: 0,
     });
+  });
+
+  it("denies missing credentials in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("CRAWLER_RUN_TOKEN", "");
+    const response = await createSamGovRunPost({ runCrawlerSourceOnce })(new Request("http://localhost/api/crawler/sam-gov/run"));
+    expect(response.status).toBe(401);
+    expect(runCrawlerSourceOnce).not.toHaveBeenCalled();
+  });
+
+  it("does not extend the local admin bypass to staging or remote requests", async () => {
+    vi.stubEnv("ADMIN_UI_LOCAL_BYPASS", "true");
+    vi.stubEnv("APP_ENV", "staging");
+    const POST = createSamGovRunPost({ runCrawlerSourceOnce });
+    expect((await POST(new Request("http://localhost/api/crawler/sam-gov/run"))).status).toBe(401);
+    vi.stubEnv("APP_ENV", "development");
+    expect((await POST(new Request("https://example.com/api/crawler/sam-gov/run"))).status).toBe(401);
   });
 
   it("requires crawler token when configured", async () => {
@@ -118,7 +138,7 @@ describe("POST /api/crawler/sam-gov/run", () => {
     expect(runCrawlerSourceOnce).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        source: "SAM.gov",
+        source: "sam_gov",
         owner: "route_test",
         runnerOptions: {
           postedFrom: "05/01/2026",
@@ -169,7 +189,7 @@ describe("POST /api/crawler/sam-gov/run", () => {
     });
   });
 
-  it("allows local development when no crawler token is configured", async () => {
+  it("allows explicitly configured local development when no crawler token is configured", async () => {
     const POST = createSamGovRunPost({ runCrawlerSourceOnce });
 
     const response = await POST(new Request("http://localhost/api/crawler/sam-gov/run"));

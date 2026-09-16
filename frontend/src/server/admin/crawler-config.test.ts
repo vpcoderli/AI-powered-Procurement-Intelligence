@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_ENRICHMENT_CONFIG,
+  DEFAULT_LIST_EXTRACTION_CONFIG,
   parseEnrichmentConfig,
+  parseListExtractionConfig,
   serializeEnrichmentConfig,
+  serializeListExtractionConfig,
   validateCrawlerConfigInput,
 } from "./crawler-config";
 
@@ -181,5 +184,173 @@ describe("validateCrawlerConfigInput", () => {
 
   it("returns an empty value when nothing crawler-related is present", () => {
     expect(validateCrawlerConfigInput({})).toEqual({ ok: true, value: {} });
+  });
+});
+
+describe("validateCrawlerConfigInput attachments block", () => {
+  // The per-source attachment policy rules live in `@/server/attachments/policy`
+  // (shared contract C3 of docs/superpowers/plans/2026-09-16-attachment-repair.md); this
+  // suite only asserts that the admin validator delegates to them and surfaces the
+  // rejection message verbatim, not the ranges themselves.
+  it("accepts a complete attachments policy alongside enrichment", () => {
+    const fetchConfig = {
+      base_url: "https://www.bidbuy.illinois.gov",
+      enrichment: { enabled: true },
+      attachments: {
+        archive: true,
+        mode: "browser",
+        max_per_run: 25,
+        min_interval_seconds: 3,
+        timeout_seconds: 30,
+        max_bytes: 52428800,
+        browser_link_selector: "a.download",
+      },
+    };
+
+    expect(validateCrawlerConfigInput({ fetchConfig })).toEqual({ ok: true, value: { fetchConfig } });
+  });
+
+  it("accepts a fetch_config with no attachments block at all", () => {
+    expect(validateCrawlerConfigInput({ fetchConfig: { base_url: "https://x.gov" } })).toEqual({
+      ok: true,
+      value: { fetchConfig: { base_url: "https://x.gov" } },
+    });
+  });
+
+  it("rejects an out-of-range per-run limit", () => {
+    const result = validateCrawlerConfigInput({ fetchConfig: { attachments: { max_per_run: 500 } } });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toContain("attachments.max_per_run");
+  });
+
+  it("rejects an unsupported download mode", () => {
+    const result = validateCrawlerConfigInput({ fetchConfig: { attachments: { mode: "torrent" } } });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toContain("attachments.mode");
+  });
+
+  it("rejects a non-object attachments block", () => {
+    const result = validateCrawlerConfigInput({ fetchConfig: { attachments: "on" } });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.message).toContain("attachments");
+  });
+});
+
+describe("list extraction config (contract C1)", () => {
+  it("returns scrapling-first defaults for a fetch_config without a list_extraction block", () => {
+    expect(parseListExtractionConfig({ base_url: "https://x" })).toEqual(DEFAULT_LIST_EXTRACTION_CONFIG);
+    expect(DEFAULT_LIST_EXTRACTION_CONFIG).toEqual({
+      mode: "scrapling",
+      render: false,
+      itemSelector: null,
+      maxItems: 200,
+      selectors: {},
+    });
+  });
+
+  it("reads snake_case values, drops unknown/blank selectors and clamps max_items", () => {
+    expect(
+      parseListExtractionConfig({
+        list_extraction: {
+          mode: "adapter",
+          render: true,
+          item_selector: "tr.mets-table-row",
+          max_items: 9_999,
+          selectors: { title: "a.title", url: "a.title", nickname: "span", issuer_name: "   ", deadline_date: "td.due" },
+        },
+      }),
+    ).toEqual({
+      mode: "adapter",
+      render: true,
+      itemSelector: "tr.mets-table-row",
+      maxItems: 500,
+      selectors: { title: "a.title", url: "a.title", deadline_date: "td.due" },
+    });
+  });
+
+  it("falls back to defaults for unusable values", () => {
+    expect(
+      parseListExtractionConfig({
+        list_extraction: { mode: "magic", render: "yes", item_selector: "  ", max_items: "many", selectors: "all" },
+      }),
+    ).toEqual(DEFAULT_LIST_EXTRACTION_CONFIG);
+  });
+
+  it("round-trips through serializeListExtractionConfig", () => {
+    const config = parseListExtractionConfig({
+      list_extraction: { mode: "adapter", render: true, item_selector: "li.card", max_items: 25, selectors: { title: "h3" } },
+    });
+
+    expect(serializeListExtractionConfig(config)).toEqual({
+      mode: "adapter",
+      render: true,
+      item_selector: "li.card",
+      max_items: 25,
+      selectors: { title: "h3" },
+    });
+    expect(parseListExtractionConfig({ list_extraction: serializeListExtractionConfig(config) })).toEqual(config);
+  });
+
+  it("accepts a fully specified block, null selectors and a null item selector", () => {
+    const result = validateCrawlerConfigInput({
+      fetchConfig: {
+        list_extraction: {
+          mode: "scrapling",
+          render: false,
+          item_selector: null,
+          max_items: 200,
+          selectors: {
+            title: "a",
+            url: "a",
+            published_date: null,
+            deadline_date: "td.due",
+            source_bid_id: "td.id",
+            issuer_name: "td.agency",
+          },
+        },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects an unsupported mode, a non-boolean render flag and a blank item selector", () => {
+    for (const [block, expected] of [
+      [{ mode: "browser" }, "list_extraction.mode"],
+      [{ render: "true" }, "list_extraction.render"],
+      [{ item_selector: "   " }, "list_extraction.item_selector"],
+      [{ item_selector: 12 }, "list_extraction.item_selector"],
+    ] as const) {
+      const result = validateCrawlerConfigInput({ fetchConfig: { list_extraction: block } });
+      expect(result.ok).toBe(false);
+      expect(result.ok === false && result.message).toContain(expected);
+    }
+  });
+
+  it("rejects out-of-range or fractional max_items", () => {
+    for (const maxItems of [0, 501, 12.5, "200"]) {
+      const result = validateCrawlerConfigInput({ fetchConfig: { list_extraction: { max_items: maxItems } } });
+      expect(result.ok).toBe(false);
+      expect(result.ok === false && result.message).toContain("list_extraction.max_items");
+    }
+  });
+
+  it("rejects unsupported selector fields, blank selectors and non-object containers", () => {
+    const unsupported = validateCrawlerConfigInput({
+      fetchConfig: { list_extraction: { selectors: { nickname: "span" } } },
+    });
+    expect(unsupported.ok === false && unsupported.message).toContain("unsupported field: nickname");
+
+    const blank = validateCrawlerConfigInput({ fetchConfig: { list_extraction: { selectors: { title: "  " } } } });
+    expect(blank.ok === false && blank.message).toContain("list_extraction.selectors.title");
+
+    const container = validateCrawlerConfigInput({ fetchConfig: { list_extraction: { selectors: [] } } });
+    expect(container.ok === false && container.message).toContain("list_extraction.selectors");
+
+    const block = validateCrawlerConfigInput({ fetchConfig: { list_extraction: "scrapling" } });
+    expect(block.ok === false && block.message).toContain("list_extraction must be a JSON object.");
   });
 });

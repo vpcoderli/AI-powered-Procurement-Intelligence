@@ -12,7 +12,122 @@ describe("crawler orchestrator", () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     await testDb.cleanup();
+  });
+
+  it("provides the unique lease identity, cancellation signal and live clock to persistence", async () => {
+    let at = new Date("2026-09-15T00:00:00.000Z");
+    const result = await runCrawlerSourceOnce(testDb.db, {
+      source: "SAM.gov", owner: "worker", now: () => at,
+      runner: async (_options, context) => {
+        const fence = context?.lease;
+        expect(fence).toBeDefined();
+        expect(fence?.source).toBe("sam_gov");
+        expect(fence?.owner).toBe(testDb.db.select().from(crawlerLocks).get()?.owner);
+        expect(fence?.signal).toBe(context?.signal);
+        at = new Date("2026-09-15T00:00:05.000Z");
+        expect(fence?.now()).toBe(at.toISOString());
+        return { ok: true, source: "SAM.gov", status: "success", stdout: "", stderr: "" };
+      },
+      matcher: async () => ({ evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0, matches: [] }),
+      notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("does not let a stale attempt release a newer lease with the same configured owner", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-15T00:00:00.000Z"));
+    let finishOld!: () => void;
+    let finishNew!: () => void;
+    const after = { matcher: async () => ({ evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0, matches: [] }), notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }) };
+    const oldRun = runCrawlerSourceOnce(testDb.db, { ...after, source: "same", owner: "same_worker", lockTtlMs: 90, runner: async (_options, context) => {
+      await new Promise<void>((resolve) => { finishOld = resolve; });
+      await context!.assertLease();
+      return { ok: true, source: "same", status: "success", stdout: "", stderr: "" };
+    } });
+    const oldOwner = testDb.db.select().from(crawlerLocks).get()!.owner;
+    vi.setSystemTime(new Date(Date.now() + 100));
+    const newRun = runCrawlerSourceOnce(testDb.db, { ...after, source: "same", owner: "same_worker", lockTtlMs: 90, runner: async () => {
+      await new Promise<void>((resolve) => { finishNew = resolve; });
+      return { ok: true, source: "same", status: "success", stdout: "", stderr: "" };
+    } });
+    const newOwner = testDb.db.select().from(crawlerLocks).get()!.owner;
+    expect(newOwner).not.toBe(oldOwner);
+    finishOld();
+    expect(await oldRun).toMatchObject({ ok: false, runner: { errorCode: "CrawlerLeaseLostError" } });
+    expect(testDb.db.select().from(crawlerLocks).get()!.owner).toBe(newOwner);
+    finishNew();
+    expect((await newRun).ok).toBe(true);
+  });
+
+  it("contains runner exceptions and skips post-ingestion work", async () => {
+    const matcher = vi.fn();
+    const result = await runCrawlerSourceOnce(testDb.db, {
+      source: "new_source", owner: "owner", runner: async () => { throw new Error("boom"); },
+      matcher, notifier: vi.fn(),
+    });
+    expect(result).toMatchObject({ ok: false, status: "failure", runner: { errorCode: "Error", stderr: "boom" } });
+    expect(matcher).not.toHaveBeenCalled();
+    expect(testDb.db.select().from(crawlerLocks).all()).toEqual([]);
+  });
+
+  it.each(["matcher", "notifier"])("keeps ingestion successful when %s fails", async (stage) => {
+    const result = await runCrawlerSourceOnce(testDb.db, {
+      source: "new_source", owner: "owner",
+      runner: async () => ({ ok: true, source: "new_source", status: "success", stdout: "", stderr: "" }),
+      matcher: async () => { if (stage === "matcher") throw new Error("match failed"); return { evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0, matches: [] }; },
+      notifier: async () => { throw new Error("send failed"); },
+    });
+    expect(result).toMatchObject({ ok: true, status: "success", postProcessingErrors: [{ stage }] });
+  });
+
+  it.each(["county", "city", "special_district"])("requires explicit approval for a manual %s run", async (jurisdictionLevel) => {
+    testDb.db.insert(dataSources).values({ id: "local_source", label: "Local", issuerType: jurisdictionLevel, stateCode: "CA", jurisdictionLevel, isEnabled: 1, approvalStatus: null, createdAt: "2026-09-15", updatedAt: "2026-09-15" }).run();
+    const runner = vi.fn();
+    const result = await runCrawlerSourceOnce(testDb.db, { source: "local_source", owner: "owner", runner, matcher: vi.fn(), notifier: vi.fn() });
+    expect(result.status).toBe("blocked");
+    expect(runner).not.toHaveBeenCalled();
+  });
+
+  it("renews its lease while a long runner is active", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-15T00:00:00.000Z"));
+    let finish!: () => void;
+    const running = runCrawlerSourceOnce(testDb.db, {
+      source: "long", owner: "owner", lockTtlMs: 90,
+      runner: async () => { await new Promise<void>((resolve) => { finish = resolve; }); return { ok: true, source: "long", status: "success", stdout: "", stderr: "" }; },
+      matcher: async () => ({ evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0, matches: [] }),
+      notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
+    });
+    await vi.advanceTimersByTimeAsync(240);
+    expect(acquireCrawlerLock(testDb.db, { source: "long", owner: "competitor", acquiredAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 90).toISOString() }).acquired).toBe(false);
+    finish();
+    expect((await running).ok).toBe(true);
+  });
+
+  it("cancels lost ownership before the runner can import and leaves the replacement lock intact", async () => {
+    vi.useFakeTimers();
+    let ready!: () => void;
+    const imported = vi.fn();
+    const started = new Promise<void>((resolve) => { ready = resolve; });
+    const running = runCrawlerSourceOnce(testDb.db, {
+      source: "lost", owner: "owner", lockTtlMs: 90,
+      runner: async (_options, context) => {
+        ready();
+        await new Promise<void>((resolve) => context!.signal.addEventListener("abort", () => resolve(), { once: true }));
+        await context!.assertLease();
+        imported();
+        return { ok: true, source: "lost", status: "success", stdout: "", stderr: "" };
+      }, matcher: vi.fn(), notifier: vi.fn(),
+    });
+    await started;
+    testDb.db.update(crawlerLocks).set({ owner: "replacement" }).run();
+    await vi.advanceTimersByTimeAsync(31);
+    expect(await running).toMatchObject({ ok: false, runner: { errorCode: "CrawlerLeaseLostError" } });
+    expect(imported).not.toHaveBeenCalled();
+    expect(testDb.db.select().from(crawlerLocks).all()[0].owner).toBe("replacement");
   });
 
   it("runs matcher and notifier after a successful crawler run", async () => {
@@ -46,6 +161,7 @@ describe("crawler orchestrator", () => {
     });
 
     expect(result.status).toBe("success");
+    if (result.status !== "success") throw new Error("Expected successful crawler run");
     expect(result.runner).toEqual({
       ok: true,
       source: "SAM.gov",
@@ -97,7 +213,7 @@ describe("crawler orchestrator", () => {
 
   it("returns locked and skips work when another owner holds the lock", async () => {
     acquireCrawlerLock(testDb.db, {
-      source: "SAM.gov",
+      source: "sam_gov",
       owner: "other_owner",
       acquiredAt: "2026-05-19T00:00:00.000Z",
       expiresAt: "2026-05-19T00:10:00.000Z",
@@ -321,7 +437,7 @@ function createFakeMysqlCrawlerStore(input: {
   return {
     dataSources: input.dataSources,
     locks,
-    query: async (sql: string, values: unknown[] = []) => {
+    query: async (sql: string, values: unknown[] = []): Promise<[unknown[], unknown?]> => {
       if (sql.includes("FROM data_sources")) {
         const ids = values.map(String);
         const row = input.dataSources.find((source) => ids.includes(source.label) || ids.includes(source.id));
@@ -335,7 +451,7 @@ function createFakeMysqlCrawlerStore(input: {
 
       return [[]];
     },
-    execute: async (sql: string, values: unknown[] = []) => {
+    execute: async (sql: string, values: unknown[] = []): Promise<[unknown, unknown?]> => {
       if (sql.includes("INSERT INTO crawler_locks")) {
         const [source, owner, acquiredAt, expiresAt] = values.map(String);
         const existing = locks.get(source);

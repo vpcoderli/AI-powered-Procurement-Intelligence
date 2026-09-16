@@ -542,9 +542,15 @@ export const bidAttachments = sqliteTable(
     mimeType: text("mime_type"),
     sortOrder: integer("sort_order").notNull().default(0),
     createdAt: text("created_at").notNull(),
+    // Attachment repair bookkeeping (see docs/superpowers/specs/2026-09-16-attachment-repair-design.md).
+    verifiedAt: text("verified_at"),
+    repairAttempts: integer("repair_attempts").notNull().default(0),
+    nextRepairAt: text("next_repair_at"),
+    failureKind: text("failure_kind"),
   },
   (table) => ({
     bidIdx: index("idx_bid_attachments_bid_id").on(table.bidId),
+    repairIdx: index("idx_bid_attachments_repair").on(table.archiveStatus, table.nextRepairAt),
   }),
 );
 

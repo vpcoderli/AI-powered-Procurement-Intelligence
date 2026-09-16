@@ -226,6 +226,40 @@ export interface UpdateAdminDataSourceOptions {
   actorUserId?: string | null;
 }
 
+/**
+ * Contract C6 hard check (from the 2026-07-29 source registry design): a source that requires
+ * a login is never approved on an automated signal alone — a named reviewer, a legal opinion
+ * reference and an explicit ToS review must be on the ledger, either already stored or supplied
+ * in the same request.
+ */
+export class SourceApprovalRequirementsError extends Error {
+  readonly missingFields: string[];
+
+  constructor(missingFields: string[]) {
+    super(
+      `Approving a login-gated source requires ${missingFields.join(", ")} to be recorded in the compliance ledger.`,
+    );
+    this.name = "SourceApprovalRequirementsError";
+    this.missingFields = missingFields;
+  }
+}
+
+/** Robots/live-health write-back from an admin pre-check run (contract C5). */
+export interface RecordSourcePrecheckInput {
+  robots?: {
+    status: string | null;
+    checkedAt: string | null;
+    hash: string | null;
+    disallowsCrawledPaths: boolean | null;
+    flagReason: string | null;
+  };
+  liveHealth?: {
+    disposition: string | null;
+    notes: string | null;
+    reviewedAt: string | null;
+  };
+}
+
 const CRAWLER_LOG_SOURCE_BY_STATE = STATE_CRAWLER_SOURCE_IDS_BY_STATE;
 
 type SourceApprovalEventRow = typeof sourceApprovalEvents.$inferSelect;
@@ -533,6 +567,40 @@ function parseFetchConfigJson(raw: unknown): Record<string, unknown> {
   }
 }
 
+/**
+ * Contract C6: which ledger fields a `requires_login` source is still missing when this request
+ * asks for `approvalStatus: "approved"`. Values already stored on the row count — the approval
+ * form may be re-submitted without repeating them.
+ */
+export function missingApprovalRequirements(
+  existing: Pick<DataSourceRow, "requiresLogin" | "complianceReviewer" | "legalOpinionReference" | "tosReviewed">,
+  input: UpdateAdminDataSourceInput,
+): string[] {
+  if (input.approvalStatus !== "approved") return [];
+  if (Number(existing.requiresLogin ?? 0) !== 1) return [];
+
+  const reviewer = input.complianceReviewer !== undefined ? input.complianceReviewer : existing.complianceReviewer;
+  const opinion =
+    input.legalOpinionReference !== undefined ? input.legalOpinionReference : existing.legalOpinionReference;
+  const tosReviewed =
+    input.tosReviewed !== undefined ? input.tosReviewed === true : Number(existing.tosReviewed ?? 0) === 1;
+
+  const missing: string[] = [];
+  if (typeof reviewer !== "string" || !reviewer.trim()) missing.push("complianceReviewer");
+  if (typeof opinion !== "string" || !opinion.trim()) missing.push("legalOpinionReference");
+  if (!tosReviewed) missing.push("tosReviewed");
+
+  return missing;
+}
+
+function assertApprovalRequirements(
+  existing: Pick<DataSourceRow, "requiresLogin" | "complianceReviewer" | "legalOpinionReference" | "tosReviewed">,
+  input: UpdateAdminDataSourceInput,
+) {
+  const missing = missingApprovalRequirements(existing, input);
+  if (missing.length > 0) throw new SourceApprovalRequirementsError(missing);
+}
+
 function hasCrawlerConfigUpdate(input: UpdateAdminDataSourceInput) {
   return input.fetchConfig !== undefined || input.cadence !== undefined || input.baseUrl !== undefined;
 }
@@ -817,6 +885,8 @@ export async function updateAdminDataSource(
     throw new AdminDataSourceNotFoundError(id);
   }
 
+  assertApprovalRequirements(existing, input);
+
   const updatedAt = new Date().toISOString();
   const previousSource = toAdminSource(existing, null);
   const lastApprovalReviewedAt = hasGovernanceUpdate(input) ? updatedAt : existing.lastApprovalReviewedAt;
@@ -926,6 +996,8 @@ export async function updateAdminDataSourceFromMysql(
   if (!existing) {
     throw new AdminDataSourceNotFoundError(id);
   }
+
+  assertApprovalRequirements(existing, input);
 
   const updatedAt = new Date().toISOString();
   const previousSource = toAdminSource(existing, null);
@@ -1092,6 +1164,87 @@ export async function updateAdminDataSourceFromMysql(
   const approvalHistory = approvalHistoryBySource(await listSourceApprovalEventsFromMysql(mysql, id));
 
   return toAdminSource(updated, null, undefined, undefined, approvalHistory.get(id));
+}
+
+function precheckColumnUpdates(input: RecordSourcePrecheckInput) {
+  const columns: Array<[string, unknown]> = [];
+
+  if (input.robots) {
+    columns.push(
+      ["robots_txt_status", input.robots.status],
+      ["robots_txt_checked_at", input.robots.checkedAt],
+      ["robots_txt_hash", input.robots.hash],
+      [
+        "robots_txt_disallows_crawled_paths",
+        input.robots.disallowsCrawledPaths === null ? null : input.robots.disallowsCrawledPaths ? 1 : 0,
+      ],
+      ["robots_txt_flag_reason", input.robots.flagReason],
+    );
+  }
+
+  if (input.liveHealth) {
+    columns.push(
+      ["live_health_disposition", input.liveHealth.disposition],
+      ["live_health_notes", redactLiveHealthNotes(input.liveHealth.notes)],
+      ["live_health_reviewed_at", input.liveHealth.reviewedAt],
+    );
+  }
+
+  return columns;
+}
+
+/**
+ * Contract C5 write-back: the robots.txt verdict and the live-health disposition of one admin
+ * pre-check run. Deliberately separate from `updateAdminDataSource` — a pre-check is evidence
+ * gathering, never a governance decision, so it writes no approval columns and logs no
+ * approval event.
+ */
+export function recordSourcePrecheck(db: AppDatabase, id: string, input: RecordSourcePrecheckInput): void {
+  if (!input.robots && !input.liveHealth) return;
+
+  const existing = db.select().from(dataSources).where(eq(dataSources.id, id)).limit(1).get();
+  if (!existing) throw new AdminDataSourceNotFoundError(id);
+
+  db.update(dataSources)
+    .set({
+      ...(input.robots
+        ? {
+            robotsTxtStatus: input.robots.status,
+            robotsTxtCheckedAt: input.robots.checkedAt,
+            robotsTxtHash: input.robots.hash,
+            robotsTxtDisallowsCrawledPaths:
+              input.robots.disallowsCrawledPaths === null ? null : input.robots.disallowsCrawledPaths ? 1 : 0,
+            robotsTxtFlagReason: input.robots.flagReason,
+          }
+        : {}),
+      ...(input.liveHealth
+        ? {
+            liveHealthDisposition: input.liveHealth.disposition,
+            liveHealthNotes: redactLiveHealthNotes(input.liveHealth.notes),
+            liveHealthReviewedAt: input.liveHealth.reviewedAt,
+          }
+        : {}),
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(dataSources.id, id))
+    .run();
+}
+
+export async function recordSourcePrecheckFromMysql(
+  mysql: MysqlDataSourcesStore,
+  id: string,
+  input: RecordSourcePrecheckInput,
+): Promise<void> {
+  const columns = precheckColumnUpdates(input);
+  if (columns.length === 0) return;
+
+  const existing = await mysqlSelectOne<{ id: string }>(mysql, "SELECT id FROM data_sources WHERE id = ? LIMIT 1", [id]);
+  if (!existing) throw new AdminDataSourceNotFoundError(id);
+
+  const assignments = [...columns.map(([column]) => `${column} = ?`), "updated_at = ?"];
+  const values = [...columns.map(([, value]) => value), new Date().toISOString(), id];
+
+  await mysqlExecute(mysql, `UPDATE data_sources SET ${assignments.join(", ")} WHERE id = ?`, values);
 }
 
 async function listSourceApprovalEventsFromMysql(mysql: MysqlDataSourcesStore, sourceId?: string) {

@@ -1,5 +1,8 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
+import { CrawlerLeaseLostError, crawlerRuntime, type CrawlerExecutionContext } from "./execution-context";
+import { createDatabase } from "@/server/db/client";
+import { importCrawlerJsonRunIntoSqlite } from "./sqlite-json-importer";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { importCrawlerJsonRunIntoMysql, type CrawlerJsonRunPayload } from "./mysql-json-importer";
 import { prepareMysqlCrawlerRun } from "./mysql-runner";
@@ -22,6 +25,8 @@ export interface SamGovCrawlerRunResult {
   status: "success" | "failure";
   stdout: string;
   stderr: string;
+  errorCode?: string | null;
+  payload?: CrawlerJsonRunPayload | null;
 }
 
 function samGovDate(date: Date) {
@@ -40,12 +45,9 @@ function defaultPostedTo() {
   return samGovDate(new Date());
 }
 
-function crawlerDirectory() {
-  return path.resolve(process.cwd(), "..", "crawler");
-}
-
 function defaultDatabasePath() {
-  return path.resolve(process.cwd(), "data", "apsi.sqlite");
+  // Same resolution rule as the worker scripts and db/client.ts: DATABASE_PATH relative to cwd.
+  return path.resolve(process.cwd(), process.env.DATABASE_PATH?.trim() || path.join("data", "apsi.sqlite"));
 }
 
 function defaultArchiveDir() {
@@ -100,26 +102,53 @@ function parseCrawlerJsonPayload(stdout: string): CrawlerJsonRunPayload {
 
 export async function runSamGovCrawler(
   options: SamGovCrawlerRunOptions = {},
+  context?: CrawlerExecutionContext,
 ): Promise<SamGovCrawlerRunResult> {
+  const { python, ...runtime } = crawlerRuntime();
   const useDirectMysqlImport = !options.databasePath && isMysqlDatabaseUrlConfigured();
+  const useManagedSqliteImport = Boolean(context) && !useDirectMysqlImport && !options.outputJson;
   const mysqlRun = useDirectMysqlImport ? null : prepareMysqlCrawlerRun(options.databasePath);
   const databasePath = mysqlRun?.databasePath;
 
   return new Promise((resolve) => {
     execFile(
-      "python3",
-      buildArgs(useDirectMysqlImport ? { ...options, outputJson: true } : { ...options, databasePath }),
+      python,
+      buildArgs(useDirectMysqlImport || useManagedSqliteImport
+        ? { ...options, outputJson: true }
+        : { ...options, databasePath }),
       {
-        cwd: crawlerDirectory(),
+        ...runtime,
         env: process.env,
+        signal: context?.signal,
       },
       (error, stdout, stderr) => {
         void (async () => {
           let importError: unknown = null;
+          const cancelled = context?.signal.aborted === true;
+          const timedOut = !cancelled && error?.killed === true && error.signal === "SIGKILL";
+          let payload: CrawlerJsonRunPayload | null = null;
           try {
-            if (useDirectMysqlImport) {
-              await importCrawlerJsonRunIntoMysql(resolveMysqlPool(), parseCrawlerJsonPayload(String(stdout ?? "")));
-            } else if (mysqlRun?.isMysqlImport) {
+            if (cancelled || timedOut) {
+              // Never import successful-looking stdout from a cancelled/killed subprocess.
+            } else if (useDirectMysqlImport || useManagedSqliteImport) {
+              payload = parseCrawlerJsonPayload(String(stdout ?? ""));
+              if (!error || payload.status === "failure") {
+                await context?.assertLease();
+                if (useDirectMysqlImport) {
+                  await importCrawlerJsonRunIntoMysql(resolveMysqlPool(), payload, context?.lease);
+                } else {
+                  // Managed children never receive the live SQLite path. Persistence starts
+                  // in the parent only after confirming the renewable lease is still ours.
+                  const database = createDatabase(databasePath ?? defaultDatabasePath());
+                  try {
+                    importCrawlerJsonRunIntoSqlite(database, payload, context?.lease);
+                  } finally {
+                    database.$client.close();
+                  }
+                }
+              }
+            } else if (!error && mysqlRun?.isMysqlImport) {
+              await context?.assertLease();
               await mysqlRun.importIntoMysql();
             }
           } catch (caught) {
@@ -128,13 +157,18 @@ export async function runSamGovCrawler(
             mysqlRun?.cleanup();
           }
 
+          const lostLease = cancelled || context?.signal.aborted === true || importError instanceof CrawlerLeaseLostError;
+          const errorCode = lostLease ? "CrawlerLeaseLostError" : timedOut ? "CrawlerTaskTimeoutError" : importError ? "CrawlerPersistenceError" : payload?.errorCode ?? (error ? String(error.code ?? error.name) : null);
+          const failed = Boolean(error || importError || lostLease || payload?.status === "failure");
           const errorText = importError instanceof Error ? importError.message : String(importError ?? "");
           resolve({
-            ok: !error && !importError,
+            ok: !failed,
             source: "SAM.gov",
-            status: error || importError ? "failure" : "success",
+            status: failed ? "failure" : "success",
             stdout: String(stdout ?? ""),
-            stderr: [String(stderr ?? ""), errorText].filter(Boolean).join("\n"),
+            stderr: [String(stderr ?? ""), errorText, lostLease ? "Crawler source lease was lost" : timedOut ? `Crawler task timed out after ${runtime.timeout}ms` : null].filter(Boolean).join("\n"),
+            ...(errorCode ? { errorCode } : {}),
+            ...(payload ? { payload } : {}),
           });
         })();
       },

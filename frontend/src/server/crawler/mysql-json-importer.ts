@@ -1,8 +1,25 @@
-import { mysqlExecute, mysqlSelectOne } from "@/server/db/mysql-runtime";
+import { randomUUID } from "node:crypto";
+import { mysqlExecute, mysqlSelectMany, mysqlSelectOne } from "@/server/db/mysql-runtime";
 
-interface MysqlCrawlerImportStore {
+import { mergePersistedAttachments, mergePersistedBid } from "./persistence-merge";
+import { CrawlerPersistenceError, persistenceFailurePayload, validateCrawlerImport } from "./persistence-errors";
+import { CrawlerLeaseLostError, type CrawlerLeaseFence } from "./execution-context";
+import { assertPersistenceLease } from "./persistence-lease";
+
+export interface MysqlCrawlerImportStore {
   query: (sql: string, values?: unknown[]) => Promise<[unknown[], unknown?]>;
   execute: (sql: string, values?: never[]) => Promise<[unknown, unknown?]>;
+  getConnection?: () => Promise<MysqlCrawlerImportConnection>;
+  beginTransaction?: () => Promise<void>;
+  commit?: () => Promise<void>;
+  rollback?: () => Promise<void>;
+}
+
+export interface MysqlCrawlerImportConnection extends MysqlCrawlerImportStore {
+  beginTransaction: () => Promise<void>;
+  commit: () => Promise<void>;
+  rollback: () => Promise<void>;
+  release?: () => void;
 }
 
 export interface CrawlerJsonImportResult {
@@ -79,62 +96,6 @@ const bidUpdateColumns = bidColumns.filter((column) =>
   column !== "first_seen_at" &&
   column !== "created_at"
 );
-
-const preserveWhenEmptyColumns = new Set([
-  "full_description", "original_category", "contact_name", "contact_email", "contact_phone", "published_date", "detail_fetched_at",
-]);
-
-/**
- * SQL fragment that rewrites `valueSql` so every whitespace character JS's `String.trim()`
- * recognizes — not just the space MySQL's bare `TRIM()` strips by default — collapses to a
- * plain space: tab, newline, carriage return, and non-breaking space (routine in HTML-scraped
- * payloads). Feeds `isBlankSql`/`normalizedSql` below so `TRIM(...)` on the result matches
- * sqlite-json-importer.ts's `value.trim() === ""` byte-for-byte instead of only stripping ASCII
- * spaces.
- */
-function normalizeWhitespaceSql(valueSql: string) {
-  return (
-    `REPLACE(REPLACE(REPLACE(REPLACE(${valueSql}, '\\t', ' '), '\\n', ' '), '\\r', ' '), ` +
-    `CHAR(0xC2A0 USING utf8mb4), ' ')`
-  );
-}
-
-/** SQL fragment that is `''` when `valueSql` is NULL or trims (all whitespace) to `''`. */
-function isBlankSql(valueSql: string) {
-  return `TRIM(${normalizeWhitespaceSql(`COALESCE(${valueSql}, '')`)}) = ''`;
-}
-
-/** SQL fragment for a whitespace-trimmed, case-folded comparison value. */
-function normalizedSql(valueSql: string) {
-  return `LOWER(TRIM(${normalizeWhitespaceSql(`COALESCE(${valueSql}, '')`)}))`;
-}
-
-/**
- * ON DUPLICATE KEY UPDATE assignment for one column. Detail-page enrichment (see
- * crawler/apsi_crawler/enrichment.py) writes richer values than a list-page crawl; a later
- * list-page-only run must not clobber them. MySQL twin of sqlite-json-importer.ts's
- * enrichmentPreservingUpdateSet.
- *
- * "Empty" means NULL or a value that trims to `''` — a whitespace-only incoming value (tabs,
- * newlines, CRs, NBSP included, not just plain spaces) does not count as real content, so it
- * never overwrites an existing (possibly enriched) value. For `description`, an incoming value
- * that equals the title once both sides are trimmed and case-folded is a title echo, not a real
- * description, and is treated the same as blank; an existing description that is itself a title
- * echo is not otherwise protected, so a real incoming description still overwrites it.
- */
-export function bidUpdateAssignment(column: string) {
-  if (column === "description") {
-    return (
-      `description = IF(${isBlankSql("VALUES(description)")} ` +
-      `OR ${normalizedSql("VALUES(description)")} = ${normalizedSql("VALUES(title)")}, ` +
-      `description, VALUES(description))`
-    );
-  }
-  if (preserveWhenEmptyColumns.has(column)) {
-    return `${column} = IF(${isBlankSql(`VALUES(${column})`)}, ${column}, VALUES(${column}))`;
-  }
-  return `${column} = VALUES(${column})`;
-}
 
 const attachmentColumns = [
   "id",
@@ -244,27 +205,27 @@ function valueByColumn(row: JsonRecord, column: typeof bidColumns[number], fallb
   return optionalString(row.fips_code);
 }
 
-async function mysqlExistingBidId(mysql: MysqlCrawlerImportStore, dedupeKey: unknown) {
-  return mysqlSelectOne<{ id: string }>(mysql, "SELECT id FROM bids WHERE dedupe_key = ? LIMIT 1", [dedupeKey]);
-}
-
 async function upsertBid(mysql: MysqlCrawlerImportStore, row: JsonRecord, fallbackTimestamp: string) {
-  const existing = await mysqlExistingBidId(mysql, row.dedupe_key);
+  // Lock the persisted content before applying the shared merge rule. All reads and writes
+  // use the same transaction connection. Two pinpoint reads keep InnoDB on the unique
+  // indexes (an OR across two indexes can degrade to a scan and gap-lock far more rows).
+  const existing = await mysqlSelectOne<JsonRecord>(mysql,
+    "SELECT * FROM bids WHERE id = ? LIMIT 1 FOR UPDATE", [normalizedBidId(row)])
+    ?? (row.dedupe_key
+      ? await mysqlSelectOne<JsonRecord>(mysql, "SELECT * FROM bids WHERE dedupe_key = ? LIMIT 1 FOR UPDATE", [row.dedupe_key])
+      : null);
+  const merged = mergePersistedBid(row, existing ?? undefined);
   await mysqlExecute(
     mysql,
     `
       INSERT INTO bids (${bidColumns.join(", ")})
       VALUES (${bidColumns.map(() => "?").join(", ")})
       ON DUPLICATE KEY UPDATE
-        ${bidUpdateColumns.map(bidUpdateAssignment).join(", ")}
+        ${bidUpdateColumns.map((column) => `${column} = VALUES(${column})`).join(", ")}
     `,
-    bidColumns.map((column) => valueByColumn(row, column, fallbackTimestamp)),
+    bidColumns.map((column) => valueByColumn(merged, column, fallbackTimestamp)),
   );
-
-  return {
-    id: existing?.id ?? normalizedBidId(row),
-    status: existing ? "updated" as const : "inserted" as const,
-  };
+  return { id: String(existing?.id ?? normalizedBidId(row)), status: existing ? "updated" as const : "inserted" as const };
 }
 
 function attachmentRowsForBid(row: JsonRecord, mysqlBidId: string, fallbackTimestamp: string) {
@@ -289,25 +250,19 @@ function attachmentRowsForBid(row: JsonRecord, mysqlBidId: string, fallbackTimes
   }));
 }
 
-async function replaceAttachments(mysql: MysqlCrawlerImportStore, bidRows: JsonRecord[], bidIdByPayloadId: Map<string, string>, fallbackTimestamp: string) {
-  for (const row of bidRows) {
-    const payloadBidId = stringValue(row.id);
-    const mysqlBidId = bidIdByPayloadId.get(payloadBidId) ?? payloadBidId;
-    const incoming = attachmentRowsForBid(row, mysqlBidId, fallbackTimestamp);
-    // Empty list = this run learned nothing about attachments (list-page-only crawl); keep
-    // what an enriched run already stored. Non-empty lists still fully replace the set.
-    if (incoming.length === 0) continue;
-    await mysqlExecute(mysql, "DELETE FROM bid_attachments WHERE bid_id = ?", [mysqlBidId]);
-    for (const attachment of incoming) {
-      await mysqlExecute(
-        mysql,
-        `
-          INSERT INTO bid_attachments (${attachmentColumns.join(", ")})
-          VALUES (${attachmentColumns.map(() => "?").join(", ")})
-        `,
-        attachmentColumns.map((column) => attachment[column]),
-      );
-    }
+async function mergeAttachments(mysql: MysqlCrawlerImportStore, row: JsonRecord, bidId: string, fallbackTimestamp: string) {
+  if (!Array.isArray(row.attachments) || row.attachments.length === 0) return;
+  const existing = await mysqlSelectMany<JsonRecord>(mysql, "SELECT * FROM bid_attachments WHERE bid_id = ? FOR UPDATE", [bidId]);
+  const merged = mergePersistedAttachments(existing, row.attachments as JsonRecord[], bidId);
+  for (const attachment of attachmentRowsForBid({ attachments: merged }, bidId, fallbackTimestamp)) {
+    const update = existing.some((row) => row.id === attachment.id)
+      ? `ON DUPLICATE KEY UPDATE ${attachmentColumns.filter((column) => column !== "id" && column !== "bid_id" && column !== "created_at").map((column) => `${column} = VALUES(${column})`).join(", ")}`
+      : "";
+    await mysqlExecute(mysql, `
+      INSERT INTO bid_attachments (${attachmentColumns.join(", ")})
+      VALUES (${attachmentColumns.map(() => "?").join(", ")})
+      ${update}
+    `, attachmentColumns.map((column) => attachment[column]));
   }
 }
 
@@ -315,9 +270,10 @@ async function insertCrawlerLog(
   mysql: MysqlCrawlerImportStore,
   payload: CrawlerJsonRunPayload,
   counts: Pick<CrawlerJsonImportResult, "fetchedCount" | "insertedCount" | "updatedCount">,
+  id = `${payload.runId}:log`,
 ) {
   const row: Record<typeof crawlerLogColumns[number], unknown> = {
-    id: `${payload.runId}:log`,
+    id,
     source: payload.source,
     run_id: payload.runId,
     status: payload.status,
@@ -348,35 +304,62 @@ async function insertCrawlerLog(
 export async function importCrawlerJsonRunIntoMysql(
   mysql: MysqlCrawlerImportStore,
   payload: CrawlerJsonRunPayload,
+  lease?: CrawlerLeaseFence,
 ): Promise<CrawlerJsonImportResult> {
-  const bidRows = payload.bids ?? [];
-
-  if (payload.status === "success" && bidRows.length === 0) {
-    throw new Error("Crawler MySQL JSON import refused a successful run with no bid rows.");
+  let connection: MysqlCrawlerImportConnection | undefined;
+  let began = false;
+  try {
+    validateCrawlerImport(payload);
+    const candidate = mysql.getConnection ? await mysql.getConnection() : mysql;
+    connection = candidate as MysqlCrawlerImportConnection;
+    if (typeof candidate.beginTransaction !== "function" || typeof candidate.commit !== "function" || typeof candidate.rollback !== "function") {
+      throw new Error("Crawler MySQL import requires a transaction-capable connection or pool.");
+    }
+    await connection.beginTransaction();
+    began = true;
+    const checkLease = async (lock: boolean) => {
+      if (!lease) return;
+      const row = await mysqlSelectOne<{ owner: string; expiresAt: string }>(connection!,
+        `SELECT owner, expires_at AS expiresAt FROM crawler_locks WHERE source = ?${lock ? " FOR UPDATE" : ""}`, [lease.source]);
+      assertPersistenceLease(lease, row);
+    };
+    // The opening check is a plain read: holding the lease row locked for the whole import
+    // would block the orchestrator's heartbeat UPDATE and, past innodb_lock_wait_timeout,
+    // abort our own run. Only the final check locks the row, briefly, until commit.
+    // Never use the pool for these reads: it may have one connection.
+    await checkLease(false);
+    const bidRows = payload.bids ?? [];
+    let insertedCount = 0;
+    let updatedCount = 0;
+    for (const row of bidRows) {
+      const result = await upsertBid(connection, row, payload.startedAt);
+      if (result.status === "inserted") insertedCount += 1;
+      else updatedCount += 1;
+      await mergeAttachments(connection, row, result.id, payload.startedAt);
+    }
+    const counts = { fetchedCount: bidRows.length, insertedCount, updatedCount };
+    await insertCrawlerLog(connection, payload, counts);
+    await checkLease(true);
+    await connection.commit();
+    return { ...counts, logCount: 1 };
+  } catch (error) {
+    const failure = error instanceof CrawlerLeaseLostError ? error : new CrawlerPersistenceError(error);
+    if (began && connection) {
+      try { await connection.rollback(); } catch { /* Preserve the original write failure. */ }
+    }
+    // Return the acquired connection before asking the pool to write a failure log;
+    // otherwise a pool with connectionLimit: 1 would wait forever for its own lease.
+    if (mysql.getConnection) {
+      connection?.release?.();
+      connection = undefined;
+    }
+    // A separate autocommit log survives rollback when the database remains usable.
+    try {
+      await insertCrawlerLog(mysql, persistenceFailurePayload(payload, error), { fetchedCount: 0, insertedCount: 0, updatedCount: 0 }, `${payload.runId}:failure:${randomUUID()}`);
+      Object.assign(failure, { failureLogged: true });
+    } catch { /* Logging must not mask the source's failed persistence result. */ }
+    throw failure;
+  } finally {
+    if (mysql.getConnection) connection?.release?.();
   }
-
-  const bidIdByPayloadId = new Map<string, string>();
-  let insertedCount = 0;
-  let updatedCount = 0;
-
-  for (const row of bidRows) {
-    const result = await upsertBid(mysql, row, payload.startedAt);
-    bidIdByPayloadId.set(stringValue(row.id), result.id);
-    if (result.status === "inserted") insertedCount += 1;
-    if (result.status === "updated") updatedCount += 1;
-  }
-
-  await replaceAttachments(mysql, bidRows, bidIdByPayloadId, payload.startedAt);
-  await insertCrawlerLog(mysql, payload, {
-    fetchedCount: bidRows.length,
-    insertedCount,
-    updatedCount,
-  });
-
-  return {
-    fetchedCount: bidRows.length,
-    insertedCount,
-    updatedCount,
-    logCount: 1,
-  };
 }

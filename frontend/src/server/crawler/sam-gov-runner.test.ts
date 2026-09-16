@@ -1,6 +1,10 @@
-import { execFile } from "node:child_process";
+import { execFile, type ExecFileException, type ExecFileOptions } from "node:child_process";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createTestDatabase } from "@/server/db/test-utils";
+import { bids, crawlerLogs } from "@/server/db/schema";
+import { importCrawlerJsonRunIntoSqlite } from "./sqlite-json-importer";
+import { CrawlerLeaseLostError } from "./execution-context";
 import { importCrawlerJsonRunIntoMysql } from "./mysql-json-importer";
 import { runSamGovCrawler } from "./sam-gov-runner";
 
@@ -52,8 +56,104 @@ describe("SAM.gov crawler runner", () => {
     vi.unstubAllEnvs();
   });
 
+  it("preserves a transaction lease failure as a nonretryable lease result", async () => {
+    vi.stubEnv("DATABASE_URL", "mysql://user:pass@127.0.0.1:3306/test");
+    mockedImportCrawlerJsonRunIntoMysql.mockRejectedValueOnce(new CrawlerLeaseLostError());
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+      callback(null, mysqlJsonPayload, "");
+      return {} as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+    const result = await runSamGovCrawler({}, { signal: new AbortController().signal, assertLease: async () => {} });
+    expect(result).toMatchObject({ ok: false, status: "failure", errorCode: "CrawlerLeaseLostError" });
+  });
+
+  it("passes its transaction lease fence to the MySQL importer", async () => {
+    vi.stubEnv("DATABASE_URL", "mysql://user:pass@127.0.0.1:3306/test");
+    const signal = new AbortController().signal;
+    const lease = { source: "sam_gov", owner: "unique_attempt", now: () => "2026-09-15T00:00:00.000Z", signal };
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+      callback(null, mysqlJsonPayload, "");
+      return {} as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+    expect((await runSamGovCrawler({}, { signal, lease, assertLease: async () => {} })).ok).toBe(true);
+    expect(mockedImportCrawlerJsonRunIntoMysql.mock.calls[0][2]).toBe(lease);
+  });
+
+  it("never exposes the live SQLite database to a managed child that loses its lease", async () => {
+    const database = await createTestDatabase();
+    const controller = new AbortController();
+    const assertLease = vi.fn(async () => { throw new CrawlerLeaseLostError(); });
+    try {
+      mockedExecFile.mockImplementationOnce(((_command: string, args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+        // Simulate the existing Python CLI: --database writes before the parent sees stdout.
+        if (args.includes("--database")) importCrawlerJsonRunIntoSqlite(database.db, JSON.parse(mysqlJsonPayload));
+        controller.abort(new CrawlerLeaseLostError());
+        callback(null, mysqlJsonPayload, "");
+        return {} as ReturnType<typeof execFile>;
+      }) as typeof execFile);
+      const result = await runSamGovCrawler({ databasePath: database.databasePath }, { signal: controller.signal, assertLease });
+      expect(result).toMatchObject({ ok: false, errorCode: "CrawlerLeaseLostError" });
+      expect(database.db.select().from(bids).all()).toEqual([]);
+      expect(mockedExecFile.mock.calls[0][1]).toContain("--output-json");
+      expect(mockedExecFile.mock.calls[0][1]).not.toContain("--database");
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("imports managed SQLite output only after checking the lease", async () => {
+    const database = await createTestDatabase();
+    const assertLease = vi.fn(async () => {
+      expect(database.db.select().from(bids).all()).toEqual([]);
+    });
+    try {
+      mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+        callback(null, mysqlJsonPayload, "");
+        return {} as ReturnType<typeof execFile>;
+      }) as typeof execFile);
+      const result = await runSamGovCrawler({ databasePath: database.databasePath }, { signal: new AbortController().signal, assertLease });
+      expect(result.ok).toBe(true);
+      expect(assertLease).toHaveBeenCalledTimes(1);
+      expect(database.db.select().from(bids).all()).toHaveLength(1);
+      expect(database.db.select().from(crawlerLogs).all()).toHaveLength(1);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("uses configured runtime and timeout, and skips MySQL import after cancellation", async () => {
+    vi.stubEnv("CRAWLER_PYTHON_BIN", "/opt/python");
+    vi.stubEnv("CRAWLER_DIRECTORY", "/crawler");
+    vi.stubEnv("CRAWLER_TASK_TIMEOUT_MS", "1234");
+    vi.stubEnv("DATABASE_URL", "mysql://user:pass@127.0.0.1:3306/test");
+    const controller = new AbortController();
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+      expect(options.signal).toBe(controller.signal);
+      controller.abort();
+      callback(null, mysqlJsonPayload, "");
+      return {} as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+    const result = await runSamGovCrawler({}, { signal: controller.signal, assertLease: async () => { throw new Error("lease lost"); } });
+    expect(mockedExecFile.mock.calls[0][0]).toBe("/opt/python");
+    const runtime = mockedExecFile.mock.calls[0][2] as ExecFileOptions;
+    expect({ cwd: runtime.cwd, timeout: runtime.timeout, killSignal: runtime.killSignal }).toEqual({ cwd: "/crawler", timeout: 1234, killSignal: "SIGKILL" });
+    expect(result).toMatchObject({ ok: false, errorCode: "CrawlerLeaseLostError" });
+    expect(mockedImportCrawlerJsonRunIntoMysql).not.toHaveBeenCalled();
+  });
+
+  it("does not import successful-looking partial stdout after subprocess timeout", async () => {
+    vi.stubEnv("DATABASE_URL", "mysql://user:pass@127.0.0.1:3306/test");
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+      callback(Object.assign(new Error("timed out"), { killed: true, signal: "SIGKILL" as const }), mysqlJsonPayload, "");
+      return {} as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+    const result = await runSamGovCrawler();
+    expect(result).toMatchObject({ ok: false, errorCode: "CrawlerTaskTimeoutError" });
+    expect(mockedImportCrawlerJsonRunIntoMysql).not.toHaveBeenCalled();
+  });
+
   it("starts the Python crawler with documented date and pagination options", async () => {
-    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
       callback(null, "imported 1", "");
       return {} as ReturnType<typeof execFile>;
     }) as typeof execFile);
@@ -101,7 +201,7 @@ describe("SAM.gov crawler runner", () => {
   });
 
   it("returns failure metadata when the crawler exits with an error", async () => {
-    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
       callback(new Error("crawler failed"), "", "trace");
       return {} as ReturnType<typeof execFile>;
     }) as typeof execFile);
@@ -118,7 +218,7 @@ describe("SAM.gov crawler runner", () => {
   });
 
   it("passes archive document options by default", async () => {
-    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
       callback(null, "imported 1", "");
       return {} as ReturnType<typeof execFile>;
     }) as typeof execFile);
@@ -137,7 +237,7 @@ describe("SAM.gov crawler runner", () => {
 
   it("runs the Python crawler in JSON mode and imports directly into MySQL when MySQL is configured", async () => {
     vi.stubEnv("DATABASE_URL", "mysql://user:pass@127.0.0.1:3306/winbids");
-    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
       callback(null, mysqlJsonPayload, "");
       return {} as ReturnType<typeof execFile>;
     }) as typeof execFile);
@@ -153,6 +253,6 @@ describe("SAM.gov crawler runner", () => {
     const args = mockedExecFile.mock.calls[0][1] as string[];
     expect(args).toContain("--output-json");
     expect(args).not.toContain("--database");
-    expect(mockedImportCrawlerJsonRunIntoMysql).toHaveBeenCalledWith(expect.anything(), JSON.parse(mysqlJsonPayload));
+    expect(mockedImportCrawlerJsonRunIntoMysql).toHaveBeenCalledWith(expect.anything(), JSON.parse(mysqlJsonPayload), undefined);
   });
 });

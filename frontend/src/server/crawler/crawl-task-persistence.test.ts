@@ -6,6 +6,7 @@ import type { CrawlTaskResult } from "./state-runner";
 import { importCrawlerJsonRunIntoMysql, type CrawlerJsonRunPayload } from "./mysql-json-importer";
 import { importCrawlerJsonRunIntoSqlite, stampJurisdiction } from "./sqlite-json-importer";
 import { persistCrawlTaskResult } from "./crawl-task-persistence";
+import { CrawlerLeaseLostError } from "./execution-context";
 
 // Fully mocked (not the partial "wrap the real implementation" style configured-runner.test.ts
 // uses for its containment test) — this module's own job is purely the stamp/dispatch/contain
@@ -97,7 +98,7 @@ describe("persistCrawlTaskResult", () => {
 
     expect(mockedStampJurisdiction).toHaveBeenCalledWith(result.payload, theSource);
     expect(mockedImportSqlite).toHaveBeenCalledTimes(1);
-    expect(mockedImportSqlite).toHaveBeenCalledWith(database, { ...result.payload, stamped: true });
+    expect(mockedImportSqlite).toHaveBeenCalledWith(database, { ...result.payload, stamped: true }, undefined);
     expect(mockedImportMysql).not.toHaveBeenCalled();
     expect(returned).toBe(result);
   });
@@ -110,7 +111,7 @@ describe("persistCrawlTaskResult", () => {
 
     expect(mockedStampJurisdiction).toHaveBeenCalledWith(result.payload, theSource);
     expect(mockedImportMysql).toHaveBeenCalledTimes(1);
-    expect(mockedImportMysql).toHaveBeenCalledWith(mysql, { ...result.payload, stamped: true });
+    expect(mockedImportMysql).toHaveBeenCalledWith(mysql, { ...result.payload, stamped: true }, undefined);
     expect(mockedImportSqlite).not.toHaveBeenCalled();
     expect(returned).toBe(result);
   });
@@ -128,7 +129,20 @@ describe("persistCrawlTaskResult", () => {
     expect(mockedImportSqlite).toHaveBeenCalledTimes(1);
   });
 
-  it("contains a SQLite importer throw: logs crawler_json_import_failed and still returns the result unchanged", async () => {
+  it("forwards the lease fence and reports lease loss as a failed source result", async () => {
+    const lease = { source: "src_a", owner: "owner", now: () => NOW };
+    mockedImportMysql.mockRejectedValueOnce(new CrawlerLeaseLostError());
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const returned = await persistCrawlTaskResult(database, mysql, source(), taskResult(), lease);
+      expect(mockedImportMysql).toHaveBeenNthCalledWith(1, mysql, expect.any(Object), lease);
+      expect(returned).toMatchObject({ ok: false, status: "failure", errorCode: "CrawlerLeaseLostError", payload: { status: "failure", errorCode: "CrawlerLeaseLostError" } });
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  it("contains a SQLite importer throw: logs crawler_json_import_failed and returns a failed result", async () => {
     const result = taskResult();
     const theSource = source({ id: "throwing_source" });
     mockedImportSqlite.mockImplementationOnce(() => {
@@ -138,9 +152,9 @@ describe("persistCrawlTaskResult", () => {
 
     const returned = await persistCrawlTaskResult(database, undefined, theSource, result);
 
-    expect(returned).toBe(result);
-    expect(returned.ok).toBe(true);
-    expect(returned.status).toBe("success");
+    expect(returned.ok).toBe(false);
+    expect(returned.status).toBe("failure");
+    expect(returned.errorCode).toBe("CrawlerPersistenceError");
     expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
     const [loggedPayload] = consoleErrorSpy.mock.calls[0] as [string];
     expect(JSON.parse(loggedPayload)).toMatchObject({
@@ -152,7 +166,7 @@ describe("persistCrawlTaskResult", () => {
     consoleErrorSpy.mockRestore();
   });
 
-  it("contains a MySQL importer rejection: logs crawler_json_import_failed and still returns the result unchanged", async () => {
+  it("contains a MySQL importer rejection: logs crawler_json_import_failed and returns a failed result", async () => {
     const result = taskResult();
     const theSource = source({ id: "throwing_mysql_source" });
     mockedImportMysql.mockRejectedValueOnce(new Error("mysql import boom"));
@@ -160,7 +174,8 @@ describe("persistCrawlTaskResult", () => {
 
     const returned = await persistCrawlTaskResult(database, mysql, theSource, result);
 
-    expect(returned).toBe(result);
+    expect(returned.ok).toBe(false);
+    expect(returned.errorCode).toBe("CrawlerPersistenceError");
     expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
     const [loggedPayload] = consoleErrorSpy.mock.calls[0] as [string];
     expect(JSON.parse(loggedPayload)).toMatchObject({
@@ -181,7 +196,7 @@ describe("persistCrawlTaskResult", () => {
   // "bids is truthy but not an array" trigger (see route.test.ts's
   // "does not abort the batch when a payload's bids is present but not an array" for that exact,
   // real-stampJurisdiction, end-to-end scenario).
-  it("contains a stampJurisdiction throw the same way as an importer throw: logs crawler_json_import_failed and still returns the result unchanged", async () => {
+  it("contains a stampJurisdiction throw the same way as an importer throw: logs crawler_json_import_failed and returns a failed result", async () => {
     const result = taskResult();
     const theSource = source({ id: "throwing_stamp_source" });
     mockedStampJurisdiction.mockImplementationOnce(() => {
@@ -191,10 +206,10 @@ describe("persistCrawlTaskResult", () => {
 
     const returned = await persistCrawlTaskResult(database, undefined, theSource, result);
 
-    expect(returned).toBe(result);
-    expect(returned.ok).toBe(true);
-    expect(returned.status).toBe("success");
-    expect(mockedImportSqlite).not.toHaveBeenCalled();
+    expect(returned.ok).toBe(false);
+    expect(returned.status).toBe("failure");
+    expect(returned.errorCode).toBe("CrawlerPersistenceError");
+    expect(mockedImportSqlite).toHaveBeenCalledWith(database, expect.objectContaining({ status: "failure", errorCode: "CrawlerPersistenceError", bids: [] }));
     expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
     const [loggedPayload] = consoleErrorSpy.mock.calls[0] as [string];
     expect(JSON.parse(loggedPayload)).toMatchObject({

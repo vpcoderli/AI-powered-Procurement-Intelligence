@@ -1743,3 +1743,71 @@ describe("jurisdiction columns", () => {
     }
   });
 });
+
+describe("attachment repair migration (C4)", () => {
+  it("adds the repair bookkeeping columns and index to bid_attachments", async () => {
+    const testDb = await createTestDatabase();
+
+    try {
+      const columns = testDb.db.$client
+        .prepare("PRAGMA table_info(bid_attachments)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(columns).toEqual(
+        expect.arrayContaining(["verified_at", "repair_attempts", "next_repair_at", "failure_kind"]),
+      );
+
+      const indexes = testDb.db.$client
+        .prepare("PRAGMA index_list(bid_attachments)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(indexes).toContain("idx_bid_attachments_repair");
+
+      const defaults = testDb.db.$client
+        .prepare("PRAGMA table_info(bid_attachments)")
+        .all()
+        .find((row) => (row as { name: string }).name === "repair_attempts") as
+        | { dflt_value: string; notnull: number }
+        | undefined;
+
+      expect(defaults?.notnull).toBe(1);
+      expect(String(defaults?.dflt_value)).toBe("0");
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("is idempotent when an older database is migrated twice", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "apsi-db-"));
+    try {
+      const database = createDatabase(path.join(directory, "apsi.sqlite"));
+      // An older database: bid_attachments exists without the repair columns.
+      database.$client.exec(`
+        CREATE TABLE bid_attachments (
+          id TEXT PRIMARY KEY,
+          bid_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          url TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+      `);
+
+      expect(() => runMigrations(database)).not.toThrow();
+      expect(() => runMigrations(database)).not.toThrow();
+
+      const columns = database.$client
+        .prepare("PRAGMA table_info(bid_attachments)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+
+      expect(columns).toEqual(
+        expect.arrayContaining(["verified_at", "repair_attempts", "next_repair_at", "failure_kind"]),
+      );
+      database.$client.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});

@@ -3,6 +3,8 @@ import { eq } from "drizzle-orm";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { crawlerLocks } from "@/server/db/schema";
 import {
+  renewCrawlerLock,
+  renewCrawlerLockFromMysql,
   acquireCrawlerLock,
   acquireCrawlerLockFromMysql,
   releaseCrawlerLock,
@@ -18,6 +20,21 @@ describe("crawler lock repository", () => {
 
   afterEach(async () => {
     await testDb.cleanup();
+  });
+
+  it("renews only live owned leases in both databases", async () => {
+    const mysql = createFakeMysqlLockStore();
+    const input = { source: "source", owner: "owner", acquiredAt: "2026-09-15T00:00:00.000Z", expiresAt: "2026-09-15T00:10:00.000Z" };
+    acquireCrawlerLock(testDb.db, input);
+    await acquireCrawlerLockFromMysql(mysql, input);
+    const live = { source: "source", owner: "owner", now: "2026-09-15T00:05:00.000Z", expiresAt: "2026-09-15T00:15:00.000Z" };
+    expect(renewCrawlerLock(testDb.db, { ...live, owner: "other" })).toBe(false);
+    expect(await renewCrawlerLockFromMysql(mysql, { ...live, owner: "other" })).toBe(false);
+    expect(renewCrawlerLock(testDb.db, live)).toBe(true);
+    expect(await renewCrawlerLockFromMysql(mysql, live)).toBe(true);
+    const expired = { ...live, now: "2026-09-15T00:15:00.000Z", expiresAt: "2026-09-15T00:25:00.000Z" };
+    expect(renewCrawlerLock(testDb.db, expired)).toBe(false);
+    expect(await renewCrawlerLockFromMysql(mysql, expired)).toBe(false);
   });
 
   it("does not acquire a lock held by another owner", () => {
@@ -134,7 +151,7 @@ function createFakeMysqlLockStore() {
 
   return {
     locks,
-    query: async (sql: string, values: unknown[] = []) => {
+    query: async (sql: string, values: unknown[] = []): Promise<[unknown[], unknown?]> => {
       if (sql.includes("SELECT source, owner, expires_at AS expiresAt")) {
         const row = locks.get(String(values[0]));
         return [[row ? { source: row.source, owner: row.owner, expiresAt: row.expires_at } : undefined].filter(Boolean)];
@@ -142,7 +159,7 @@ function createFakeMysqlLockStore() {
 
       return [[]];
     },
-    execute: async (sql: string, values: unknown[] = []) => {
+    execute: async (sql: string, values: unknown[] = []): Promise<[unknown, unknown?]> => {
       if (sql.includes("INSERT INTO crawler_locks")) {
         const [source, owner, acquiredAt, expiresAt] = values.map(String);
         const existing = locks.get(source);
@@ -151,6 +168,14 @@ function createFakeMysqlLockStore() {
           return [{ affectedRows: 1 }];
         }
         return [{ affectedRows: 0 }];
+      }
+
+      if (sql.includes("UPDATE crawler_locks SET expires_at")) {
+        const [expiresAt, source, owner, now] = values.map(String);
+        const current = locks.get(source);
+        if (current?.owner !== owner || current.expires_at <= now) return [{ affectedRows: 0 }];
+        current.expires_at = expiresAt;
+        return [{ affectedRows: 1 }];
       }
 
       if (sql.includes("DELETE FROM crawler_locks")) {

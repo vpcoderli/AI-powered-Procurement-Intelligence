@@ -9,9 +9,19 @@ export interface CrawlerFailureInput {
 /** Python 侧抛出的异常类名，见 crawler/apsi_crawler/。 */
 const NETWORK_ERROR_CODES = new Set([
   "Timeout",
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "ENOTFOUND",
   "ConnectTimeout",
   "ReadTimeout",
   "ConnectionError",
+  "ProxyError",
+  "ChunkedEncodingError",
+  "ContentDecodingError",
+  "RetryError",
+  "RemoteDisconnected",
   "SSLError",
   "TooManyRedirects",
 ]);

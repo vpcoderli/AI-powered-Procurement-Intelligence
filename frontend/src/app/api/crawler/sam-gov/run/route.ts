@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  crawlerExceptionResult,
   runCrawlerSourceOnce,
   type CrawlerNotifier,
   type CrawlerRunner,
@@ -11,7 +12,8 @@ import {
   runSamGovCrawler,
   type SamGovCrawlerRunOptions,
 } from "@/server/crawler/sam-gov-runner";
-import { AdminAuthError, requireAdminAccess } from "@/server/admin/auth";
+import { isCrawlerRunAuthorized } from "@/server/crawler/run-authorization";
+import { recordSourceHealthOutcome } from "@/server/crawler/source-health-outcome";
 import { db, type AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { sendMatchedAlertNotifications, sendMatchedAlertNotificationsFromMysql } from "@/server/notifications/service";
@@ -35,30 +37,6 @@ interface SamGovRunRouteDependencies {
   matcher: Matcher;
   notifier: CrawlerNotifier;
   runCrawlerSourceOnce: Orchestrator;
-}
-
-function tokenFromRequest(request: Request) {
-  const authorization = request.headers.get("authorization");
-  if (authorization?.startsWith("Bearer ")) {
-    return authorization.slice("Bearer ".length);
-  }
-
-  return request.headers.get("x-crawler-token");
-}
-
-async function isAuthorized(database: AppDatabase, request: Request) {
-  const requiredToken = process.env.CRAWLER_RUN_TOKEN;
-  if (!requiredToken) return true;
-
-  if (tokenFromRequest(request) === requiredToken) return true;
-
-  try {
-    await requireAdminAccess(database, request, { roles: ["admin", "operator"] });
-    return true;
-  } catch (error) {
-    if (error instanceof AdminAuthError) return false;
-    throw error;
-  }
 }
 
 async function parseOptions(request: Request): Promise<SamGovCrawlerRunOptions> {
@@ -97,7 +75,7 @@ export function createSamGovRunPost(overrides: Partial<SamGovRunRouteDependencie
   };
 
   return async function POST(request: Request) {
-    if (!(await isAuthorized(dependencies.database, request))) {
+    if (!(await isCrawlerRunAuthorized(dependencies.database, request))) {
       return NextResponse.json(
         {
           error: {
@@ -109,15 +87,21 @@ export function createSamGovRunPost(overrides: Partial<SamGovRunRouteDependencie
       );
     }
 
-    const result = await dependencies.runCrawlerSourceOnce(dependencies.database, {
-      mysql: dependencies.mysql,
-      source: "SAM.gov",
-      owner: dependencies.owner,
-      runner: dependencies.runner,
-      runnerOptions: await parseOptions(request),
-      matcher: dependencies.matcher,
-      notifier: dependencies.notifier,
-    });
+    let result: RunCrawlerSourceOnceResult;
+    try {
+      result = await dependencies.runCrawlerSourceOnce(dependencies.database, {
+        mysql: dependencies.mysql,
+        source: "sam_gov",
+        owner: dependencies.owner,
+        runner: dependencies.runner,
+        runnerOptions: await parseOptions(request),
+        matcher: dependencies.matcher,
+        notifier: dependencies.notifier,
+      });
+    } catch (error) {
+      result = crawlerExceptionResult("sam_gov", error);
+    }
+    await recordSourceHealthOutcome(dependencies, "sam_gov", result, new Date().toISOString());
 
     if (result.status === "locked") {
       return NextResponse.json(result, { status: 409 });

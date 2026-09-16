@@ -16,6 +16,7 @@ export interface CrawlableSource {
   fipsCode: string | null;
   fetchConfig: Record<string, unknown>;
   lastSuccessAt: string | null;
+  lastFailureAt?: string | null;
   consecutiveFailures: number;
 }
 
@@ -30,8 +31,7 @@ export interface MysqlSourceStore {
  * - County/city: NULL approval_status is EXCLUDED — bulk-registered sub-state sources
  *   must receive explicit approval_status = 'approved' before their first crawl.
  *
- * The manual admin run route (listAllSources) bypasses this gate entirely so admins
- * can trigger a test run of unapproved sources.
+ * Explicit manual selections resolve all sources, then the orchestrator applies the same gate.
  */
 const LEGAL_REVIEW_ALLOWED = ["approved_public", "approved"];
 
@@ -61,6 +61,7 @@ function toCrawlableSource(row: typeof dataSources.$inferSelect): CrawlableSourc
     fipsCode: row.fipsCode ?? null,
     fetchConfig: parseFetchConfig(row.fetchConfig),
     lastSuccessAt: row.lastSuccessAt ?? null,
+    lastFailureAt: row.lastFailureAt ?? null,
     consecutiveFailures: row.consecutiveFailures ?? 0,
   };
 }
@@ -78,7 +79,7 @@ export function listCrawlableSources(db: AppDatabase): CrawlableSource[] {
           and(
             isNull(dataSources.approvalStatus),
             or(
-              isNull(dataSources.jurisdictionLevel),
+              and(isNull(dataSources.jurisdictionLevel), inArray(dataSources.issuerType, ["federal", "state"])),
               inArray(dataSources.jurisdictionLevel, ["federal", "state"]),
             ),
           ),
@@ -120,6 +121,7 @@ interface MysqlSourceRow {
   fipsCode: string | null;
   fetchConfig: string | null;
   lastSuccessAt: string | null;
+  lastFailureAt?: string | null;
   consecutiveFailures: number | string | null;
 }
 
@@ -136,6 +138,7 @@ const MYSQL_SOURCE_COLUMNS = `
   fips_code AS fipsCode,
   fetch_config AS fetchConfig,
   last_success_at AS lastSuccessAt,
+  last_failure_at AS lastFailureAt,
   consecutive_failures AS consecutiveFailures
 `;
 
@@ -153,6 +156,7 @@ function toCrawlableSourceFromMysqlRow(row: MysqlSourceRow): CrawlableSource {
     fipsCode: row.fipsCode ?? null,
     fetchConfig: parseFetchConfig(row.fetchConfig),
     lastSuccessAt: row.lastSuccessAt ?? null,
+    lastFailureAt: row.lastFailureAt ?? null,
     consecutiveFailures: Number(row.consecutiveFailures ?? 0),
   };
 }
@@ -171,7 +175,7 @@ export async function listCrawlableSourcesFromMysql(
           approval_status = 'approved'
           OR (
             approval_status IS NULL
-            AND (jurisdiction_level IS NULL OR jurisdiction_level IN ('federal', 'state'))
+            AND ((jurisdiction_level IS NULL AND issuer_type IN ('federal', 'state')) OR jurisdiction_level IN ('federal', 'state'))
           )
         )
         AND (legal_review_status IS NULL OR legal_review_status IN ('approved_public', 'approved'))
