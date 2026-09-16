@@ -63,7 +63,7 @@ Includes everything in Mode A, plus:
 
 Limit:
 
-- The repository currently has no Dockerfile. If the team chooses ECS/Fargate, add a container build step before executing this path.
+- Build `frontend/Dockerfile` from the repository root; use `runner` for web and `worker` for ECS tasks. Configure ECR publishing and ECS scheduling before executing this path.
 
 ## AWS Staging Dry-Run Evidence Protocol
 
@@ -460,20 +460,19 @@ Use this path for Mode B.
 
 ### Container Image Requirement
 
-The repository currently has no Dockerfile. Before running ECS workers, create one production image that can run:
+Build the two targets from the repository root:
 
 ```bash
-npm run start -- -p 8080
-npm run worker:crawler
-npm run worker:events
-npm run worker:notifications
-npm run crawler:once
+docker build -f frontend/Dockerfile --target runner -t apsi-web .
+docker build -f frontend/Dockerfile --target worker -t apsi-worker .
 ```
 
-After the image exists:
+The runner starts `node server.js`; configure `PORT=8080` when required. The worker includes Python, crawler source, tzdata, Node dependencies, and scripts. Its default command runs the crawler worker; override with `npm run worker:events`, `npm run worker:notifications`, or `npm run crawler:once` as appropriate. Keep Scrapling on a private network and pass `SCRAPLING_EXTRACTOR_URL` to both entry points.
 
-1. Push the image to ECR.
-2. Create one task definition for web or one shared task definition with command overrides.
+After building:
+
+1. Push both images to ECR. These are two distinct images, not one image with two commands: the runner carries only the pruned Next standalone output and has no `tsx`, so it cannot run any worker script.
+2. Create one task definition for the web image, and one for the worker image. Run the three workers as separate tasks off that single worker image using command overrides.
 3. Attach the same Secrets Manager / SSM values used by App Runner.
 4. Send logs to CloudWatch.
 5. Run worker preflight in ECS:

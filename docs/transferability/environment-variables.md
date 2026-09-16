@@ -28,8 +28,13 @@ rg -n "sk_live_|whsec_|secret|password|token" docs frontend/.env.local 2>/dev/nu
 | `MYSQL_DATABASE_URL` | Optional alternative MySQL URL used by `npm run db:mysql:migrate`. | Same boundary as `DATABASE_URL`; do not set both unless intentionally overriding. |
 | `MYSQL_CONNECTION_LIMIT` | Optional local MySQL pool size for migration tooling. | Set according to runtime and RDS capacity after cutover. |
 | `ADMIN_UI_LOCAL_BYPASS` | May be `true` for local admin testing only. | Must be unset or false. |
-| `CRAWLER_RUN_TOKEN` | Optional local token for protected crawler run APIs. | Required if crawler run APIs are exposed; store in secret manager. |
-| `CRAWLER_ATTACHMENT_DIR` | Optional local attachment path. | Persistent storage path or object storage handoff. |
+| `CRAWLER_RUN_TOKEN` | Optional bearer / `x-crawler-token` for `POST /api/crawler/state/run` and `/api/crawler/sam-gov/run`. Without it, only an admin/operator session may trigger runs. | Required if crawler run APIs are exposed; store in secret manager. |
+| `CRAWLER_ALLOW_UNAUTHENTICATED_LOCAL_RUN` | `true` lets loopback requests trigger crawler run APIs without a token or session, only when `NODE_ENV` is `development`/`test` and no `*_ENV` variable names production or staging. | Must be unset. |
+| `CRAWLER_TASK_TIMEOUT_MS` | Optional; defaults to `1800000` (30 min). Whole fetch-task budget including detail enrichment; the Python child is SIGKILLed past it and the run fails with `CrawlerTaskTimeoutError`. | Set explicitly from the largest configured `max_details_per_run` × `min_interval_seconds`. |
+| `CRAWLER_PLATFORM_MIN_INTERVAL_MS` | Optional; defaults to `5000`. Minimum pause between two sources of the same `provider_family` inside one crawl tick. When one of them answers with a challenge/throttle (BidNet challenge, or HTTP 403/429/202), the remaining not-yet-run sources of that platform come back `status: "deferred"` for the tick instead of being run into the wall — no health write-back, no retry. | Raise it for platforms that rate-limit aggressively (BidNet Direct sits behind AWS WAF); never lower it below the portal's documented crawl delay. |
+| `CRAWLER_PYTHON_BIN` | Optional; defaults to `python3` on `PATH`. | Set to the crawler venv interpreter (the container images bake `/opt/crawler-venv/bin/python`). |
+| `CRAWLER_DIRECTORY` | Optional; defaults to `../crawler` relative to `frontend/`. | Set to the packaged crawler source directory (the container images bake `/crawler`). |
+| `CRAWLER_ATTACHMENT_DIR` | Optional local attachment path; a path-separator-delimited list. The **first** entry is the archive write root used by the attachment repair worker; the remaining entries stay readable roots for already-archived files. Unset = `<cwd>/data/attachments`. | Persistent storage path or object storage handoff. |
 | `APP_ORIGIN` | Optional; not required when running on `localhost:3000` (dev origins are trusted automatically). | Set to the canonical HTTPS origin (for example `https://app.apsi.example.com`). Used by the CSRF Origin/Referer check in `frontend/src/server/security/csrf.ts`. |
 | `CSRF_ALLOWED_ORIGINS` | Optional comma-separated list, only needed when testing multiple origins locally. | Set when more than one origin legitimately calls state-changing APIs with the session cookie (for example a staging origin kept alongside production, or a separate marketing subdomain). Comma-separated absolute origins, for example `https://app.apsi.example.com,https://staging.apsi.example.com`. |
 
@@ -207,6 +212,21 @@ See `frontend/src/server/ai/prompt-registry.ts`, `frontend/src/server/ai/confide
 | `CRAWLER_WORKER_SEND_RETRY_MAX_ATTEMPTS` | Optional; defaults to `3`. | Number of fast in-process retries for a single search-alert notification send triggered after a crawler run, mirroring `NOTIFICATION_WORKER_SEND_RETRY_MAX_ATTEMPTS`. |
 | `CRAWLER_WORKER_SEND_RETRY_BASE_DELAY_MS` | Optional; defaults to `200`. | Base delay (ms) for that notification send retry backoff. |
 | `CRAWLER_WORKER_SEND_RETRY_MAX_DELAY_MS` | Optional; defaults to `10000`. | Upper bound (ms) on that notification send retry delay. |
+| `ATTACHMENT_WORKER_INTERVAL_MS` | Optional; defaults to `21600000` (6 h). Loop interval of `npm run worker:attachments`. | Set explicitly for the scheduled attachment repair worker. |
+| `ATTACHMENT_WORKER_RUN_ONCE` | Optional; `1`/`true` runs a single pass and exits (same as the `--once` flag, and what `npm run attachments:repair:once` sets). | Use for one-off/scheduled single passes (for example an ECS scheduled task). |
+| `ATTACHMENT_REPAIR_MAX_PER_SOURCE` | Optional positive integer. Caps attachments attempted per source per run, **downward only** — it can lower but never raise each source's `fetch_config.attachments.max_per_run` (default 50). | Use to throttle a first backfill run; leave unset to honour per-source policy. |
+| `BROWSER_DOWNLOADER_URL` | Optional http(s) URL of the headless-browser download sidecar. `http://localhost:8092` with `services/browser-downloader/run-local.sh`; `http://browser-downloader:8092` under docker compose (no host port is published — the sidecar is reachable only from the compose network). Unset = sources configured with `attachments.mode=browser` stay queued as `browser_unavailable`. | Private network address of the sidecar; it has no authentication and must never be exposed publicly. |
+| `BROWSER_DOWNLOADER_HOST` | Sidecar-side. Optional; defaults to `127.0.0.1` so a locally run sidecar is not reachable off-box. | The container image sets `0.0.0.0` for the compose/private network; keep the service behind the private network. |
+| `BROWSER_DOWNLOADER_PORT` | Sidecar-side. Optional; defaults to `8092`. | Set to match the port in `BROWSER_DOWNLOADER_URL`. |
+| `BROWSER_DOWNLOADER_MAX_BYTES` | Sidecar-side. Optional; defaults to `52428800` (50 MB). Hard ceiling on a single download the sidecar will buffer. | Set at or above the largest per-source `attachments.max_bytes`. |
+
+Attachment repair one-shot (operations guide: `docs/operations/attachment-repair.md`):
+
+```bash
+cd frontend
+npm run worker:attachments:check                              # environment preflight only
+ATTACHMENT_REPAIR_MAX_PER_SOURCE=3 npm run attachments:repair:once
+```
 
 Crawler one-shot:
 
@@ -217,7 +237,7 @@ STATE_CRAWLER_LIMIT=5 npm run crawler:once
 
 ## Worker Reliability (Retry/Backoff and Failure Alerting)
 
-All three worker scripts (`crawler-worker.ts`, `event-worker.ts`, `notification-worker.ts`) now retry individual items (one crawler source, one notification send, one event outbox row) with exponential backoff + jitter before recording that item as failed for the current tick — see `frontend/src/lib/resilience/retry.ts`. This is layered on top of, not a replacement for, each worker's existing durable cross-tick retry mechanism (`crawlerLocks`, `notification_outbox.attempt_count`, `event_outbox.attempt_count`): the new in-process retries only affect how many times the underlying send/run/handler call is attempted before one outcome is recorded per tick, the same as before.
+The three outbox/crawler worker scripts (`crawler-worker.ts`, `event-worker.ts`, `notification-worker.ts`) retry individual items (one crawler source, one notification send, one event outbox row) with exponential backoff + jitter before recording that item as failed for the current tick — see `frontend/src/lib/resilience/retry.ts`. This is layered on top of, not a replacement for, each worker's existing durable cross-tick retry mechanism (`crawlerLocks`, `notification_outbox.attempt_count`, `event_outbox.attempt_count`): the new in-process retries only affect how many times the underlying send/run/handler call is attempted before one outcome is recorded per tick, the same as before.
 
 When an item exhausts its in-process retries, the worker emits a structured JSON failure-alert log line (`frontend/src/lib/resilience/failure-alerts.ts`) with the worker name, item id, attempt count, and error, tagged `"alert": true`. This is log-only today — wiring these alerts to a real paging channel (Slack/PagerDuty/email) is a human follow-up; match on `"alert": true` in your log pipeline to build that alert rule.
 

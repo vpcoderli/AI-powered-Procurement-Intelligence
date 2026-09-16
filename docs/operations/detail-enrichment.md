@@ -1,5 +1,7 @@
 # 详情补全（Scrapling extractor）运维
 
+完整执行链路、字段覆盖规则和当前缺口见[爬虫与 Scrapling 逻辑梳理](../architecture/crawler-enrichment-flow.md)。下列门户数据为历史实测快照。当前代码已增加离线跨层验证，结果见[修复验证记录](crawler-hardening-verification.md)。
+
 ## 组件
 
 - `services/scrapling-extractor`：解析 sidecar（Python 3.12，scrapling 0.4.15 基础包，无抓取/反检测组件）。只接收 HTML 字符串并返回解析结果，自身不发起任何外部请求。
@@ -12,6 +14,7 @@
 - **本机（宿主机跑 `npm run dev` 时的标准路径）**：`services/scrapling-extractor/run-local.sh`；
   `frontend/.env.local` 设 `SCRAPLING_EXTRACTOR_URL=http://localhost:8091`。
   健康检查：`curl -s http://localhost:8091/health` → `{"ok": true, "scrapling": "0.4.15"}`。
+- **容器 worker**：从仓库根目录构建；`docker compose --profile workers up -d --build crawler-worker` 显式启用调度。仅检查环境可用 `docker compose --profile workers run --rm crawler-worker npm run worker:crawler:check`。app 和 worker 均包含 Python、crawler 代码和时区数据库。
 - **compose：sidecar 只在 compose 网络内可达，不发布宿主机端口**（`docker-compose.yml` 里没有
   `ports:`）。`docker compose up -d scrapling-extractor` 后由 `app` 容器通过 compose DNS 访问
   `http://scrapling-extractor:8091`（URL 已自动注入）；宿主机不要去连 `localhost:8091`，要验健康
@@ -22,7 +25,7 @@
 ## 观测
 
 - `crawler_logs.metadata.enrichment`：`{attempted, enriched, failed, skipped, reason, extractor}`；`reason` 取值 `disabled | extractor_not_configured | extractor_unavailable | enrichment_crashed | null`。
-- `bids.detail_fetched_at`、`bids.raw_payload.enrichment.fields`（每字段 `selector` / `heuristic` / `not_found`）。
+- `bids.detail_fetched_at`、`bids.raw_payload.enrichment.fields`（每字段 `selector` / `heuristic` / `not_found`）。`applied_fields` 记录本次应用字段（含显式清除），`persisted_fields` 是数据库累积的详情保护字段。
 - 注意语义：`enriched` 统计的是**实际写入了至少一个字段**的记录条数（2026-09-15 修正；此前它统计的是"抓取 + 解析成功"，CA 那种全 `not_found` 的 SPA 外壳会虚报 `enriched: 24`）。详情页抓到了、解析器也答了，但没有任何字段被写入（返回值全为 `not_found`，或都已存在）的记录现在计入 `skipped`，`attempted` 含义不变。因此 `attempted = enriched + failed + (本次抓取但未写入的 skipped)`，逐字段收益仍以 `raw_payload.enrichment.fields` 为准。
 
 常用 SQL：
@@ -108,7 +111,7 @@ status = success, fetched_count = 25
 | `MD5(GROUP_CONCAT(id~description~category~contact_*))` | `f0c86cb6faf8548982179845a35c7b0f` | `f0c86cb6faf8548982179845a35c7b0f` |
 | `bid_attachments` 行数 / 覆盖招标数 | 72 / 25 | 72 / 25 |
 
-导入器只在目标字段为空（或 `description` 恰好等于 `title`）时才写入，所以纯列表页的复跑不会冲掉已补全的值。
+上表验证的是当时版本。当前导入器增加来源标记、附件增量合并、成功归档保护和事务：非空列表摘要也不能覆盖已标记的详情字段，后续有效详情可以更新。已新增 SQLite/MySQL 离线回归，历史门户数据不作为当前全部字段保护的证明。
 
 ## 已知偏差
 
@@ -140,11 +143,7 @@ status = success, fetched_count = 25
 ## 边界
 
 - 详情页 403 / WAF 挑战 / TLS 重置只计 `failed`，不重试、不绕过、不做浏览器渲染、不解验证码。
-- 登录后才能看的详情页不抓取；发现某个源的详情页 302 到登录页，正确做法是把该源的补全关掉。补全阶段本身也会拦截这类跳转：抓取后比对最终 URL，出现"换了 host / 路径新增 `/login`、`/signin`、`/sign-in`、`/account/login`、`/auth` 标记 / 跳转后丢掉了原路径末段（详情 id）"三者之一，就判定抓到的不是目标详情页，**不调用解析器、不合并任何字段**，直接计 `failed` 并向 stderr 打印 `RedirectedOffTarget: final url …`。这是拦截，不是绕过 —— 项目不会为登录墙做任何绕过。
-- 补全只填空值；关闭补全后的运行不会覆盖已补全数据（importer 保护式 upsert）。反过来说，
-  补全写错的值也不会被自动修正，所以上线新源前应先用少量样本核对选择器。
-  **保护范围有限**：importer 只在传入值为空、或 `description` 恰好等于标题时才保留已补全的值；
-  如果某个源的列表页本身带有一段真实的简短说明，关闭补全后的复跑仍会用这段列表页文案刷新
-  `description`（IL 的复跑之所以完全等价，是因为它的列表页描述恰好等于标题）。
+- 登录后才能看的详情页不抓取；发现某个源的详情页 302 到登录页，正确做法是把该源的补全关掉。补全阶段本身也会拦截这类跳转：抓取后比对最终 URL，出现"换了 host / 路径新增 `/login`、`/signin`、`/sign-in`、`/account/login`、`/auth` 标记 / 跳转后丢掉了原路径末段（详情 id）"三者之一，或 query 招标身份变化、同 URL 返回登录表单，就判定抓到的不是目标详情页，**不调用解析器、不合并任何字段**，直接计 `failed` 并向 stderr 打印 `RedirectedOffTarget: final url …`。这是拦截，不是绕过 —— 项目不会为登录墙做任何绕过。
+- 补全按正文质量和联系人子字段判断缺失；更完整的详情可替换列表摘要。数据库按 `applied_fields` / `persisted_fields` 保护字段，附件按 URL/稳定 ID 合并，成功归档不会因发现链接而降级。旧脏值仍需人工确认后修正。
 - sidecar 只做解析：它不发起外部请求，HTML 由 crawler 自己按既有礼貌策略（默认 3 秒间隔、
   每源每次最多 25 条详情页）抓取后 POST 进去。

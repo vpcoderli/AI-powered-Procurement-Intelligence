@@ -19,7 +19,8 @@ All commands run from the `frontend/` directory.
 npm run dev                      # Next.js dev server (localhost:3000)
 npm run build && npm run start   # Production build (build also typechecks — there is no separate typecheck script)
 npm run lint                     # ESLint (flat config, no path arg needed)
-npm run test                     # Vitest suite (~280 test files)
+npm run test                     # Vitest suite (~300 test files; discovery limited to src/, scripts/ and the root so .next/standalone copies are skipped)
+npm run test:crawler-integration # Opt-in offline cross-language pipeline test. Needs ONE Python >= 3.10 interpreter with BOTH crawler/requirements.txt and services/scrapling-extractor/requirements.txt installed (CRAWLER_INTEGRATION_PYTHON); CRAWLER_INTEGRATION_MYSQL_URL (root-level URL, no schema) adds the real-MySQL cases, which create and drop a random apsi_crawler_test_* database
 npm run db:migrate               # Apply schema migrations to SQLite
 npm run db:seed                  # Seed demo data
 npm run auth:reset-admin         # Reset admin password
@@ -27,7 +28,9 @@ npm run crawler:once             # One-shot run of every configured source (SAM.
 npm run worker:crawler           # Continuous crawler daemon
 npm run worker:events            # Event outbox daemon
 npm run worker:notifications     # Notification delivery daemon
-npm run workers:check            # Non-blocking health check of all three workers
+npm run worker:attachments       # Attachment archive/repair daemon (6 h)
+npm run attachments:repair:once  # One attachment repair pass, then exit
+npm run workers:check            # Non-blocking health check of all four workers
 npm run source:health:check      # Verify scraper source liveness
 npm run i18n:check               # i18n coverage scan (see i18n section)
 npm run billing:stripe:sandbox   # Stripe E2E sandbox test
@@ -51,17 +54,22 @@ npm run db:mysql:import-sqlite   # Copy a local SQLite DB into MySQL
 ### Docker / CI
 
 ```bash
-docker compose up --build        # Local web app (repo root), http://localhost:3000
-docker build -t apsi-frontend frontend
+docker compose up --build                                        # Web app + Scrapling sidecar (repo root), http://localhost:3000
+docker compose --profile workers up -d crawler-worker            # Opt-in scheduled crawler worker (SQLite dev topology)
+docker compose --profile workers up -d browser-downloader attachment-worker  # Opt-in attachment archiving/repair + its headless-browser sidecar
+docker build -f frontend/Dockerfile --target runner -t apsi-web .      # Build context is the REPO ROOT, not frontend/
+docker build -f frontend/Dockerfile --target worker -t apsi-worker .
 ```
 
-`.github/workflows/ci.yml` runs on every push/PR: `npm ci`, `lint`, `test`, `build`, then seeds a throwaway SQLite DB (`npm run db:seed`) and runs `npm run risk:check` as a merge gate. CI deliberately does **not** set `NODE_ENV=production` — production mode makes `risk:check` additionally require real-world data-source legal/approval review, which seed data cannot satisfy (that stricter gate belongs to the release checklist). `frontend/Dockerfile` is a multi-stage build (`deps` → `builder` → `runner`) using Next.js `output: "standalone"` and packages **only the web process** — the three worker scripts are not in this image. `docker-compose.yml` is local/demo parity only; production topology lives in `docs/operations/aws-deployment-runbook.md`.
+`.github/workflows/ci.yml` runs on every push/PR: the `frontend` job (`npm ci`, `lint`, `test`, `build`, seed a throwaway SQLite DB, `npm run risk:check` as a merge gate), a `crawler` job (pytest for `crawler/` and `services/scrapling-extractor/` on Python 3.12), a `crawler-runtime` job (builds the `worker` image and smoke-runs the Python CLI and `worker:crawler:check` inside it), and a `crawler-integration` job (`npm run test:crawler-integration` against a MySQL 8 service: real list fixture → real adapter → HTTP extractor → CLI JSON → both importers). CI deliberately does **not** set `NODE_ENV=production` — production mode makes `risk:check` additionally require real-world data-source legal/approval review, which seed data cannot satisfy (that stricter gate belongs to the release checklist).
+
+`frontend/Dockerfile` is built from the repository root and has three useful targets: `crawler-runtime` (node:20-alpine + a Python venv with `crawler/requirements.txt`, `/crawler/apsi_crawler`, tzdata; bakes `CRAWLER_DIRECTORY=/crawler` and `CRAWLER_PYTHON_BIN`), `runner` (Next.js `output: "standalone"` web process on top of it, so API-triggered crawls work in the container) and `worker` (full `node_modules` + `tsx` + `src/` + `scripts/`; default command is the crawler worker, override for `worker:events` / `worker:notifications` / `crawler:once`). `.dockerignore` at the repo root keeps `.env*`, `node_modules`, `.next`, `.venv` and `frontend/data` out of the context. `docker-compose.yml` is local/demo parity only (SQLite, sidecar internal-only, worker behind the `workers` profile, no admin bypass); production topology lives in `docs/operations/aws-deployment-runbook.md`.
 
 ## Crawler Commands
 
 ```bash
 cd crawler
-pip install -r requirements.txt
+pip install -r requirements.txt                  # requirements-runtime.txt (requests only) is what the container images install
 pytest                                              # All tests
 PYTHONPATH=. pytest tests/test_generic_state.py     # One test file
 echo '{"task_id":"t1","source_id":"ca_caleprocure","label":"California Cal eProcure","state_code":"CA","provider_family":null,"fetch_config":{"base_url":"https://caleprocure.ca.gov"},"limit":25,"query":null}' \
@@ -69,9 +77,12 @@ echo '{"task_id":"t1","source_id":"ca_caleprocure","label":"California Cal eProc
 python -m apsi_crawler.cli fetch-sam-gov --posted-from 2026-07-01 --posted-to 2026-07-28
 python -m apsi_crawler.cli validate-state-live --source ca_caleprocure          # repeatable; defaults to all beta sources
 python -m apsi_crawler.cli import-fixture --database <path> --fixture <path>
+echo '{"base_url":"https://www.bidnetdirect.com/ohio/franklin-county/solicitations/open-bids","label":"Franklin County, OH (BidNet)","state_code":"OH","provider_family":"bidnet"}' \
+  | python -m apsi_crawler.cli discover-tenant      # read-only tenant-path probe; suggests a base_url, never writes one
+echo '{"base_url":"https://www.bidnetdirect.com/x"}' | python -m apsi_crawler.cli fetch-robots   # robots.txt via the crawler's HTTP client
 ```
 
-Those four subcommands — `import-fixture`, `fetch-sam-gov`, `validate-state-live`, `fetch-task` — are the complete CLI surface (`build_parser()` in `crawler/apsi_crawler/cli.py`).
+Those seven subcommands — `import-fixture`, `fetch-sam-gov`, `validate-state-live`, `fetch-task`, `archive-attachments`, `discover-tenant`, `fetch-robots` — are the complete CLI surface (`build_parser()` in `crawler/apsi_crawler/cli.py`). The last four all use the same stdin-JSON → stdout-JSON contract as `fetch-task`. `fetch-robots` exists because WAF-fronted portals (BidNet Direct) reject Node's `fetch` outright while serving the crawler's `requests` client, so the admin pre-check and `source:compliance:scan` fetch robots.txt through the crawler (`src/server/admin/crawler-robots-fetch.ts`; `--node-fetch` opts out in the script).
 
 ## Architecture
 
@@ -152,15 +163,24 @@ Client side: `useFeature` (`src/lib/features/useFeature.ts`).
 
 **MySQL crawler flow:** `state-runner.ts`'s `runCrawlTask` always invokes the Python CLI's `fetch-task` (stdin JSON in, stdout JSON out) the same way regardless of dialect — there is no `--output-json`/`--database` branch left on this path. Dialect branching happens on the TS side, in `persistCrawlTaskResult` (`crawl-task-persistence.ts`): it pipes the parsed result through `mysql-json-importer.ts` when a MySQL pool is present, or `sqlite-json-importer.ts` otherwise.
 
-**Detail enrichment (optional):** `fetch-task` runs `apsi_crawler/enrichment.py` after the liveness check when a source's `fetch_config.enrichment.enabled` is true: it fetches each bid's `source_url` on the crawler's own requests path and POSTs the HTML to the `services/scrapling-extractor` sidecar (`SCRAPLING_EXTRACTOR_URL`; Scrapling 0.4.15 parser only — no fetchers, no anti-bot tooling, never bypasses WAF challenges). It only fills empty fields, never fails the run (`metadata.enrichment` reports stats), and both JSON importers use enrichment-preserving upserts so a later list-page-only run cannot clobber enriched values. Admins edit `fetch_config`/`cadence`/`base_url` per source in `/admin` (PATCH `/api/admin/data-sources/[id]`). Operations guide and measured MySQL baseline: `docs/operations/detail-enrichment.md`.
+**Detail enrichment (optional):** `fetch-task` runs `apsi_crawler/enrichment.py` after the liveness check when a source's `fetch_config.enrichment.enabled` is true: it fetches each bid's `source_url` on the crawler's own requests path and POSTs the HTML to the `services/scrapling-extractor` sidecar (`SCRAPLING_EXTRACTOR_URL`; Scrapling 0.4.15 parser only — no fetchers, no anti-bot tooling, never bypasses WAF challenges or login walls; off-target redirects, changed detail-ID queries and same-URL login forms are counted as `failed` without parsing). It fills missing or summary-only values judged by `content_quality.py` (title echoes and duplicate short/long copies are never "content"), validates the whole extractor response before mutating a bid, merges attachments by URL, and records provenance in `raw_payload.enrichment.applied_fields` (+ `original_values` for normalized dates). It never fails the run (`metadata.enrichment` reports `attempted/enriched/failed/skipped`).
+
+Persistence is the other half of the contract: `persistence-merge.ts` (shared by both JSON importers, executed inside one transaction per run) keeps detail-provenance fields (`applied_fields`, cumulative `persisted_fields`) from being downgraded by list-page values, merges `bid_attachments` incrementally (never deletes unobserved rows, never erases a successful archive), and normalizes legacy title echoes to `description = ""` / `full_description = null`. `validateCrawlerImport` refuses a zero-row "success" unless `metadata.dateFilter` explains it (`kept: 0`, `dropped > 0`, `unparsed: 0`) or `metadata.emptyState` reports a verified, tenant-confirmed empty list. A persistence failure is a source failure (`CrawlerPersistenceError`, separate failure log row, no notifications, health write-back as failure). The UI picks the displayable text with `src/lib/bid-description.ts`. Admins edit `fetch_config`/`cadence`/`base_url` per source in `/admin` (PATCH `/api/admin/data-sources/[id]`). Full flow: `docs/architecture/crawler-enrichment-flow.md`; operations guide and measured MySQL baseline: `docs/operations/detail-enrichment.md`.
+
+**Attachment repair (separate worker):** the crawler only records attachment *links*; archiving is a separate loop. `attachment-repair-worker.ts` → `runAttachmentRepairOnce` classifies each `bid_attachments` row with the pure classifier in `src/server/attachments/anomaly.ts` (`never_archived | archive_failed | archive_missing | archive_corrupt | path_not_portable | unavailable | healthy`), takes an `attachment_repair:<source_id>` `crawler_locks` lease per source, and spawns `python -m apsi_crawler.cli archive-attachments` (stdin JSON → stdout JSON, same contract style as `fetch-task`) which validates magic bytes, never writes HTML to disk, and returns `storage_path` **relative** to the archive root. Per-source policy lives in `data_sources.fetch_config.attachments` (`archive`, `mode`, `max_per_run`, `min_interval_seconds`, `timeout_seconds`, `max_bytes`, `browser_link_selector`), validated by `src/server/attachments/policy.ts` and edited in the admin crawler-config panel. `mode: "browser"` routes the download through the `services/browser-downloader` Playwright sidecar (`BROWSER_DOWNLOADER_URL`) which only clicks download controls on public pages — never logs in, never solves CAPTCHAs, never leaves `allowed_hosts`; unreachable = `browser_unavailable` + backoff, never a run failure. Each run writes exactly one `crawler_logs` row with `source = "attachment_repair"`. Operations guide: `docs/operations/attachment-repair.md`.
+
+**List extraction & local-source approval:** list-page parsing is configured per source in `data_sources.fetch_config.list_extraction` (`mode: "scrapling" | "adapter"`, `render`, `item_selector`, `max_items`, six field `selectors`), validated by `src/server/admin/crawler-config.ts` (`parseListExtractionConfig`/`serializeListExtractionConfig`) and edited in the admin crawler-config panel's "List extraction" group. Scrapling is the **main path** (the sidecar's `POST /extract-list`) and the adapter's own parser is the automatic fallback — the crawler reports which ran in `metadata.listExtraction.method` (`scrapling | adapter | adapter_fallback`). Either way the list page is fetched exactly once; `render: true` routes that one fetch through the browser sidecar's `POST /render` for JS-built lists. A list page that is HTTP 200, carries an explicit "no open bids" phrase in its **visible** copy (hidden template rows — `aria-hidden`, `hidden`, `display:none` — never count; BidNet keeps such a row above real rows), yields **zero parsed rows** on both the sidecar and the adapter parser, and confirms the tenant is a **verified empty state**: `status = "success"` with `bids = []` and `metadata.emptyState`, which `validateCrawlerImport` accepts as a zero-row success (health is not downgraded). County/city/special-district rows stay behind the governance gate in `orchestrator.ts` until a person approves them: `POST /api/admin/data-sources/[id]/precheck` (`src/server/admin/source-precheck.ts`, admin/operator) runs robots.txt + a non-persisting `limit=5` dry run + a `discover-tenant` probe on 404 and returns a `ready | empty | needs_fix` verdict plus an optional `suggestedBaseUrl`; the admin then approves through the existing PATCH with the full compliance ledger (reviewer, ToS, legal reference, next review date). Nothing in that flow bypasses the gate. When one source of a platform hits a challenge/throttle, the rest of that `providerFamily` in the same tick come back `status: "deferred"` (`platform-deferral.ts`, `CRAWLER_PLATFORM_MIN_INTERVAL_MS`) instead of being run into a 403 wall. Operations guide: `docs/operations/local-source-approval.md`.
+
+**Execution controls:** `runCrawlerSourceOnce` (orchestrator.ts) takes a `crawler_locks` lease with a per-attempt unique owner, renews it every TTL/3 (`renewCrawlerLock*`), aborts the Python child on lease loss, and hands runners a `CrawlerExecutionContext` (`signal`, `assertLease`, `lease`) that the importers re-check inside their write transaction. `CRAWLER_TASK_TIMEOUT_MS` (default 30 min) SIGKILLs a runaway child (`CrawlerTaskTimeoutError`). `CRAWLER_PYTHON_BIN` / `CRAWLER_DIRECTORY` locate the crawler (`execution-context.ts`). The manual run routes require `CRAWLER_RUN_TOKEN` or an admin/operator session; `CRAWLER_ALLOW_UNAUTHENTICATED_LOCAL_RUN=true` re-enables token-less loopback runs in development only (`run-authorization.ts`). Matcher/notifier failures after a successful ingest surface as `postProcessingErrors` and never trigger a recrawl; only network-classified failures are retried by the worker (`retrying-runner.ts`).
 
 ### Workers
 
-Three long-running scripts in `frontend/scripts/`, each supporting a `--check` flag for a non-blocking health probe:
+Four long-running scripts in `frontend/scripts/`, each supporting a `--check` flag for a non-blocking health probe:
 
 - `crawler-worker.ts` — periodically runs configured sources via `runConfiguredCrawlerSourcesOnce`, which also matches saved search alerts and queues notifications.
 - `event-worker.ts` — drains the `event_outbox` table (durable events written by `writeEvent`/`writeAuditEvent` in `src/server/events/event-log.ts`).
 - `notification-worker.ts` — drains `notification_outbox` through the configured provider (`src/server/notifications/`).
+- `attachment-repair-worker.ts` — every 6 h (`ATTACHMENT_WORKER_INTERVAL_MS`), calls `runAttachmentRepairOnce` (`src/server/attachments/repair-service.ts`) to verify and re-download bid attachments. Not part of the default compose startup; `--once` / `ATTACHMENT_WORKER_RUN_ONCE=1` runs a single pass.
 
 Both outboxes have status/created indexes and dedupe keys; delivery wraps providers in `retrying-*` decorators.
 
@@ -200,6 +220,10 @@ Create `frontend/.env.local` for local dev. Key variables:
 | `OBJECT_STORAGE_PROVIDER` | `local` | `s3` for S3/S3-compatible storage |
 | `STATE_CRAWLER_LIMIT` | — | Records per source for crawler runs |
 | `SAM_API_KEY` | — | SAM.gov federal bid crawling |
+| `CRAWLER_TASK_TIMEOUT_MS` | `1800000` | Whole fetch-task budget incl. enrichment; child is killed past it |
+| `CRAWLER_PYTHON_BIN` / `CRAWLER_DIRECTORY` | `python3` / `../crawler` | Crawler interpreter and source dir (baked into the container images) |
+| `CRAWLER_RUN_TOKEN` | — | Bearer token for the manual run routes; otherwise admin/operator session required |
+| `CRAWLER_ALLOW_UNAUTHENTICATED_LOCAL_RUN` | — | `true` allows token-less loopback runs in development/test only |
 
 Full reference: `docs/transferability/environment-variables.md`.
 
