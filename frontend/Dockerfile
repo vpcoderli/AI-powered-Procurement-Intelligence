@@ -1,77 +1,58 @@
-# syntax=docker/dockerfile:1
+# Build from the repository root: docker build -f frontend/Dockerfile .
+# The runner target serves Next.js; the worker target runs the crawler worker.
 
-# APSi frontend production image (web process only).
-#
-# Multi-stage build: deps -> build -> runtime.
-#
-# Scope note: this image runs the Next.js web server (`npm run start`) on
-# port 3000. It does NOT run the background workers (crawler-worker.ts,
-# event-worker.ts, notification-worker.ts) — those are separate long-running
-# `tsx` scripts intended to run as their own scheduled tasks/processes (see
-# docs/operations/aws-deployment-runbook.md, "ECS/Fargate Worker
-# Deployment"). This image's pruned standalone output does not include `tsx`
-# or full node_modules, so it cannot run the worker scripts as-is. If/when
-# workers are containerized, either reuse the `deps`/`builder` stages here
-# with a different runtime stage (full node_modules + tsx), or build a
-# dedicated worker image.
-
-# ---- Stage 1: deps -------------------------------------------------------
-# Installs dependencies once, including native build tooling required to
-# compile better-sqlite3's prebuilt/native binding on Alpine (musl).
 FROM node:20-alpine AS deps
 WORKDIR /app
-
-# python3/make/g++ are required by node-gyp for better-sqlite3's native
-# addon; libc6-compat covers glibc-assuming prebuilt binaries on musl.
 RUN apk add --no-cache libc6-compat python3 make g++
-
-COPY package.json package-lock.json ./
+COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
-# ---- Stage 2: builder ------------------------------------------------------
-# Builds the Next.js production bundle (standalone output, see next.config.ts).
 FROM node:20-alpine AS builder
 WORKDIR /app
-
 RUN apk add --no-cache libc6-compat
-
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
-
+COPY frontend/ ./
 ENV NEXT_TELEMETRY_DISABLED=1
+# `next build` collects page data in ~1 worker per CPU, and every worker that
+# imports `@/server/db/client` opens cwd/data/apsi.sqlite (the path is a module
+# constant; DATABASE_PATH is not consulted there) and runs
+# `pragma journal_mode = WAL`. When that file does not exist yet, the workers
+# race to create it and switch journal mode, and the losers abort the build with
+# `SqliteError: database is locked` (SQLITE_BUSY). Reproduced here as an
+# intermittent failure of `--target runner`. Creating the file in WAL mode first
+# makes each worker's pragma a no-op read, so the build is deterministic.
+RUN node -e "const D=require('better-sqlite3');require('node:fs').mkdirSync('data',{recursive:true});const d=new D('data/apsi.sqlite');d.pragma('journal_mode = WAL');d.close()"
 RUN npm run build
 
-# ---- Stage 3: runtime -----------------------------------------------------
-# Minimal image: only the standalone server output, static assets, and
-# public files. No dev dependencies, no source, no build toolchain.
-FROM node:20-alpine AS runner
+# Both entry points execute the same Python fetch-task contract. Scrapling stays
+# in its own parser service; the crawler runtime only needs its own dependencies.
+FROM node:20-alpine AS crawler-runtime
 WORKDIR /app
-
-RUN apk add --no-cache libc6-compat \
-  && addgroup --system --gid 1001 nodejs \
-  && adduser --system --uid 1001 nextjs
-
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV PORT=3000
-ENV HOSTNAME=0.0.0.0
-
-# Persisted local state (SQLite db, local attachment/object storage,
-# notification outbox files). Mount a volume at /app/data in compose/prod
-# for durability; see docker-compose.yml at the repo root.
+RUN apk add --no-cache libc6-compat python3 py3-pip tzdata \
+    && addgroup --system --gid 1001 nodejs \
+    && adduser --system --uid 1001 nextjs
+COPY crawler/requirements-runtime.txt /tmp/crawler-requirements.txt
+RUN python3 -m venv /opt/crawler-venv \
+    && /opt/crawler-venv/bin/python -m pip install --no-cache-dir -r /tmp/crawler-requirements.txt
+COPY --chown=nextjs:nodejs crawler/apsi_crawler /crawler/apsi_crawler
+ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 \
+    CRAWLER_DIRECTORY=/crawler CRAWLER_PYTHON_BIN=/opt/crawler-venv/bin/python \
+    PATH="/opt/crawler-venv/bin:${PATH}" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN mkdir -p /app/data && chown -R nextjs:nodejs /app/data
 
-# next.config.ts sets output: "standalone", which produces a pruned
-# server.js plus a minimal node_modules subset under .next/standalone.
+FROM crawler-runtime AS worker
+COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --chown=nextjs:nodejs frontend/package.json frontend/package-lock.json frontend/tsconfig.json ./
+COPY --chown=nextjs:nodejs frontend/src ./src
+COPY --chown=nextjs:nodejs frontend/scripts ./scripts
+USER nextjs
+CMD ["node_modules/.bin/tsx", "scripts/crawler-worker.ts"]
+
+FROM crawler-runtime AS runner
+ENV PORT=3000 HOSTNAME=0.0.0.0
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
-
 USER nextjs
-
 EXPOSE 3000
-
-# server.js is the standalone entrypoint generated by `next build`
-# (equivalent to `npm run start` but without needing the `next` CLI/full
-# node_modules present in the runtime image).
 CMD ["node", "server.js"]

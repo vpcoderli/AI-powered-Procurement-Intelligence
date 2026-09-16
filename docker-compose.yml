@@ -10,11 +10,21 @@
 #
 # Usage:
 #   docker compose up --build
-#   docker compose exec app npm run db:seed   # optional: seed demo data
+#   docker compose --profile workers run --rm crawler-worker npm run db:seed
+#   docker compose --profile workers up -d crawler-worker  # opt-in scheduled crawling
+#   docker compose --profile workers up -d browser-downloader attachment-worker  # opt-in attachment archiving/repair
+#   docker compose --profile workers run --rm attachment-worker npm run attachments:repair:once  # one pass
 #
 # frontend/.env.local (if present) is loaded for runtime environment
 # variables (Stripe test keys, notification provider, etc.) but is optional;
 # the app has zero-config SQLite defaults.
+#
+# Database: this file is the SQLite development topology. env_file values that
+# the services do not override are inherited verbatim, so a host-oriented
+# `DATABASE_URL=mysql://…@127.0.0.1:3306/…` in frontend/.env.local would point
+# the containers at themselves. Both services therefore pin DATABASE_URL and
+# MYSQL_DATABASE_URL to empty (= SQLite) unless you export COMPOSE_DATABASE_URL
+# in your shell, e.g. COMPOSE_DATABASE_URL=mysql://user:pw@host.docker.internal:3306/winbids.
 
 services:
   scrapling-extractor:
@@ -37,8 +47,9 @@ services:
 
   app:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend/Dockerfile
+      target: runner
     image: apsi-frontend:local
     depends_on:
       # Detail enrichment is fail-open (unset/unreachable extractor = enrichment skipped), so the
@@ -54,11 +65,13 @@ services:
     environment:
       NODE_ENV: production
       PORT: "3000"
+      # SQLite unless COMPOSE_DATABASE_URL is exported (see header).
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-}
+      MYSQL_DATABASE_URL: ${COMPOSE_DATABASE_URL:-}
       HOSTNAME: "0.0.0.0"
       # Local/demo defaults. Override via frontend/.env.local as needed.
       BILLING_PROVIDER: local
       NOTIFICATION_PROVIDER: file
-      ADMIN_UI_LOCAL_BYPASS: "true"
       # Detail-enrichment sidecar (services/scrapling-extractor); unset = enrichment skipped.
       SCRAPLING_EXTRACTOR_URL: http://scrapling-extractor:8091
     volumes:
@@ -66,6 +79,89 @@ services:
       # state across container restarts. Matches frontend/data/.gitkeep
       # convention used in local dev.
       - apsi-data:/app/data
+    restart: unless-stopped
+
+  crawler-worker:
+    # Explicit opt-in; default demo startup does not schedule external crawling.
+    profiles: [workers]
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      target: worker
+    image: apsi-crawler-worker:local
+    depends_on:
+      scrapling-extractor:
+        condition: service_started
+    env_file:
+      - path: ./frontend/.env.local
+        required: false
+    environment:
+      # This compose file is a SQLite development topology. Production workers
+      # use NODE_ENV=production and a MySQL DATABASE_URL.
+      NODE_ENV: development
+      APP_ENV: development
+      SCRAPLING_EXTRACTOR_URL: http://scrapling-extractor:8091
+      # SQLite unless COMPOSE_DATABASE_URL is exported (see header).
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-}
+      MYSQL_DATABASE_URL: ${COMPOSE_DATABASE_URL:-}
+      NOTIFICATION_PROVIDER: file
+      BILLING_PROVIDER: local
+    volumes:
+      - apsi-data:/app/data
+    init: true
+    restart: unless-stopped
+
+  browser-downloader:
+    # Explicit opt-in: only the attachment worker uses it, and it ships a Chromium image.
+    profiles: [workers]
+    build:
+      context: ./services/browser-downloader
+    image: apsi-browser-downloader:local
+    # Deliberately no `ports:` mapping, for the same reason as scrapling-extractor: the sidecar
+    # has no authentication and drives a real browser against whatever page it is handed, so it
+    # must stay on the compose network only — `attachment-worker` reaches it at
+    # http://browser-downloader:8092 via compose DNS. To drive it from a host-run worker, start it
+    # outside compose instead: services/browser-downloader/run-local.sh.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8092/health', timeout=2).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  attachment-worker:
+    # Explicit opt-in; default demo startup does not download attachments from portals.
+    profiles: [workers]
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      target: worker
+    image: apsi-crawler-worker:local
+    command: ["npm", "run", "worker:attachments"]
+    depends_on:
+      # Attachment repair degrades gracefully when the sidecar is down (browser-mode sources are
+      # recorded as browser_unavailable and retried with backoff), so gate on started, not healthy.
+      browser-downloader:
+        condition: service_started
+    env_file:
+      - path: ./frontend/.env.local
+        required: false
+    environment:
+      # This compose file is a SQLite development topology. Production workers
+      # use NODE_ENV=production and a MySQL DATABASE_URL.
+      NODE_ENV: development
+      APP_ENV: development
+      BROWSER_DOWNLOADER_URL: http://browser-downloader:8092
+      # SQLite unless COMPOSE_DATABASE_URL is exported (see header).
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:-}
+      MYSQL_DATABASE_URL: ${COMPOSE_DATABASE_URL:-}
+      NOTIFICATION_PROVIDER: file
+      BILLING_PROVIDER: local
+    volumes:
+      # Shares the archive root (data/attachments) with app and crawler-worker so a repaired
+      # attachment is immediately downloadable through /api/bids/[id]/attachments/[attachmentId].
+      - apsi-data:/app/data
+    init: true
     restart: unless-stopped
 
 volumes:

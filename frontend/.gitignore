@@ -50,3 +50,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Per-user artifact vault files written by the running app (business data, never commit).
+/data/artifact-vault/
+
+# Attachment files downloaded by the archive/repair worker (business data, 60MB+).
+/data/attachments/

@@ -1,0 +1,29 @@
+.git
+.github
+# Claude Code session state and worktrees: ~68 MB of the build context, plus
+# .claude/settings.local.json. Never a build input.
+.claude
+**/node_modules
+**/.next
+**/.venv
+**/.data
+**/__pycache__
+**/.pytest_cache
+**/coverage
+**/*.tsbuildinfo
+**/*.log
+**/.env
+**/.env.*
+frontend/data/**
+!frontend/data/.gitkeep
+frontend/out
+ops-evidence
+.superpowers
+_to_delete
+.DS_Store
+# Documentation and local helper scripts are never copied by frontend/Dockerfile.
+# start-mysql.sh carries a local database password, so keep it out of the context.
+doc
+docs
+*.patch
+start-mysql.sh
