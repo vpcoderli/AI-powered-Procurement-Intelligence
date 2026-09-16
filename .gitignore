@@ -12,3 +12,7 @@ services/scrapling-extractor/.venv/
 
 # Scrapling extractor adaptive-selector store when run via run-local.sh.
 services/scrapling-extractor/.data/
+
+# Python bytecode and pytest caches (crawler, extractor, fixture scripts).
+__pycache__/
+.pytest_cache/

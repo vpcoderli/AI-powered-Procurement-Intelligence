@@ -15,6 +15,105 @@ defaults:
     working-directory: frontend
 
 jobs:
+  crawler-runtime:
+    name: Crawler container runtime
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f frontend/Dockerfile --target worker -t apsi-crawler-check .
+      - run: docker run --rm -w /crawler apsi-crawler-check python -m apsi_crawler.cli --help
+      - run: docker run --rm -e NODE_ENV=development -e APP_ENV=development apsi-crawler-check npm run worker:crawler:check
+      # The attachment repair worker ships in the same image and is started by compose with a
+      # command override, so prove its environment preflight runs there too.
+      - run: docker run --rm -e NODE_ENV=development -e APP_ENV=development apsi-crawler-check npm run worker:attachments:check
+      # The runner image is what compose and the ECS web task actually serve, and
+      # it is the only target that runs `next build` inside Docker. Build it here
+      # too (the deps/crawler-runtime layers are already cached by the worker
+      # build above, so this only adds the builder stage) and prove the packaged
+      # web image can still spawn the Python crawler that defect #5 was about.
+      - run: docker build -f frontend/Dockerfile --target runner -t apsi-web-check .
+      - run: docker run --rm --entrypoint sh apsi-web-check -c 'cd "$CRAWLER_DIRECTORY" && "$CRAWLER_PYTHON_BIN" -m apsi_crawler.cli --help >/dev/null && "$CRAWLER_PYTHON_BIN" -c "import requests"'
+      - name: Runner image answers /api/health
+        run: |
+          docker run -d --name apsi-web-check-run -p 3100:3000 apsi-web-check
+          for _ in $(seq 1 30); do
+            if curl -fs http://127.0.0.1:3100/api/health >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+          docker logs apsi-web-check-run
+          docker rm -f apsi-web-check-run
+          test "$ok" = 1
+
+  crawler:
+    name: Python crawler, Scrapling and browser-downloader
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            crawler/requirements.txt
+            crawler/requirements-runtime.txt
+            services/scrapling-extractor/requirements.txt
+            services/browser-downloader/requirements.txt
+      # Installs the playwright Python package but deliberately NOT `playwright install`: no
+      # Chromium binary is downloaded in CI, and the browser-dependent integration test in
+      # services/browser-downloader self-skips when Chromium is missing.
+      - run: python -m pip install -r crawler/requirements.txt -r services/scrapling-extractor/requirements.txt -r services/browser-downloader/requirements.txt
+      - run: PYTHONPATH=crawler python -m pytest crawler/tests -q
+      - run: python -m pytest tests -q
+        working-directory: services/scrapling-extractor
+      - run: python -m pytest tests -q
+        working-directory: services/browser-downloader
+
+  crawler-integration:
+    name: Crawler to SQLite and MySQL integration
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      # scripts/fixtures/enrichment-pipeline.py imports both the crawler package
+      # and the extractor's server module into one interpreter, so this job needs
+      # crawler + extractor requirements together, on Python >= 3.10 (scrapling).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            crawler/requirements.txt
+            crawler/requirements-runtime.txt
+            services/scrapling-extractor/requirements.txt
+      - run: npm ci
+      - run: python -m pip install -r ../crawler/requirements.txt -r ../services/scrapling-extractor/requirements.txt
+      - run: npm run test:crawler-integration
+        env:
+          CRAWLER_INTEGRATION_PYTHON: python
+          CRAWLER_INTEGRATION_MYSQL_URL: mysql://root@127.0.0.1:3306/
+
   frontend:
     name: Frontend (lint, test, build, risk:check)
     runs-on: ubuntu-latest
