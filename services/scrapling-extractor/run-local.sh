@@ -7,4 +7,5 @@ PY="${PYTHON:-python3.12}"
 .venv/bin/pip install -q -r requirements.txt
 export SCRAPLING_STORAGE_DIR="${SCRAPLING_STORAGE_DIR:-$PWD/.data}"
 export EXTRACTOR_PORT="${EXTRACTOR_PORT:-8091}"
+export EXTRACTOR_HOST="${EXTRACTOR_HOST:-127.0.0.1}"
 exec .venv/bin/python server.py

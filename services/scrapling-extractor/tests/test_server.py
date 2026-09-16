@@ -1,4 +1,5 @@
 import json
+import http.client
 import os
 import pathlib
 import threading
@@ -137,3 +138,38 @@ def test_resolve_storage_dir_prefers_the_env_var(tmp_path, monkeypatch):
 def test_resolve_storage_dir_falls_back_when_the_target_is_unusable(monkeypatch):
     monkeypatch.setenv("SCRAPLING_STORAGE_DIR", "/proc/definitely-not-creatable/scrapling")
     assert resolve_storage_dir() == os.getcwd()
+
+
+def test_server_defaults_to_loopback(storage_dir, monkeypatch):
+    monkeypatch.delenv("EXTRACTOR_HOST", raising=False)
+    server = create_server(0, storage_dir=str(storage_dir))
+    try:
+        assert server.server_address[0] == "127.0.0.1"
+    finally:
+        server.server_close()
+
+
+@pytest.mark.parametrize("updates", [
+    {"fields": [{"field": "description"}]},
+    {"selectors": {"description": 123}},
+    {"selectors": {"unknown": "p"}},
+    {"url": "javascript:alert(1)"},
+])
+def test_invalid_request_schema_is_400(base_url, updates):
+    payload = {"url": "https://example.gov/bid/1", "html": "<p>Scope</p>", "fields": ["description"]}
+    payload.update(updates)
+    status, body = _post(base_url, payload)
+    assert status == 400
+    assert body["error"]["code"] == "INVALID_REQUEST"
+
+
+@pytest.mark.parametrize("length", ["bogus", "-1"])
+def test_invalid_content_length_is_400(base_url, length):
+    connection = http.client.HTTPConnection(base_url.removeprefix("http://"), timeout=2)
+    try:
+        connection.request("POST", "/extract", body=b"{}", headers={"Content-Length": length})
+        response = connection.getresponse()
+        assert response.status == 400
+        assert json.loads(response.read())["error"]["code"] == "INVALID_REQUEST"
+    finally:
+        connection.close()
