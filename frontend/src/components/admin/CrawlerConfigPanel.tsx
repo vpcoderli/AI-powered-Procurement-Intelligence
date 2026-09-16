@@ -7,15 +7,39 @@ import { useLanguage } from "@/lib/i18n/LanguageContext";
 import {
   CADENCES,
   ENRICHMENT_FIELDS,
+  LIST_EXTRACTION_FIELDS,
+  LIST_EXTRACTION_MODES,
   parseEnrichmentConfig,
+  parseListExtractionConfig,
   serializeEnrichmentConfig,
+  serializeListExtractionConfig,
   type Cadence,
   type EnrichmentField,
+  type ListExtractionField,
+  type ListExtractionMode,
 } from "@/server/admin/crawler-config";
+import {
+  ATTACHMENT_MODES,
+  parseAttachmentPolicy,
+  serializeAttachmentPolicy,
+  type AttachmentMode,
+  type AttachmentPolicy,
+} from "@/server/attachments/policy";
 
 /**
  * Per-source crawler config editor for the admin data-source table (spec:
  * docs/superpowers/specs/2026-09-15-scrapling-enrichment-sidecar).
+ *
+ * The "Attachments" group edits `fetch_config.attachments`, the per-source archiving policy the
+ * attachment repair worker reads (spec:
+ * docs/superpowers/specs/2026-09-16-attachment-repair-design.md).
+ *
+ * The "List extraction" group edits `fetch_config.list_extraction` (contract C1 of
+ * docs/superpowers/plans/2026-09-16-local-source-governance-recovery.md): which parser reads the
+ * portal's LIST page — the Scrapling sidecar (main path) or the adapter's own regex/DOM parser
+ * (fallback) — whether the page has to be rendered by the browser sidecar first, and the
+ * per-source item/field selectors. It never adds a request: the same single list fetch feeds
+ * whichever parser is selected.
  *
  * Edits the same `fetch_config.enrichment` block the Python crawler reads, plus the row's
  * cadence and base URL, through the existing PATCH /api/admin/data-sources/[id] route. The
@@ -41,10 +65,35 @@ export interface CrawlerConfigForm {
   timeoutSeconds: string;
   detailSelectors: Partial<Record<EnrichmentField, string>>;
   attachmentUrlTemplate: string;
+  /**
+   * Per-source attachment archiving policy (`fetch_config.attachments`), read by the
+   * attachment repair worker. Same raw-string rule as the enrichment limits above; the size
+   * cap is edited in MB and converted to bytes at patch time.
+   */
+  attachmentsArchive: boolean;
+  attachmentsMode: AttachmentMode;
+  attachmentsMaxPerRun: string;
+  attachmentsMinIntervalSeconds: string;
+  attachmentsTimeoutSeconds: string;
+  attachmentsMaxMb: string;
+  attachmentsBrowserLinkSelector: string;
+  /**
+   * Per-source list-page parsing (`fetch_config.list_extraction`). `listMaxItems` follows the
+   * same raw-string rule as the limits above.
+   */
+  listMode: ListExtractionMode;
+  listRender: boolean;
+  listItemSelector: string;
+  listMaxItems: string;
+  listSelectors: Partial<Record<ListExtractionField, string>>;
 }
+
+const BYTES_PER_MB = 1024 * 1024;
 
 export function formFromSource(source: AdminDataSource): CrawlerConfigForm {
   const enrichment = parseEnrichmentConfig(source.fetchConfig ?? {});
+  const attachments = parseAttachmentPolicy(source.fetchConfig ?? {});
+  const listExtraction = parseListExtractionConfig(source.fetchConfig ?? {});
   return {
     cadence: (CADENCES as readonly string[]).includes(source.cadence) ? (source.cadence as Cadence) : "daily",
     baseUrl: source.baseUrl ?? "",
@@ -55,6 +104,18 @@ export function formFromSource(source: AdminDataSource): CrawlerConfigForm {
     timeoutSeconds: String(enrichment.timeoutSeconds),
     detailSelectors: enrichment.detailSelectors,
     attachmentUrlTemplate: enrichment.attachmentUrlTemplate ?? "",
+    attachmentsArchive: attachments.archive,
+    attachmentsMode: attachments.mode,
+    attachmentsMaxPerRun: String(attachments.maxPerRun),
+    attachmentsMinIntervalSeconds: String(attachments.minIntervalSeconds),
+    attachmentsTimeoutSeconds: String(attachments.timeoutSeconds),
+    attachmentsMaxMb: String(attachments.maxBytes / BYTES_PER_MB),
+    attachmentsBrowserLinkSelector: attachments.browserLinkSelector ?? "",
+    listMode: listExtraction.mode,
+    listRender: listExtraction.render,
+    listItemSelector: listExtraction.itemSelector ?? "",
+    listMaxItems: String(listExtraction.maxItems),
+    listSelectors: listExtraction.selectors,
   };
 }
 
@@ -69,6 +130,16 @@ function numberOrSaved(raw: string, saved: number): number {
   return raw.trim() !== "" && Number.isFinite(parsed) ? parsed : saved;
 }
 
+/**
+ * Returns the snake_case block that belongs under `fetch_config.attachments`. The shared
+ * serializer returns the wrapper `{ attachments: {...} }`, so unwrap it before merging the block
+ * into the patch alongside `enrichment`.
+ */
+function attachmentsBlock(policy: AttachmentPolicy): Record<string, unknown> {
+  return serializeAttachmentPolicy(policy).attachments as Record<string, unknown>;
+}
+
+
 export function buildCrawlerConfigPatch(
   source: AdminDataSource,
   form: CrawlerConfigForm,
@@ -82,12 +153,41 @@ export function buildCrawlerConfigPatch(
   const template = form.attachmentUrlTemplate.trim();
   const baseUrl = form.baseUrl.trim();
   const saved = parseEnrichmentConfig(source.fetchConfig ?? {});
+  const savedAttachments = parseAttachmentPolicy(source.fetchConfig ?? {});
+  const savedListExtraction = parseListExtractionConfig(source.fetchConfig ?? {});
+  const browserLinkSelector = form.attachmentsBrowserLinkSelector.trim();
+  const listItemSelector = form.listItemSelector.trim();
+
+  const listSelectors: Partial<Record<ListExtractionField, string>> = {};
+  for (const [field, selector] of Object.entries(form.listSelectors) as Array<
+    [ListExtractionField, string | undefined]
+  >) {
+    if (selector && selector.trim()) listSelectors[field] = selector.trim();
+  }
 
   return {
     cadence: form.cadence,
     baseUrl: baseUrl === "" ? null : baseUrl,
     fetchConfig: {
       ...(source.fetchConfig ?? {}),
+      list_extraction: serializeListExtractionConfig({
+        mode: form.listMode,
+        render: form.listRender,
+        itemSelector: listItemSelector === "" ? null : listItemSelector,
+        maxItems: numberOrSaved(form.listMaxItems, savedListExtraction.maxItems),
+        selectors: listSelectors,
+      }),
+      attachments: attachmentsBlock({
+        archive: form.attachmentsArchive,
+        mode: form.attachmentsMode,
+        maxPerRun: numberOrSaved(form.attachmentsMaxPerRun, savedAttachments.maxPerRun),
+        minIntervalSeconds: numberOrSaved(form.attachmentsMinIntervalSeconds, savedAttachments.minIntervalSeconds),
+        timeoutSeconds: numberOrSaved(form.attachmentsTimeoutSeconds, savedAttachments.timeoutSeconds),
+        maxBytes: Math.round(
+          numberOrSaved(form.attachmentsMaxMb, savedAttachments.maxBytes / BYTES_PER_MB) * BYTES_PER_MB,
+        ),
+        browserLinkSelector: browserLinkSelector === "" ? null : browserLinkSelector,
+      }),
       enrichment: serializeEnrichmentConfig({
         enabled: form.enabled,
         fields: form.fields,
@@ -294,6 +394,164 @@ export function CrawlerConfigPanel({ source, disabled = false, onSaved }: Crawle
           className={inputClass}
         />
       </label>
+
+      <div
+        className="grid gap-2 border-t border-slate-200 pt-3"
+        data-testid={`crawler-config-list-extraction-${source.id}`}
+      >
+        <span className="font-semibold text-slate-800">{t("admin.crawlerConfigListTitle")}</span>
+        <p className="text-slate-500">{t("admin.crawlerConfigListDescription")}</p>
+
+        <label className="grid gap-1">
+          <span className="font-medium text-slate-600">{t("admin.crawlerConfigListMode")}</span>
+          <select
+            value={form.listMode}
+            onChange={(event) => update("listMode", event.target.value as ListExtractionMode)}
+            className={inputClass}
+          >
+            {LIST_EXTRACTION_MODES.map((mode) => (
+              <option key={mode} value={mode}>
+                {t(`admin.crawlerConfigListMode_${mode}`)}
+              </option>
+            ))}
+          </select>
+          <span className="text-slate-500">{t("admin.crawlerConfigListModeHelp")}</span>
+        </label>
+
+        <label className="flex items-center gap-2 font-medium text-slate-700">
+          <input
+            type="checkbox"
+            checked={form.listRender}
+            onChange={(event) => update("listRender", event.target.checked)}
+          />
+          {t("admin.crawlerConfigListRender")}
+        </label>
+        <span className="text-slate-500">{t("admin.crawlerConfigListRenderHelp")}</span>
+
+        <div className="grid gap-2 md:grid-cols-2">
+          <label className="grid gap-1">
+            <span className="font-medium text-slate-600">{t("admin.crawlerConfigListItemSelector")}</span>
+            <input
+              type="text"
+              value={form.listItemSelector}
+              onChange={(event) => update("listItemSelector", event.target.value)}
+              className={inputClass}
+            />
+          </label>
+          <label className="grid gap-1">
+            <span className="font-medium text-slate-600">{t("admin.crawlerConfigListMaxItems")}</span>
+            <input
+              type="number"
+              min={1} max={500}
+              value={form.listMaxItems}
+              onChange={(event) => update("listMaxItems", event.target.value)}
+              className={inputClass}
+            />
+          </label>
+        </div>
+
+        <div className="grid gap-1">
+          <span className="font-medium text-slate-600">{t("admin.crawlerConfigListSelectors")}</span>
+          {LIST_EXTRACTION_FIELDS.map((field) => (
+            <label key={field} className="grid grid-cols-[8rem_1fr] items-center gap-2">
+              <span className="text-slate-500">{t(`admin.crawlerConfigListField_${field}`)}</span>
+              <input
+                type="text"
+                value={form.listSelectors[field] ?? ""}
+                onChange={(event) =>
+                  update("listSelectors", { ...form.listSelectors, [field]: event.target.value })
+                }
+                className={inputClass}
+              />
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-2 border-t border-slate-200 pt-3" data-testid={`crawler-config-attachments-${source.id}`}>
+        <span className="font-semibold text-slate-800">{t("admin.crawlerConfigAttachmentsTitle")}</span>
+        <p className="text-slate-500">{t("admin.crawlerConfigAttachmentsDescription")}</p>
+
+        <label className="flex items-center gap-2 font-medium text-slate-700">
+          <input
+            type="checkbox"
+            checked={form.attachmentsArchive}
+            onChange={(event) => update("attachmentsArchive", event.target.checked)}
+          />
+          {t("admin.crawlerConfigAttachmentsArchive")}
+        </label>
+
+        <label className="grid gap-1">
+          <span className="font-medium text-slate-600">{t("admin.crawlerConfigAttachmentsMode")}</span>
+          <select
+            value={form.attachmentsMode}
+            onChange={(event) => update("attachmentsMode", event.target.value as AttachmentMode)}
+            className={inputClass}
+          >
+            {ATTACHMENT_MODES.map((mode) => (
+              <option key={mode} value={mode}>
+                {t(`admin.crawlerConfigAttachmentsMode_${mode}`)}
+              </option>
+            ))}
+          </select>
+          <span className="text-slate-500">{t("admin.crawlerConfigAttachmentsModeHelp")}</span>
+        </label>
+
+        <div className="grid gap-2 md:grid-cols-4">
+          <label className="grid gap-1">
+            <span className="font-medium text-slate-600">{t("admin.crawlerConfigAttachmentsMaxPerRun")}</span>
+            <input
+              type="number"
+              min={1} max={200}
+              value={form.attachmentsMaxPerRun}
+              onChange={(event) => update("attachmentsMaxPerRun", event.target.value)}
+              className={inputClass}
+            />
+          </label>
+          <label className="grid gap-1">
+            <span className="font-medium text-slate-600">{t("admin.crawlerConfigAttachmentsMinInterval")}</span>
+            <input
+              type="number"
+              min={0} max={60}
+              step={0.5}
+              value={form.attachmentsMinIntervalSeconds}
+              onChange={(event) => update("attachmentsMinIntervalSeconds", event.target.value)}
+              className={inputClass}
+            />
+          </label>
+          <label className="grid gap-1">
+            <span className="font-medium text-slate-600">{t("admin.crawlerConfigAttachmentsTimeout")}</span>
+            <input
+              type="number"
+              min={5} max={120}
+              value={form.attachmentsTimeoutSeconds}
+              onChange={(event) => update("attachmentsTimeoutSeconds", event.target.value)}
+              className={inputClass}
+            />
+          </label>
+          <label className="grid gap-1">
+            <span className="font-medium text-slate-600">{t("admin.crawlerConfigAttachmentsMaxMb")}</span>
+            <input
+              type="number"
+              min={1} max={200}
+              value={form.attachmentsMaxMb}
+              onChange={(event) => update("attachmentsMaxMb", event.target.value)}
+              className={inputClass}
+            />
+          </label>
+        </div>
+
+        <label className="grid gap-1">
+          <span className="font-medium text-slate-600">{t("admin.crawlerConfigAttachmentsSelector")}</span>
+          <input
+            type="text"
+            value={form.attachmentsBrowserLinkSelector}
+            onChange={(event) => update("attachmentsBrowserLinkSelector", event.target.value)}
+            className={inputClass}
+          />
+          <span className="text-slate-500">{t("admin.crawlerConfigAttachmentsSelectorHelp")}</span>
+        </label>
+      </div>
 
       <div className="flex items-center justify-end gap-2">
         {status?.kind === "success" && (

@@ -183,7 +183,7 @@ describe("crawler worker script", () => {
     const script = readFileSync(new URL("crawler-worker.ts", import.meta.url), "utf8");
 
     expect(script).toContain("createRetryingRunCrawlerSourceOnce");
-    expect(script).toContain("retryResultWithBackoff");
+    expect(script).toContain("retryCrawlerSourceResult");
     expect(script).toContain("emitWorkerFailureAlert");
     expect(script).toContain("CRAWLER_WORKER_RETRY_MAX_ATTEMPTS");
     expect(script).toContain("CRAWLER_WORKER_RETRY_BASE_DELAY_MS");

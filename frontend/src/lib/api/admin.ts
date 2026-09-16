@@ -118,7 +118,24 @@ type AdminApiErrorCode =
   | "DATA_SOURCE_NOT_FOUND"
   | "BID_NOT_FOUND"
   | "USER_NOT_FOUND"
+  | "SOURCE_NOT_FOUND"
+  | "PRECHECK_FAILED"
   | "INTERNAL_ERROR";
+
+const ADMIN_API_ERROR_CODES: readonly AdminApiErrorCode[] = [
+  "FORBIDDEN",
+  "EMAIL_EXISTS",
+  "INVALID_REQUEST",
+  "INVALID_CONFIG",
+  "INVALID_CRAWLER_CONFIG",
+  "CONFIG_NOT_FOUND",
+  "DATA_SOURCE_NOT_FOUND",
+  "BID_NOT_FOUND",
+  "USER_NOT_FOUND",
+  "SOURCE_NOT_FOUND",
+  "PRECHECK_FAILED",
+  "INTERNAL_ERROR",
+];
 
 export interface AdminCrawlerLogsResponse {
   logs: AdminCrawlerLog[];
@@ -168,6 +185,82 @@ export interface AdminDataSourceHealthCheckResponse {
   source: AdminDataSource;
 }
 
+/**
+ * Approval pre-check (`POST /api/admin/data-sources/[id]/precheck`, contract C5 of
+ * docs/superpowers/plans/2026-09-16-local-source-governance-recovery.md).
+ *
+ * The route runs, for one source and without persisting any bid: a robots.txt scan of the base
+ * URL host, a dry-run `fetch-task` that deliberately bypasses the governance gate (the gate is
+ * exactly what the pre-check informs), and — when the dry run came back HTTP 404 — a read-only
+ * `discover-tenant` probe that may suggest a corrected `base_url`.
+ *
+ * Mirrors the server response shape exactly; it is declared here rather than imported so the
+ * admin console is not coupled to the pre-check service module.
+ */
+export type AdminSourcePrecheckVerdict = "ready" | "empty" | "needs_fix";
+
+/** `empty_verified` = HTTP 200 with a recognised "no open bids" marker and a confirmed tenant. */
+export type AdminSourcePrecheckFetchStatus = "ok" | "empty_verified" | "failed";
+
+export interface AdminSourcePrecheckRobots {
+  /** Ledger value written to `data_sources.robots_txt_status` (e.g. "clear", "flagged"). */
+  status: string;
+  flagged: boolean;
+  flagReason: string | null;
+}
+
+export interface AdminSourcePrecheckSampleItem {
+  title: string | null;
+  url: string | null;
+}
+
+export interface AdminSourcePrecheckFetch {
+  status: AdminSourcePrecheckFetchStatus;
+  items: number;
+  sample: AdminSourcePrecheckSampleItem[];
+  /** `metadata.listExtraction.method`: "scrapling" | "adapter" | "adapter_fallback". */
+  listMethod: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  httpStatus: number | null;
+  wafChallenge: boolean;
+}
+
+export interface AdminSourcePrecheckResult {
+  sourceId: string;
+  checkedAt: string;
+  verdict: AdminSourcePrecheckVerdict;
+  reasons: string[];
+  robots: AdminSourcePrecheckRobots;
+  fetch: AdminSourcePrecheckFetch;
+  /** Set only when a 404 tenant path was probed and one candidate matched unambiguously. */
+  suggestedBaseUrl: string | null;
+}
+
+export interface PrecheckAdminDataSourceOptions {
+  /** Records fetched by the dry run; the route defaults to 5. */
+  limit?: number;
+}
+
+/**
+ * The one PATCH body the "approve local source" dialog posts (contract C6). Every field is
+ * already part of `UpdateAdminDataSourceInput`; this alias exists so the dialog cannot silently
+ * drop one half of the compliance ledger write (approval columns without reviewer/ToS trail).
+ */
+export interface ApproveLocalSourceInput extends UpdateAdminDataSourceInput {
+  approvalStatus: "approved";
+  legalReviewStatus: "approved_public";
+  approvedForIngestion: true;
+  isEnabled: true;
+  tosReviewed: true;
+  tosUrl: string | null;
+  complianceReviewer: string;
+  legalOpinionReference: string | null;
+  complianceReviewDueAt: string | null;
+  complianceNotes: string | null;
+  approvalNotes: string | null;
+}
+
 export interface UpdateAdminUserResponse {
   user: AdminUser;
 }
@@ -215,16 +308,8 @@ function isAdminErrorResponse(body: unknown): body is { error: { code: AdminApiE
   const { code, message } = error as { code?: unknown; message?: unknown };
 
   return (
-    (code === "FORBIDDEN" ||
-      code === "EMAIL_EXISTS" ||
-      code === "INVALID_REQUEST" ||
-      code === "INVALID_CONFIG" ||
-      code === "INVALID_CRAWLER_CONFIG" ||
-      code === "CONFIG_NOT_FOUND" ||
-      code === "DATA_SOURCE_NOT_FOUND" ||
-      code === "BID_NOT_FOUND" ||
-      code === "USER_NOT_FOUND" ||
-      code === "INTERNAL_ERROR") &&
+    typeof code === "string" &&
+    (ADMIN_API_ERROR_CODES as readonly string[]).includes(code) &&
     typeof message === "string"
   );
 }
@@ -397,6 +482,20 @@ export async function checkAdminDataSourceHealth(id: string, input: { timeoutMs?
   return parseResponse<AdminDataSourceHealthCheckResponse>(response);
 }
 
+/**
+ * Runs the approval pre-check for one data source (C5). Admin or operator; mutating, so the
+ * route enforces CSRF like every other admin POST.
+ */
+export async function precheckAdminDataSource(id: string, input: PrecheckAdminDataSourceOptions = {}) {
+  const response = await fetch(`/api/admin/data-sources/${encodeURIComponent(id)}/precheck`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<AdminSourcePrecheckResult>(response);
+}
+
 export async function listAdminCrawlerLogs() {
   const response = await fetch("/api/admin/crawler-logs");
 
@@ -505,16 +604,39 @@ export interface CrawlerRunWindowOptions {
   postedTo?: string;
 }
 
+/**
+ * Verified-empty-list marker the crawler attaches to a zero-row success (contract C1): the list
+ * page was HTTP 200, carried an explicit "no open bids" phrase and the tenant was confirmed from
+ * the page itself. Present only on such runs, so the batch panel can show "no open bids" instead
+ * of an indistinguishable "0 fetched".
+ */
+export interface CrawlerEmptyStateMetadata {
+  verified?: boolean;
+  marker?: string | null;
+  tenant_confirmed?: boolean;
+  method?: string | null;
+}
+
 /** Per-source result entry from /api/crawler/state/run (see orchestrator.ts's union). */
 export interface StateCrawlerRunResultEntry {
   source: string;
   ok: boolean;
+  /**
+   * `success | failure | blocked | locked | disabled | deferred`. `deferred` (C7) means another
+   * source on the same platform hit a challenge/throttle earlier in this tick, so the rest of
+   * that platform's sources were skipped rather than run into a 403 wall.
+   */
   status: string;
   reason?: string;
   runner?: {
     fetchedCount?: number;
     errorCode?: string | null;
-    payload?: { metadata?: { dateFilter?: { kept?: number; dropped?: number; unparsed?: number } } } | null;
+    payload?: {
+      metadata?: {
+        dateFilter?: { kept?: number; dropped?: number; unparsed?: number };
+        emptyState?: CrawlerEmptyStateMetadata | null;
+      };
+    } | null;
   };
 }
 

@@ -16,7 +16,7 @@ import { sendMatchedAlertNotifications, sendMatchedAlertNotificationsFromMysql }
 import { createNotificationProvider } from "../src/server/notifications/provider";
 import { createRetryingNotificationProvider } from "../src/server/notifications/retrying-provider";
 import { emitWorkerFailureAlert } from "../src/lib/resilience/failure-alerts";
-import { retryResultWithBackoff } from "../src/lib/resilience/retry";
+import { retryCrawlerSourceResult } from "../src/server/crawler/retrying-runner";
 import type { AppDatabase } from "../src/server/db/client";
 import type { MysqlCrawlerLockStore } from "../src/server/crawler/lock-repository";
 
@@ -91,8 +91,8 @@ function crawlerRetryMaxDelayMs() {
  * lock is always released in a `finally`, so re-attempting is safe and does not risk a
  * stuck lock or duplicate concurrent runs of the same source.
  *
- * Only the crawler subprocess failing (`ok: false` / status "failure") is treated as
- * retryable-by-default; "locked" (another owner is already running it), "disabled", and
+ * Only structured network failures are retried; persistence, parsing, empty-result and
+ * lease failures are terminal. Successful ingestion remains terminal if matching or notification fails; "locked" (another owner is already running it), "disabled", and
  * "blocked" (governance/legal hold) are terminal for this tick and are returned as-is
  * without consuming a retry attempt, since retrying them cannot change the outcome.
  */
@@ -100,7 +100,6 @@ function createRetryingRunCrawlerSourceOnce(runCrawlerSourceOnce: typeof default
   const maxAttempts = crawlerRetryMaxAttempts();
   const baseDelayMs = crawlerRetryBaseDelayMs();
   const maxDelayMs = crawlerRetryMaxDelayMs();
-  const nonRetryableStatuses = new Set(["locked", "disabled", "blocked"]);
 
   return async function retryingRunCrawlerSourceOnce<TOptions>(
     db: Parameters<typeof defaultRunCrawlerSourceOnce>[0],
@@ -108,21 +107,12 @@ function createRetryingRunCrawlerSourceOnce(runCrawlerSourceOnce: typeof default
   ): Promise<RunCrawlerSourceOnceResult> {
     let attemptsMade = 0;
 
-    const result = await retryResultWithBackoff<RunCrawlerSourceOnceResult>(
+    const result = await retryCrawlerSourceResult(
       () => runCrawlerSourceOnce(db, options),
       {
         maxAttempts,
         baseDelayMs,
         maxDelayMs,
-        isOk: (attemptResult) => attemptResult.ok || nonRetryableStatuses.has(attemptResult.status),
-        toError: (attemptResult) =>
-          new Error(
-            attemptResult.ok
-              ? "unreachable"
-              : attemptResult.status === "failure"
-                ? attemptResult.runner.stderr || `Crawler source ${attemptResult.source} failed`
-                : `Crawler source ${attemptResult.source} did not run (${attemptResult.status})`,
-          ),
         onAttemptFailure: ({ attempt, retryable }) => {
           attemptsMade = attempt;
           if (attempt < maxAttempts && retryable) {
