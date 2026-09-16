@@ -6,7 +6,8 @@ import { bids, crawlerLogs, dataSources } from "@/server/db/schema";
 import { runCrawlTask } from "@/server/crawler/state-runner";
 import { importCrawlerJsonRunIntoSqlite } from "@/server/crawler/sqlite-json-importer";
 import type { CrawlerJsonRunPayload } from "@/server/crawler/mysql-json-importer";
-import { runCrawlerSourceOnce as realRunCrawlerSourceOnce } from "@/server/crawler/orchestrator";
+import type { AppDatabase } from "@/server/db/client";
+import { runCrawlerSourceOnce as realRunCrawlerSourceOnce, type RunCrawlerSourceOnceOptions } from "@/server/crawler/orchestrator";
 import { createStateCrawlerRunPost } from "./route";
 
 vi.mock("@/server/notifications/service", () => ({
@@ -37,8 +38,8 @@ const NOW = "2026-07-30T00:00:00.000Z";
 // Unlike the default `runCrawlerSourceOnce` fake configured in `beforeEach` below (which never
 // calls `options.runner()`), this one actually invokes it and reflects the runner's `ok` field —
 // mirroring orchestrator.ts's real success/failure branch — so the persistence tests can also
-// assert that a contained import failure never turns a fetch success into a reported failure.
-const runnerInvokingOrchestrator = (async (_database, options) => {
+// assert that persistence failures report failure without aborting the batch.
+const runnerInvokingOrchestrator = (async (_database: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
   const runner = await options.runner();
   if (!runner.ok) {
     return { ok: false, source: options.source, status: "failure", runner };
@@ -107,7 +108,8 @@ describe("POST /api/crawler/state/run", () => {
     testDb = await createTestDatabase({ seed: false });
     vi.clearAllMocks();
     vi.unstubAllEnvs();
-    runCrawlerSourceOnce.mockImplementation(async (_database, options) => ({
+    vi.stubEnv("CRAWLER_ALLOW_UNAUTHENTICATED_LOCAL_RUN", "true");
+    runCrawlerSourceOnce.mockImplementation(async (_database: AppDatabase, options: RunCrawlerSourceOnceOptions) => ({
       ok: true,
       source: options.source,
       status: "success",
@@ -164,6 +166,33 @@ describe("POST /api/crawler/state/run", () => {
       })
       .run();
   }
+
+  it("denies missing credentials in production even with local bypass configured", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("CRAWLER_RUN_TOKEN", "");
+    const response = await createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce })(new Request("http://localhost/api/crawler/state/run"));
+    expect(response.status).toBe(401);
+    expect(runCrawlerSourceOnce).not.toHaveBeenCalled();
+  });
+
+  it("denies missing credentials by default in development", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("CRAWLER_ALLOW_UNAUTHENTICATED_LOCAL_RUN", "false");
+    vi.stubEnv("ADMIN_UI_LOCAL_BYPASS", "false");
+    const response = await createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce })(new Request("http://localhost/api/crawler/state/run"));
+    expect(response.status).toBe(401);
+  });
+
+  it("records manual health and continues after an execution exception", async () => {
+    insertSource("broken");
+    insertSource("healthy");
+    runCrawlerSourceOnce.mockRejectedValueOnce(new Error("execution blew up"));
+    const response = await createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce, now: () => new Date(NOW) })(new Request("http://localhost/api/crawler/state/run"));
+    const body = await response.json();
+    expect(body.results.map((r: { status: string }) => r.status)).toEqual(["failure", "success"]);
+    expect(testDb.db.select().from(dataSources).where(eq(dataSources.id, "broken")).get()).toMatchObject({ consecutiveFailures: 1, lastFailureAt: NOW });
+    expect(testDb.db.select().from(dataSources).where(eq(dataSources.id, "healthy")).get()).toMatchObject({ consecutiveFailures: 0, lastSuccessAt: NOW });
+  });
 
   it("requires crawler token when configured", async () => {
     vi.stubEnv("CRAWLER_RUN_TOKEN", "local-token");
@@ -344,6 +373,99 @@ describe("POST /api/crawler/state/run", () => {
     expect(testDb.db.select().from(crawlerLogs).all()).toHaveLength(0);
   });
 
+  it("defers the remaining sources of a throttled platform in the same batch", async () => {
+    insertSource("bidnet_a", { providerFamily: "bidnet" });
+    insertSource("bidnet_b", { providerFamily: "bidnet" });
+    insertSource("tx_esbd", { providerFamily: null });
+    runCrawlerSourceOnce.mockImplementation(async (_database: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
+      if (options.source === "bidnet_a") {
+        return {
+          ok: false,
+          source: options.source,
+          status: "failure",
+          runner: { ok: false, source: options.source, status: "failure", stdout: "", stderr: "HtmlPageError: unexpected status 403", errorCode: "HtmlPageError" },
+        };
+      }
+      return {
+        ok: true,
+        source: options.source,
+        status: "success",
+        runner: { ok: true, source: options.source, status: "success", stdout: "", stderr: "" },
+        alertMatching: { evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0 },
+        notification: { queued: 0, sent: 0, skipped: 0, failed: 0 },
+      };
+    });
+    const POST = createStateCrawlerRunPost({
+      database: testDb.db,
+      runCrawlerSourceOnce,
+      platformDeferral: { minIntervalMs: 0 },
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/crawler/state/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sources: ["bidnet_a", "bidnet_b", "tx_esbd"] }),
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.results.map((result: { source: string; status: string }) => [result.source, result.status])).toEqual([
+      ["bidnet_a", "failure"],
+      ["bidnet_b", "deferred"],
+      ["tx_esbd", "success"],
+    ]);
+    expect(body.results[1]).toEqual({
+      ok: false,
+      source: "bidnet_b",
+      status: "deferred",
+      reason: "platform_throttled:bidnet_a",
+    });
+    // The deferred source was never dispatched, so its health was never written back.
+    expect(runCrawlerSourceOnce.mock.calls.map((call) => (call[1] as RunCrawlerSourceOnceOptions).source)).toEqual([
+      "bidnet_a",
+      "tx_esbd",
+    ]);
+    expect(testDb.db.select().from(dataSources).where(eq(dataSources.id, "bidnet_b")).get()).toMatchObject({
+      consecutiveFailures: 0,
+      lastFailureAt: null,
+    });
+  });
+
+  it("spaces two sources of the same platform by the configured interval", async () => {
+    insertSource("bidnet_a", { providerFamily: "bidnet" });
+    insertSource("bidnet_b", { providerFamily: "bidnet" });
+    const sleep = vi.fn(async () => {});
+    let clock = 0;
+    runCrawlerSourceOnce.mockImplementation(async (_database: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
+      clock += 500;
+      return {
+        ok: true,
+        source: options.source,
+        status: "success",
+        runner: { ok: true, source: options.source, status: "success", stdout: "", stderr: "" },
+        alertMatching: { evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0 },
+        notification: { queued: 0, sent: 0, skipped: 0, failed: 0 },
+      };
+    });
+    const POST = createStateCrawlerRunPost({
+      database: testDb.db,
+      runCrawlerSourceOnce,
+      platformDeferral: { minIntervalMs: 5_000, sleep, now: () => clock },
+    });
+
+    await POST(
+      new Request("http://localhost/api/crawler/state/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sources: ["bidnet_a", "bidnet_b"] }),
+      }),
+    );
+
+    expect(sleep).toHaveBeenCalledExactlyOnceWith(4_500);
+  });
+
   it("continues after a source failure and returns per-source results", async () => {
     insertSource("il_bidbuy");
     insertSource("fl_mfmp");
@@ -427,7 +549,7 @@ describe("POST /api/crawler/state/run", () => {
     const POST = createStateCrawlerRunPost({
       database: testDb.db,
       now: () => now,
-      runCrawlerSourceOnce: (async (_database, options) => {
+      runCrawlerSourceOnce: (async (_database: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
         await options.runner();
         return { ok: true, source: options.source, status: "success" };
       }) as never,
@@ -496,7 +618,7 @@ describe("POST /api/crawler/state/run", () => {
       const POST = createStateCrawlerRunPost({
         database: testDb.db,
         now: () => now,
-        runCrawlerSourceOnce: (async (_database, options) => {
+        runCrawlerSourceOnce: (async (_database: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
           await options.runner();
           return { ok: true, source: options.source, status: "success" };
         }) as never,
@@ -670,18 +792,17 @@ describe("POST /api/crawler/state/run", () => {
       );
       const body = await response.json();
 
-      // Both sources ran to completion despite the first import throwing, and — since the
-      // import failure is contained rather than propagated — both are still reported as
-      // successful fetches: a persistence bug must not silently turn into a reported failure.
+      // The failed source reports failure and retains its diagnostic log; the next source runs.
       expect(response.status).toBe(200);
-      expect(body.status).toBe("completed");
+      expect(body.status).toBe("completed_with_failures");
+      expect(body.results.map((result: { status: string }) => result.status)).toEqual(["failure", "success"]);
       expect(body.results).toHaveLength(2);
-      expect(mockedImportCrawlerJsonRunIntoSqlite).toHaveBeenCalledTimes(2);
+      expect(mockedImportCrawlerJsonRunIntoSqlite).toHaveBeenCalledTimes(3);
 
       // Exactly one of the two imports actually persisted (the other's throw happened before
       // any write), and the failure was logged rather than propagated.
       expect(testDb.db.select().from(bids).all()).toHaveLength(1);
-      expect(testDb.db.select().from(crawlerLogs).all()).toHaveLength(1);
+      expect(testDb.db.select().from(crawlerLogs).all()).toHaveLength(2);
       expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
       const [loggedPayload] = consoleErrorSpy.mock.calls[0] as [string];
       expect(JSON.parse(loggedPayload)).toMatchObject({ event: "crawler_json_import_failed" });
@@ -779,11 +900,10 @@ describe("POST /api/crawler/state/run", () => {
       );
       const body = await response.json();
 
-      // The batch must not abort: both sources still get a result, and — since the stamp
-      // failure is contained rather than propagated — both are still reported as successful
-      // fetches, same as an importer throw.
+      // Invalid payloads fail the affected source while the rest of the batch continues.
       expect(response.status).toBe(200);
-      expect(body.status).toBe("completed");
+      expect(body.status).toBe("completed_with_failures");
+      expect(body.results.map((result: { status: string }) => result.status)).toEqual(["failure", "success"]);
       expect(body.results).toHaveLength(2);
 
       // The malformed source persisted nothing (stampJurisdiction threw before the importer

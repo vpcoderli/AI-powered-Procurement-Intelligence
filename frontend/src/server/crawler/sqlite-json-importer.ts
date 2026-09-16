@@ -1,8 +1,16 @@
-import { eq, sql } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
-import { bidAttachments, bids, crawlerLogs } from "@/server/db/schema";
+import { bidAttachments, bids, crawlerLocks, crawlerLogs } from "@/server/db/schema";
 import type { CrawlerJsonImportResult, CrawlerJsonRunPayload } from "./mysql-json-importer";
 import type { CrawlableSource } from "./source-registry";
+
+import { mergePersistedAttachments, mergePersistedBid, snakeCaseRecord } from "./persistence-merge";
+import { CrawlerPersistenceError, persistenceFailurePayload, validateCrawlerImport } from "./persistence-errors";
+import { CrawlerLeaseLostError, type CrawlerLeaseFence } from "./execution-context";
+import { assertPersistenceLease } from "./persistence-lease";
+
+type SqliteImportStore = Pick<AppDatabase, "select" | "insert">;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -108,75 +116,35 @@ function attachmentRowsForBid(row: JsonRecord, bidId: string, fallbackTimestamp:
   }));
 }
 
-/**
- * A value counts as "nothing learned" when it is null or trims to the empty string --
- * whitespace-only input from a list-only crawl must not read as a real value. Task 7's MySQL
- * twin mirrors this exact rule (in SQL) for the same column set.
- */
-function isBlank(value: string | null): boolean {
-  return value === null || value.trim() === "";
-}
-
-/**
- * True when `description` is just the title echoed back (a list-page-only crawl commonly fills
- * `description` with the title), ignoring case and surrounding whitespace. Task 7's MySQL twin
- * mirrors this exact rule.
- */
-function isTitleEcho(description: string, title: string): boolean {
-  return description.trim().toLowerCase() === title.trim().toLowerCase();
-}
-
-/**
- * Enrichment-preserving update set: a list-page-only run must not clobber detail-page data
- * written by an earlier enriched run. `description` is only replaced when the incoming value
- * is a real description (non-blank and not just the title echoed back); the other enrichable
- * columns only when the incoming value is non-blank. Everything else keeps the plain overwrite
- * semantics.
- */
-export function enrichmentPreservingUpdateSet(updateValues: ReturnType<typeof bidUpdateValues>, row: JsonRecord) {
-  const incomingDescription = stringValue(row.description, "");
-  const incomingTitle = stringValue(row.title, "Untitled opportunity");
-  const realDescription = !isBlank(incomingDescription) && !isTitleEcho(incomingDescription, incomingTitle);
-  const keepIfEmpty = <K extends keyof typeof updateValues>(key: K, column: string) =>
-    isBlank(updateValues[key] as string | null)
-      ? sql.raw(column)
-      : updateValues[key];
-
-  return {
-    ...updateValues,
-    description: realDescription ? updateValues.description : sql.raw("description"),
-    fullDescription: keepIfEmpty("fullDescription", "full_description"),
-    originalCategory: keepIfEmpty("originalCategory", "original_category"),
-    contactName: keepIfEmpty("contactName", "contact_name"),
-    contactEmail: keepIfEmpty("contactEmail", "contact_email"),
-    contactPhone: keepIfEmpty("contactPhone", "contact_phone"),
-    publishedDate: keepIfEmpty("publishedDate", "published_date"),
-    detailFetchedAt: keepIfEmpty("detailFetchedAt", "detail_fetched_at"),
-  };
-}
-
-/**
- * SQLite twin of mysql-json-importer.ts's replaceAttachments: DELETE+INSERT per bid so a bid's
- * persisted attachment set always matches the latest crawl (an attachment removed upstream must
- * disappear on re-import, not accumulate alongside the new set). This only persists whatever
- * archive metadata the JSON payload already carries -- attachment DOWNLOADING/archiving (the
- * crawler's `--archive-documents` path) is out of scope here and stays deferred to a later
- * phase; empty payload lists are ignored, see below.
- */
-function replaceAttachments(db: AppDatabase, row: JsonRecord, bidId: string, fallbackTimestamp: string) {
-  const incoming = attachmentRowsForBid(row, bidId, fallbackTimestamp);
-  // An empty incoming list means "this run learned nothing about attachments" (list-page-only
-  // crawl), not "the portal removed them" — keep whatever an enriched run already stored.
-  if (incoming.length === 0) return;
-  db.delete(bidAttachments).where(eq(bidAttachments.bidId, bidId)).run();
-  for (const attachmentRow of incoming) {
-    db.insert(bidAttachments).values(attachmentRow).run();
+function mergeAttachments(db: SqliteImportStore, row: JsonRecord, bidId: string, fallbackTimestamp: string) {
+  if (!Array.isArray(row.attachments) || row.attachments.length === 0) return;
+  const existing = db.select().from(bidAttachments).where(eq(bidAttachments.bidId, bidId)).all().map(snakeCaseRecord);
+  const incoming = mergePersistedAttachments(existing, row.attachments as JsonRecord[], bidId);
+  for (const attachmentRow of attachmentRowsForBid({ attachments: incoming }, bidId, fallbackTimestamp)) {
+    const insert = db.insert(bidAttachments).values(attachmentRow);
+    if (existing.some((attachment) => attachment.id === attachmentRow.id)) {
+      insert.onConflictDoUpdate({ target: bidAttachments.id, set: attachmentRow }).run();
+    } else {
+      // A supplied ID colliding with another bid must fail the run, not move its attachment.
+      insert.run();
+    }
   }
 }
 
-function upsertBid(db: AppDatabase, row: JsonRecord, fallbackTimestamp: string): "inserted" | "updated" {
-  const id = normalizedBidId(row);
-  const updateValues = bidUpdateValues(row, fallbackTimestamp);
+/** Resolve the persisted row for a payload bid by primary id, then by dedupe key (MySQL twin does the same). */
+function existingBidFor(db: SqliteImportStore, row: JsonRecord) {
+  const byId = db.select().from(bids).where(eq(bids.id, normalizedBidId(row))).get();
+  if (byId) return byId;
+  const dedupeKey = stringValue(row.dedupe_key);
+  return dedupeKey ? db.select().from(bids).where(eq(bids.dedupeKey, dedupeKey)).get() : undefined;
+}
+
+function upsertBid(db: SqliteImportStore, row: JsonRecord, fallbackTimestamp: string): { id: string; status: "inserted" | "updated" } {
+  const existing = existingBidFor(db, row);
+  // A dedupe-key match under another primary id updates that row instead of failing the run.
+  const id = existing?.id ?? normalizedBidId(row);
+  const merged = mergePersistedBid(row, existing ? snakeCaseRecord(existing) : undefined);
+  const updateValues = bidUpdateValues(merged, fallbackTimestamp);
   const insertValues = {
     id,
     source: stringValue(row.source),
@@ -186,24 +154,23 @@ function upsertBid(db: AppDatabase, row: JsonRecord, fallbackTimestamp: string):
     ...updateValues,
   };
 
-  const existing = db.select({ id: bids.id }).from(bids).where(eq(bids.id, id)).get();
-
   db.insert(bids)
     .values(insertValues)
-    .onConflictDoUpdate({ target: bids.id, set: enrichmentPreservingUpdateSet(updateValues, row) })
+    .onConflictDoUpdate({ target: bids.id, set: updateValues })
     .run();
 
-  return existing ? "updated" : "inserted";
+  return { id, status: existing ? "updated" : "inserted" };
 }
 
 function insertCrawlerLog(
-  db: AppDatabase,
+  db: SqliteImportStore,
   payload: CrawlerJsonRunPayload,
   counts: Pick<CrawlerJsonImportResult, "fetchedCount" | "insertedCount" | "updatedCount">,
+  id = `${payload.runId}:log`,
 ) {
   db.insert(crawlerLogs)
     .values({
-      id: `${payload.runId}:log`,
+      id,
       source: payload.source,
       runId: payload.runId,
       status: payload.status,
@@ -223,43 +190,43 @@ function insertCrawlerLog(
     .run();
 }
 
-/**
- * SQLite twin of `importCrawlerJsonRunIntoMysql` (mysql-json-importer.ts) — the JSON task
- * contract's Drizzle-backed importer. Upserts every bid in the payload by `id`
- * (onConflictDoUpdate), replaces its `bid_attachments` (delete + re-insert from the payload),
- * and writes exactly one `crawler_logs` row per call, success or failure.
- *
- * Unlike the MySQL twin, this does not reject a successful run with zero bid rows — that is not
- * part of this module's contract; see the task report for the reasoning.
- */
+/** Atomically commit every bid, attachment, and the successful run log. */
 export function importCrawlerJsonRunIntoSqlite(
   db: AppDatabase,
   payload: CrawlerJsonRunPayload,
+  lease?: CrawlerLeaseFence,
 ): CrawlerJsonImportResult {
-  const bidRows = payload.bids ?? [];
-
-  let insertedCount = 0;
-  let updatedCount = 0;
-
-  for (const row of bidRows) {
-    const status = upsertBid(db, row, payload.startedAt);
-    if (status === "inserted") insertedCount += 1;
-    else updatedCount += 1;
-    replaceAttachments(db, row, normalizedBidId(row), payload.startedAt);
+  try {
+    validateCrawlerImport(payload);
+    return db.transaction((transaction) => {
+      const checkLease = () => {
+        if (!lease) return;
+        const row = transaction.select().from(crawlerLocks).where(eq(crawlerLocks.source, lease.source)).get();
+        assertPersistenceLease(lease, row);
+      };
+      checkLease();
+      const bidRows = payload.bids ?? [];
+      let insertedCount = 0;
+      let updatedCount = 0;
+      for (const row of bidRows) {
+        const result = upsertBid(transaction, row, payload.startedAt);
+        if (result.status === "inserted") insertedCount += 1;
+        else updatedCount += 1;
+        mergeAttachments(transaction, row, result.id, payload.startedAt);
+      }
+      const counts = { fetchedCount: bidRows.length, insertedCount, updatedCount };
+      insertCrawlerLog(transaction, payload, counts);
+      checkLease();
+      return { ...counts, logCount: 1 };
+    }, lease ? { behavior: "immediate" } : undefined);
+  } catch (error) {
+    const failure = error instanceof CrawlerLeaseLostError ? error : new CrawlerPersistenceError(error);
+    try {
+      insertCrawlerLog(db, persistenceFailurePayload(payload, error), { fetchedCount: 0, insertedCount: 0, updatedCount: 0 }, `${payload.runId}:failure:${randomUUID()}`);
+      Object.assign(failure, { failureLogged: true });
+    } catch { /* The original failure remains actionable even if logging is unavailable. */ }
+    throw failure;
   }
-
-  insertCrawlerLog(db, payload, {
-    fetchedCount: bidRows.length,
-    insertedCount,
-    updatedCount,
-  });
-
-  return {
-    fetchedCount: bidRows.length,
-    insertedCount,
-    updatedCount,
-    logCount: 1,
-  };
 }
 
 function stampedValue(existing: unknown, sourceValue: string | null): unknown {

@@ -1,21 +1,8 @@
 import { execFile } from "node:child_process";
-import path from "node:path";
+import { crawlerRuntime, type CrawlerExecutionContext } from "./execution-context";
 import type { CrawlerJsonRunPayload } from "./mysql-json-importer";
 import type { CrawlableSource } from "./source-registry";
 
-function crawlerDirectory() {
-  return path.resolve(process.cwd(), "..", "crawler");
-}
-
-/**
- * Cap on the child's accumulated stdout. Node's `execFile` default is 1 MiB, which a real
- * fetch-task run can exceed on its own: the whole bid list is serialized to stdout, and detail
- * enrichment fills `description` + `full_description` (each capped at 20 000 chars in the
- * extractor) for up to 200 records per run — several MB. Past the limit Node SIGTERMs the child
- * and returns ERR_CHILD_PROCESS_STDIO_MAXBUFFER with truncated stdout, so JSON.parse throws and
- * a perfectly good run is recorded as a failure with zero bids imported.
- */
-const CRAWLER_STDOUT_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 export interface CrawlTaskDateRange {
   from: string | null;
@@ -90,45 +77,63 @@ export interface CrawlTaskResult {
 export async function runCrawlTask(
   source: CrawlableSource,
   options: CrawlTaskOptions,
+  context?: CrawlerExecutionContext,
 ): Promise<CrawlTaskResult> {
   const payload = buildCrawlTaskPayload(source, options);
+  const { python, ...runtime } = crawlerRuntime();
 
   return new Promise((resolve) => {
     const child = execFile(
-      "python3",
+      python,
       ["-m", "apsi_crawler.cli", "fetch-task"],
       {
-        cwd: crawlerDirectory(),
+        ...runtime,
         env: process.env,
-        maxBuffer: CRAWLER_STDOUT_MAX_BUFFER_BYTES,
+        signal: context?.signal,
       },
       (error, stdout, stderr) => {
         // Python 侧 _json_run_payload 输出 camelCase 键,不是 snake_case。
         let parsed: { status?: string; bids?: unknown[]; errorCode?: string | null } = {};
         try {
-          parsed = JSON.parse(String(stdout ?? ""));
+          const value: unknown = JSON.parse(String(stdout ?? ""));
+          parsed = value !== null && typeof value === "object" ? value : {};
         } catch {
           parsed = {};
         }
 
-        const ok = !error && parsed.status === "success";
+        const cancelled = context?.signal.aborted === true;
+        const timedOut = !cancelled && error?.killed === true && error.signal === "SIGKILL";
+        const processErrorCode = cancelled ? "CrawlerLeaseLostError" : timedOut ? "CrawlerTaskTimeoutError" : error?.code ? String(error.code) : null;
+        const ok = !error && !cancelled && parsed.status === "success";
         // Same `parsed` value as above — not re-parsed — just validated for the shape the
         // importer needs (an object with a status field) before being exposed as `resultPayload`.
         // Named distinctly from the outer `payload` (the outbound task request) so the two
         // don't shadow each other.
-        const resultPayload: CrawlerJsonRunPayload | null =
-          parsed !== null && typeof parsed === "object" && typeof parsed.status === "string"
+        let resultPayload: CrawlerJsonRunPayload | null =
+          !cancelled && !timedOut && typeof parsed.status === "string"
             ? (parsed as CrawlerJsonRunPayload)
             : null;
+        if (resultPayload && resultPayload.status === "success" && error) {
+          // The child printed a success document but exited non-zero (or was killed by
+          // maxBuffer). Never let the importer record that as a successful run.
+          resultPayload = {
+            ...resultPayload,
+            status: "failure",
+            bids: [],
+            errorCode: processErrorCode ?? "CrawlerProcessError",
+            errorMessage: error.message,
+            metadata: { ...(resultPayload.metadata ?? {}), fetchedBeforeProcessFailure: Array.isArray(parsed.bids) ? parsed.bids.length : 0 },
+          };
+        }
 
         resolve({
           ok,
           source: source.id,
           status: ok ? "success" : "failure",
           stdout: String(stdout ?? ""),
-          stderr: String(stderr ?? ""),
+          stderr: [String(stderr ?? ""), cancelled ? "Crawler source lease was lost" : timedOut ? `Crawler task timed out after ${runtime.timeout}ms` : !resultPayload ? error?.message : null].filter(Boolean).join("\n"),
           fetchedCount: Array.isArray(parsed.bids) ? parsed.bids.length : 0,
-          errorCode: parsed.errorCode ?? null,
+          errorCode: processErrorCode ?? parsed.errorCode ?? (ok ? null : "CrawlerOutputError"),
           payload: resultPayload,
         });
       },

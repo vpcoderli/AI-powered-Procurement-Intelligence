@@ -361,6 +361,27 @@ const mysqlColumnMigrations: MysqlColumnMigration[] = [
     columnName: "fips_code",
     definition: "VARCHAR(191)",
   },
+  // Attachment repair bookkeeping (C4).
+  {
+    tableName: "bid_attachments",
+    columnName: "verified_at",
+    definition: "VARCHAR(191)",
+  },
+  {
+    tableName: "bid_attachments",
+    columnName: "repair_attempts",
+    definition: "INT NOT NULL DEFAULT 0",
+  },
+  {
+    tableName: "bid_attachments",
+    columnName: "next_repair_at",
+    definition: "VARCHAR(191)",
+  },
+  {
+    tableName: "bid_attachments",
+    columnName: "failure_kind",
+    definition: "VARCHAR(191)",
+  },
 ];
 
 export function mysqlColumnMigrationStatements() {
@@ -392,6 +413,11 @@ const mysqlIndexMigrations: MysqlIndexMigration[] = [
     indexName: "idx_bids_fips_code",
     columns: ["fips_code"],
   },
+  {
+    tableName: "bid_attachments",
+    indexName: "idx_bid_attachments_repair",
+    columns: ["archive_status", "next_repair_at"],
+  },
 ];
 
 export function mysqlIndexMigrationStatements() {
@@ -410,6 +436,42 @@ function indexMigrationColumnNameSet() {
   }
 
   return columns;
+}
+
+export interface MysqlColumnShape {
+  dataType: string;
+  isNullable: string;
+  columnDefault: string | null;
+}
+
+function mysqlTextDefaultLiteral(columnDefault: string | null) {
+  if (columnDefault === null || columnDefault === undefined) return null;
+
+  // MySQL 8 reports expression defaults (the only kind a LONGTEXT column can carry) as the
+  // expression text, e.g. `_utf8mb4\'not_archived\'`; plain column defaults come back as the
+  // raw value.
+  const withoutIntroducer = columnDefault.replace(/^_[A-Za-z0-9]+/, "");
+  const quoted = withoutIntroducer.match(/^\\?'([\s\S]*?)\\?'$/);
+  const value = quoted ? quoted[1].replace(/\\'/g, "'").replace(/''/g, "'") : columnDefault;
+
+  if (!quoted && value.toUpperCase() === "NULL") return null;
+
+  return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "''")}'`;
+}
+
+/**
+ * The column definition needed to narrow a text column so MySQL can index it, or null when the
+ * column is already indexable. Nullability and the existing default are preserved: dropping
+ * `DEFAULT 'not_archived'` off `bid_attachments.archive_status` would break inserts that omit it.
+ */
+export function mysqlIndexColumnModification(column: MysqlColumnShape): string | null {
+  const dataType = column.dataType.trim().toLowerCase();
+  if (dataType !== "longtext" && dataType !== "text" && dataType !== "mediumtext") return null;
+
+  const nullability = column.isNullable.trim().toUpperCase() === "YES" ? " NULL" : " NOT NULL";
+  const literal = mysqlTextDefaultLiteral(column.columnDefault);
+
+  return `VARCHAR(191)${nullability}${literal ? ` DEFAULT ${literal}` : ""}`;
 }
 
 function assertMysqlIdentifier(value: string) {
@@ -479,12 +541,19 @@ export async function runMysqlMigrations(pool: Pool = createMysqlPool()): Promis
       assertMysqlIdentifier(column);
       try {
         const [rows] = await pool.query(
-          `SELECT DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
+          `SELECT DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?`,
           [indexMigration.tableName, column],
         );
-        const dataType = Array.isArray(rows) && rows.length > 0 ? String((rows[0] as Record<string, unknown>).DATA_TYPE).toLowerCase() : "";
-        if (dataType === "longtext" || dataType === "text" || dataType === "mediumtext") {
-          await pool.query(`ALTER TABLE ${indexMigration.tableName} MODIFY COLUMN ${column} VARCHAR(191) NOT NULL`);
+        const record = Array.isArray(rows) && rows.length > 0 ? (rows[0] as Record<string, unknown>) : null;
+        const definition = record
+          ? mysqlIndexColumnModification({
+              dataType: String(record.DATA_TYPE ?? ""),
+              isNullable: String(record.IS_NULLABLE ?? "YES"),
+              columnDefault: record.COLUMN_DEFAULT === null || record.COLUMN_DEFAULT === undefined ? null : String(record.COLUMN_DEFAULT),
+            })
+          : null;
+        if (definition) {
+          await pool.query(`ALTER TABLE ${indexMigration.tableName} MODIFY COLUMN ${column} ${definition}`);
           appliedStatements += 1;
         }
       } catch {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bidUpdateAssignment, importCrawlerJsonRunIntoMysql } from "./mysql-json-importer";
+import { importCrawlerJsonRunIntoMysql } from "./mysql-json-importer";
 
 const NOW = "2026-06-01T00:00:00.000Z";
 
@@ -84,7 +84,7 @@ describe("crawler JSON MySQL importer", () => {
         id: "json_bid_1",
         dedupe_key: "tx_esbd:TX-JSON-1",
         title: "JSON Imported Bid",
-        raw_payload: JSON.stringify({ id: "TX-JSON-1" }),
+        raw_payload: expect.stringContaining('"id":"TX-JSON-1"'),
         quality_flags_json: JSON.stringify(["has_attachment"]),
       }),
     ]);
@@ -119,13 +119,14 @@ describe("crawler JSON MySQL importer", () => {
         metadata: {},
         bids: [],
       }),
-    ).rejects.toThrow("Crawler MySQL JSON import refused a successful run with no bid rows.");
+    ).rejects.toThrow("Crawler JSON import refused a successful run with no bid rows.");
   });
 
   it("includes jurisdiction_level, jurisdiction_name, and fips_code in the emitted bids upsert SQL and persists their values", async () => {
     let capturedSql = "";
     let capturedValues: unknown[] = [];
     const mysql = {
+      beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {},
       execute: async (sql: string, values: unknown[] = []) => {
         if (sql.includes("INSERT INTO bids")) {
           capturedSql = sql;
@@ -180,6 +181,7 @@ describe("crawler JSON MySQL importer", () => {
   it("persists null jurisdiction columns when a payload (e.g. SAM.gov) does not carry the keys", async () => {
     let capturedValues: unknown[] = [];
     const mysql = {
+      beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {},
       execute: async (sql: string, values: unknown[] = []) => {
         if (sql.includes("INSERT INTO bids")) capturedValues = values;
         return [{ affectedRows: 1 }, undefined] as [unknown, unknown?];
@@ -212,197 +214,184 @@ describe("crawler JSON MySQL importer", () => {
     expect(capturedValues.at(-1)).toBeNull();
   });
 
-  // Both `TRIM(...)` calls below must strip the same whitespace class as JS's `String.trim()`
-  // (tab/newline/CR/NBSP included), not just the plain space MySQL's bare TRIM() strips by
-  // default — hence the REPLACE chain feeding every TRIM.
-  const normalizeWhitespace = (valueSql: string) =>
-    `REPLACE(REPLACE(REPLACE(REPLACE(${valueSql}, '\\t', ' '), '\\n', ' '), '\\r', ' '), CHAR(0xC2A0 USING utf8mb4), ' ')`;
-  const isBlank = (valueSql: string) => `TRIM(${normalizeWhitespace(`COALESCE(${valueSql}, '')`)}) = ''`;
-  const normalized = (valueSql: string) => `LOWER(TRIM(${normalizeWhitespace(`COALESCE(${valueSql}, '')`)}))`;
+  it("uses one acquired connection for reads, writes, commit, and release", async () => {
+    const mysql = createFakeMysql();
+    await importCrawlerJsonRunIntoMysql(mysql, payload({ description: "Scope", attachments: [{ url: "https://x/a" }] }));
+    expect(mysql.events[0]).toBe("acquire");
+    expect(mysql.events[1]).toBe("begin");
+    expect(mysql.events.slice(-2)).toEqual(["commit", "release"]);
+    expect(mysql.events).not.toContain("pool-query");
+    expect(mysql.events).not.toContain("pool-execute");
+  });
 
-  it("builds enrichment-preserving ON DUPLICATE KEY UPDATE assignments", () => {
-    expect(bidUpdateAssignment("description")).toBe(
-      `description = IF(${isBlank("VALUES(description)")} ` +
-        `OR ${normalized("VALUES(description)")} = ${normalized("VALUES(title)")}, ` +
-        "description, VALUES(description))",
-    );
-    for (const column of ["full_description", "original_category", "contact_name", "contact_email", "contact_phone", "published_date", "detail_fetched_at"]) {
-      expect(bidUpdateAssignment(column)).toBe(
-        `${column} = IF(${isBlank(`VALUES(${column})`)}, ${column}, VALUES(${column}))`,
-      );
+  it("refuses a store with no transaction capability before any bid write", async () => {
+    const mysql = createFakeMysql();
+    await expect(importCrawlerJsonRunIntoMysql({ query: mysql.query, execute: mysql.execute }, payload())).rejects.toThrow(/transaction/i);
+    expect(mysql.bids.size).toBe(0);
+  });
+
+  it("merges detailed fields and attachments across repeated list-only imports", async () => {
+    const mysql = createFakeMysql();
+    await importCrawlerJsonRunIntoMysql(mysql, payload({
+      description: "Detailed scope", full_description: "Complete detailed scope", original_category: "Construction", contact_email: "jane@example.gov", detail_fetched_at: NOW,
+      raw_payload: { enrichment: { applied_fields: ["description", "full_description", "original_category", "contact_email"], fields: { description: "selector" } } },
+      attachments: [{ id: "a", name: "A", url: "https://x/a", storage_path: "/archive/a", archive_status: "archived" }, { id: "b", name: "B", url: "https://x/b" }],
+    }));
+    for (let n = 0; n < 2; n += 1) {
+      await importCrawlerJsonRunIntoMysql(mysql, payload({
+        description: "List scope", full_description: "ROAD  REPAIR", original_category: "General", contact_email: "help@example.gov", raw_payload: { list: n },
+        attachments: [{ id: "different-id", name: "Updated A", url: "https://x/a", archive_status: "not_archived" }],
+      }));
     }
-    expect(bidUpdateAssignment("title")).toBe("title = VALUES(title)");
-    expect(bidUpdateAssignment("deadline_date")).toBe("deadline_date = VALUES(deadline_date)");
+    const row = [...mysql.bids.values()][0];
+    expect(row).toMatchObject({ description: "Detailed scope", full_description: "Complete detailed scope", original_category: "Construction", contact_email: "jane@example.gov" });
+    expect(JSON.parse(String(row.raw_payload))).toMatchObject({ list: 1, enrichment: { fields: { description: "selector" } } });
+    expect(mysql.attachments).toHaveLength(2);
+    expect(mysql.attachments[0]).toMatchObject({ id: "a", name: "Updated A", storage_path: "/archive/a", archive_status: "archived" });
   });
 
-  it("uses the preserving assignments in the bids upsert SQL", async () => {
+  it("rolls back all writes and logs failure after a mid-run attachment error", async () => {
     const mysql = createFakeMysql();
-    const executed: string[] = [];
-    const recording = { ...mysql, execute: async (sql: string, values: unknown[] = []) => { executed.push(sql); return mysql.execute(sql, values); } };
-    await importCrawlerJsonRunIntoMysql(recording as typeof mysql, {
-      source: "il_bidbuy", runId: "run_p", status: "success", startedAt: NOW, finishedAt: NOW, durationMs: 1, metadata: {},
-      bids: [{ id: "il_bidbuy:1", source: "Illinois BidBuy", source_bid_id: "1", dedupe_key: "il_bidbuy:1", title: "T", description: "T", state_code: "IL", source_url: "https://x/1" }],
-      errorCode: null, errorMessage: null, errorStack: null,
-    });
-    const upsert = executed.find((sql) => sql.includes("INSERT INTO bids"));
-    expect(upsert).toContain(bidUpdateAssignment("description"));
-    expect(upsert).toContain(bidUpdateAssignment("original_category"));
+    await importCrawlerJsonRunIntoMysql(mysql, payload({ description: "Original" }));
+    mysql.failAttachment = true;
+    const failed = payload({ description: "Changed", attachments: [{ url: "https://x/a" }] });
+    await expect(importCrawlerJsonRunIntoMysql(mysql, failed)).rejects.toThrow("attachment unavailable");
+    expect([...mysql.bids.values()][0].description).toBe("Original");
+    expect(mysql.attachments).toHaveLength(0);
+    expect(mysql.logs.find((row) => row.run_id === failed.runId)).toMatchObject({ status: "failure", inserted_count: 0, updated_count: 0, error_code: "CrawlerPersistenceError" });
+    expect(mysql.events).toContain("rollback");
   });
 
-  it("treats a whitespace-only incoming value as blank so it does not overwrite an enriched value", async () => {
+  it("accepts an explained date-filtered zero-row success", async () => {
     const mysql = createFakeMysql();
-    const executed: string[] = [];
-    const recording = { ...mysql, execute: async (sql: string, values: unknown[] = []) => { executed.push(sql); return mysql.execute(sql, values); } };
-    await importCrawlerJsonRunIntoMysql(recording as typeof mysql, {
-      source: "il_bidbuy", runId: "run_ws", status: "success", startedAt: NOW, finishedAt: NOW, durationMs: 1, metadata: {},
-      bids: [{
-        id: "il_bidbuy:1", source: "Illinois BidBuy", source_bid_id: "1", dedupe_key: "il_bidbuy:1",
-        title: "T", description: "T", contact_email: "   ", state_code: "IL", source_url: "https://x/1",
-      }],
-      errorCode: null, errorMessage: null, errorStack: null,
-    });
-    const upsert = executed.find((sql) => sql.includes("INSERT INTO bids"));
-    // The assignment SQL itself (not the TS layer) decides blankness via TRIM(...) — a
-    // whitespace-only "   " bound as the contact_email parameter trims to '' in MySQL, so this
-    // fragment keeps the existing column value instead of overwriting it with whitespace.
-    expect(upsert).toContain(bidUpdateAssignment("contact_email"));
+    expect(await importCrawlerJsonRunIntoMysql(mysql, { ...payload(), bids: [], metadata: { dateFilter: { from: "2026-09-01", to: null, kept: 0, dropped: 2, unparsed: 0 } } })).toEqual({ fetchedCount: 0, insertedCount: 0, updatedCount: 0, logCount: 1 });
+    expect(mysql.logs[0].status).toBe("success");
   });
 
-  it("treats an incoming description that is a title echo (differing only by case/whitespace) as blank", async () => {
+  it("accepts a verified empty-state zero-row success and rejects an unconfirmed tenant", async () => {
     const mysql = createFakeMysql();
-    const executed: string[] = [];
-    const recording = { ...mysql, execute: async (sql: string, values: unknown[] = []) => { executed.push(sql); return mysql.execute(sql, values); } };
-    await importCrawlerJsonRunIntoMysql(recording as typeof mysql, {
-      source: "il_bidbuy", runId: "run_echo", status: "success", startedAt: NOW, finishedAt: NOW, durationMs: 1, metadata: {},
-      bids: [{
-        id: "il_bidbuy:1", source: "Illinois BidBuy", source_bid_id: "1", dedupe_key: "il_bidbuy:1",
-        title: "Road Resurfacing Project", description: "  ROAD resurfacing project  ",
-        state_code: "IL", source_url: "https://x/1",
-      }],
-      errorCode: null, errorMessage: null, errorStack: null,
-    });
-    const upsert = executed.find((sql) => sql.includes("INSERT INTO bids"));
-    // LOWER(TRIM(...)) on both sides means MySQL — not the TS layer — decides this incoming
-    // description is a title echo (same text modulo case/whitespace) and keeps the existing one.
-    expect(upsert).toContain(`${normalized("VALUES(description)")} = ${normalized("VALUES(title)")}`);
+    const emptyState = { verified: true, tenant_confirmed: true, marker: "There are no open bids at this time.", method: "adapter" };
+    expect(await importCrawlerJsonRunIntoMysql(mysql, { ...payload(), bids: [], metadata: { emptyState } })).toEqual({ fetchedCount: 0, insertedCount: 0, updatedCount: 0, logCount: 1 });
+    expect(mysql.logs[0].status).toBe("success");
+    await expect(
+      importCrawlerJsonRunIntoMysql(createFakeMysql(), {
+        ...payload(),
+        bids: [],
+        metadata: { emptyState: { ...emptyState, tenant_confirmed: false } },
+      }),
+    ).rejects.toThrow("Crawler JSON import refused a successful run with no bid rows.");
   });
 
-  it("normalizes tab/newline/CR/NBSP whitespace, not just plain spaces, when deciding blankness and title-echo", async () => {
+  it("preserves successful bid archive metadata when a later list import has no archive", async () => {
     const mysql = createFakeMysql();
-    let capturedSql = "";
-    let capturedValues: unknown[] = [];
-    const recording = {
-      ...mysql,
-      execute: async (sql: string, values: unknown[] = []) => {
-        if (sql.includes("INSERT INTO bids")) {
-          capturedSql = sql;
-          capturedValues = values;
-        }
-        return mysql.execute(sql, values);
-      },
-    };
-    const fullDescription = "\n\t ";
-    const description = "\n\tROAD RESURFACING PROJECT\r";
-    const title = "Road resurfacing project";
-    await importCrawlerJsonRunIntoMysql(recording as typeof mysql, {
-      source: "il_bidbuy", runId: "run_ws_class", status: "success", startedAt: NOW, finishedAt: NOW, durationMs: 1, metadata: {},
-      bids: [{
-        id: "il_bidbuy:1", source: "Illinois BidBuy", source_bid_id: "1", dedupe_key: "il_bidbuy:1",
-        title, description, full_description: fullDescription, state_code: "IL", source_url: "https://x/1",
-      }],
-      errorCode: null, errorMessage: null, errorStack: null,
-    });
-
-    // The generated SQL must normalize tab/newline/CR/NBSP to a plain space before TRIM — a
-    // bare TRIM() (space-only) would leave "\n\t " and a newline/tab-padded title echo
-    // unrecognized as blank, unlike sqlite-json-importer.ts's `value.trim() === ""`.
-    expect(capturedSql).toContain(bidUpdateAssignment("full_description"));
-    expect(capturedSql).toContain(`${normalized("VALUES(description)")} = ${normalized("VALUES(title)")}`);
-
-    // The bound parameters must carry the raw, un-normalized payload text — normalization is a
-    // MySQL-side decision inside the assignment SQL, not something the TS layer pre-processes.
-    // Positional indices per bidColumns in mysql-json-importer.ts: title=4, description=5,
-    // full_description=6 (id, source, source_bid_id, dedupe_key precede title).
-    expect(capturedValues[4]).toBe(title);
-    expect(capturedValues[5]).toBe(description);
-    expect(capturedValues[6]).toBe(fullDescription);
+    await importCrawlerJsonRunIntoMysql(mysql, payload({ detail_archive_status: "archived", detail_archive_path: "/archive/detail.html", detail_checksum_sha256: "sha", detail_fetched_at: NOW, detail_archive_error: null }));
+    await importCrawlerJsonRunIntoMysql(mysql, payload({ detail_archive_status: "not_archived", detail_archive_path: null, detail_checksum_sha256: null, detail_fetched_at: null, detail_archive_error: null }));
+    expect([...mysql.bids.values()][0]).toMatchObject({ detail_archive_status: "archived", detail_archive_path: "/archive/detail.html", detail_checksum_sha256: "sha", detail_fetched_at: NOW, detail_archive_error: null });
   });
 
-  it("does not delete existing attachments when the payload carries an empty list", async () => {
+  it("locks and checks the source lease using the write connection and rolls back expiry", async () => {
     const mysql = createFakeMysql();
-    const executed: string[] = [];
-    const recording = { ...mysql, execute: async (sql: string, values: unknown[] = []) => { executed.push(sql); return mysql.execute(sql, values); } };
-    await importCrawlerJsonRunIntoMysql(recording as typeof mysql, {
-      source: "il_bidbuy", runId: "run_a", status: "success", startedAt: NOW, finishedAt: NOW, durationMs: 1, metadata: {},
-      bids: [{ id: "il_bidbuy:1", source: "Illinois BidBuy", source_bid_id: "1", dedupe_key: "il_bidbuy:1", title: "T", state_code: "IL", source_url: "https://x/1", attachments: [] }],
-      errorCode: null, errorMessage: null, errorStack: null,
-    });
-    expect(executed.some((sql) => sql.includes("DELETE FROM bid_attachments"))).toBe(false);
+    mysql.lease = { source: "il_bidbuy", owner: "lease-owner", expiresAt: "2026-06-01T00:00:01.000Z" };
+    let now = NOW;
+    mysql.beforeAttachment = () => { now = "2026-06-01T00:00:02.000Z"; };
+    const run = payload({ attachments: [{ url: "https://x/a" }] });
+    await expect(importCrawlerJsonRunIntoMysql(mysql, run, { source: "il_bidbuy", owner: "lease-owner", now: () => now })).rejects.toThrow(/lease was lost/);
+    expect(mysql.bids.size).toBe(0);
+    expect(mysql.attachments).toHaveLength(0);
+    // The opening lease check is a plain read (a held row lock would block the heartbeat);
+    // only the pre-commit check locks the row.
+    expect(mysql.events.filter((event) => event === "lease-read")).toHaveLength(1);
+    expect(mysql.events.filter((event) => event === "lease-lock")).toHaveLength(1);
+    expect(mysql.events.indexOf("lease-read")).toBeLessThan(mysql.events.indexOf("lease-lock"));
+    expect(mysql.logs[0]).toMatchObject({ status: "failure", error_code: "CrawlerLeaseLostError", inserted_count: 0 });
+    expect(mysql.events).not.toContain("commit");
+  });
+
+  it("rolls back if lease cancellation arrives during an otherwise valid write", async () => {
+    const mysql = createFakeMysql();
+    const controller = new AbortController();
+    mysql.lease = { source: "il_bidbuy", owner: "lease-owner", expiresAt: "2026-06-01T00:10:00.000Z" };
+    mysql.beforeAttachment = () => controller.abort();
+    await expect(importCrawlerJsonRunIntoMysql(mysql, payload({ attachments: [{ url: "https://x/a" }] }), { source: "il_bidbuy", owner: "lease-owner", now: () => NOW, signal: controller.signal })).rejects.toThrow(/lease was lost/);
+    expect(mysql.bids.size).toBe(0);
+    expect(mysql.events).not.toContain("commit");
   });
 });
 
+let sequence = 0;
+function payload(overrides: Record<string, unknown> = {}) {
+  return { source: "il_bidbuy", runId: `run_${sequence++}`, status: "success" as const, startedAt: NOW, bids: [{ id: "bid_1", source: "Illinois BidBuy", dedupe_key: "il_bidbuy:1", title: "Road Repair", state_code: "IL", source_url: "https://x/1", ...overrides }] };
+}
+
+// An explicit transaction-capable connection fake tests orchestration and bound values.
+// Real SQL constraint/rollback behavior is checked by the isolated MySQL integration suite.
 function createFakeMysql() {
   const bids = new Map<string, Record<string, unknown>>();
   const attachments: Record<string, unknown>[] = [];
   const logs: Record<string, unknown>[] = [];
-
-  return {
-    bids,
-    attachments,
-    logs,
-    execute: async (sql: string, values: unknown[] = []) => {
-      if (sql.includes("INSERT INTO bids")) {
-        const existing = [...bids.values()].find((row) => row.dedupe_key === values[3]);
-        const id = existing?.id as string | undefined;
-        bids.set(id ?? values[0] as string, {
-          id: id ?? values[0],
-          source: values[1],
-          source_bid_id: values[2],
-          dedupe_key: values[3],
-          title: values[4],
-          description: values[5],
-          raw_payload: values[22],
-          quality_flags_json: values[24],
-          updated_at: values[34],
-        });
-      }
-
-      if (sql.includes("DELETE FROM bid_attachments")) {
-        for (let index = attachments.length - 1; index >= 0; index -= 1) {
-          if (attachments[index].bid_id === values[0]) attachments.splice(index, 1);
+  const events: string[] = [];
+  let snapshot: { bids: typeof bids; attachments: typeof attachments; logs: typeof logs };
+  const execute = async (sql: string, values: unknown[] = []): Promise<[unknown, unknown?]> => {
+    events.push("execute");
+    const match = sql.match(/INSERT INTO (bids|bid_attachments|crawler_logs) \(([^)]+)\)/);
+    if (match) {
+      const columns = match[2].split(",").map((name) => name.trim());
+      const row = Object.fromEntries(columns.map((name, index) => [name, values[index]]));
+      if (match[1] === "bids") {
+        const existing = [...bids.values()].find((bid) => bid.dedupe_key === row.dedupe_key || bid.id === row.id);
+        if (existing) {
+          // Mirror the real ON DUPLICATE KEY UPDATE column list: identity/first-seen columns stay.
+          const update = Object.fromEntries(Object.entries(row).filter(([column]) => !["id", "source", "dedupe_key", "first_seen_at", "created_at"].includes(column)));
+          bids.set(String(existing.id), { ...existing, ...update });
+        } else {
+          bids.set(String(row.id), row);
         }
+      } else if (match[1] === "bid_attachments") {
+        store.beforeAttachment?.();
+        if (store.failAttachment) throw new Error("attachment unavailable");
+        const index = attachments.findIndex((attachment) => attachment.id === row.id);
+        if (index >= 0) attachments[index] = row;
+        else attachments.push(row);
+      } else logs.push(row);
+    }
+    if (sql.includes("DELETE FROM bid_attachments")) {
+      for (let index = attachments.length - 1; index >= 0; index -= 1) {
+        if (attachments[index].bid_id === values[0]) attachments.splice(index, 1);
       }
-
-      if (sql.includes("INSERT INTO bid_attachments")) {
-        attachments.push({
-          id: values[0],
-          bid_id: values[1],
-          name: values[2],
-          url: values[3],
-          archive_status: values[10],
-        });
-      }
-
-      if (sql.includes("INSERT INTO crawler_logs")) {
-        logs.push({
-          id: values[0],
-          source: values[1],
-          run_id: values[2],
-          status: values[3],
-          fetched_count: values[7],
-          inserted_count: values[8],
-          updated_count: values[9],
-        });
-      }
-
-      return [{ affectedRows: 1 }, undefined];
-    },
-    query: async (sql: string, values: unknown[] = []) => {
-      if (sql.includes("SELECT id FROM bids WHERE dedupe_key")) {
-        return [[...bids.values()].filter((row) => row.dedupe_key === values[0]).map((row) => ({ id: row.id })), undefined];
-      }
-
-      return [[], undefined];
-    },
+    }
+    return [{ affectedRows: 1 }, undefined];
   };
+  const query = async (sql: string, values: unknown[] = []): Promise<[unknown[], unknown?]> => {
+    events.push("query");
+    if (sql.includes("FROM crawler_locks")) {
+      events.push(sql.includes("FOR UPDATE") ? "lease-lock" : "lease-read");
+      return [store.lease && store.lease.source === values[0] ? [store.lease] : [], undefined];
+    }
+    if (sql.includes("FROM bids WHERE id = ?")) return [[...bids.values()].filter((row) => row.id === values[0]), undefined];
+    if (sql.includes("FROM bids WHERE dedupe_key = ?")) return [[...bids.values()].filter((row) => row.dedupe_key === values[0]), undefined];
+    if (sql.includes("FROM bid_attachments WHERE")) return [attachments.filter((row) => row.bid_id === values[0]), undefined];
+    return [[], undefined];
+  };
+  const connection = {
+    query, execute,
+    beginTransaction: async () => { events.push("begin"); snapshot = structuredClone({ bids, attachments, logs }); },
+    commit: async () => { events.push("commit"); },
+    rollback: async () => {
+      events.push("rollback");
+      bids.clear();
+      for (const [key, value] of snapshot.bids) bids.set(key, value);
+      attachments.splice(0, attachments.length, ...snapshot.attachments);
+      logs.splice(0, logs.length, ...snapshot.logs);
+    },
+    release: () => { events.push("release"); },
+  };
+  const store = {
+    bids, attachments, logs, events, failAttachment: false,
+    lease: null as { source: string; owner: string; expiresAt: string } | null,
+    beforeAttachment: undefined as (() => void) | undefined,
+    query: async (sql: string, values: unknown[] = []) => { events.push("pool-query"); return query(sql, values); },
+    execute: async (sql: string, values: unknown[] = []) => { events.push("pool-execute"); return execute(sql, values); },
+    getConnection: async () => { events.push("acquire"); return connection; },
+  };
+  return store;
 }

@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { bidAttachments, bids, crawlerLogs } from "@/server/db/schema";
+import { bidAttachments, bids, crawlerLocks, crawlerLogs } from "@/server/db/schema";
 import type { CrawlableSource } from "./source-registry";
 import type { CrawlerJsonRunPayload } from "./mysql-json-importer";
 import { importCrawlerJsonRunIntoSqlite, stampJurisdiction } from "./sqlite-json-importer";
@@ -247,7 +247,7 @@ describe("crawler JSON SQLite importer", () => {
     });
   });
 
-  it("replaces attachments on re-import rather than duplicating them", () => {
+  it("retains earlier attachments when a re-import discovers another URL", () => {
     const firstPayload: CrawlerJsonRunPayload = {
       source: "il_bidbuy",
       runId: "sqlite_run_attach_a",
@@ -303,8 +303,8 @@ describe("crawler JSON SQLite importer", () => {
       .from(bidAttachments)
       .where(eq(bidAttachments.bidId, "sqlite_bid_replace"))
       .all();
-    expect(attachmentRows).toHaveLength(1);
-    expect(attachmentRows[0]).toMatchObject({ name: "New.pdf", url: "https://example.com/new.pdf" });
+    expect(attachmentRows).toHaveLength(3);
+    expect(attachmentRows).toContainEqual(expect.objectContaining({ name: "New.pdf", url: "https://example.com/new.pdf" }));
   });
 
   it("leaves no attachment rows for a bid with no attachments", () => {
@@ -353,7 +353,7 @@ describe("crawler JSON SQLite importer", () => {
 
     const row = testDb.db.select().from(bids).where(eq(bids.id, "il_bidbuy:1")).get();
     expect(row?.description).toBe("Full scope of work");
-    expect(row?.fullDescription).toBe("Full scope of work");
+    expect(row?.fullDescription).toBeNull();
     expect(row?.originalCategory).toBe("Construction");
     expect(row?.publishedDate).toBe("08/14/2026");
     expect(row?.contactEmail).toBe("jane@example.gov");
@@ -375,7 +375,7 @@ describe("crawler JSON SQLite importer", () => {
 
     const row = testDb.db.select().from(bids).where(eq(bids.id, "il_bidbuy:1")).get();
     expect(row?.description).toBe("Full scope of work");
-    expect(row?.fullDescription).toBe("Full scope of work");
+    expect(row?.fullDescription).toBeNull();
     expect(row?.contactEmail).toBe("jane@example.gov");
   });
 
@@ -393,7 +393,182 @@ describe("crawler JSON SQLite importer", () => {
     expect(testDb.db.select().from(bidAttachments).where(eq(bidAttachments.bidId, "il_bidbuy:1")).all()).toHaveLength(1);
 
     importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, attachments: [{ name: "A.pdf", url: "https://x/a.pdf", sort_order: 0 }, { name: "B.pdf", url: "https://x/b.pdf", sort_order: 1 }] }));
-    expect(testDb.db.select().from(bidAttachments).where(eq(bidAttachments.bidId, "il_bidbuy:1")).all().map((a) => a.name)).toEqual(["A.pdf", "B.pdf"]);
+    expect(testDb.db.select().from(bidAttachments).where(eq(bidAttachments.bidId, "il_bidbuy:1")).all().map((a) => a.name)).toEqual(["Spec.pdf", "A.pdf", "B.pdf"]);
+  });
+
+  it("protects detailed fields and diagnostics through repeated nonempty list-only imports", () => {
+    const applied = ["description", "full_description", "original_category", "contact_name", "contact_email", "contact_phone"];
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({
+      ...baseBid, description: "Detailed scope", full_description: "Complete detailed scope of the construction work",
+      original_category: "Construction", contact_name: "Jane", contact_email: "jane@example.gov", contact_phone: "123",
+      detail_fetched_at: NOW,
+      raw_payload: { enrichment: { applied_fields: applied, fields: { description: "selector", contact: "heuristic" } } },
+    }));
+    for (let index = 0; index < 2; index += 1) {
+      importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({
+        ...baseBid, description: "Short list summary", full_description: "ROAD  REPAIR",
+        original_category: "General", contact_name: "Help desk", contact_email: "help@example.gov", contact_phone: "999",
+        raw_payload: { listRevision: index },
+      }));
+    }
+    const row = testDb.db.select().from(bids).get()!;
+    expect(row).toMatchObject({ description: "Detailed scope", fullDescription: "Complete detailed scope of the construction work", originalCategory: "Construction", contactName: "Jane", contactEmail: "jane@example.gov", contactPhone: "123" });
+    expect(JSON.parse(row.rawPayload!)).toMatchObject({ listRevision: 1, enrichment: { fields: { description: "selector", contact: "heuristic" } } });
+  });
+
+  it("refreshes only fields that a new extraction actually wrote", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Old detailed scope", original_category: "Construction", contact_email: "jane@example.gov", detail_fetched_at: NOW }));
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({
+      ...baseBid, description: "New detailed scope", original_category: "List category", contact_email: "help@example.gov", detail_fetched_at: NOW,
+      raw_payload: { enrichment: { applied_fields: ["description"], fields: { description: "selector" } } },
+    }));
+    expect(testDb.db.select().from(bids).get()).toMatchObject({ description: "New detailed scope", originalCategory: "Construction", contactEmail: "jane@example.gov" });
+  });
+
+  it("preserves legacy detail values when parsing succeeded without applying any field", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Legacy scope", detail_fetched_at: NOW }));
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "List scope", detail_fetched_at: NOW, raw_payload: { enrichment: { applied_fields: [], fields: { description: "not_found" } } } }));
+    expect(testDb.db.select().from(bids).get()?.description).toBe("Legacy scope");
+  });
+
+  it("merges attachment URLs across reordering and retains archived metadata", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, attachments: [
+      { id: "original-a", name: "A", url: "https://x/a", storage_path: "/archive/a", archive_status: "archived", checksum_sha256: "sha", byte_size: 10, fetched_at: NOW },
+      { id: "original-b", name: "B", url: "https://x/b" },
+    ] }));
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, attachments: [
+      { id: "changed-id", name: "Updated A", url: "https://x/a", archive_status: "not_archived", storage_path: null },
+      { name: "C", url: "https://x/c" },
+      { name: "Duplicate C", url: "https://x/c" },
+    ] }));
+    const attachments = testDb.db.select().from(bidAttachments).all();
+    expect(attachments).toHaveLength(3);
+    expect(attachments.find((row) => row.url === "https://x/a")).toMatchObject({ id: "original-a", name: "Updated A", archiveStatus: "archived", storagePath: "/archive/a", checksumSha256: "sha", byteSize: 10, fetchedAt: NOW });
+    expect(attachments.some((row) => row.url === "https://x/b")).toBe(true);
+  });
+
+  it("rolls back bid and attachment updates when the success log cannot be written", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Original scope", attachments: [{ name: "A", url: "https://x/a" }] }));
+    testDb.db.$client.exec("CREATE TRIGGER reject_success_log BEFORE INSERT ON crawler_logs WHEN NEW.status = 'success' BEGIN SELECT RAISE(FAIL, 'log unavailable'); END");
+    const failed = payloadWith({ ...baseBid, description: "Changed scope", attachments: [{ name: "B", url: "https://x/b" }] });
+    expect(() => importCrawlerJsonRunIntoSqlite(testDb.db, failed)).toThrow("log unavailable");
+    expect(testDb.db.select().from(bids).get()?.description).toBe("Original scope");
+    expect(testDb.db.select().from(bidAttachments).all().map((row) => row.url)).toEqual(["https://x/a"]);
+    expect(testDb.db.select().from(crawlerLogs).where(eq(crawlerLogs.runId, failed.runId)).get()).toMatchObject({ status: "failure", insertedCount: 0, updatedCount: 0, errorCode: "CrawlerPersistenceError" });
+  });
+
+  it("accepts an explained date-filtered zero-row success and rejects raw empty success", () => {
+    const empty = { source: "il_bidbuy", runId: "filtered", status: "success" as const, startedAt: NOW, bids: [], metadata: { dateFilter: { from: "2026-09-01", to: null, kept: 0, dropped: 2, unparsed: 0 } } };
+    expect(importCrawlerJsonRunIntoSqlite(testDb.db, empty)).toMatchObject({ fetchedCount: 0, logCount: 1 });
+    expect(() => importCrawlerJsonRunIntoSqlite(testDb.db, { ...empty, runId: "raw-empty", metadata: {} })).toThrow(/no bid rows/);
+  });
+
+  it("accepts a verified empty-state zero-row success and rejects an unconfirmed tenant", () => {
+    const emptyState = { verified: true, tenant_confirmed: true, marker: "There are no open bids at this time.", method: "adapter" };
+    const empty = { source: "bidnet_ny_erie", runId: "empty-verified", status: "success" as const, startedAt: NOW, bids: [], metadata: { emptyState } };
+    expect(importCrawlerJsonRunIntoSqlite(testDb.db, empty)).toMatchObject({ fetchedCount: 0, logCount: 1 });
+    expect(testDb.db.select().from(crawlerLogs).where(eq(crawlerLogs.runId, "empty-verified")).get()).toMatchObject({ status: "success", fetchedCount: 0 });
+    expect(() =>
+      importCrawlerJsonRunIntoSqlite(testDb.db, {
+        ...empty,
+        runId: "empty-unconfirmed",
+        metadata: { emptyState: { ...emptyState, tenant_confirmed: false } },
+      }),
+    ).toThrow(/no bid rows/);
+  });
+
+  it("clears stale full detail when a fresh extraction explicitly replaces it with a short description", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Old scope", full_description: "Old long detailed scope", detail_fetched_at: NOW }));
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "New short detail", full_description: null, detail_fetched_at: NOW, raw_payload: { enrichment: { applied_fields: ["description", "full_description"] } } }));
+    expect(testDb.db.select().from(bids).get()).toMatchObject({ description: "New short detail", fullDescription: null });
+  });
+
+  it("rolls back every bid if a new attachment ID belongs to a different bid", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, attachments: [{ id: "shared-id", url: "https://x/a" }] }));
+    const conflicting = payloadWith({ ...baseBid, id: "other-bid", source_bid_id: "other-bid", dedupe_key: "other-bid", attachments: [{ id: "shared-id", url: "https://x/b" }] });
+    expect(() => importCrawlerJsonRunIntoSqlite(testDb.db, conflicting)).toThrow();
+    expect(testDb.db.select().from(bids).all()).toHaveLength(1);
+    expect(testDb.db.select().from(bidAttachments).get()).toMatchObject({ bidId: baseBid.id, url: "https://x/a" });
+  });
+
+  it("records a queryable persistence failure even when the run's ordinary log ID already exists", () => {
+    const initial = payloadWith({ ...baseBid, description: "Original" });
+    importCrawlerJsonRunIntoSqlite(testDb.db, initial);
+    expect(() => importCrawlerJsonRunIntoSqlite(testDb.db, { ...initial, bids: [{ ...baseBid, description: "Changed" }] })).toThrow();
+    expect(testDb.db.select().from(crawlerLogs).where(eq(crawlerLogs.runId, initial.runId)).all()).toContainEqual(expect.objectContaining({ status: "failure", errorCode: "CrawlerPersistenceError", updatedCount: 0 }));
+  });
+
+  it("retains a successful detail archive across list-only defaults and failed archival attempts", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, detail_archive_status: "archived", detail_archive_path: "/archive/detail.html", detail_checksum_sha256: "original-sha", detail_fetched_at: NOW, detail_archive_error: null }));
+    for (const status of ["not_archived", "failed"]) {
+      importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, detail_archive_status: status, detail_archive_path: null, detail_checksum_sha256: null, detail_fetched_at: null, detail_archive_error: status === "failed" ? "download failed" : null }));
+      expect(testDb.db.select().from(bids).get()).toMatchObject({ detailArchiveStatus: "archived", detailArchivePath: "/archive/detail.html", detailChecksumSha256: "original-sha", detailFetchedAt: NOW, detailArchiveError: null });
+    }
+  });
+
+  it("allows a newly archived detail file to refresh the previous archive", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, detail_archive_status: "archived", detail_archive_path: "/archive/old.html", detail_checksum_sha256: "old" }));
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, detail_archive_status: "archived", detail_archive_path: "/archive/new.html", detail_checksum_sha256: "new" }));
+    expect(testDb.db.select().from(bids).get()).toMatchObject({ detailArchiveStatus: "archived", detailArchivePath: "/archive/new.html", detailChecksumSha256: "new" });
+  });
+
+  it("rolls back the entire run when its lease expires before transaction completion", () => {
+    testDb.db.insert(crawlerLocks).values({ source: "il_bidbuy", owner: "lease-owner", acquiredAt: NOW, expiresAt: "2026-07-31T00:00:01.000Z" }).run();
+    let checks = 0;
+    const lease = { source: "il_bidbuy", owner: "lease-owner", now: () => checks++ === 0 ? NOW : "2026-07-31T00:00:02.000Z" };
+    const run = payloadWith({ ...baseBid, attachments: [{ url: "https://x/a" }] });
+    expect(() => importCrawlerJsonRunIntoSqlite(testDb.db, run, lease)).toThrow(/lease was lost/);
+    expect(testDb.db.select().from(bids).all()).toHaveLength(0);
+    expect(testDb.db.select().from(bidAttachments).all()).toHaveLength(0);
+    expect(testDb.db.select().from(crawlerLogs).where(eq(crawlerLogs.runId, run.runId)).get()).toMatchObject({ status: "failure", errorCode: "CrawlerLeaseLostError" });
+  });
+
+  it("rejects an old lease owner before ingesting any bids", () => {
+    testDb.db.insert(crawlerLocks).values({ source: "il_bidbuy", owner: "replacement", acquiredAt: NOW, expiresAt: "2026-07-31T00:10:00.000Z" }).run();
+    expect(() => importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith(baseBid), { source: "il_bidbuy", owner: "old-owner", now: () => NOW })).toThrow(/lease was lost/);
+    expect(testDb.db.select().from(bids).all()).toHaveLength(0);
+  });
+});
+
+describe("crawler JSON SQLite importer dedupe-key parity", () => {
+  let testDb: TestDatabase;
+
+  beforeEach(async () => {
+    testDb = await createTestDatabase({ seed: false });
+  });
+
+  afterEach(async () => {
+    await testDb.cleanup();
+  });
+
+  function run(runId: string, bid: Record<string, unknown>): CrawlerJsonRunPayload {
+    return {
+      source: "tx_esbd", runId, status: "success", startedAt: NOW, finishedAt: NOW, durationMs: 1, metadata: {},
+      bids: [{ source: "tx_esbd", source_bid_id: "TX-9", dedupe_key: "tx_esbd:TX-9", title: "Parity", description: "Content",
+        issuer_name: "Texas Agency", issuer_type: "state", state_code: "TX", source_url: "https://example.com/tx-9", ...bid }],
+      errorCode: null, errorMessage: null, errorStack: null,
+    };
+  }
+
+  it("updates the row matched by dedupe_key when the payload carries a different primary id (MySQL twin behaviour)", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, run("r1", { id: "legacy_id", attachments: [{ name: "A.pdf", url: "https://x/a.pdf" }] }));
+    const result = importCrawlerJsonRunIntoSqlite(testDb.db, run("r2", { id: "new_id", description: "Refreshed content", attachments: [{ name: "B.pdf", url: "https://x/b.pdf" }] }));
+
+    expect(result).toMatchObject({ insertedCount: 0, updatedCount: 1 });
+    const rows = testDb.db.select().from(bids).all();
+    expect(rows.map((row) => row.id)).toEqual(["legacy_id"]);
+    expect(rows[0].description).toBe("Refreshed content");
+    // Attachments follow the persisted row, and the earlier one is kept.
+    expect(testDb.db.select().from(bidAttachments).where(eq(bidAttachments.bidId, "legacy_id")).all().map((row) => row.url).sort())
+      .toEqual(["https://x/a.pdf", "https://x/b.pdf"]);
+    expect(testDb.db.select().from(crawlerLogs).all().map((row) => row.status)).toEqual(["success", "success"]);
+  });
+
+  it("normalizes a legacy title echo that differs only by trailing punctuation", () => {
+    importCrawlerJsonRunIntoSqlite(testDb.db, run("r3", { id: "echo_id", title: "Road repair", description: "Road repair.", full_description: "ROAD REPAIR" }));
+    const row = testDb.db.select().from(bids).where(eq(bids.id, "echo_id")).get();
+    expect(row?.description).toBe("");
+    expect(row?.fullDescription).toBeNull();
   });
 });
 

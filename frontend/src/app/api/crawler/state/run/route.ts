@@ -1,13 +1,20 @@
 import { NextResponse } from "next/server";
-import { AdminAuthError, requireAdminAccess } from "@/server/admin/auth";
+import { isCrawlerRunAuthorized } from "@/server/crawler/run-authorization";
+import { recordSourceHealthOutcome } from "@/server/crawler/source-health-outcome";
 import { persistCrawlTaskResult } from "@/server/crawler/crawl-task-persistence";
 import {
+  crawlerExceptionResult,
   runCrawlerSourceOnce,
   type CrawlerNotifier,
   type RunCrawlerSourceOnceOptions,
   type RunCrawlerSourceOnceResult,
 } from "@/server/crawler/orchestrator";
 import type { MysqlCrawlerLockStore } from "@/server/crawler/lock-repository";
+import {
+  PlatformDeferralTracker,
+  platformDeferredResult,
+  type PlatformDeferralOptions,
+} from "@/server/crawler/platform-deferral";
 import {
   listAllSources,
   listAllSourcesFromMysql,
@@ -50,6 +57,8 @@ interface StateCrawlerRunRouteDependencies {
   listSources: (database: AppDatabase, mysql?: MysqlCrawlerLockStore) => Promise<CrawlableSource[]>;
   listAllSources: (database: AppDatabase, mysql?: MysqlCrawlerLockStore) => Promise<CrawlableSource[]>;
   now: () => Date;
+  /** Contract C7 knobs (injectable sleeper/interval); defaults come from the environment. */
+  platformDeferral?: PlatformDeferralOptions;
 }
 
 /**
@@ -79,29 +88,6 @@ async function defaultListAllSources(
 ): Promise<CrawlableSource[]> {
   const sources = mysql ? await listAllSourcesFromMysql(mysql) : listAllSources(database);
   return sources.filter((source) => source.issuerType !== "federal");
-}
-
-function tokenFromRequest(request: Request) {
-  const authorization = request.headers.get("authorization");
-  if (authorization?.startsWith("Bearer ")) {
-    return authorization.slice("Bearer ".length);
-  }
-
-  return request.headers.get("x-crawler-token");
-}
-
-async function isAuthorized(database: AppDatabase, request: Request) {
-  const requiredToken = process.env.CRAWLER_RUN_TOKEN;
-  if (!requiredToken) return true;
-  if (tokenFromRequest(request) === requiredToken) return true;
-
-  try {
-    await requireAdminAccess(database, request, { roles: ["admin", "operator"] });
-    return true;
-  } catch (error) {
-    if (error instanceof AdminAuthError) return false;
-    throw error;
-  }
 }
 
 interface ParsedRequestBody {
@@ -193,32 +179,35 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
     body: ParsedRequestBody,
     now: Date,
   ): Promise<RunCrawlerSourceOnceResult> {
-    return dependencies.runCrawlerSourceOnce(dependencies.database, {
-      mysql: dependencies.mysql,
-      source: source.id,
-      owner: dependencies.owner,
-      // Mirrors configured-runner.ts's runStateSourceAndImport: run the JSON task contract,
-      // then persist whatever it returned (stamp jurisdiction + dialect-appropriate import,
-      // contained so an import failure can't abort the batch or flip a fetch success into a
-      // reported failure) via the shared persistCrawlTaskResult helper — see
-      // crawl-task-persistence.ts.
-      runner: async () => {
-        const taskResult = await runCrawlTask(source, {
-          taskId: `tsk_${source.id}_${now.getTime()}`,
-          limit: body.limit,
-          query: body.query ?? null,
-          postedFrom: body.postedFrom ?? null,
-          postedTo: body.postedTo ?? null,
-        });
-        return persistCrawlTaskResult(dependencies.database, dependencies.mysql, source, taskResult);
-      },
-      matcher: dependencies.matcher,
-      notifier: dependencies.notifier,
-    });
+    let result: RunCrawlerSourceOnceResult;
+    try {
+      result = await dependencies.runCrawlerSourceOnce(dependencies.database, {
+        mysql: dependencies.mysql,
+        source: source.id,
+        owner: dependencies.owner,
+        runner: async (_options, context) => {
+          const taskResult = await runCrawlTask(source, {
+            taskId: `tsk_${source.id}_${now.getTime()}`,
+            limit: body.limit,
+            query: body.query ?? null,
+            postedFrom: body.postedFrom ?? null,
+            postedTo: body.postedTo ?? null,
+          }, context);
+          await context?.assertLease();
+          return persistCrawlTaskResult(dependencies.database, dependencies.mysql, source, taskResult, context?.lease);
+        },
+        matcher: dependencies.matcher,
+        notifier: dependencies.notifier,
+      });
+    } catch (error) {
+      result = crawlerExceptionResult(source.id, error);
+    }
+    await recordSourceHealthOutcome(dependencies, source.id, result, dependencies.now().toISOString());
+    return result;
   }
 
   return async function POST(request: Request) {
-    if (!(await isAuthorized(dependencies.database, request))) {
+    if (!(await isCrawlerRunAuthorized(dependencies.database, request))) {
       return NextResponse.json(
         {
           error: {
@@ -247,14 +236,30 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
     const now = dependencies.now();
     const results: RunCrawlerSourceOnceResult[] = [];
     const errors: UnknownSourceError[] = [];
+    // Contract C7: one tracker per request, so a platform throttled in this batch defers only
+    // the sources still waiting in this same batch.
+    const platform = new PlatformDeferralTracker(dependencies.platformDeferral);
+
+    async function runBatch(sources: CrawlableSource[]) {
+      for (const source of sources) {
+        const throttledBy = platform.deferredBy(source);
+        if (throttledBy) {
+          // Never contacted: no health write-back and no retry.
+          results.push(platformDeferredResult(source.id, throttledBy));
+          continue;
+        }
+        await platform.waitForPlatformSlot(source);
+        const result = await dispatch(source, parsedBody, now);
+        platform.observe(source, result);
+        results.push(result);
+      }
+    }
 
     if (requestedIds === null) {
       // No specific ids requested: run every crawlable (governance-approved) source, same as
       // before.
       const allSources = await dependencies.listSources(dependencies.database, dependencies.mysql);
-      for (const source of allSources) {
-        results.push(await dispatch(source, parsedBody, now));
-      }
+      await runBatch(allSources);
     } else {
       // Specific ids requested: resolve against EVERY known non-federal source, not just the
       // governance-filtered list, so a blocked/needs_review id is still found and dispatched
@@ -263,6 +268,7 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
       const allKnownSources = await dependencies.listAllSources(dependencies.database, dependencies.mysql);
       const byId = new Map(allKnownSources.map((source) => [source.id, source] as const));
 
+      const requested: CrawlableSource[] = [];
       for (const requestedId of requestedIds) {
         const source = byId.get(requestedId);
         if (!source) {
@@ -273,8 +279,9 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
           });
           continue;
         }
-        results.push(await dispatch(source, parsedBody, now));
+        requested.push(source);
       }
+      await runBatch(requested);
     }
 
     return NextResponse.json(

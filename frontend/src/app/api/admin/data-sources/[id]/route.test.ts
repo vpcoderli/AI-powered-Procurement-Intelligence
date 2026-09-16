@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { dataSources } from "@/server/db/schema";
+import { eq } from "drizzle-orm";
+import { dataSources, sourceApprovalEvents } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import * as adminAuth from "@/server/admin/auth";
 import { createAdminDataSourcePatch } from "./route";
@@ -205,6 +206,121 @@ describe("PATCH /api/admin/data-sources/[id]", () => {
     expect(adminAuth.requireAdminAccess).toHaveBeenNthCalledWith(2, testDb.db, expect.anything(), {
       roles: ["admin"],
     });
+  });
+
+  it("writes the full compliance ledger in one approval request", async () => {
+    const PATCH = createAdminDataSourcePatch(testDb.db);
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/data-sources/sam_gov", {
+        method: "PATCH",
+        body: JSON.stringify({
+          approvalStatus: "approved",
+          legalReviewStatus: "approved_public",
+          approvedForIngestion: true,
+          isEnabled: true,
+          tosReviewed: true,
+          tosUrl: "https://sam.gov/terms",
+          complianceReviewer: "apsi.lily@gmail.com",
+          legalOpinionReference: "LEGAL-2026-014",
+          complianceReviewDueAt: "2027-09-16T00:00:00.000Z",
+          complianceNotes: "Public solicitation listing, robots clear.",
+          approvalNotes: "Approved after pre-check.",
+        }),
+      }),
+      { params: Promise.resolve({ id: "sam_gov" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.source).toMatchObject({
+      approvalStatus: "approved",
+      legalReviewStatus: "approved_public",
+      approvedForIngestion: true,
+      isEnabled: true,
+      tosReviewed: true,
+      tosUrl: "https://sam.gov/terms",
+      complianceReviewer: "apsi.lily@gmail.com",
+      legalOpinionReference: "LEGAL-2026-014",
+      complianceReviewDueAt: "2027-09-16T00:00:00.000Z",
+      complianceNotes: "Public solicitation listing, robots clear.",
+      lastApprovalReviewedAt: expect.any(String),
+    });
+    expect(testDb.db.select().from(sourceApprovalEvents).all()).toEqual([
+      expect.objectContaining({ sourceId: "sam_gov", action: "approved", nextApprovalStatus: "approved" }),
+    ]);
+  });
+
+  it("refuses to approve a login-gated source without reviewer, legal reference and ToS review", async () => {
+    testDb.db.update(dataSources).set({ requiresLogin: 1 }).where(eq(dataSources.id, "sam_gov")).run();
+    const PATCH = createAdminDataSourcePatch(testDb.db);
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/data-sources/sam_gov", {
+        method: "PATCH",
+        body: JSON.stringify({ approvalStatus: "approved", approvedForIngestion: true }),
+      }),
+      { params: Promise.resolve({ id: "sam_gov" }) },
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("APPROVAL_REQUIREMENTS_UNMET");
+    expect(body.error.message).toContain("complianceReviewer");
+    expect(body.error.message).toContain("legalOpinionReference");
+    expect(body.error.message).toContain("tosReviewed");
+    expect(testDb.db.select().from(dataSources).where(eq(dataSources.id, "sam_gov")).get()?.approvalStatus).toBeNull();
+  });
+
+  it("approves a login-gated source when the ledger fields arrive with the request", async () => {
+    testDb.db.update(dataSources).set({ requiresLogin: 1 }).where(eq(dataSources.id, "sam_gov")).run();
+    const PATCH = createAdminDataSourcePatch(testDb.db);
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/data-sources/sam_gov", {
+        method: "PATCH",
+        body: JSON.stringify({
+          approvalStatus: "approved",
+          tosReviewed: true,
+          complianceReviewer: "apsi.lily@gmail.com",
+          legalOpinionReference: "LEGAL-2026-014",
+        }),
+      }),
+      { params: Promise.resolve({ id: "sam_gov" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).source).toMatchObject({ approvalStatus: "approved" });
+  });
+
+  it("approves a login-gated source when the ledger fields are already stored", async () => {
+    testDb.db
+      .update(dataSources)
+      .set({ requiresLogin: 1, tosReviewed: 1, complianceReviewer: "apsi.lily@gmail.com", legalOpinionReference: "LEGAL-2026-014" })
+      .where(eq(dataSources.id, "sam_gov"))
+      .run();
+    const PATCH = createAdminDataSourcePatch(testDb.db);
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/data-sources/sam_gov", {
+        method: "PATCH",
+        body: JSON.stringify({ approvalStatus: "approved" }),
+      }),
+      { params: Promise.resolve({ id: "sam_gov" }) },
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("leaves a login-gated source blockable without the ledger fields", async () => {
+    testDb.db.update(dataSources).set({ requiresLogin: 1 }).where(eq(dataSources.id, "sam_gov")).run();
+    const PATCH = createAdminDataSourcePatch(testDb.db);
+    const response = await PATCH(
+      new Request("http://localhost/api/admin/data-sources/sam_gov", {
+        method: "PATCH",
+        body: JSON.stringify({ approvalStatus: "blocked", approvalNotes: "duplicate placeholder" }),
+      }),
+      { params: Promise.resolve({ id: "sam_gov" }) },
+    );
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).source).toMatchObject({ approvalStatus: "blocked" });
   });
 
   it("updates crawler config (fetchConfig, cadence, baseUrl) for operators", async () => {

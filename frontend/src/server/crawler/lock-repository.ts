@@ -139,3 +139,33 @@ export async function releaseCrawlerLockFromMysql(
     released: result.affectedRows > 0,
   };
 }
+
+export interface RenewCrawlerLockInput extends ReleaseCrawlerLockInput {
+  now: string;
+  expiresAt: string;
+}
+
+/** An expired lease cannot be revived, even by the previous owner. */
+export function renewCrawlerLock(db: AppDatabase, input: RenewCrawlerLockInput): boolean {
+  const result = db.$client.prepare(
+    "UPDATE crawler_locks SET expires_at = ? WHERE source = ? AND owner = ? AND expires_at > ?",
+  ).run(input.expiresAt, input.source, input.owner, input.now);
+  return result.changes > 0;
+}
+
+export async function renewCrawlerLockFromMysql(
+  mysql: MysqlCrawlerLockStore,
+  input: RenewCrawlerLockInput,
+): Promise<boolean> {
+  const result = await mysqlExecute(mysql,
+    "UPDATE crawler_locks SET expires_at = ? WHERE source = ? AND owner = ? AND expires_at > ?",
+    [input.expiresAt, input.source, input.owner, input.now],
+  );
+  if (result.affectedRows > 0) return true;
+  // MySQL can report zero changed rows when the clock has not advanced since renewal.
+  const current = await mysqlSelectOne<{ owner: string; expiresAt: string }>(mysql,
+    "SELECT source, owner, expires_at AS expiresAt FROM crawler_locks WHERE source = ? LIMIT 1",
+    [input.source],
+  );
+  return current?.owner === input.owner && current.expiresAt === input.expiresAt && current.expiresAt > input.now;
+}

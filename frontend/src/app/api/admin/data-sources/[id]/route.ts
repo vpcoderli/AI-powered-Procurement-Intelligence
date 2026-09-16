@@ -3,6 +3,7 @@ import { requireAdminAccess, AdminAuthError, type AdminAccessPrincipal } from "@
 import { validateCrawlerConfigInput } from "@/server/admin/crawler-config";
 import {
   AdminDataSourceNotFoundError,
+  SourceApprovalRequirementsError,
   updateAdminDataSource,
   updateAdminDataSourceFromMysql,
   type MysqlDataSourcesStore,
@@ -30,6 +31,10 @@ function routeError(error: unknown) {
 
   if (error instanceof AdminDataSourceNotFoundError) {
     return errorResponse("DATA_SOURCE_NOT_FOUND", "Data source was not found.", 404);
+  }
+
+  if (error instanceof SourceApprovalRequirementsError) {
+    return errorResponse("APPROVAL_REQUIREMENTS_UNMET", error.message, 400);
   }
 
   return errorResponse("INTERNAL_ERROR", "Internal server error", 500);

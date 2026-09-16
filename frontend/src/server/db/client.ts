@@ -22,6 +22,9 @@ export class MysqlRuntimeDatabaseGuardError extends Error {
 export function createDatabase(databasePath = DEFAULT_DATABASE_PATH) {
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const sqlite = new Database(databasePath);
+  // Several processes can open a fresh file at once (next build's page-data workers, parallel
+  // scripts). Without a busy timeout the losers of the journal-mode switch fail with SQLITE_BUSY.
+  sqlite.pragma("busy_timeout = 5000");
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
 

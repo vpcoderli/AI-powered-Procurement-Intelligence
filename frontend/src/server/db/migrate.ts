@@ -316,7 +316,11 @@ export function runMigrations(db: AppDatabase) {
       size_label TEXT,
       mime_type TEXT,
       sort_order INTEGER NOT NULL DEFAULT 0,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      verified_at TEXT,
+      repair_attempts INTEGER NOT NULL DEFAULT 0,
+      next_repair_at TEXT,
+      failure_kind TEXT
     );
 
     CREATE TABLE IF NOT EXISTS bid_field_corrections (
@@ -1130,6 +1134,15 @@ export function runMigrations(db: AppDatabase) {
   addBidAttachmentColumn("fetched_at", "TEXT");
   addBidAttachmentColumn("archive_status", "TEXT NOT NULL DEFAULT 'not_archived'");
   addBidAttachmentColumn("archive_error", "TEXT");
+  addBidAttachmentColumn("verified_at", "TEXT");
+  addBidAttachmentColumn("repair_attempts", "INTEGER NOT NULL DEFAULT 0");
+  addBidAttachmentColumn("next_repair_at", "TEXT");
+  addBidAttachmentColumn("failure_kind", "TEXT");
+  // Declared here rather than in the CREATE INDEX block above for the same reason as
+  // idx_bids_fips_code: next_repair_at only exists after the ALTER TABLE above has run.
+  sqlite.exec(
+    "CREATE INDEX IF NOT EXISTS idx_bid_attachments_repair ON bid_attachments(archive_status, next_repair_at)",
+  );
 
   const intentColumns = new Set(
     sqlite

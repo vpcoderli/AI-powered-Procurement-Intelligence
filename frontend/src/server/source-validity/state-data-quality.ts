@@ -910,6 +910,10 @@ function mysqlAttachmentQualityRow(row: Record<string, unknown>): AttachmentRow 
     mimeType: mysqlNullableString(row, "mimeType"),
     sortOrder: mysqlNumber(row, "sortOrder", 0),
     createdAt: mysqlString(row, "createdAt"),
+    verifiedAt: mysqlNullableString(row, "verifiedAt"),
+    repairAttempts: mysqlNumber(row, "repairAttempts", 0),
+    nextRepairAt: mysqlNullableString(row, "nextRepairAt"),
+    failureKind: mysqlNullableString(row, "failureKind"),
   };
 }
 

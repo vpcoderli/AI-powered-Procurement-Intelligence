@@ -71,6 +71,9 @@ export interface SourceComplianceScanOptions {
 // is handled separately by isDisallowAll().
 const DEFAULT_CRAWLED_PATH_HINTS = ["bid", "solicitation", "procurement", "opportunit", "search", "api"];
 
+export const ROBOTS_FETCH_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36";
+
 function timeoutSignal(timeoutMs: number) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -87,7 +90,11 @@ async function fetchRobotsTxt(fetchImpl: typeof fetch, robotsUrl: string, timeou
       redirect: "follow",
       signal: timeout.signal,
       headers: {
-        "user-agent": "APSI Source Compliance Scan/1.0 (+data-source-compliance-ledger)",
+        // Portals behind AWS WAF (BidNet Direct, verified 2026-09-16) answer 403 to a
+        // non-browser agent even for robots.txt, which turned every scan into "unreachable".
+        // Same UA the crawler itself sends (crawler/apsi_crawler/html/public_page.py).
+        "user-agent": ROBOTS_FETCH_USER_AGENT,
+        accept: "text/plain,*/*;q=0.8",
       },
     });
 

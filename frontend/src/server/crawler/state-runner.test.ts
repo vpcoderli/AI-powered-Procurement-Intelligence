@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, type ExecFileException, type ExecFileOptions } from "node:child_process";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CrawlableSource } from "./source-registry";
 import { buildCrawlTaskPayload, runCrawlTask } from "./state-runner";
@@ -91,11 +91,51 @@ describe("buildCrawlTaskPayload", () => {
 describe("runCrawlTask", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it("uses configured runtime paths and a finite hard timeout", async () => {
+    vi.stubEnv("CRAWLER_PYTHON_BIN", "/opt/crawler/bin/python");
+    vi.stubEnv("CRAWLER_DIRECTORY", "/crawler");
+    vi.stubEnv("CRAWLER_TASK_TIMEOUT_MS", "1234");
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+      callback(Object.assign(new Error("Command timed out"), { killed: true, signal: "SIGKILL" as const }), "", "");
+      return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+    const result = await runCrawlTask(source(), { taskId: "timed" });
+    expect(mockedExecFile).toHaveBeenCalledWith("/opt/crawler/bin/python", expect.any(Array), expect.objectContaining({ cwd: "/crawler", timeout: 1234, killSignal: "SIGKILL" }), expect.any(Function));
+    expect(result).toMatchObject({ ok: false, errorCode: "CrawlerTaskTimeoutError", payload: null });
+    expect(result.stderr).toContain("timed out");
+  });
+
+  it("forwards cancellation to the child and never exposes success after lease loss", async () => {
+    const controller = new AbortController();
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+      expect(options.signal).toBe(controller.signal);
+      controller.abort(new Error("lease lost"));
+      callback(null, JSON.stringify({ status: "success", bids: [] }), "");
+      return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+    const result = await runCrawlTask(source(), { taskId: "lost" }, { signal: controller.signal, assertLease: async () => {} });
+    expect(result).toMatchObject({ ok: false, errorCode: "CrawlerLeaseLostError", payload: null });
+  });
+
+  it("never exposes a success payload when the child exited non-zero", async () => {
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+      // e.g. stdout was truncated by maxBuffer after a success document was flushed, or the
+      // interpreter died on exit; the process contract says exit code and status move together.
+      callback(Object.assign(new Error("Command failed: exit code 1"), { code: 1 }), JSON.stringify({ status: "success", runId: "r", bids: [{ id: "bid_1" }], metadata: { mode: "live" } }), "Traceback");
+      return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+    const result = await runCrawlTask(source(), { taskId: "exit1" });
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("failure");
+    expect(result.payload).toMatchObject({ status: "failure", bids: [], errorCode: "1", metadata: { mode: "live", fetchedBeforeProcessFailure: 1 } });
   });
 
   it("writes the JSON task payload to the child's stdin and closes it", async () => {
     const stdinEnd = vi.fn();
-    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
       callback(null, JSON.stringify({ status: "success", bids: [], errorCode: null }), "");
       return { stdin: { end: stdinEnd } } as unknown as ReturnType<typeof execFile>;
     }) as typeof execFile);
@@ -126,7 +166,7 @@ describe("runCrawlTask", () => {
       taskId: "tsk_success",
     };
     const stdout = JSON.stringify(runPayload);
-    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
       callback(null, stdout, "");
       return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
     }) as typeof execFile);
@@ -161,7 +201,7 @@ describe("runCrawlTask", () => {
       taskId: "tsk_failure",
     };
     const stdout = JSON.stringify(runPayload);
-    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
       // fetch_task exits 1 on exception; execFile surfaces that as a non-null error
       // even though stdout still carries the JSON result payload.
       callback(new Error("Command failed with exit code 1"), stdout, "");
@@ -183,7 +223,7 @@ describe("runCrawlTask", () => {
   });
 
   it("sets payload to null when stdout is not valid JSON", async () => {
-    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
       callback(new Error("Command failed with exit code 1"), "not json", "traceback");
       return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
     }) as typeof execFile);
@@ -220,7 +260,7 @@ describe("runCrawlTask", () => {
     const stdout = JSON.stringify(runPayload);
     expect(Buffer.byteLength(stdout)).toBeGreaterThan(1024 * 1024);
 
-    mockedExecFile.mockImplementationOnce(((_command, _args, options, callback) => {
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
       const maxBuffer = (options as { maxBuffer?: number }).maxBuffer ?? 1024 * 1024;
       if (Buffer.byteLength(stdout) > maxBuffer) {
         const error = Object.assign(new Error("stdout maxBuffer length exceeded"), {
@@ -242,7 +282,7 @@ describe("runCrawlTask", () => {
   });
 
   it("sets payload to null when stdout parses but carries no status field", async () => {
-    mockedExecFile.mockImplementationOnce(((_command, _args, _options, callback) => {
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
       callback(null, JSON.stringify({ unrelated: true }), "");
       return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
     }) as typeof execFile);

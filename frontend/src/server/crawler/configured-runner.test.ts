@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { bids, crawlerLogs, dataSources } from "@/server/db/schema";
+import { bids, crawlerLocks, crawlerLogs, dataSources } from "@/server/db/schema";
 import { classifyCrawlerFailure } from "./failure-classifier";
 import type { RunCrawlerSourceOnceOptions } from "./orchestrator";
 import { runSamGovCrawler } from "./sam-gov-runner";
@@ -111,7 +111,7 @@ describe("runConfiguredCrawlerSourcesOnce reads sources from the database", () =
       now: new Date(NOW),
       matcher: async () => ({ matched: 0, matches: [] }) as never,
       notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
-      runCrawlerSourceOnce: (async (_db, options) => {
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
         attempted.push(options.source);
         return { ok: true, source: options.source, status: "success" };
       }) as never,
@@ -131,13 +131,112 @@ describe("runConfiguredCrawlerSourcesOnce reads sources from the database", () =
       now: new Date(NOW),
       matcher: async () => ({ matched: 0, matches: [] }) as never,
       notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
-      runCrawlerSourceOnce: (async (_db, options) => {
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
         attempted.push(options.source);
         return { ok: true, source: options.source, status: "success" };
       }) as never,
     });
 
     expect(attempted).toEqual([]);
+  });
+
+  it("continues after an unexpected source execution exception and records the failed attempt", async () => {
+    insertSource("a_broken");
+    insertSource("b_healthy");
+    const execute = vi.fn().mockRejectedValueOnce(new Error("execution failed")).mockImplementation(async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => ({ ok: true, source: options.source, status: "success", runner: { ok: true, source: options.source, status: "success", stdout: "", stderr: "" }, alertMatching: { evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0 }, notification: { queued: 0, sent: 0, skipped: 0, failed: 0 } }));
+    const results = await runConfiguredCrawlerSourcesOnce({ database: testDb.db, owner: "test", now: new Date(NOW), runCrawlerSourceOnce: execute });
+    expect(results.map((result) => result.status)).toEqual(["failure", "success"]);
+    expect(getSource("a_broken")).toMatchObject({ consecutiveFailures: 1, lastFailureAt: NOW });
+  });
+
+  it("defers the rest of a platform after a throttle signature and never touches their health", async () => {
+    insertSource("bidnet_a", { providerFamily: "bidnet", lastSuccessAt: null, consecutiveFailures: 2 });
+    insertSource("bidnet_b", { providerFamily: "bidnet", lastSuccessAt: null, consecutiveFailures: 2 });
+    insertSource("dedicated_c", { providerFamily: null, lastSuccessAt: null });
+
+    const attempted: string[] = [];
+    const results = await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db,
+      owner: "test",
+      now: new Date(NOW),
+      matcher: noopMatcher,
+      notifier: noopNotifier,
+      platformDeferral: { minIntervalMs: 0 },
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
+        attempted.push(options.source);
+        if (options.source.startsWith("bidnet_")) {
+          return {
+            ok: false,
+            source: options.source,
+            status: "failure",
+            runner: { ok: false, source: options.source, status: "failure", stdout: "", stderr: "challenge", errorCode: "BidNetChallengeError" },
+          };
+        }
+        return { ok: true, source: options.source, status: "success" };
+      }) as never,
+    });
+
+    // Only the first BidNet source was contacted; the second never ran.
+    expect(attempted).toEqual(["bidnet_a", "dedicated_c"]);
+    const deferred = results.find((result) => result.source === "bidnet_b");
+    expect(deferred).toEqual({
+      ok: false,
+      source: "bidnet_b",
+      status: "deferred",
+      reason: "platform_throttled:bidnet_a",
+    });
+    // The deferred source's health is untouched; the throttled one still counts as a failure.
+    expect(getSource("bidnet_b")).toMatchObject({ consecutiveFailures: 2, lastFailureAt: null });
+    expect(getSource("bidnet_a")).toMatchObject({ consecutiveFailures: 3, lastFailureAt: NOW });
+  });
+
+  it("spaces two sources of the same platform by the configured interval", async () => {
+    insertSource("bidnet_a", { providerFamily: "bidnet", lastSuccessAt: null });
+    insertSource("bidnet_b", { providerFamily: "bidnet", lastSuccessAt: null });
+    const sleep = vi.fn(async () => {});
+    let clock = 0;
+
+    await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db,
+      owner: "test",
+      now: new Date(NOW),
+      matcher: noopMatcher,
+      notifier: noopNotifier,
+      platformDeferral: { minIntervalMs: 5_000, sleep, now: () => clock },
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
+        clock += 1_000;
+        return { ok: true, source: options.source, status: "success" };
+      }) as never,
+    });
+
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(sleep).toHaveBeenCalledWith(4_000);
+  });
+
+  it("does not defer a platform after an ordinary source failure", async () => {
+    insertSource("bidnet_a", { providerFamily: "bidnet", lastSuccessAt: null });
+    insertSource("bidnet_b", { providerFamily: "bidnet", lastSuccessAt: null });
+
+    const attempted: string[] = [];
+    await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db,
+      owner: "test",
+      now: new Date(NOW),
+      matcher: noopMatcher,
+      notifier: noopNotifier,
+      platformDeferral: { minIntervalMs: 0 },
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
+        attempted.push(options.source);
+        return {
+          ok: false,
+          source: options.source,
+          status: "failure",
+          runner: { ok: false, source: options.source, status: "failure", stdout: "", stderr: "no rows", errorCode: "EmptyCrawlerResultError" },
+        };
+      }) as never,
+    });
+
+    expect(attempted).toEqual(["bidnet_a", "bidnet_b"]);
   });
 
   it("records success and resets the failure counter when a due source succeeds", async () => {
@@ -149,7 +248,7 @@ describe("runConfiguredCrawlerSourcesOnce reads sources from the database", () =
       now: new Date(NOW),
       matcher: noopMatcher,
       notifier: noopNotifier,
-      runCrawlerSourceOnce: (async (_db, options) => ({
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => ({
         ok: true,
         source: options.source,
         status: "success",
@@ -170,7 +269,7 @@ describe("runConfiguredCrawlerSourcesOnce reads sources from the database", () =
       now: new Date(NOW),
       matcher: noopMatcher,
       notifier: noopNotifier,
-      runCrawlerSourceOnce: (async (_db, options) => ({
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => ({
         ok: false,
         source: options.source,
         status: "failure",
@@ -190,6 +289,36 @@ describe("runConfiguredCrawlerSourcesOnce reads sources from the database", () =
     expect(row?.lastFailureAt).toBe(NOW);
   });
 
+  it("does not count a lost lease as source ill-health", async () => {
+    insertSource("contended_source", { lastSuccessAt: null, consecutiveFailures: 0 });
+
+    await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db,
+      owner: "test",
+      now: new Date(NOW),
+      matcher: noopMatcher,
+      notifier: noopNotifier,
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => ({
+        ok: false,
+        source: options.source,
+        status: "failure",
+        runner: {
+          ok: false,
+          source: options.source,
+          status: "failure",
+          stdout: "",
+          stderr: "Crawler source lease was lost",
+          errorCode: "CrawlerLeaseLostError",
+        },
+      })) as never,
+    });
+
+    // Lease loss is worker contention, not evidence about the portal: no backoff anchor, no counter.
+    const row = getSource("contended_source");
+    expect(row?.consecutiveFailures).toBe(0);
+    expect(row?.lastFailureAt).toBeNull();
+  });
+
   it("threads a concrete errorCode from the runner result into the failure classification", async () => {
     insertSource("classified_failure", { lastSuccessAt: null, consecutiveFailures: 2 });
 
@@ -199,7 +328,7 @@ describe("runConfiguredCrawlerSourcesOnce reads sources from the database", () =
       now: new Date(NOW),
       matcher: noopMatcher,
       notifier: noopNotifier,
-      runCrawlerSourceOnce: (async (_db, options) => ({
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => ({
         ok: false,
         source: options.source,
         status: "failure",
@@ -237,7 +366,7 @@ describe("runConfiguredCrawlerSourcesOnce reads sources from the database", () =
       now: new Date(NOW),
       matcher: noopMatcher,
       notifier: noopNotifier,
-      runCrawlerSourceOnce: (async (_db, options) => ({
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => ({
         ok: false,
         source: options.source,
         status: "blocked",
@@ -256,7 +385,7 @@ describe("runConfiguredCrawlerSourcesOnce reads sources from the database", () =
     insertSource("closes_the_loop", { lastSuccessAt: null });
 
     const attempted: string[] = [];
-    const fakeRunCrawlerSourceOnce = (async (_db, options) => {
+    const fakeRunCrawlerSourceOnce = (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
       attempted.push(options.source);
       return { ok: true, source: options.source, status: "success" };
     }) as never;
@@ -319,7 +448,7 @@ describe("runConfiguredCrawlerSourcesOnce dispatches health write-back through t
   }
 
   it("records success through recordSourceSuccessInMysql, not the failure twin", async () => {
-    const execute = vi.fn(async () => [{ affectedRows: 1, insertId: 0 }] as [unknown, unknown?]);
+    const execute = vi.fn<(sql: string, values?: unknown[]) => Promise<[unknown, unknown?]>>(async () => [{ affectedRows: 1, insertId: 0 }]);
     const query = vi.fn(async () => [[mysqlSourceRow("mysql_due_source")]] as [unknown[], unknown?]);
     const mysql = { query, execute };
 
@@ -330,7 +459,7 @@ describe("runConfiguredCrawlerSourcesOnce dispatches health write-back through t
       now: new Date(NOW),
       matcher: async () => ({ matched: 0, matches: [] }) as never,
       notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
-      runCrawlerSourceOnce: (async (_db, options) => ({
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => ({
         ok: true,
         source: options.source,
         status: "success",
@@ -347,7 +476,7 @@ describe("runConfiguredCrawlerSourcesOnce dispatches health write-back through t
   });
 
   it("records failure through recordSourceFailureInMysql, not the success twin", async () => {
-    const execute = vi.fn(async () => [{ affectedRows: 1, insertId: 0 }] as [unknown, unknown?]);
+    const execute = vi.fn<(sql: string, values?: unknown[]) => Promise<[unknown, unknown?]>>(async () => [{ affectedRows: 1, insertId: 0 }]);
     const query = vi.fn(async () => [[mysqlSourceRow("mysql_failing_source")]] as [unknown[], unknown?]);
     const mysql = { query, execute };
 
@@ -358,7 +487,7 @@ describe("runConfiguredCrawlerSourcesOnce dispatches health write-back through t
       now: new Date(NOW),
       matcher: async () => ({ matched: 0, matches: [] }) as never,
       notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
-      runCrawlerSourceOnce: (async (_db, options) => ({
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => ({
         ok: false,
         source: options.source,
         status: "failure",
@@ -381,7 +510,7 @@ describe("runConfiguredCrawlerSourcesOnce dispatches health write-back through t
   });
 
   it("passes the MySQL control store to every dispatched source", async () => {
-    const execute = vi.fn(async () => [{ affectedRows: 1, insertId: 0 }] as [unknown, unknown?]);
+    const execute = vi.fn<(sql: string, values?: unknown[]) => Promise<[unknown, unknown?]>>(async () => [{ affectedRows: 1, insertId: 0 }]);
     const query = vi.fn(
       async () =>
         [[mysqlSourceRow("mysql_source_a"), mysqlSourceRow("mysql_source_b")]] as [unknown[], unknown?],
@@ -396,7 +525,7 @@ describe("runConfiguredCrawlerSourcesOnce dispatches health write-back through t
       now: new Date(NOW),
       matcher: async () => ({ matched: 0, matches: [] }) as never,
       notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
-      runCrawlerSourceOnce: (async (_db, options) => {
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
         calls.push(options);
         return { ok: true, source: options.source, status: "success" };
       }) as never,
@@ -429,7 +558,7 @@ describe("runConfiguredCrawlerSourcesOnce dispatches health write-back through t
       now: new Date(NOW),
       matcher: async () => ({ matched: 0, matches: [] }) as never,
       notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
-      runCrawlerSourceOnce: (async (_db, options) => {
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
         attempted.push(options.source);
         return { ok: true, source: options.source, status: "success" };
       }) as never,
@@ -513,14 +642,14 @@ describe("runConfiguredCrawlerSourcesOnce threads stateRunnerOptions into state 
       // so the mocked `runCrawlTask`/`runSamGovCrawler` calls (and their arguments) are
       // observable — the other tests never call it, since they only care about which source
       // got dispatched, not what its runner closure was built with.
-      runCrawlerSourceOnce: (async (_db, options) => {
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
         await options.runner();
         return { ok: true, source: options.source, status: "success" };
       }) as never,
     });
 
     expect(mockedRunSamGovCrawler).toHaveBeenCalledTimes(1);
-    expect(mockedRunSamGovCrawler).toHaveBeenCalledWith();
+    expect(mockedRunSamGovCrawler).toHaveBeenCalledWith(undefined, undefined);
 
     expect(mockedRunCrawlTask).toHaveBeenCalledTimes(1);
     const [sourceArg, taskOptions] = mockedRunCrawlTask.mock.calls[0];
@@ -577,9 +706,10 @@ describe("runConfiguredCrawlerSourcesOnce imports the runCrawlTask JSON payload 
       .run();
   }
 
-  const runnerInvokingOrchestrator = (async (_db, options) => {
-    await options.runner();
-    return { ok: true, source: options.source, status: "success" };
+  const runnerInvokingOrchestrator = (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
+    const runner = await options.runner();
+    if (!runner.ok) return { ok: false, source: options.source, status: "failure", runner };
+    return { ok: true, source: options.source, status: "success", runner };
   }) as never;
 
   function successPayload(sourceId: string): CrawlerJsonRunPayload {
@@ -696,6 +826,34 @@ describe("runConfiguredCrawlerSourcesOnce imports the runCrawlTask JSON payload 
     expect(logRows[0]).toMatchObject({ status: "failure", errorCode: "EmptyCrawlerResultError" });
   });
 
+  it("verifies the lease after fetching and refuses to import after ownership changes", async () => {
+    insertSource("lease_lost_source");
+    mockedRunCrawlTask.mockImplementation(async (sourceArg) => {
+      testDb.db.update(crawlerLocks).set({ owner: "replacement" }).run();
+      return { ok: true, source: sourceArg.id, status: "success", stdout: "", stderr: "", fetchedCount: 1, errorCode: null, payload: successPayload(sourceArg.id) };
+    });
+    const matcher = vi.fn();
+    const notifier = vi.fn();
+    const results = await runConfiguredCrawlerSourcesOnce({ database: testDb.db, owner: "test", now: new Date(NOW), matcher, notifier });
+    expect(results[0]).toMatchObject({ status: "failure", runner: { errorCode: "CrawlerLeaseLostError" } });
+    expect(mockedImportCrawlerJsonRunIntoSqlite).not.toHaveBeenCalled();
+    expect(matcher).not.toHaveBeenCalled();
+    expect(notifier).not.toHaveBeenCalled();
+    expect(testDb.db.select().from(crawlerLocks).get()?.owner).toBe("replacement");
+  });
+
+  it("keeps detail failures observable while recording successful durable list ingestion", async () => {
+    insertSource("partial_enrichment", { consecutiveFailures: 2 });
+    const payload = successPayload("partial_enrichment");
+    payload.metadata = { enrichment: { attempted: 1, enriched: 0, failed: 1, skipped: 0, reason: null } };
+    mockedRunCrawlTask.mockResolvedValue({ ok: true, source: "partial_enrichment", status: "success", stdout: "", stderr: "detail fetch failed", fetchedCount: 1, errorCode: null, payload });
+    const results = await runConfiguredCrawlerSourcesOnce({ database: testDb.db, owner: "test", now: new Date(NOW), matcher: async () => ({ evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0, matches: [] }), notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }) });
+    expect(results[0]).toMatchObject({ status: "success", runner: { payload: { metadata: payload.metadata } } });
+    expect(testDb.db.select().from(dataSources).where(eq(dataSources.id, "partial_enrichment")).get()).toMatchObject({ lastSuccessAt: NOW, consecutiveFailures: 0 });
+    const log = testDb.db.select().from(crawlerLogs).get()!;
+    expect(JSON.parse(log.metadata!)).toMatchObject(payload.metadata!);
+  });
+
   it("contains an importer throw to the offending source and still runs the next source", async () => {
     insertSource("import_throw_source_a");
     insertSource("import_throw_source_b");
@@ -714,23 +872,28 @@ describe("runConfiguredCrawlerSourcesOnce imports the runCrawlTask JSON payload 
     });
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
+    const matcher = vi.fn(async () => ({ evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0, matches: [] }));
+    const notifier = vi.fn(async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }));
     const results = await runConfiguredCrawlerSourcesOnce({
       database: testDb.db,
       owner: "test",
       now: new Date(NOW),
-      matcher: async () => ({ matched: 0, matches: [] }) as never,
-      notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
-      runCrawlerSourceOnce: runnerInvokingOrchestrator,
+      matcher,
+      notifier,
     });
 
     // Both sources ran to completion despite the first import throwing.
     expect(results).toHaveLength(2);
-    expect(mockedImportCrawlerJsonRunIntoSqlite).toHaveBeenCalledTimes(2);
+    expect(matcher).toHaveBeenCalledTimes(1);
+    expect(notifier).toHaveBeenCalledTimes(1);
+    expect(testDb.db.select().from(dataSources).where(eq(dataSources.id, "import_throw_source_a")).get()).toMatchObject({ consecutiveFailures: 1, lastSuccessAt: null });
+    expect(mockedImportCrawlerJsonRunIntoSqlite).toHaveBeenCalledTimes(3);
+    expect(results.map((result) => result.status)).toEqual(["failure", "success"]);
 
     // Exactly one of the two imports actually persisted (the other's throw happened before any
     // write), and the failure was logged rather than propagated.
     expect(testDb.db.select().from(bids).all()).toHaveLength(1);
-    expect(testDb.db.select().from(crawlerLogs).all()).toHaveLength(1);
+    expect(testDb.db.select().from(crawlerLogs).all()).toHaveLength(2);
     expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
     const [loggedPayload] = consoleErrorSpy.mock.calls[0] as [string];
     expect(JSON.parse(loggedPayload)).toMatchObject({ event: "crawler_json_import_failed" });

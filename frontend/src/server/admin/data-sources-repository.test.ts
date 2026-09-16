@@ -4,10 +4,15 @@ import { crawlerLogs, dataSources, eventLog, sourceApprovalEvents } from "@/serv
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { recordLiveSourceHealthSnapshot } from "@/server/source-validity/health-snapshots";
 import {
+  AdminDataSourceNotFoundError,
+  SourceApprovalRequirementsError,
   listAdminCrawlerLogs,
   listAdminCrawlerLogsFromMysql,
   listAdminDataSources,
   listAdminDataSourcesFromMysql,
+  missingApprovalRequirements,
+  recordSourcePrecheck,
+  recordSourcePrecheckFromMysql,
   updateAdminDataSource,
   updateAdminDataSourceFromMysql,
 } from "./data-sources-repository";
@@ -874,6 +879,243 @@ describe("admin data sources repository", () => {
         (call) => call.sql.includes("INSERT INTO event_log") && call.values.includes("data_source.crawler_config_updated"),
       ),
     ).toBe(true);
+  });
+});
+
+describe("compliance ledger and approval requirements", () => {
+  let testDb: TestDatabase;
+
+  beforeEach(async () => {
+    testDb = await createTestDatabase({ seed: false });
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id: "bidnet_ny_erie",
+        label: "Erie County, NY (BidNet)",
+        issuerType: "county",
+        stateCode: "NY",
+        isEnabled: 1,
+        cadence: "daily",
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+      .run();
+  });
+
+  afterEach(async () => {
+    await testDb.cleanup();
+  });
+
+  it("writes every C6 ledger field and stamps the approval review date (SQLite)", async () => {
+    const source = await updateAdminDataSource(testDb.db, "bidnet_ny_erie", {
+      approvalStatus: "approved",
+      legalReviewStatus: "approved_public",
+      approvedForIngestion: true,
+      isEnabled: true,
+      tosReviewed: true,
+      tosUrl: "https://www.bidnetdirect.com/terms",
+      complianceReviewer: "apsi.lily@gmail.com",
+      legalOpinionReference: "LEGAL-2026-014",
+      complianceReviewDueAt: "2027-09-16T00:00:00.000Z",
+      complianceNotes: "Public county listing.",
+      approvalNotes: "Approved after pre-check.",
+    });
+
+    expect(source).toMatchObject({
+      approvalStatus: "approved",
+      legalReviewStatus: "approved_public",
+      approvedForIngestion: true,
+      tosReviewed: true,
+      tosUrl: "https://www.bidnetdirect.com/terms",
+      complianceReviewer: "apsi.lily@gmail.com",
+      legalOpinionReference: "LEGAL-2026-014",
+      complianceReviewDueAt: "2027-09-16T00:00:00.000Z",
+      complianceNotes: "Public county listing.",
+    });
+    expect(source.lastApprovalReviewedAt).not.toBeNull();
+    expect(testDb.db.select().from(sourceApprovalEvents).all()).toHaveLength(1);
+  });
+
+  it("writes every C6 ledger column and the approval event (MySQL)", async () => {
+    const executed: Array<{ sql: string; values: unknown[] }> = [];
+    const row = {
+      id: "bidnet_ny_erie",
+      label: "Erie County, NY (BidNet)",
+      issuerType: "county",
+      stateCode: "NY",
+      isEnabled: 1,
+      cadence: "daily",
+      requiresLogin: 0,
+      approvalStatus: null,
+      legalReviewStatus: null,
+      approvedForIngestion: null,
+      tosReviewed: null,
+      complianceReviewer: null,
+      legalOpinionReference: null,
+      consecutiveFailures: 0,
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+    const mysql = {
+      query: async (sql: string) => sql.includes("FROM data_sources") ? [[row]] : [[]],
+      execute: async (sql: string, values: unknown[] = []) => {
+        executed.push({ sql, values });
+        return [{ affectedRows: 1 }];
+      },
+    };
+
+    await updateAdminDataSourceFromMysql(
+      mysql as never,
+      "bidnet_ny_erie",
+      {
+        approvalStatus: "approved",
+        legalReviewStatus: "approved_public",
+        approvedForIngestion: true,
+        isEnabled: true,
+        tosReviewed: true,
+        tosUrl: "https://www.bidnetdirect.com/terms",
+        complianceReviewer: "apsi.lily@gmail.com",
+        legalOpinionReference: "LEGAL-2026-014",
+        complianceReviewDueAt: "2027-09-16T00:00:00.000Z",
+        complianceNotes: "Public county listing.",
+        approvalNotes: "Approved after pre-check.",
+      },
+      { actorUserId: "admin_1" },
+    );
+
+    const update = executed.find((call) => call.sql.startsWith("UPDATE data_sources SET"));
+    for (const column of [
+      "approval_status = ?",
+      "legal_review_status = ?",
+      "approved_for_ingestion = ?",
+      "tos_reviewed = ?",
+      "tos_reviewed_at = ?",
+      "tos_url = ?",
+      "compliance_reviewer = ?",
+      "legal_opinion_reference = ?",
+      "compliance_review_due_at = ?",
+      "compliance_notes = ?",
+      "last_approval_reviewed_at = ?",
+    ]) {
+      expect(update?.sql).toContain(column);
+    }
+    expect(update?.values).toContain("apsi.lily@gmail.com");
+    expect(update?.values).toContain("LEGAL-2026-014");
+    expect(
+      executed.some((call) => call.sql.includes("INSERT INTO source_approval_events") && call.values.includes("approved")),
+    ).toBe(true);
+  });
+
+  it("refuses approval of a login-gated source with missing ledger fields on both dialects", async () => {
+    testDb.db.update(dataSources).set({ requiresLogin: 1 }).where(eq(dataSources.id, "bidnet_ny_erie")).run();
+
+    await expect(
+      updateAdminDataSource(testDb.db, "bidnet_ny_erie", { approvalStatus: "approved" }),
+    ).rejects.toBeInstanceOf(SourceApprovalRequirementsError);
+    expect(
+      testDb.db.select().from(dataSources).where(eq(dataSources.id, "bidnet_ny_erie")).get()?.approvalStatus,
+    ).toBeNull();
+
+    const mysql = createFakeMysqlDataSourcesStore();
+    const loginSource = mysql.sources.find((item) => item.id === "sam_gov")!;
+    (loginSource as { requiresLogin: number | null }).requiresLogin = 1;
+    await expect(
+      updateAdminDataSourceFromMysql(mysql as never, "sam_gov", { approvalStatus: "approved" }),
+    ).rejects.toBeInstanceOf(SourceApprovalRequirementsError);
+  });
+
+  it("names exactly the missing ledger fields", () => {
+    const row = { requiresLogin: 1, complianceReviewer: null, legalOpinionReference: "LEGAL-1", tosReviewed: 1 };
+
+    expect(missingApprovalRequirements(row, { approvalStatus: "approved" })).toEqual(["complianceReviewer"]);
+    expect(missingApprovalRequirements(row, { approvalStatus: "approved", complianceReviewer: "  " })).toEqual([
+      "complianceReviewer",
+    ]);
+    expect(missingApprovalRequirements(row, { approvalStatus: "approved", complianceReviewer: "a@b.c" })).toEqual([]);
+    expect(missingApprovalRequirements(row, { approvalStatus: "approved", tosReviewed: false })).toEqual([
+      "complianceReviewer",
+      "tosReviewed",
+    ]);
+    // Not an approval, or not login-gated: never checked.
+    expect(missingApprovalRequirements(row, { approvalStatus: "blocked" })).toEqual([]);
+    expect(missingApprovalRequirements({ ...row, requiresLogin: 0 }, { approvalStatus: "approved" })).toEqual([]);
+  });
+
+  it("records a pre-check's robots and live-health evidence (SQLite)", () => {
+    recordSourcePrecheck(testDb.db, "bidnet_ny_erie", {
+      robots: {
+        status: "clear",
+        checkedAt: "2026-09-16T10:00:00.000Z",
+        hash: "hash-1",
+        disallowsCrawledPaths: false,
+        flagReason: null,
+      },
+      liveHealth: {
+        disposition: "ready",
+        notes: "precheck token=secret",
+        reviewedAt: "2026-09-16T10:00:00.000Z",
+      },
+    });
+
+    expect(testDb.db.select().from(dataSources).where(eq(dataSources.id, "bidnet_ny_erie")).get()).toMatchObject({
+      robotsTxtStatus: "clear",
+      robotsTxtCheckedAt: "2026-09-16T10:00:00.000Z",
+      robotsTxtHash: "hash-1",
+      robotsTxtDisallowsCrawledPaths: 0,
+      liveHealthDisposition: "ready",
+      liveHealthNotes: "precheck token=[REDACTED]",
+      liveHealthReviewedAt: "2026-09-16T10:00:00.000Z",
+      approvalStatus: null,
+    });
+    expect(testDb.db.select().from(sourceApprovalEvents).all()).toHaveLength(0);
+  });
+
+  it("rejects a pre-check write-back for an unknown source on both dialects", async () => {
+    expect(() =>
+      recordSourcePrecheck(testDb.db, "nope", {
+        robots: { status: "clear", checkedAt: NOW, hash: null, disallowsCrawledPaths: false, flagReason: null },
+      }),
+    ).toThrow(AdminDataSourceNotFoundError);
+
+    const mysql = { query: async () => [[]], execute: async () => [{}] };
+    await expect(
+      recordSourcePrecheckFromMysql(mysql as never, "nope", {
+        robots: { status: "clear", checkedAt: NOW, hash: null, disallowsCrawledPaths: false, flagReason: null },
+      }),
+    ).rejects.toBeInstanceOf(AdminDataSourceNotFoundError);
+  });
+
+  it("writes only the requested pre-check columns (MySQL)", async () => {
+    const executed: Array<{ sql: string; values: unknown[] }> = [];
+    const mysql = {
+      query: async () => [[{ id: "bidnet_ny_erie" }]],
+      execute: async (sql: string, values: unknown[] = []) => {
+        executed.push({ sql, values });
+        return [{ affectedRows: 1 }];
+      },
+    };
+
+    await recordSourcePrecheckFromMysql(mysql as never, "bidnet_ny_erie", {
+      robots: {
+        status: "disallow_all",
+        checkedAt: "2026-09-16T10:00:00.000Z",
+        hash: "hash-2",
+        disallowsCrawledPaths: true,
+        flagReason: "Disallow: /",
+      },
+    });
+
+    expect(executed).toHaveLength(1);
+    expect(executed[0].sql).toContain("robots_txt_disallows_crawled_paths = ?");
+    expect(executed[0].sql).not.toContain("live_health_disposition");
+    expect(executed[0].values.slice(0, 5)).toEqual([
+      "disallow_all",
+      "2026-09-16T10:00:00.000Z",
+      "hash-2",
+      1,
+      "Disallow: /",
+    ]);
+    expect(executed[0].values.at(-1)).toBe("bidnet_ny_erie");
   });
 });
 
