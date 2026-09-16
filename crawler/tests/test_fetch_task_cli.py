@@ -1,5 +1,6 @@
 import io
 import json
+from pathlib import Path
 
 from apsi_crawler import cli
 from apsi_crawler.adapters import registry
@@ -259,3 +260,188 @@ def test_enrichment_failure_never_fails_the_run(monkeypatch, capsys):
     assert exit_code == 0
     assert result["status"] == "success"
     assert result["metadata"]["enrichment"]["reason"] == "enrichment_crashed"
+
+
+def test_per_record_enrichment_failure_keeps_stdout_pure_json_and_logs_to_stderr(monkeypatch, capsys):
+    from apsi_crawler import enrichment
+
+    monkeypatch.setitem(registry.DEDICATED_ADAPTERS, "noisy_source", lambda source, **kwargs: [{"id": "noisy_source:1", "title": "T", "source": "Noisy", "source_url": "https://portal.example.gov/bid/1"}])
+    monkeypatch.setenv("SCRAPLING_EXTRACTOR_URL", "http://extractor.test")
+    monkeypatch.setattr(
+        enrichment,
+        "fetch_page",
+        lambda url, session=None, timeout=30: FetchedPage("<html>detail</html>", url, False),
+    )
+
+    class Exploding:
+        def health(self, timeout=3.0):
+            return "0.4.15"
+
+        def extract(self, html, url, fields, selectors, timeout=10.0):
+            raise RuntimeError("sidecar exploded")
+
+    monkeypatch.setattr(enrichment, "ExtractorClient", lambda base_url, session=None: Exploding())
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"task_id": "tsk_e4", "source_id": "noisy_source", "label": "Noisy", "state_code": "CA", "fetch_config": {"enrichment": {"enabled": True, "min_interval_seconds": 0}}})))
+    exit_code = cli.main(["fetch-task"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    result = json.loads(captured.out)           # stdout carries the JSON result and nothing else
+    assert result["metadata"]["enrichment"]["failed"] == 1
+    assert "sidecar exploded" in captured.err
+
+
+# --- list extraction / verified empty state (contract C1) ---------------------------------
+
+
+ERIE_FIXTURE = Path(__file__).parent / "fixtures" / "bidnet_erie_no_open_bids.html"
+ERIE_TASK = {
+    "task_id": "tsk_empty_1",
+    "source_id": "bidnet_ny_erie",
+    "label": "Erie County, NY (BidNet)",
+    "state_code": "NY",
+    "provider_family": "bidnet",
+    "fetch_config": {"base_url": "https://www.bidnetdirect.com/new-york/erie-county/solicitations/open-bids"},
+    "limit": 25,
+}
+
+
+def _stub_bidnet_list_html(monkeypatch, html):
+    """Serve one BidNet list page to BOTH list paths without touching the network."""
+    from apsi_crawler.spiders import co_bidnet
+
+    monkeypatch.setitem(
+        registry.LIST_HTML_FETCHERS,
+        "bidnet",
+        registry.BIDNET_LIST_HTML_ADAPTER._replace(
+            fetch_list_html=lambda source, url, session=None, timeout=30: (html, url, 200)
+        ),
+    )
+    monkeypatch.setitem(
+        registry.PLATFORM_ADAPTERS,
+        "bidnet",
+        lambda source, query=None, limit=25, **kwargs: co_bidnet.parse_bidnet_list_html(
+            source, html, query=query, limit=limit
+        ),
+    )
+
+
+def test_adapter_mode_still_reports_list_extraction_metadata(monkeypatch, capsys):
+    monkeypatch.delenv("SCRAPLING_EXTRACTOR_URL", raising=False)
+    monkeypatch.setitem(
+        registry.DEDICATED_ADAPTERS,
+        "plain_source",
+        lambda source, query=None, limit=25, **kwargs: [{"id": "plain_source:1", "title": "Road Repair"}],
+    )
+
+    exit_code, result = _run(
+        {"task_id": "tsk_le_1", "source_id": "plain_source", "label": "Plain", "state_code": "CA", "fetch_config": {}},
+        monkeypatch,
+        capsys,
+    )
+
+    assert exit_code == 0
+    assert result["metadata"]["listExtraction"] == {
+        "method": "adapter",
+        "items": 1,
+        "diagnostics": {},
+        "rendered": False,
+        "extractor": None,
+        "fallback_reason": None,
+    }
+    assert "emptyState" not in result["metadata"]
+
+
+def test_verified_empty_tenant_page_is_a_zero_row_success(monkeypatch, capsys):
+    monkeypatch.delenv("SCRAPLING_EXTRACTOR_URL", raising=False)
+    _stub_bidnet_list_html(monkeypatch, ERIE_FIXTURE.read_text(encoding="utf-8"))
+
+    exit_code, result = _run(ERIE_TASK, monkeypatch, capsys)
+
+    assert exit_code == 0
+    assert result["status"] == "success"
+    assert result["bids"] == []
+    assert result["metadata"]["emptyState"] == {
+        "verified": True,
+        "marker": "There are no open bids at this time.",
+        "tenant_confirmed": True,
+        "method": "adapter",
+    }
+    assert result["metadata"]["listExtraction"]["items"] == 0
+
+
+def test_unconfirmed_empty_page_stays_an_empty_result_failure(monkeypatch, capsys):
+    monkeypatch.delenv("SCRAPLING_EXTRACTOR_URL", raising=False)
+    _stub_bidnet_list_html(monkeypatch, ERIE_FIXTURE.read_text(encoding="utf-8"))
+
+    task = dict(ERIE_TASK, task_id="tsk_empty_2", source_id="bidnet_co_boulder", label="Boulder County, CO (BidNet)", state_code="CO")
+    exit_code, result = _run(task, monkeypatch, capsys)
+
+    assert exit_code == 1
+    assert result["status"] == "failure"
+    assert result["errorCode"] == "EmptyCrawlerResultError"
+    assert "emptyState" not in result["metadata"]
+
+
+def test_scrapling_is_the_main_list_path_when_the_sidecar_is_configured(monkeypatch, capsys):
+    from apsi_crawler import list_extraction
+
+    monkeypatch.setenv("SCRAPLING_EXTRACTOR_URL", "http://extractor.test")
+    _stub_bidnet_list_html(monkeypatch, "<html><body><table></table></body></html>")
+
+    class Extractor:
+        def extract_list(self, html, url, item_selector=None, selectors=None, max_items=200, timeout=None):
+            return {
+                "items": [
+                    {
+                        "title": "Street sweeping",
+                        "url": "https://www.bidnetdirect.com/private/supplier/solicitations/4512345/detail",
+                        "published_date": "09/01/2026",
+                        "deadline_date": "09/30/2026",
+                        "source_bid_id": "4512345",
+                        "issuer_name": None,
+                    }
+                ],
+                "diagnostics": {"title": "selector"},
+                "empty_state": {"detected": False, "marker": None},
+            }
+
+    monkeypatch.setattr(list_extraction, "ListExtractorClient", lambda base_url, session=None: Extractor())
+
+    exit_code, result = _run(dict(ERIE_TASK, task_id="tsk_le_2"), monkeypatch, capsys)
+
+    assert exit_code == 0
+    assert [bid["source_bid_id"] for bid in result["bids"]] == ["4512345"]
+    assert result["metadata"]["listExtraction"] == {
+        "method": "scrapling",
+        "items": 1,
+        "diagnostics": {"title": "selector"},
+        "rendered": False,
+        "extractor": "http://extractor.test",
+        "fallback_reason": None,
+    }
+
+
+def test_sidecar_failure_falls_back_to_the_adapter_parser(monkeypatch, capsys):
+    from apsi_crawler import list_extraction
+
+    monkeypatch.setenv("SCRAPLING_EXTRACTOR_URL", "http://extractor.test")
+    _stub_bidnet_list_html(
+        monkeypatch,
+        '<html><body><table><tr class="mets-table-row">'
+        '<td><a href="/private/supplier/solicitations/4512345/detail">Street sweeping</a></td>'
+        '<td><span class="date-value">09/01/2026</span></td></tr></table></body></html>',
+    )
+
+    class Broken:
+        def extract_list(self, html, url, item_selector=None, selectors=None, max_items=200, timeout=None):
+            raise list_extraction.ListExtractionError("extractor request failed: refused")
+
+    monkeypatch.setattr(list_extraction, "ListExtractorClient", lambda base_url, session=None: Broken())
+
+    exit_code, result = _run(dict(ERIE_TASK, task_id="tsk_le_3"), monkeypatch, capsys)
+
+    assert exit_code == 0
+    assert [bid["source_bid_id"] for bid in result["bids"]] == ["4512345"]
+    assert result["metadata"]["listExtraction"]["method"] == "adapter_fallback"
+    assert result["metadata"]["listExtraction"]["fallback_reason"].startswith("extractor_unreachable")

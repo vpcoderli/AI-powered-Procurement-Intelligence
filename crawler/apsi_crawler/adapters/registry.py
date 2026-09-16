@@ -5,12 +5,22 @@
 察觉哪些源没有在运行。
 """
 
+from collections import namedtuple
+
 from apsi_crawler.sources.state_sources import SPECIAL_FETCHERS
 from apsi_crawler.spiders.bonfire import fetch_bonfire_opportunities
 from apsi_crawler.spiders.ca_caleprocure import fetch_ca_caleprocure_opportunities
-from apsi_crawler.spiders.co_bidnet import fetch_bidnet_opportunities
+from apsi_crawler.spiders.co_bidnet import (
+    fetch_bidnet_list_html,
+    fetch_bidnet_opportunities,
+    parse_bidnet_list_html,
+)
 from apsi_crawler.spiders.fl_mfmp import fetch_fl_mfmp_opportunities
-from apsi_crawler.spiders.generic_state import fetch_generic_state_opportunities
+from apsi_crawler.spiders.generic_state import (
+    fetch_generic_state_list_html,
+    fetch_generic_state_opportunities,
+    parse_generic_state_list_html,
+)
 from apsi_crawler.spiders.il_bidbuy import fetch_il_bidbuy_opportunities
 from apsi_crawler.spiders.ny_contract_reporter import fetch_ny_contract_reporter_opportunities
 from apsi_crawler.spiders.tx_esbd import fetch_tx_esbd_opportunities
@@ -59,6 +69,54 @@ DEDICATED_ADAPTERS = {
     "fl_mfmp": fetch_fl_mfmp_opportunities,
     "il_bidbuy": fetch_il_bidbuy_opportunities,
 }
+
+
+# --- list-HTML adapters (Scrapling main path) ---------------------------------------------
+#
+# An adapter qualifies when its list stage is one plain HTML page we can fetch ONCE and hand to
+# two different parsers (the sidecar, then the adapter's own regex). Adapters that page through
+# JSON APIs or need per-row requests are deliberately absent: there is no single HTML document
+# to share, so the "never more than one list request" invariant could not hold.
+ListHtmlAdapter = namedtuple("ListHtmlAdapter", ("name", "list_url", "fetch_list_html", "parse_list_html"))
+
+
+def _bidnet_list_url(source):
+    url = source.fetch_config.get("base_url") or getattr(source, "base_url", "")
+    if not url:
+        raise ValueError(f"bidnet source {source.id} has no fetch_config.base_url")
+    return url
+
+
+def _generic_list_url(source):
+    url = getattr(source, "base_url", "") or source.fetch_config.get("base_url")
+    if not url:
+        raise ValueError(f"generic source {source.id} has no base_url")
+    return url
+
+
+BIDNET_LIST_HTML_ADAPTER = ListHtmlAdapter(
+    "bidnet", _bidnet_list_url, fetch_bidnet_list_html, parse_bidnet_list_html
+)
+GENERIC_LIST_HTML_ADAPTER = ListHtmlAdapter(
+    "generic", _generic_list_url, fetch_generic_state_list_html, parse_generic_state_list_html
+)
+
+LIST_HTML_FETCHERS = {
+    "bidnet": BIDNET_LIST_HTML_ADAPTER,
+    "generic": GENERIC_LIST_HTML_ADAPTER,
+}
+
+
+def resolve_list_html_adapter(source_id, provider_family):
+    """Same precedence as `resolve_adapter`: source id first, then provider family, else None.
+
+    None simply means "this source has no shared list HTML", which makes
+    `resolve_list_extraction_config` pick `mode: "adapter"`. It is never an error.
+    """
+    entry = LIST_HTML_FETCHERS.get(source_id)
+    if entry is None and provider_family:
+        entry = LIST_HTML_FETCHERS.get(provider_family)
+    return entry
 
 
 def resolve_adapter(source_id, provider_family):

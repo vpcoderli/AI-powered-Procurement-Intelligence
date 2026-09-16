@@ -77,6 +77,39 @@ def test_normalize_state_opportunity_fills_non_empty_content_defaults():
     )
 
     assert bid["description"] == "Network equipment refresh"
-    assert bid["full_description"] == "Network equipment refresh"
+    assert bid["full_description"] is None
     assert bid["issuer_name"] == "Unknown state agency"
     assert bid["source_url"] == "https://pr-webs-vendor.des.wa.gov"
+
+
+@pytest.mark.parametrize("full", [None, "  ROAD   REPAIR  ", "Short scope."])
+def test_long_description_is_not_a_title_or_duplicate_summary(full):
+    raw = {"id": "1", "title": "Road repair", "description": "Short scope.", "full_description": full}
+    bid = normalize_state_opportunity(raw, get_source("il_bidbuy"))
+    assert bid["description"] == "Short scope."
+    assert bid["full_description"] is None
+
+
+def test_distinct_explicit_full_body_survives_normalization():
+    raw = {"id": "1", "title": "Road repair", "description": "Short scope.", "full_description": "A complete and useful statement of work."}
+    bid = normalize_state_opportunity(raw, get_source("il_bidbuy"))
+    assert bid["full_description"] == raw["full_description"]
+
+
+def test_two_digit_published_date_is_normalized_without_losing_raw_evidence():
+    raw = {"id": "1", "title": "Road repair", "published_date": "09/14/26"}
+    bid = normalize_state_opportunity(raw, get_source("il_bidbuy"))
+    assert bid["published_date"] == "2026-09-14"
+    assert bid["raw_payload"]["published_date"] == "09/14/26"
+
+
+def test_title_echo_differing_only_by_trailing_punctuation_is_not_kept_as_a_full_body():
+    raw = {"id": "1", "title": "Road repair", "full_description": "Road repair."}
+    bid = normalize_state_opportunity(raw, get_source("il_bidbuy"))
+    assert bid["full_description"] is None
+
+
+def test_full_description_duplicating_the_description_with_punctuation_is_dropped():
+    raw = {"id": "1", "title": "Road repair", "description": "Replace pavement", "full_description": "Replace pavement."}
+    bid = normalize_state_opportunity(raw, get_source("il_bidbuy"))
+    assert bid["full_description"] is None

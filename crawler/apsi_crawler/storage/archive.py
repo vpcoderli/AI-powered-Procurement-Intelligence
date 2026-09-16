@@ -1,16 +1,45 @@
+"""Download and validate bid documents onto the local archive root.
+
+Hardened 2026-09-16 (see `docs/superpowers/specs/2026-09-16-attachment-repair-design.md`):
+
+* `storage_path` is RELATIVE to the archive root — an absolute host path stops resolving the
+  moment the same database is read from a container or another machine.
+* Nothing reaches disk before its magic bytes are checked. A portal that answers a download
+  URL with a login/session-error page returns HTTP 200 + HTML, and the old writer happily
+  stored that HTML as `Solicitation.pdf`.
+* The blocklist matches WHOLE path segments, so `/authority/bid/7` is downloaded and only a
+  real `/login/…` route is refused.
+* Requests carry the crawler's browser headers and the bid detail page as `Referer`, with a
+  streamed, size-capped read.
+"""
+
 import hashlib
-import mimetypes
 import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import requests
 
+from apsi_crawler.content_quality import is_login_html
+from apsi_crawler.enrichment import detect_off_target_redirect
+from apsi_crawler.html.public_page import BROWSER_REQUEST_HEADERS
+from apsi_crawler.storage.content_sniff import (
+    clean_content_type,
+    extension_for_content_type,
+    sniff_bytes,
+)
 
-DEFAULT_HEADERS = {"User-Agent": "Mozilla/5.0 APSI crawler"}
-BLOCKED_URL_MARKERS = (
+
+# Same identity as every other crawler request, but a document download must not advertise an
+# HTML-only Accept header — some portals answer `406` or hand back an HTML wrapper for it.
+DOWNLOAD_REQUEST_HEADERS = dict(BROWSER_REQUEST_HEADERS)
+DOWNLOAD_REQUEST_HEADERS["Accept"] = "*/*"
+
+# Whole path segments only. Substring matching used to reject `/authority/…`,
+# `/associations/…` and anything else that merely contains "auth" or "login".
+BLOCKED_PATH_SEGMENTS = (
     "browser_check",
     "captcha",
     "login",
@@ -19,24 +48,13 @@ BLOCKED_URL_MARKERS = (
     "sso",
     "auth",
 )
-CONTENT_TYPE_EXTENSIONS = {
-    "application/pdf": ".pdf",
-    "application/zip": ".zip",
-    "application/vnd.ms-excel": ".xls",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-    "application/msword": ".doc",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-    "text/html": ".html",
-    "text/plain": ".txt",
-}
+
+DEFAULT_MAX_BYTES = 52428800
+_CHUNK_SIZE = 65536
 
 
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
-
-
-def _clean_content_type(value):
-    return (value or "").split(";")[0].strip().lower()
 
 
 def _safe_segment(value):
@@ -45,38 +63,184 @@ def _safe_segment(value):
     return text.strip("._-") or "unknown"
 
 
-def _is_public_http_url(url):
+def is_public_http_url(url):
     parsed = urlparse(str(url or ""))
     return parsed.scheme in ("http", "https") and bool(parsed.netloc)
 
 
-def _looks_browser_or_login_required(url):
-    lowered = str(url or "").lower()
-    return any(marker in lowered for marker in BLOCKED_URL_MARKERS)
+def looks_browser_or_login_required(url):
+    """True only when a WHOLE path segment is a login/challenge route.
+
+    `/authority/bid/7`, `/associations/…` and `bidDetail.sdo?…` are ordinary public
+    documents; the pre-2026-09-16 substring blocklist refused all of them.
+    """
+    path = urlparse(str(url or "")).path
+    segments = [segment for segment in unquote(path or "").lower().split("/") if segment]
+    return any(segment in BLOCKED_PATH_SEGMENTS for segment in segments)
 
 
-def _extension_for(url, content_type, fallback):
-    parsed = urlparse(url)
-    suffix = Path(parsed.path).suffix
+# Internal aliases kept for the original call sites in this module.
+_is_public_http_url = is_public_http_url
+_looks_browser_or_login_required = looks_browser_or_login_required
+
+
+def document_extension(sniffed_type, url, fallback=None):
+    """C1 order: sniffed type -> URL path suffix -> caller's expected extension -> `.bin`."""
+    extension = extension_for_content_type(sniffed_type)
+    if extension:
+        return extension
+    suffix = Path(urlparse(str(url or "")).path).suffix
     if suffix:
         return suffix[:16]
-    if content_type in CONTENT_TYPE_EXTENSIONS:
-        return CONTENT_TYPE_EXTENSIONS[content_type]
-    return mimetypes.guess_extension(content_type) or fallback
+    return fallback or ".bin"
 
 
-def _write_bytes(archive_root, bid, content, url, content_type, prefix, index):
-    extension = _extension_for(url, content_type, ".bin")
-    source_segment = _safe_segment(bid.get("source") or bid.get("source_bid_id") or "source")
-    bid_segment = _safe_segment(bid.get("id") or bid.get("dedupe_key") or "bid")
-    directory = Path(archive_root).resolve() / source_segment / bid_segment
+def relative_storage_path(archive_root, *segments):
+    """`<archive_root>/<safe>/<safe>/…` as a path RELATIVE to `archive_root` (never absolute)."""
+    relative = Path(*[_safe_segment(segment) for segment in segments])
+    directory = (Path(archive_root) / relative).parent
     directory.mkdir(parents=True, exist_ok=True)
-    file_path = directory / f"{prefix}-{index}{extension}"
-    file_path.write_bytes(content)
-    return str(file_path)
+    return relative.as_posix()
 
 
-def _download_public_url(url, archive_root, bid, session, timeout, prefix, index):
+def write_document(archive_root, relative_path, content):
+    path = Path(archive_root) / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    return relative_path
+
+
+def validate_document(content, header_content_type, allow_html=False):
+    """Return `(content_type, sniffed_type, failure_kind, error)` for a downloaded payload."""
+    if not content:
+        return None, None, "network", "Downloaded document was empty."
+
+    header = clean_content_type(header_content_type)
+    sniffed = sniff_bytes(content, header)
+    if (sniffed == "text/html" or header == "text/html") and not allow_html:
+        text = content.decode("utf-8", errors="ignore")
+        try:
+            login = is_login_html(text)
+        except Exception:  # noqa: BLE001 - a malformed login page is still an HTML response
+            login = False
+        return (
+            None,
+            sniffed,
+            "login_wall" if login else "html_response",
+            "Portal returned a login page instead of the document."
+            if login
+            else "Portal returned an HTML page instead of the document.",
+        )
+
+    content_type = sniffed or header or None
+    if content_type is None:
+        return None, None, "unsupported_type", "Downloaded bytes matched no known document type."
+    return content_type, sniffed, None, None
+
+
+def _read_capped(response, limit):
+    """Stream at most `limit` bytes. Returns `(data, exceeded)`; nothing is written to disk."""
+    chunks = []
+    total = 0
+    for chunk in response.iter_content(chunk_size=_CHUNK_SIZE):
+        if not chunk:
+            continue
+        total += len(chunk)
+        if total > limit:
+            chunks.append(chunk[: max(0, limit - (total - len(chunk)))])
+            return b"".join(chunks), True
+        chunks.append(chunk)
+    return b"".join(chunks), False
+
+
+def fetch_document(
+    session,
+    url,
+    referer=None,
+    timeout=30,
+    max_bytes=DEFAULT_MAX_BYTES,
+    allow_html=False,
+):
+    """GET one document with the crawler's polite headers and full content validation.
+
+    Returns a dict with `ok`, `content`, `content_type`, `sniffed_type`, `final_url`,
+    `failure_kind` and `error`. Never raises for an expected portal condition.
+    """
+    headers = dict(DOWNLOAD_REQUEST_HEADERS)
+    if referer:
+        headers["Referer"] = referer
+
+    def failure(kind, error, final_url=None):
+        return {
+            "ok": False,
+            "content": None,
+            "content_type": None,
+            "sniffed_type": None,
+            "final_url": final_url or url,
+            "failure_kind": kind,
+            "error": error,
+        }
+
+    try:
+        response = session.get(url, headers=headers, timeout=timeout, stream=True)
+    except requests.Timeout as error:
+        return failure("timeout", "Request timed out: {0}".format(error))
+    except requests.RequestException as error:
+        return failure("network", "Request failed: {0}".format(error))
+
+    try:
+        status_code = int(getattr(response, "status_code", 0) or 0)
+        final_url = getattr(response, "url", None) or url
+        if status_code >= 500:
+            return failure("http_5xx", "HTTP {0}".format(status_code), final_url)
+        if status_code >= 400:
+            return failure("http_4xx", "HTTP {0}".format(status_code), final_url)
+
+        off_target = detect_off_target_redirect(url, final_url, bool(getattr(response, "history", None)))
+        if off_target:
+            return failure("off_target", "Redirected to {0} — {1}".format(final_url, off_target), final_url)
+
+        try:
+            content, exceeded = _read_capped(response, max_bytes)
+        except requests.Timeout as error:
+            return failure("timeout", "Read timed out: {0}".format(error), final_url)
+        except requests.RequestException as error:
+            return failure("network", "Read failed: {0}".format(error), final_url)
+
+        header_content_type = (getattr(response, "headers", None) or {}).get("Content-Type")
+        if exceeded:
+            content_type, _sniffed, kind, error = validate_document(
+                content, header_content_type, allow_html=allow_html
+            )
+            if kind in ("html_response", "login_wall"):
+                return failure(kind, error, final_url)
+            return failure(
+                "too_large",
+                "Document exceeds the {0} byte cap.".format(max_bytes),
+                final_url,
+            )
+
+        content_type, sniffed, kind, error = validate_document(
+            content, header_content_type, allow_html=allow_html
+        )
+        if kind:
+            return failure(kind, error, final_url)
+        return {
+            "ok": True,
+            "content": content,
+            "content_type": content_type,
+            "sniffed_type": sniffed,
+            "final_url": final_url,
+            "failure_kind": None,
+            "error": None,
+        }
+    finally:
+        close = getattr(response, "close", None)
+        if callable(close):
+            close()
+
+
+def _download_public_url(url, archive_root, bid, session, timeout, prefix, index, allow_html=False):
     if not _is_public_http_url(url):
         return {
             "archive_status": "unavailable",
@@ -88,31 +252,39 @@ def _download_public_url(url, archive_root, bid, session, timeout, prefix, index
             "archive_error": "Attachment URL appears to require browser/login access.",
         }
 
-    try:
-        response = session.get(url, headers=DEFAULT_HEADERS, timeout=timeout)
-        response.raise_for_status()
-        content = bytes(response.content or b"")
-        if not content:
-            return {
-                "archive_status": "failed",
-                "storage_path": None,
-                "archive_error": f"Downloaded {prefix.replace('_', ' ')} was empty.",
-            }
-        content_type = _clean_content_type(response.headers.get("Content-Type"))
-        return {
-            "archive_status": "archived",
-            "storage_path": _write_bytes(archive_root, bid, content, url, content_type, prefix, index),
-            "byte_size": len(content),
-            "content_type": content_type or None,
-            "checksum_sha256": hashlib.sha256(content).hexdigest(),
-            "archive_error": None,
-        }
-    except Exception as error:
+    outcome = fetch_document(
+        session,
+        url,
+        referer=bid.get("source_url"),
+        timeout=timeout,
+        max_bytes=DEFAULT_MAX_BYTES,
+        allow_html=allow_html,
+    )
+    if not outcome["ok"]:
         return {
             "archive_status": "failed",
             "storage_path": None,
-            "archive_error": str(error),
+            "archive_error": outcome["error"],
+            "failure_kind": outcome["failure_kind"],
         }
+
+    content = outcome["content"]
+    extension = document_extension(outcome["sniffed_type"], url)
+    relative = relative_storage_path(
+        archive_root,
+        bid.get("source") or bid.get("source_bid_id") or "source",
+        bid.get("id") or bid.get("dedupe_key") or "bid",
+        "{0}-{1}{2}".format(prefix, index, extension),
+    )
+    return {
+        "archive_status": "archived",
+        "storage_path": write_document(archive_root, relative, content),
+        "byte_size": len(content),
+        "content_type": outcome["content_type"],
+        "checksum_sha256": hashlib.sha256(content).hexdigest(),
+        "archive_error": None,
+        "failure_kind": None,
+    }
 
 
 def _detail_unavailable_error(url):
@@ -129,6 +301,12 @@ def archive_bid_documents(
     fetch_detail=False,
     fetched_at=None,
 ):
+    """Archive a bid's attachments (and optionally its detail page) under `archive_root`.
+
+    Used by `fetch-sam-gov --archive-documents`. `storage_path` / `detail_archive_path` are
+    relative to `archive_root`. Attachments are content-validated (HTML is refused); the
+    detail page is archived as the HTML it is meant to be.
+    """
     enriched = deepcopy(bid)
     timestamp = fetched_at or _now_iso()
     client = session or requests.Session()
@@ -161,6 +339,7 @@ def archive_bid_documents(
                     timeout,
                     "detail",
                     1,
+                    allow_html=True,
                 )
                 enriched["detail_archive_status"] = result["archive_status"]
                 enriched["detail_archive_path"] = result.get("storage_path")
