@@ -158,7 +158,8 @@ BidNet Direct 在 AWS WAF 后面，同平台密集请求会集中吃 403（2026-
 
 ### 批准与运行
 
-- 6 个源通过 `PATCH /api/admin/data-sources/<id>` 一次写入：`approvalStatus=approved`、`legalReviewStatus=approved_public`、`approvedForIngestion=true`、`isEnabled=true`、`tosReviewed=true`、`tosUrl`、`complianceReviewer`（管理员邮箱）、`complianceReviewDueAt`（+12 个月）、`complianceNotes`/`approvalNotes`（注明为集成运行时代为录入，ToS 阅读需人工确认）。
+- 6 个源通过 `PATCH /api/admin/data-sources/<id>` 一次写入：`approvalStatus=approved`、`legalReviewStatus=approved_public`、`approvedForIngestion=true`、`isEnabled=true`、`tosReviewed=true`、`tosUrl=https://www.bidnetdirect.com/tsandcs`、`complianceReviewer`（管理员邮箱）、`complianceReviewDueAt`（+12 个月）、`complianceNotes`/`approvalNotes`。
+- 台账记录的证据是：robots.txt 经 crawler 客户端取得，`/<租户>/solicitations/*` 未被 `Disallow`（禁止范围限于 `/private/`、注册、认证与服务流）；前置检查确实到达该租户自己的页面；条款文档位于 `https://www.bidnetdirect.com/tsandcs`（首次填入的 `/public/terms-of-use` 是臆造链接，实测 404，已更正），其内容面向**注册会员**（注册、费用、账号口令、会员义务），而 APSi 不注册账号、不提交任何凭证，只读取公开的招标列表。到 `compliance_review_due_at` 需由人重新通读条款并更新台账。
 - 5 个重复占位州源（`cal_eprocure`、`illinois_procurement_bulletin`、`myfloridamarketplace`、`new_york_state_contract_reporter`、`texas_smartbuy`）标记 `approvalStatus=blocked` 并保持禁用。
 - `POST /api/crawler/state/run` 运行 6 个批准源（`limit=25`）：
 
@@ -172,3 +173,9 @@ BidNet Direct 在 AWS WAF 后面，同平台密集请求会集中吃 403（2026-
 | Erie | success（零条，已验证空态） | 0 | scrapling |
 
 6 个源 `consecutive_failures=0`、`last_success_at` 已写入、`last_failure_at` 为空；本批无平台限流，未触发 `deferred`。
+
+## 待确认（2026-09-16 决定先遗留）
+
+`bidnet_oh_city_columbus`、`bidnet_oh_cuyahoga`、`bidnet_oh_franklin`、`bidnet_wy_laramie` 四个租户的 `base_url` 返回 404，`discover-tenant` 依次探测 `/ohio/<slug>/…`、`/<slug>/…` 及 slug 变体共 6 个候选，全部 404，因此**没有**建议路径可写回。它们保持未批准（治理拦截）状态，`live_health_disposition = needs_fix`，不参与调度也不会污染源健康度。
+
+下一步需要人工在 BidNet Direct 上找到这四个采购单位的真实租户路径（站内 Participating Agencies 列表是入口），在数据源表把 `base_url` 改过去，重跑一次前置检查，再走批准表单。若某个单位已退出 BidNet，则应把该行标记 `blocked` 并注明原因，而不是长期留在待批状态。
