@@ -194,6 +194,63 @@ describe("POST /api/crawler/state/run", () => {
     expect(testDb.db.select().from(dataSources).where(eq(dataSources.id, "healthy")).get()).toMatchObject({ consecutiveFailures: 0, lastSuccessAt: NOW });
   });
 
+  it.each([
+    ["disabled", { status: "disabled" }],
+    ["blocked", { status: "blocked", reason: "Source governance has not approved ingestion." }],
+    ["locked", { status: "locked", lockedBy: "another-worker" }],
+    ["deferred", { status: "deferred", reason: "platform_throttled:bidnet_co_denver" }],
+  ])("reports a batch whose only outcome is %s as completed, not as failed", async (_label, outcome) => {
+    insertSource("skipped_source");
+    runCrawlerSourceOnce.mockImplementation((async (_database: AppDatabase, options: RunCrawlerSourceOnceOptions) => ({
+      ok: false,
+      source: options.source,
+      ...outcome,
+    })) as never);
+
+    const response = await createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce })(
+      new Request("http://localhost/api/crawler/state/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sources: ["skipped_source"] }),
+      }),
+    );
+    const body = await response.json();
+
+    // The source was never contacted, so there is no failure to report — the per-source row
+    // still says exactly what happened.
+    expect(body.status).toBe("completed");
+    expect(body.ok).toBe(true);
+    expect(body.results[0]).toMatchObject(outcome);
+  });
+
+  it("still reports a real run failure, and an unknown id, as failures", async () => {
+    insertSource("failing_source");
+    runCrawlerSourceOnce.mockImplementation((async (_database: AppDatabase, options: RunCrawlerSourceOnceOptions) => ({
+      ok: false,
+      source: options.source,
+      status: "failure",
+      runner: { ok: false, source: options.source, status: "failure", stdout: "", stderr: "boom" },
+    })) as never);
+
+    const failed = await createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce })(
+      new Request("http://localhost/api/crawler/state/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sources: ["failing_source"] }),
+      }),
+    );
+    expect(await failed.json()).toMatchObject({ ok: false, status: "completed_with_failures" });
+
+    const unknown = await createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce })(
+      new Request("http://localhost/api/crawler/state/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sources: ["no_such_source"] }),
+      }),
+    );
+    expect(await unknown.json()).toMatchObject({ ok: false, status: "completed_with_failures" });
+  });
+
   it("requires crawler token when configured", async () => {
     vi.stubEnv("CRAWLER_RUN_TOKEN", "local-token");
     const POST = createStateCrawlerRunPost({ database: testDb.db, runCrawlerSourceOnce });
@@ -355,8 +412,9 @@ describe("POST /api/crawler/state/run", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.ok).toBe(false);
-    expect(body.status).toBe("completed_with_failures");
+    // Governance refused it; nothing ran and nothing failed, so the batch completed.
+    expect(body.ok).toBe(true);
+    expect(body.status).toBe("completed");
     expect(body.results).toHaveLength(1);
     expect(body.results[0]).toMatchObject({
       ok: false,
@@ -526,8 +584,8 @@ describe("POST /api/crawler/state/run", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({
-      ok: false,
-      status: "completed_with_failures",
+      ok: true,
+      status: "completed",
       results: [
         {
           ok: false,

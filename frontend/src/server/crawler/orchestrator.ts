@@ -105,6 +105,24 @@ export type RunCrawlerSourceOnceResult =
 /** Status union of a single source run — imported by the admin batch-run panel. */
 export type RunCrawlerSourceOnceStatus = RunCrawlerSourceOnceResult["status"];
 
+/**
+ * True only when a source actually ran and failed.
+ *
+ * `locked`, `disabled`, `blocked` and `deferred` all mean the crawler was never invoked: the
+ * source was already running elsewhere, switched off, held by governance, or skipped because
+ * its platform had just throttled us. None of those is a failure — they write no source
+ * health, consume no retry, and must not colour a batch's overall status or an HTTP code as
+ * though something broke.
+ */
+export function isCrawlerRunFailure(result: RunCrawlerSourceOnceResult): boolean {
+  return !result.ok && result.status === "failure";
+}
+
+/** The complement: the source was never contacted, so there is nothing to report as an outcome. */
+export function isCrawlerRunSkipped(result: RunCrawlerSourceOnceResult): boolean {
+  return !result.ok && result.status !== "failure";
+}
+
 function sourceIdFor(source: string) {
   return source
     .toLowerCase()
