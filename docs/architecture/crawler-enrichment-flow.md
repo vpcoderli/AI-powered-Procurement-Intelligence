@@ -89,6 +89,14 @@ flowchart TD
 
 县/市/特别区行在人工批准前由 `orchestrator.ts` 的 `blockedReasonFor()` 拦截，Python 不会启动。`POST /api/admin/data-sources/[id]/precheck`（`src/server/admin/source-precheck.ts`，admin/operator）为这一决定提供证据：robots.txt 扫描 → 跳过门禁但不入库的 `limit=5` 试抓 → 仅在 404 时调用只读的 `discover-tenant`，返回 `ready | empty | needs_fix` 判定、robots 结论、试抓样本与所用列表解析器，以及可选的 `suggestedBaseUrl`（由管理员确认后才写回 `base_url`），并把结论落到 `robots_txt_*` / `live_health_*`。批准本身仍走既有的 `PATCH /api/admin/data-sources/[id]`，一次写入批准列与合规台账列。同平台限流由 `platform-deferral.ts` 处理：同 `provider_family` 的源间隔 `CRAWLER_PLATFORM_MIN_INTERVAL_MS`，其中一个遇挑战/限流后本批剩余同平台源记 `status: "deferred"`（不回写健康、不重试）。操作手册见 [`docs/operations/local-source-approval.md`](../operations/local-source-approval.md)。
 
+## 4c. 数据源主动发现（在上述链路之前）
+
+上面每一步都假设 `data_sources` 里已经有一行。那一行从哪来：**读平台自己公布的机构目录**，不构造租户路径。BidNet 的 slug 至少有三种互不相干的形态（`/city-of-aurora/…`、`/colorado/boulder-county/…`、`/ohio/franklincountychildrensservices`），2026-09-16 用 `discover-tenant` 为四个 404 源试探的六个候选因此全部落空。
+
+`discover-sources`（`crawler/apsi_crawler/discovery_service.py`，stdin JSON → stdout 单个 JSON，与 `fetch-task` 同一种契约）串起三块可注入的能力：`apsi_crawler.discovery` 的目录采集器（`/participating-buyers` 起步，`/participating-buyers/changePage?…&pageNumber=N` 翻页，每页约 50 家，`min_interval_seconds` 默认 3 秒，遇 HTTP 202 / 挑战页即停并返回已采集部分）、`apsi_crawler.jurisdictions` 的分类器（county / city / special_district / unknown，需要州码：`borough` 只有在阿拉斯加才是郡的对等物）与 FIPS 匹配器（同州 `name_key` 精确匹配随仓库提交的 `crawler/data/us_jurisdictions.tsv`；郡级在精确匹配失败后还允许"机构名以该州唯一的 `<X> County` 开头"这一条前缀规则）。产出 `candidates[]`（前十个字段与 `frontend/scripts/register-sources.ts` 的 `SourceCandidate` 逐字段一致，外加只给人看的 `discovery` 块：`confidence` 为 `exact` 或 `jurisdiction_prefix`，后者带 `matchedPrefix`）、`review[]`（含未进候选的原因）、`existingMatches[]`（把库里已有源在目录里反查出 `exact` / `partial` / `none`）与 `stats{}`（`county + city + special_district + unknown == agencies`，另有 `prefix_matched`、`unresolved_state_skipped`）。
+
+三条与本章其余部分的边界差异值得单独记住：**特别区一律不进候选**（决策 3，只保留在 `review` 里供人捞回）；**FIPS 不做模糊匹配**（前缀规则要求完整且在该州唯一的郡名，不是相似度匹配；匹配不唯一就留给人，错的 GEOID 会安静地把源挂到别的辖区上）；**整条命令只读**——不写数据库、不碰治理列、不做 worker，`npm run source:register` 落下的行仍是 `approval_status IS NULL`，照样要走 4b 节的前置检查与人工批准。跨语言契约由 `crawler/tests/test_discover_sources_cli.py` 与 `frontend/scripts/register-sources.test.ts` 两侧共同守住。操作手册见 [`docs/operations/source-discovery.md`](../operations/source-discovery.md)。
+
 ## 5. 日期、持久化与用户消费
 
 日期窗口在补全之后执行，缺失或无法解析的日期保留。合法零条成功必须带有效窗口、`kept=0`、正整数 dropped、`unparsed=0`；两种数据库都落成功日志。未经说明的空列表拒绝入库。

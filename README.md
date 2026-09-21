@@ -14,7 +14,7 @@ APSi GovBid 是一个致力于帮助供应商（特别是中小企业）高效�
 - AI / Enterprise 深度：约 **60%**。
 - 完整 PRD / 长期平台：约 **76%**。
 
-**工程质量**：前端 316 个测试文件 / 2,083 个测试用例，爬虫 476 个 pytest 用例，解析 sidecar 115 个、浏览器 sidecar 151 个 pytest 用例，全部通过；55 张数据表，41 个爬虫 spider 模块。
+**工程质量**：前端 316 个测试文件 / 2,083 个测试用例，爬虫 678 个 pytest 用例，解析 sidecar 115 个、浏览器 sidecar 151 个 pytest 用例，全部通过；55 张数据表，41 个爬虫 spider 模块。
 
 ## ☁️ AWS 发布应用名称
 
@@ -34,6 +34,7 @@ APSi GovBid 是一个致力于帮助供应商（特别是中小企业）高效�
 - **详情补全（Scrapling sidecar）**：按源可开关的详情页补全，补齐描述、附件、分类、联系人、发布日期；默认关闭、失败开放、只填空值，重定向到登录页的详情只计失败；仅解析、不绕过任何反爬或登录机制；管理端"爬虫配置"面板可按源设置字段、每次上限、请求间隔、超时、CSS/XPath 选择器与附件 URL 模板；两条 importer 采用保护式 upsert，列表页重跑不会抹掉已补全数据。运维说明见 `docs/operations/detail-enrichment.md`。
 - **附件归档与自动修复**：独立的附件修复 worker（默认 6 小时一轮）对每条公开 http(s) 附件下载、魔数校验后落本地相对路径，并定期复核已归档文件（存在性、checksum、魔数）；坏归档自动重下，失败按 `1h × 2ⁿ`（上限 7 天）退避并记录稳定原因，重试耗尽转 `unavailable` 不再打门户；表单/JS 驱动下载的门户可按源切到无头浏览器 sidecar（只点公开页面上的下载控件，不登录、不过验证码、不绕 WAF）。运维说明见 `docs/operations/attachment-repair.md`。
 - **县/市源治理与列表解析**：县市级数据源在人工批准前处于治理拦截状态；管理端提供"审批前置检查"（robots 扫描 + `limit=5` 不入库试抓 + 404 时只读租户路径探测，给出 `ready` / `empty` / `needs_fix` 判定与建议 `base_url`，写回由人确认）与"批准县/市源"表单（一次写入批准结论与合规台账：复核人、ToS、法务参考、下次复核日期）。批准后列表解析默认走 Scrapling sidecar（`POST /extract-list`，适配器解析为自动回退，不额外发请求），门户明确写明无在招项目时按"已验证空态"记零条成功而非失败，同平台触发限流时本批剩余同源改记 `deferred` 而非失败重试。运维说明见 `docs/operations/local-source-approval.md`。
+- **县/市源主动发现**：`discover-sources` 子命令只读地翻阅 BidNet 公开的机构目录（租户路径由平台给出，不靠猜——同一平台的 slug 至少三种形态），按机构名分类为 county / city / 特别区 / 未知，只对郡与市用随仓库提交的离线 Census 表精确匹配 FIPS（同州同名唯一命中才写，绝不模糊猜测），产出与 `source:register` 逐字段一致的候选 JSON 供人工审阅；不写库、不碰治理列、不做定时任务，注册后的新源依旧处于治理拦截状态，仍须走前置检查与人工批准。同时可反查库中已有源在目录里的真实租户路径。运维说明见 `docs/operations/source-discovery.md`。
 - **账号、角色、套餐权限**：支持普通用户注册登录、Admin/普通用户分离、Free / Pro / Business / Enterprise 功能 gate、locked/upgrade 状态和本地 paid smoke。
 - **采购意向工作台**：支持 Intent 创建、资格评估、Compliance、Submission、Pursue / No-Bid、Response Workspace、Artifact Vault、Quote Workspace、Deadline Reminders。
 - **响应包与材料库**：支持 Markdown/ZIP/PDF/DOCX 本地导出、导出审核状态、版本历史、对比、材料替换/version、checksum/byte-size 校验。
@@ -129,7 +130,7 @@ APSi GovBid 是一个致力于帮助供应商（特别是中小企业）高效�
 │   │   ├── enrichment.py    # 可选的详情页补全阶段（调用 Scrapling sidecar，只填空值、失败开放）
 │   │   ├── list_extraction.py  # 列表页解析（Scrapling 主路径 + 适配器自动回退，共用同一次请求）
 │   │   ├── tenant_discovery.py # 只读租户路径探测（404 时给出建议 base_url，由管理员确认写回）
-│   │   └── cli.py           # CLI 入口：fetch-task / archive-attachments / discover-tenant / fetch-robots / fetch-sam-gov / validate-state-live / import-fixture
+│   │   └── cli.py           # CLI 入口：fetch-task / archive-attachments / discover-sources / discover-tenant / fetch-robots / fetch-sam-gov / validate-state-live / import-fixture
 │   ├── tests/               # pytest 测试套件 + fixtures
 │   └── requirements.txt
 ├── services/
