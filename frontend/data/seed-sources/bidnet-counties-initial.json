@@ -81,8 +81,8 @@
     "stateCode": "CO",
     "baseUrl": "https://www.bidnetdirect.com/city-of-aurora/solicitations/open-bids",
     "jurisdictionLevel": "city",
-    "jurisdictionName": "Aurora",
-    "fipsCode": "0803455",
+    "jurisdictionName": "Aurora city",
+    "fipsCode": "0804000",
     "providerFamily": "bidnet",
     "cadence": "weekly",
     "fetchConfig": {
