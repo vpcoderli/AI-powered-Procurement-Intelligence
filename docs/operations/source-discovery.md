@@ -289,7 +289,9 @@ python3 -m apsi_crawler.cli discover-sources < request.json > candidates.json
 | `bidnet_oh_city_columbus` | `none` | 同上 |
 | `bidnet_wy_laramie` | `none` | 同上 |
 
-三个 `none` 的 `base_url` 2026-09-21 复测仍为 404。注意 `bidnet_oh_cuyahoga` 目前是**已批准且已启用**状态（2026-09-16 08:47 管理端批量批准工作流所为），`consecutive_failures` 已累计到 2，每轮调度都会失败；在修正或停用之前它会持续拉低源健康度。
+三个 `none` 的 `base_url` 2026-09-21 复测仍为 404。
+
+**已处置（2026-09-21）**：四行均已按上表结论标记 `approval_status = blocked`、`is_enabled = 0`、`approved_for_ingestion = 0`，`approval_notes` 记录依据（目录反查结果、404 复测、证据文件路径），审计表留有 `approved → blocked` 记录。此前 `bidnet_oh_cuyahoga` 是已批准且已启用状态（2026-09-16 08:47 管理端批量批准工作流所为），`consecutive_failures` 已到 2；处置后复跑手动运行，四者均被拦下且不再累积失败。
 
 ### 未消化的 119 条无 FIPS 匹配
 

@@ -178,4 +178,6 @@ BidNet Direct 在 AWS WAF 后面，同平台密集请求会集中吃 403（2026-
 
 `bidnet_oh_city_columbus`、`bidnet_oh_cuyahoga`、`bidnet_oh_franklin`、`bidnet_wy_laramie` 四个租户的 `base_url` 返回 404，`discover-tenant` 依次探测 `/ohio/<slug>/…`、`/<slug>/…` 及 slug 变体共 6 个候选，全部 404，因此**没有**建议路径可写回。它们保持未批准（治理拦截）状态，`live_health_disposition = needs_fix`，不参与调度也不会污染源健康度。
 
-下一步需要人工在 BidNet Direct 上找到这四个采购单位的真实租户路径（站内 Participating Agencies 列表是入口），在数据源表把 `base_url` 改过去，重跑一次前置检查，再走批准表单。若某个单位已退出 BidNet，则应把该行标记 `blocked` 并注明原因，而不是长期留在待批状态。
+**2026-09-21 结案**：`discover-sources` 全量扫过平台目录（2,036 家机构）后给出了答案——目录里根本没有 Cuyahoga County、City of Columbus、Laramie County；俄亥俄唯一的 "Franklin" 条目是 Franklin County Children Services，那是另一个采购主体，不能把旧行指过去。四行已全部标记 `blocked`、禁用并取消入库批准，`approval_notes` 写明依据与证据文件，`source_approval_events` 留有 `approved → blocked` 的审计记录。复跑手动运行确认四者均被拦下（返回 `disabled`），不再累积失败。
+
+若这些单位将来重新上线 BidNet，正确做法仍是先用 `discover-sources` 查目录拿到真实租户路径，再重跑前置检查与批准表单，而不是手工猜 `base_url`。
