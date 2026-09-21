@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<!--
+  Synthetic, hand-trimmed copy of the real `/participating-buyers` markup (structure copied
+  verbatim from `bidnet_participating_buyers_page1.html`, 2026-09-21) reduced to the cases the
+  two real pages cannot show:
+
+    * the LAST page — `mets-page-navigation-next` is present but empty, exactly the way
+      `mets-page-navigation-prev` is empty on the real page 1;
+    * a one-segment tenant path (`/city-of-aurora`) next to the usual `/<group>/<slug>` form;
+    * an agency card whose visible grid-name span is missing, so the accessible
+      "Organization logo of ..." copy is the only name left;
+    * an agency under a non-state purchasing group (`/bgis`);
+    * the footer purchasing-group nav, whose `/ohio`-style links are one-segment and would be
+      mistaken for tenants by a naive href sweep.
+-->
+<html lang="en">
+<head><title>Participating Agencies | BidNet Direct</title></head>
+<body>
+<a href="#content">Skip to content</a>
+<a href="/public/authentication/login">Login</a>
+<a href="/participating-buyers">Participating Agencies</a>
+<a href="/resources/webinars">Webinars</a>
+<a href="/solicitations/open-bids">Open Bids</a>
+<a class="mets-command-link" href="/participating-buyers/changePage?isListView=false&amp;innerTabId=public&amp;purchasingGroupContext=false">Public agencies</a>
+
+<div class="participatingAgencyGrid">
+	<div class="mets-grid-cell">
+		<a id="9000000001" href="/ohio/franklincountychildrensservices" class="mets-command-link">
+			<div class="organizationLogo previewOrganizationLogo" style="background-image: url(/public/organizations/9000000001/logofile/normal/9000000002); left: 0; width: 100%;">
+				<span class="accessibility-hidden">Organization logo of Franklin County Children Services</span>
+			</div>
+			<span class="participatingAgencyGridName">
+			<span id="g_2"  class="mets-ellipsis mets-ellipsis-wrapper">
+	Franklin County Children Services</span>
+
+<script type="text/javascript">
+	var g_2_options = {};
+	g_2_options.ellipsis = "...";
+	$("#g_2").dotdotdot(g_2_options);
+	</script>
+</span>
+
+			</a>
+	</div>
+	<div class="mets-grid-cell">
+		<a id="9000000003" href="/city-of-aurora" class="mets-command-link">
+			<div class="organizationLogo previewOrganizationLogo" style="background-image: url(/public/organizations/9000000003/logofile/normal/9000000004); left: 0; width: 100%;">
+				<span class="accessibility-hidden">Organization logo of City of Aurora</span>
+			</div>
+			</a>
+	</div>
+	<div class="mets-grid-cell">
+		<a id="9000000005" href="/bgis/bgis" class="mets-command-link">
+			<div class="organizationLogo previewOrganizationLogo" style="background-image: url(/public/organizations/9000000005/logofile/normal/9000000006); left: 0; width: 100%;">
+				<span class="accessibility-hidden">Organization logo of BGIS</span>
+			</div>
+			<span class="participatingAgencyGridName">
+			<span id="g_6"  class="mets-ellipsis mets-ellipsis-wrapper">
+	BGIS</span>
+</span>
+
+			</a>
+	</div>
+</div><div  class="mets-simple-pagination">
+	<div class="mets-page-navigation">
+					<div class="mets-page-navigation-control mets-page-navigation-prev">
+									<button type="button" class="previous mets-page-navigation-trigger"
+										data-page-url="/participating-buyers/changePage?target=paginationChange&amp;purchasingGroupContext=true" data-page-number="2"
+										data-page-size="48" title="Go to Previous Page ">
+										<span>Previous</span>
+									</button>
+					</div>
+					<div class="mets-page-navigation-control mets-page-navigation-nums">3 of&nbsp;3</div>
+					<div class="mets-page-navigation-control mets-page-navigation-next">
+					</div>
+	</div>
+</div>
+
+<nav class="footer-pg-links">
+<ul>
+<li class="footer-links-title"><a href="/purchasing-groups">Purchasing Groups</a></li>
+</ul>
+<ul class="txtLightBlue txtBullet">
+<li class="hideInFooter"><span>+</span> <a href="/ohio">Ohio Purchasing Group</a></li>
+<li class="hideInFooter"><span>+</span> <a href="/colorado">Rocky Mountain E-Purchasing System</a></li>
+<li class="hideInFooter"><span>+</span> <a href="/mitn">MITN Purchasing Group</a></li>
+</ul>
+</nav>
+</body>
+</html>
