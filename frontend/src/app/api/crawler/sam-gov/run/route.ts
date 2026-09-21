@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   crawlerExceptionResult,
+  isCrawlerRunSkipped,
   runCrawlerSourceOnce,
   type CrawlerNotifier,
   type CrawlerRunner,
@@ -103,10 +104,9 @@ export function createSamGovRunPost(overrides: Partial<SamGovRunRouteDependencie
     }
     await recordSourceHealthOutcome(dependencies, "sam_gov", result, new Date().toISOString());
 
-    if (result.status === "locked") {
-      return NextResponse.json(result, { status: 409 });
-    }
-    if (result.status === "disabled") {
+    // Never contacted (locked / disabled / blocked / deferred): the request was refused, not
+    // broken, so it answers 409 rather than a 500 that would read as a server fault.
+    if (isCrawlerRunSkipped(result)) {
       return NextResponse.json(result, { status: 409 });
     }
     if (!result.ok) {

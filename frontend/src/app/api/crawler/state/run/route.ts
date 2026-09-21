@@ -4,6 +4,7 @@ import { recordSourceHealthOutcome } from "@/server/crawler/source-health-outcom
 import { persistCrawlTaskResult } from "@/server/crawler/crawl-task-persistence";
 import {
   crawlerExceptionResult,
+  isCrawlerRunFailure,
   runCrawlerSourceOnce,
   type CrawlerNotifier,
   type RunCrawlerSourceOnceOptions,
@@ -152,7 +153,9 @@ function defaultOwner() {
 
 function batchStatus(results: RunCrawlerSourceOnceResult[], hasErrors: boolean) {
   if (hasErrors) return "completed_with_failures";
-  return results.every((result) => result.ok) ? "completed" : "completed_with_failures";
+  // A source that never ran (locked / disabled / blocked / deferred) is not a failure, so a
+  // batch of nothing but skips completed cleanly. Each row still carries its own status.
+  return results.some(isCrawlerRunFailure) ? "completed_with_failures" : "completed";
 }
 
 export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRouteDependencies> = {}) {
@@ -286,7 +289,7 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
 
     return NextResponse.json(
       {
-        ok: errors.length === 0 && results.every((result) => result.ok),
+        ok: errors.length === 0 && !results.some(isCrawlerRunFailure),
         status: batchStatus(results, errors.length > 0),
         results,
         ...(errors.length > 0 ? { errors } : {}),

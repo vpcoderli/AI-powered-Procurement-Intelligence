@@ -226,6 +226,22 @@ describe("POST /api/crawler/sam-gov/run", () => {
     });
   });
 
+  it.each([
+    ["blocked", { status: "blocked", reason: "Source governance has not approved ingestion." }],
+    ["deferred", { status: "deferred", reason: "platform_throttled:sam_gov" }],
+    ["disabled", { status: "disabled" }],
+  ])("returns conflict, not a server error, when the source was never contacted (%s)", async (_label, outcome) => {
+    runCrawlerSourceOnce.mockResolvedValueOnce({ ok: false, source: "sam_gov", ...outcome });
+    const POST = createSamGovRunPost({ runCrawlerSourceOnce });
+
+    const response = await POST(new Request("http://localhost/api/crawler/sam-gov/run"));
+
+    // 500 would claim the server broke; governance refusing, a platform deferral and a
+    // switched-off source are all refusals of a request that was handled correctly.
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject(outcome);
+  });
+
   it("returns server error when the orchestrator reports failure", async () => {
     runCrawlerSourceOnce.mockResolvedValueOnce({
       ok: false,
