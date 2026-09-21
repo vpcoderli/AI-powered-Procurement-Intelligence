@@ -16,6 +16,10 @@ from apsi_crawler.adapters.registry import (
 from apsi_crawler.adapters.task import task_source_from_payload
 from apsi_crawler.config import DEFAULT_SOURCE
 from apsi_crawler.date_window import apply_date_window
+from apsi_crawler.discovery_service import (
+    InvalidSourceDiscoveryRequestError,
+    discover_sources,
+)
 from apsi_crawler.enrichment import enrich_bids
 from apsi_crawler.errors import VerifiedEmptyListError
 from apsi_crawler.robots_fetch import InvalidRobotsRequestError, fetch_robots
@@ -503,6 +507,47 @@ def discover_tenant_command(stream=None):
     return 0
 
 
+def discover_sources_command(stream=None):
+    """Contract C3: one JSON request on stdin, one JSON response on stdout.
+
+    Exit 0 whenever the directory walk ran at all — a partial walk (a WAF challenge, the
+    `max_pages` cap) is still a usable result and says so in `stats.stopped_reason`. Exit 2
+    only when the request itself is unusable. Diagnostics go to stderr so stdout stays a
+    single JSON document that can be piped straight into `npm run source:register`.
+    """
+    stream = stream if stream is not None else sys.stdin
+    try:
+        payload = json.load(stream)
+    except ValueError as error:
+        _print_json_payload({"error": {"code": "INVALID_REQUEST", "message": f"stdin was not valid JSON: {error}"}})
+        return 2
+
+    try:
+        response = discover_sources(payload)
+    except InvalidSourceDiscoveryRequestError as error:
+        _print_json_payload({"error": {"code": "INVALID_REQUEST", "message": str(error)}})
+        return 2
+    except Exception as error:  # noqa: BLE001 - stdout must still be exactly one JSON document
+        print(traceback.format_exc(), file=sys.stderr)
+        _print_json_payload({"error": {"code": type(error).__name__, "message": str(error)}})
+        return 2
+
+    stats = response.get("stats") or {}
+    print(
+        "discover-sources: {0} candidates, {1} for review, {2} agencies over {3} pages"
+        " (stopped: {4})".format(
+            len(response.get("candidates") or []),
+            len(response.get("review") or []),
+            stats.get("agencies", 0),
+            stats.get("pages", 0),
+            stats.get("stopped_reason"),
+        ),
+        file=sys.stderr,
+    )
+    _print_json_payload(response)
+    return 0
+
+
 def fetch_robots_command(stream=None):
     """One JSON request ({"base_url"}) on stdin, one JSON robots.txt document on stdout."""
     stream = stream if stream is not None else sys.stdin
@@ -553,6 +598,7 @@ def build_parser():
     subparsers.add_parser("archive-attachments")
 
     subparsers.add_parser("discover-tenant")
+    subparsers.add_parser("discover-sources")
     subparsers.add_parser("fetch-robots")
 
     validate_state_live_parser = subparsers.add_parser("validate-state-live")
@@ -624,6 +670,8 @@ def main(argv=None):
         return fetch_robots_command()
     if args.command == "discover-tenant":
         return discover_tenant_command()
+    if args.command == "discover-sources":
+        return discover_sources_command()
 
     if args.command == "validate-state-live":
         result = validate_state_live_sources(

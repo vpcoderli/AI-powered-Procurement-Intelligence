@@ -1,0 +1,20 @@
+# Hand-written sample table for the matching tests. Shaped like the bundled
+# crawler/data/us_jurisdictions.tsv (same header comment + column names) but tiny, and with one
+# deliberate extra column the loader must ignore.
+# source_counties: https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2024_Gazetteer/2024_Gaz_counties_national.zip
+# source_places: https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2024_Gazetteer/2024_Gaz_place_national.zip
+# generated: 2026-09-21
+level	geoid	state	name	name_key	unused_extra_column
+county	39049	OH	Franklin County	franklin	ignore-me
+county	13121	GA	Fulton County	fulton	ignore-me
+county	08013	CO	Boulder County	boulder	ignore-me
+county	08031	CO	Denver County	denver	ignore-me
+county	22071	LA	Orleans Parish	orleans	ignore-me
+county	02110	AK	Juneau City and Borough	juneau city and	ignore-me
+county	29189	MO	St. Louis County	st louis	ignore-me
+place	0804000	CO	Aurora city	aurora	ignore-me
+place	1702154	IL	Aurora city	aurora	ignore-me
+place	0820000	CO	Denver city	denver	ignore-me
+place	4701520	TN	Athens city	athens	ignore-me
+place	4701521	TN	Athens town	athens	ignore-me
+place	4055000	OK	Oklahoma City city	oklahoma	ignore-me

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<!--
+  Synthetic stand-in for the AWS WAF Bot Control challenge that bidnetdirect.com serves when an
+  access pattern looks automated (observed live on 2026-08-21 as HTTP 202 with
+  `x-amzn-waf-action: challenge`). Kept here so the harvester can be tested against a challenge
+  BODY as well as against the 202 status — some fronts return the same interstitial with 200.
+  We never solve or bypass it; seeing this page stops the run.
+-->
+<html lang="en">
+<head>
+	<title>Human Verification</title>
+	<script type="text/javascript" src="https://de9ad04a4b2c.us-east-1.token.awswaf.com/de9ad04a4b2c/challenge.js"></script>
+</head>
+<body>
+	<div id="challenge-container">Checking your browser before accessing www.bidnetdirect.com.</div>
+	<script type="text/javascript">
+		AwsWafIntegration.checkForceRefresh().then(function () { window.location.reload(true); });
+	</script>
+</body>
+</html>
