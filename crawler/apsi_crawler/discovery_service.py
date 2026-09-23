@@ -21,11 +21,12 @@ stdlib only.
 
 import re
 from time import perf_counter
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 
 #: Platform id -> how its candidates are labelled and which `provider_family` they carry.
-#: Adding a second platform means adding a harvester and one row here (spec §6).
+#: Adding a second platform means adding a harvester, one row here and one in `TENANT_KEYS`
+#: (spec §6).
 PLATFORMS = {
     "bidnet": {"label": "BidNet", "provider_family": "bidnet", "harvester": "harvest_bidnet"},
 }
@@ -51,6 +52,38 @@ _TRAILING_STATE_RE = re.compile(r",\s*[A-Za-z]{2}\s*$")
 
 class InvalidSourceDiscoveryRequestError(Exception):
     """The request cannot be executed at all (CLI exit 2)."""
+
+
+def _bidnet_tenant_key(url):
+    """BidNet's tenant identity: the slug, i.e. the last path segment before `/solicitations`.
+
+    One tenant answers on two paths -- group-scoped `/colorado/city-of-aurora/...` and a root
+    alias `/city-of-aurora/...` -- so neither the whole URL nor our id is its identity. The
+    slug is: across the full 2026-09-21 directory (2,036 tenants) every slug is distinct and
+    none appears under two groups. Whole-URL comparison missed Aurora and Washtenaw, which are
+    registered under their root alias (Aurora came back as a second candidate for the same
+    tenant); id comparison merged City of Boulder into Boulder County, because both names key
+    to `boulder` (docs/qa/crawler-discovery-test-report-2026-09-23.md, C06).
+    """
+    text = (url or "").strip()
+    if not text:
+        return ""
+    parts = urlsplit(text)
+    host = (parts.netloc or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    segments = [segment for segment in (parts.path or "").split("/") if segment]
+    lowered = [segment.lower() for segment in segments]
+    if "solicitations" in lowered:
+        segments = segments[: lowered.index("solicitations")]
+    if not segments:
+        return host
+    return "{0}/{1}".format(host, segments[-1].lower())
+
+
+#: Platform id -> how a tenant URL reduces to the tenant's identity (see `_bidnet_tenant_key`).
+#: A second platform needs its own rule: a Bonfire tenant is its subdomain, not a path segment.
+TENANT_KEYS = {"bidnet": _bidnet_tenant_key}
 
 
 def _clamp(value, field, cast):
@@ -116,12 +149,34 @@ def _validate_request(request):
                 raise InvalidSourceDiscoveryRequestError(
                     "every existing_sources entry must carry a non-empty string id"
                 )
+            # Optional, and exactly what `data_sources` holds: `base_url` lets the entry
+            # deduplicate by tenant, `jurisdiction_level` pins the level the reverse lookup
+            # must confirm instead of inferring it from the label.
+            for optional in ("label", "state_code", "base_url", "jurisdiction_level"):
+                if source.get(optional) is not None and not isinstance(source[optional], str):
+                    raise InvalidSourceDiscoveryRequestError(
+                        "existing_sources entry {0!r}: {1} must be a string".format(source["id"], optional)
+                    )
+
+    existing_ids = _string_list(request.get("existing_ids"), "existing_ids")
+    existing_base_urls = _string_list(request.get("existing_base_urls"), "existing_base_urls")
+    if existing_ids and not existing_base_urls and not any(
+        (source.get("base_url") or "").strip() for source in existing_sources
+    ):
+        # An id only reserves a name. Whether an agency is already registered is decided by
+        # its tenant, so ids without the registered URLs cannot deduplicate anything, and
+        # every registered tenant would come back as a suffixed duplicate.
+        raise InvalidSourceDiscoveryRequestError(
+            "existing_ids needs the registered base URLs too (existing_base_urls, or base_url on "
+            "existing_sources): an id reserves a name, only the tenant URL proves a source is "
+            "already registered"
+        )
 
     return {
         "platform": platform,
         "levels": list(levels),
-        "existing_ids": _string_list(request.get("existing_ids"), "existing_ids"),
-        "existing_base_urls": _string_list(request.get("existing_base_urls"), "existing_base_urls"),
+        "existing_ids": existing_ids,
+        "existing_base_urls": existing_base_urls,
         "existing_sources": list(existing_sources),
         # Only the crawl budget reaches the harvester — `existing_*` is ours to apply.
         "harvest_request": {
@@ -163,16 +218,23 @@ def _resolve_helpers(platform, harvest, classify, match, jurisdictions, name_key
     return harvest, classify, match, jurisdictions, name_key
 
 
-def _normalize_url(value):
-    """Compare base URLs the way a person would: ignore case, trailing slash and fragment."""
-    text = (value or "").strip()
-    if not text:
-        return ""
-    parts = urlsplit(text)
-    if not parts.netloc:
-        return text.rstrip("/").lower()
-    path = (parts.path or "").rstrip("/")
-    return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), path, parts.query, ""))
+def _registered_tenants(existing_base_urls, existing_sources, tenant_key):
+    """Tenant key -> what an `already_registered` review row names as the owner.
+
+    The owning source id when the request says which source holds the URL
+    (`existing_sources[].base_url`); otherwise the registered URL itself, because
+    `existing_ids` and `existing_base_urls` are two unrelated lists.
+    """
+    owners = {}
+    for source in existing_sources:
+        key = tenant_key(source.get("base_url"))
+        if key:
+            owners.setdefault(key, source["id"].strip())
+    for url in existing_base_urls:
+        key = tenant_key(url)
+        if key:
+            owners.setdefault(key, url)
+    return owners
 
 
 def _id_segment(value):
@@ -220,16 +282,46 @@ def _ambiguity_detail(matched):
     return "; ".join(labels) or None
 
 
-def _existing_matches(existing_sources, agencies, name_key):
+def _level(value):
+    return (value or "").strip().lower() or "unknown"
+
+
+def _doubt(state, agency_state, level, agency_level):
+    """Why a reverse-lookup name hit is not a suggestion; None once state and level agree.
+
+    `level_mismatch` -- both levels known and different; `state_unconfirmed` -- either side
+    has no state; `level_unconfirmed` -- either side's level is `unknown`. A contradiction
+    outranks a gap: "Franklin County" (OH) against a state-less "Village of Franklin" is a
+    different kind of jurisdiction before it is an unconfirmed state.
+    """
+    if level != "unknown" and agency_level != "unknown" and level != agency_level:
+        return "level_mismatch"
+    if not state or not agency_state:
+        return "state_unconfirmed"
+    if level == "unknown" or agency_level == "unknown":
+        return "level_unconfirmed"
+    return None
+
+
+def _existing_matches(existing_sources, classified, name_key, classify):
     """Spec §4.6 — reverse-look every source we already have up in the directory.
 
-    Classification is deliberately ignored: a county row that 404s today may well be listed
-    under a name this module would file as a special district. A source with no hit at all
-    still gets a row (`confidence: "none"`), because "the directory does not list them" is
-    the evidence needed to mark it `blocked`. Suggestions only — nothing is written.
+    A name hit is a suggestion only when the directory row is confirmed to be the same kind
+    of jurisdiction in the same state: "Boulder County" and "City of Boulder" share the name
+    key `boulder`, and copying the city's URL into the county row would quietly swap one
+    jurisdiction's bids for the other's (docs/qa/crawler-discovery-test-report-2026-09-23.md,
+    C07). The source's level is its `jurisdiction_level` when the request carries one, else
+    its label classified the same way directory rows are.
+
+    Tiers, first non-empty wins: confirmed `exact`, confirmed `partial`, then the name hits
+    that failed a check -- still listed, since "the directory has a same-named row of another
+    level" is evidence too, but with `suggestedBaseUrl: None` and the failed check as the
+    confidence (see `_doubt`). A source with no hit at all still gets a row
+    (`confidence: "none"`): "the directory does not list them" is the evidence needed to mark
+    it `blocked`. Suggestions only — nothing is written.
     """
     index = []
-    for agency in agencies:
+    for agency, agency_level in classified if existing_sources else []:
         name = (agency.get("name") or "").strip()
         tokens = _tokens(name_key(name)) if name else []
         if not tokens:
@@ -239,6 +331,7 @@ def _existing_matches(existing_sources, agencies, name_key):
                 name,
                 tokens,
                 (agency.get("state_code") or "").strip().upper() or None,
+                agency_level,
                 (agency.get("tenant_url") or "").strip() or None,
             )
         )
@@ -246,21 +339,35 @@ def _existing_matches(existing_sources, agencies, name_key):
     matches = []
     for source in existing_sources:
         source_id = source["id"].strip()
-        wanted = _tokens(name_key(_display_name(source.get("label") or source_id)))
+        display = _display_name(source.get("label") or source_id)
+        wanted = _tokens(name_key(display))
         state = (source.get("state_code") or "").strip().upper() or None
+        level = _level(source.get("jurisdiction_level"))
+        if level == "unknown" and display:
+            level = _level(classify(display, state))
 
-        exact, partial = [], []
-        for name, tokens, agency_state, tenant_url in (index if wanted else []):
+        exact, partial, unconfirmed = [], [], []
+        for name, tokens, agency_state, agency_level, tenant_url in (index if wanted else []):
             if state and agency_state and state != agency_state:
                 continue
             if tokens == wanted:
-                exact.append((name, tenant_url))
+                bucket = exact
             elif tokens[: len(wanted)] == wanted or wanted[: len(tokens)] == tokens:
-                partial.append((name, tenant_url))
+                bucket = partial
+            else:
+                continue
+            doubt = _doubt(state, agency_state, level, agency_level)
+            if doubt is None:
+                bucket.append((name, tenant_url))
+            else:
+                # Same-name rows sort ahead of prefix ones.
+                unconfirmed.append((bucket is partial, name, doubt))
 
         hits = [(name, url, "exact") for name, url in sorted(exact)]
         if not hits:
             hits = [(name, url, "partial") for name, url in sorted(partial)]
+        if not hits:
+            hits = [(name, None, doubt) for _, name, doubt in sorted(unconfirmed)]
         if not hits:
             matches.append(
                 {"sourceId": source_id, "agencyName": None, "suggestedBaseUrl": None, "confidence": "none"}
@@ -304,13 +411,20 @@ def discover_sources(
     harvest_stats = dict(harvested.get("stats") or {})
 
     platform_meta = PLATFORMS[platform]
+    tenant_key = TENANT_KEYS[platform]
     requested_levels = set(settings["levels"])
-    existing_ids = set(settings["existing_ids"])
-    existing_urls = {_normalize_url(url) for url in settings["existing_base_urls"]}
-    existing_urls.discard("")
+    # "Already registered" is a statement about the tenant, never about our id: two
+    # jurisdictions can share a name key (Boulder County / City of Boulder -> `boulder`), and
+    # one tenant can be registered under an id this run would not have picked.
+    registered = _registered_tenants(
+        settings["existing_base_urls"], settings["existing_sources"], tenant_key
+    )
+    # An existing id is only a name this run must not hand out again.
+    taken_ids = set(settings["existing_ids"])
+    taken_ids.update(source["id"].strip() for source in settings["existing_sources"])
 
     counts = dict((level, 0) for level in ALL_LEVELS)
-    taken_ids = set(existing_ids)
+    classified = []
     candidates = []
     review = []
     duplicates = 0
@@ -328,6 +442,7 @@ def discover_sources(
         if level not in counts:
             level = "unknown"
         counts[level] += 1
+        classified.append((agency, level))
 
         # Decision 3 lives here: special districts and unclassifiable rows are reported so a
         # person can fish one back out by hand, but they never become a registerable source.
@@ -355,9 +470,10 @@ def discover_sources(
             continue
         base_id = "{0}_{1}_{2}".format(platform, state_code.lower(), segment)
 
-        if base_id in existing_ids or (tenant_url and _normalize_url(tenant_url) in existing_urls):
+        owner = registered.get(tenant_key(tenant_url))
+        if owner is not None:
             duplicates += 1
-            review.append(_review_entry(agency, "already_registered", base_id))
+            review.append(_review_entry(agency, "already_registered", owner))
             continue
 
         matched = match(level, state_code, name, table=jurisdictions) or {"status": "not_found"}
@@ -412,7 +528,7 @@ def discover_sources(
     return {
         "candidates": candidates,
         "review": review,
-        "existingMatches": _existing_matches(settings["existing_sources"], agencies, name_key),
+        "existingMatches": _existing_matches(settings["existing_sources"], classified, name_key, classify),
         "stats": {
             "pages": int(harvest_stats.get("pages") or 0),
             "agencies": len(agencies),
@@ -423,7 +539,7 @@ def discover_sources(
             "unmatched": unmatched,
             # Candidates whose GEOID came from the county-prefix rule, not an exact name.
             "prefix_matched": prefix_matched,
-            # Agencies dropped because they are already registered...
+            # Agencies dropped because their tenant is already registered...
             "duplicates": duplicates,
             # ...as opposed to tenant paths the harvester saw more than once while paging.
             "harvest_duplicates": int(harvest_stats.get("duplicates") or 0),
