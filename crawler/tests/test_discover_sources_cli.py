@@ -353,7 +353,13 @@ def test_colliding_ids_get_a_numeric_suffix():
 def test_a_suffixed_id_never_collides_with_an_existing_id():
     third = agency("Cuyahoga County", "/ohio/cuyahogacounty-purchasing")
     response = run(
-        {"existing_ids": ["bidnet_oh_cuyahoga_2"]},
+        {
+            "existing_ids": ["bidnet_oh_cuyahoga_2"],
+            # The tenant that holds `bidnet_oh_cuyahoga_2` is not in this directory page.
+            "existing_base_urls": [
+                "https://www.bidnetdirect.com/ohio/cuyahoga-county-engineer/solicitations/open-bids"
+            ],
+        },
         agencies=[CUYAHOGA, third],
         levels=LEVELS,
         rows=ROWS,
@@ -366,9 +372,9 @@ def test_a_suffixed_id_never_collides_with_an_existing_id():
 # --- deduplication ---------------------------------------------------------------------
 
 
-def test_existing_ids_deduplicate_and_count():
+def test_a_registered_tenant_is_deduplicated_and_counted():
     response = run(
-        {"existing_ids": ["bidnet_oh_cuyahoga"]},
+        {"existing_ids": ["bidnet_oh_cuyahoga"], "existing_base_urls": [CUYAHOGA["tenant_url"]]},
         agencies=[CUYAHOGA, COLUMBUS],
         levels=LEVELS,
         rows=ROWS,
@@ -377,7 +383,87 @@ def test_existing_ids_deduplicate_and_count():
     assert [candidate["id"] for candidate in response["candidates"]] == ["bidnet_oh_columbus"]
     assert response["stats"]["duplicates"] == 1
     assert response["review"][0]["reason"] == "already_registered"
-    assert response["review"][0]["detail"] == "bidnet_oh_cuyahoga"
+    # The two lists do not say which id holds which URL, so the URL is what gets named.
+    assert response["review"][0]["detail"] == CUYAHOGA["tenant_url"]
+
+
+def test_an_existing_source_with_a_base_url_names_the_id_that_holds_the_tenant():
+    response = run(
+        {
+            # `base_url` on the source is enough for `existing_ids` to be usable on its own.
+            "existing_ids": ["bidnet_oh_cuyahoga_county"],
+            "existing_sources": [
+                {"id": "bidnet_oh_cuyahoga_county", "label": "Cuyahoga County, OH (BidNet)",
+                 "state_code": "OH", "base_url": CUYAHOGA["tenant_url"]}
+            ],
+        },
+        agencies=[CUYAHOGA],
+        levels=LEVELS,
+        rows=ROWS,
+    )
+
+    assert response["candidates"] == []
+    assert response["review"][0]["reason"] == "already_registered"
+    assert response["review"][0]["detail"] == "bidnet_oh_cuyahoga_county"
+
+
+def test_an_id_collision_alone_is_a_suffix_not_a_duplicate():
+    """C06: an existing id reserves a name; only the registered tenant makes a duplicate."""
+    columbus_county = agency("Columbus County", "/ohio/columbus-county-purchasing")
+    response = run(
+        {
+            "existing_ids": ["bidnet_oh_columbus"],
+            "existing_base_urls": [COLUMBUS["tenant_url"]],
+        },
+        agencies=[columbus_county],
+        levels={"Columbus County": "county"},
+        rows={("county", "OH", "columbus"): {"status": "exact", "geoid": "39999", "name": "Columbus County"}},
+    )
+
+    assert [(item["id"], item["baseUrl"]) for item in response["candidates"]] == [
+        ("bidnet_oh_columbus_2", columbus_county["tenant_url"])
+    ]
+    assert response["stats"]["duplicates"] == 0
+
+
+@pytest.mark.parametrize(
+    "registered",
+    [
+        # How `bidnet_co_city_aurora` is really registered: BidNet's root alias.
+        "https://www.bidnetdirect.com/city-of-aurora/solicitations/open-bids",
+        "http://bidnetdirect.com/city-of-aurora",
+        "https://www.bidnetdirect.com/colorado/City-Of-Aurora/solicitations/open-bids?page=2",
+    ],
+)
+def test_a_root_alias_registration_deduplicates_the_group_scoped_directory_row(registered):
+    """One BidNet tenant answers on `/<group>/<slug>` and on `/<slug>`: the slug is the tenant."""
+    aurora = agency("City of Aurora", "/colorado/city-of-aurora", group="colorado", state_code="CO")
+    response = run(
+        {"existing_base_urls": [registered]},
+        agencies=[aurora],
+        levels={"City of Aurora": "city"},
+        rows={("city", "CO", "aurora"): {"status": "exact", "geoid": "0804000", "name": "Aurora city"}},
+    )
+
+    assert response["candidates"] == []
+    assert response["stats"]["duplicates"] == 1
+    assert response["review"][0]["reason"] == "already_registered"
+
+
+def test_a_different_slug_under_the_same_group_is_a_different_tenant():
+    response = run(
+        {
+            "existing_base_urls": [
+                "https://www.bidnetdirect.com/ohio/cuyahogacounty-archive/solicitations/open-bids"
+            ]
+        },
+        agencies=[CUYAHOGA],
+        levels=LEVELS,
+        rows=ROWS,
+    )
+
+    assert [candidate["id"] for candidate in response["candidates"]] == ["bidnet_oh_cuyahoga"]
+    assert response["stats"]["duplicates"] == 0
 
 
 def test_existing_base_urls_deduplicate_ignoring_trailing_slash_and_case():
@@ -398,7 +484,7 @@ def test_existing_base_urls_deduplicate_ignoring_trailing_slash_and_case():
 
 def test_a_duplicate_is_never_also_reported_as_unmatched():
     response = run(
-        {"existing_ids": ["bidnet_oh_cuyahoga"]},
+        {"existing_base_urls": [CUYAHOGA["tenant_url"]]},
         agencies=[CUYAHOGA],
         levels=LEVELS,
         rows={},
@@ -415,10 +501,14 @@ def test_a_duplicate_is_never_also_reported_as_unmatched():
 def test_existing_sources_produce_exact_partial_and_missing_matches():
     response = run(
         {
+            # `jurisdiction_level` is the `data_sources` column; the runbook's SQL selects it.
             "existing_sources": [
-                {"id": "bidnet_oh_cuyahoga", "label": "Cuyahoga County, OH (BidNet)", "state_code": "OH"},
-                {"id": "bidnet_oh_franklin", "label": "Franklin County, OH (BidNet)", "state_code": "OH"},
-                {"id": "bidnet_wy_laramie", "label": "Laramie County, WY (BidNet)", "state_code": "WY"},
+                {"id": "bidnet_oh_cuyahoga", "label": "Cuyahoga County, OH (BidNet)", "state_code": "OH",
+                 "jurisdiction_level": "county"},
+                {"id": "bidnet_oh_franklin", "label": "Franklin County, OH (BidNet)", "state_code": "OH",
+                 "jurisdiction_level": "county"},
+                {"id": "bidnet_wy_laramie", "label": "Laramie County, WY (BidNet)", "state_code": "WY",
+                 "jurisdiction_level": "county"},
             ]
         },
         agencies=DIRECTORY,
@@ -461,17 +551,198 @@ def test_existing_sources_do_not_match_across_states():
     assert response["existingMatches"][0]["confidence"] == "none"
 
 
-def test_existing_sources_reverse_lookup_ignores_classification():
-    """A 404'd county source may well correspond to a directory row we call a special district."""
+def test_a_cross_level_name_hit_is_reported_without_a_url():
+    """C07: a 404'd city row may well be listed as something else -- that is evidence to look
+    at, never a URL to copy: the special district's bids are not the city's."""
     response = run(
-        {"existing_sources": [{"id": "bidnet_oh_columbus_schools", "label": "Columbus City School District"}]},
-        agencies=DIRECTORY,
+        {
+            "existing_sources": [
+                {"id": "bidnet_oh_city_columbus", "label": "City of Columbus, OH (BidNet)",
+                 "state_code": "OH", "jurisdiction_level": "city"}
+            ]
+        },
+        agencies=[COLUMBUS_SCHOOLS, MORPC],
         levels=LEVELS,
         rows=ROWS,
     )
 
-    assert response["existingMatches"][0]["agencyName"] == "Columbus City School District"
-    assert response["existingMatches"][0]["confidence"] == "exact"
+    assert response["existingMatches"] == [
+        {
+            "sourceId": "bidnet_oh_city_columbus",
+            "agencyName": "Columbus City School District",
+            "suggestedBaseUrl": None,
+            "confidence": "level_mismatch",
+        }
+    ]
+
+
+def test_a_directory_row_without_a_state_is_never_a_confirmed_match():
+    stateless = agency("Franklin County", "/partners/franklin-county", group="partners", state_code=None)
+    response = run(
+        {
+            "existing_sources": [
+                {"id": "bidnet_oh_franklin", "label": "Franklin County, OH (BidNet)", "state_code": "OH",
+                 "jurisdiction_level": "county"}
+            ]
+        },
+        agencies=[stateless],
+        levels={"Franklin County": "county"},
+        rows=ROWS,
+    )
+
+    assert response["existingMatches"] == [
+        {
+            "sourceId": "bidnet_oh_franklin",
+            "agencyName": "Franklin County",
+            "suggestedBaseUrl": None,
+            "confidence": "state_unconfirmed",
+        }
+    ]
+
+
+def test_a_source_without_a_state_is_never_a_confirmed_match():
+    response = run(
+        {
+            "existing_sources": [
+                {"id": "x", "label": "Cuyahoga County (BidNet)", "jurisdiction_level": "county"}
+            ]
+        },
+        agencies=[CUYAHOGA],
+        levels=LEVELS,
+        rows=ROWS,
+    )
+
+    assert [
+        (m["agencyName"], m["suggestedBaseUrl"], m["confidence"]) for m in response["existingMatches"]
+    ] == [("Cuyahoga County", None, "state_unconfirmed")]
+
+
+def test_the_registered_jurisdiction_level_outranks_the_label():
+    """The label is classified only when the row carries no level of its own."""
+    response = run(
+        {
+            "existing_sources": [
+                {"id": "pinned", "label": "Boulder (BidNet)", "state_code": "CO",
+                 "jurisdiction_level": "county"},
+                {"id": "unpinned", "label": "Boulder (BidNet)", "state_code": "CO"},
+            ]
+        },
+        agencies=[BOULDER],
+        levels=LEVELS,
+        rows=ROWS,
+    )
+
+    assert [
+        (m["sourceId"], m["suggestedBaseUrl"], m["confidence"]) for m in response["existingMatches"]
+    ] == [
+        ("pinned", BOULDER["tenant_url"], "exact"),
+        # "Boulder" alone classifies as `unknown`: same name, same state, level not confirmed.
+        ("unpinned", None, "level_unconfirmed"),
+    ]
+
+
+def test_a_confirmed_hit_hides_the_unconfirmed_ones():
+    city = agency("City of Boulder", "/colorado/city-of-boulder", group="colorado", state_code="CO")
+    response = run(
+        {
+            "existing_sources": [
+                {"id": "bidnet_co_boulder", "label": "Boulder County, CO (BidNet)", "state_code": "CO",
+                 "jurisdiction_level": "county"}
+            ]
+        },
+        agencies=[city, BOULDER],
+        levels=dict(LEVELS, **{"City of Boulder": "city"}),
+        rows=ROWS,
+    )
+
+    assert [(m["agencyName"], m["confidence"]) for m in response["existingMatches"]] == [
+        ("Boulder County", "exact")
+    ]
+
+
+def test_a_state_less_same_name_village_is_not_an_exact_match_for_a_county():
+    """C07, with the real classifier and name key: the QA report's minimal reproduction."""
+    village = agency(
+        "Village of Franklin", "/partners/village-of-franklin", group="partners", state_code=None
+    )
+    county_cs = agency("Franklin County Children Services", "/ohio/franklincountychildrensservices")
+
+    response = discover_sources(
+        {
+            "existing_sources": [
+                {"id": "bidnet_oh_franklin", "label": "Franklin County, OH (BidNet)", "state_code": "OH"}
+            ]
+        },
+        harvest=fake_harvest([village, county_cs]),
+    )
+
+    # The county department is the same level in the same state: still a (partial) suggestion.
+    assert response["existingMatches"] == [
+        {
+            "sourceId": "bidnet_oh_franklin",
+            "agencyName": "Franklin County Children Services",
+            "suggestedBaseUrl": county_cs["tenant_url"],
+            "confidence": "partial",
+        }
+    ]
+
+    alone = discover_sources(
+        {
+            "existing_sources": [
+                {"id": "bidnet_oh_franklin", "label": "Franklin County, OH (BidNet)", "state_code": "OH"}
+            ]
+        },
+        harvest=fake_harvest([village]),
+    )
+    assert alone["existingMatches"] == [
+        {
+            "sourceId": "bidnet_oh_franklin",
+            "agencyName": "Village of Franklin",
+            "suggestedBaseUrl": None,
+            "confidence": "level_mismatch",
+        }
+    ]
+
+
+def test_existing_county_id_keeps_a_distinct_same_name_city_candidate():
+    county = agency("Boulder County", "/colorado/boulder-county", "colorado", "CO")
+    city = agency("City of Boulder", "/colorado/city-of-boulder", "colorado", "CO")
+
+    response = discover_sources(
+        {
+            "existing_ids": ["bidnet_co_boulder"],
+            "existing_base_urls": [county["tenant_url"]],
+        },
+        harvest=fake_harvest([county, city]),
+    )
+
+    assert [(item["id"], item["baseUrl"], item["fipsCode"]) for item in response["candidates"]] == [
+        ("bidnet_co_boulder_2", city["tenant_url"], "0807850")
+    ]
+    assert response["stats"]["duplicates"] == 1
+
+
+def test_existing_county_reverse_lookup_does_not_suggest_a_same_name_city_url():
+    county = agency("Boulder County", "/colorado/boulder-county", "colorado", "CO")
+    city = agency("City of Boulder", "/colorado/city-of-boulder", "colorado", "CO")
+
+    response = discover_sources(
+        {
+            "existing_sources": [
+                {"id": "bidnet_co_boulder", "label": "Boulder County (BidNet)", "state_code": "CO"}
+            ]
+        },
+        harvest=fake_harvest([county, city]),
+    )
+
+    assert response["existingMatches"] == [
+        {
+            "sourceId": "bidnet_co_boulder",
+            "agencyName": "Boulder County",
+            "suggestedBaseUrl": county["tenant_url"],
+            "confidence": "exact",
+        }
+    ]
 
 
 # --- stats -----------------------------------------------------------------------------
@@ -555,6 +826,7 @@ def test_the_harvester_receives_the_clamped_paging_budget():
             "timeout_seconds": 45,
             "states": ["oh", "CO"],
             "existing_ids": ["bidnet_oh_cuyahoga"],
+            "existing_base_urls": [CUYAHOGA["tenant_url"]],
         },
         agencies=[],
         recorder=recorder,
@@ -610,6 +882,12 @@ def test_paging_defaults_and_clamps_match_the_spec():
         {"existing_base_urls": [7]},
         {"existing_sources": [{"label": "no id"}]},
         {"existing_sources": "nope"},
+        {"existing_sources": [{"id": "x", "base_url": 7}]},
+        {"existing_sources": [{"id": "x", "jurisdiction_level": ["county"]}]},
+        # An id only reserves a name; without the registered URLs nothing can be deduplicated,
+        # and every registered tenant would come back as a suffixed twin.
+        {"existing_ids": ["bidnet_oh_cuyahoga"]},
+        {"existing_ids": ["bidnet_oh_cuyahoga"], "existing_sources": [{"id": "bidnet_oh_cuyahoga"}]},
     ],
 )
 def test_unusable_requests_raise_invalid_source_discovery_request_error(request_payload):
