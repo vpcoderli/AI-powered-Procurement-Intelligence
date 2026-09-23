@@ -1,8 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { createTestDatabase, type TestDatabase } from "../src/server/db/test-utils";
 import { dataSources } from "../src/server/db/schema";
-import { type SourceCandidate, registerSources, validateCandidate } from "./register-sources";
+import {
+  CandidateFileError,
+  type SourceCandidate,
+  describeCandidateFile,
+  parseCandidateFile,
+  partialDiscoveryRefusal,
+  registerSources,
+  validateCandidate,
+} from "./register-sources";
 
 const NOW = "2026-07-31T00:00:00.000Z";
 
@@ -172,6 +184,133 @@ describe("discover-sources candidates", () => {
     } finally {
       await testDb.cleanup();
     }
+  });
+});
+
+/** `discover-sources` output exactly as the Python CLI writes it (spec §4.2). */
+function discoveryDocument(stats: Record<string, unknown> = {}) {
+  return {
+    candidates: DISCOVERED,
+    review: [
+      {
+        agencyName: "Columbus City School District",
+        tenantUrl: "https://www.bidnetdirect.com/ohio/columbuscityschools/solicitations/open-bids",
+        group: "ohio",
+        reason: "classified_special_district",
+        detail: null,
+      },
+    ],
+    existingMatches: [],
+    stats: { pages: 43, agencies: 4, stopped_reason: "exhausted", ...stats },
+  };
+}
+
+describe("candidate file contract", () => {
+  it("reads the discover-sources document as that command writes it", () => {
+    const file = parseCandidateFile(discoveryDocument());
+
+    expect(file.candidates.map((c) => c.id)).toEqual(DISCOVERED.map((c) => c.id));
+    expect(file.discovery).toEqual({ pages: 43, agencies: 4, review: 1, stoppedReason: "exhausted" });
+    expect(describeCandidateFile(file)).toBe(
+      "discover-sources output: 43 pages, 4 agencies, stopped_reason=exhausted; 3 candidates, 1 in review",
+    );
+    expect(partialDiscoveryRefusal(file, false)).toBeNull();
+  });
+
+  it("still reads a bare candidate array, the seed-file format", () => {
+    const file = parseCandidateFile([candidate()]);
+
+    expect(file.candidates).toHaveLength(1);
+    expect(file.discovery).toBeNull();
+    expect(describeCandidateFile(file)).toBe("Candidate array: 1 candidates");
+    expect(partialDiscoveryRefusal(file, false)).toBeNull();
+  });
+
+  it.each(["waf_challenge", "max_pages", "fetch_failed", "no_new_links"])(
+    "refuses a run that stopped with %s unless the operator allows a partial registration",
+    (stoppedReason) => {
+      const file = parseCandidateFile(discoveryDocument({ stopped_reason: stoppedReason, pages: 12 }));
+
+      expect(partialDiscoveryRefusal(file, false)).toContain(`stats.stopped_reason = "${stoppedReason}", 12 pages`);
+      expect(partialDiscoveryRefusal(file, true)).toBeNull();
+    },
+  );
+
+  it("does not invent a stop reason the file does not carry", () => {
+    const file = parseCandidateFile({ candidates: DISCOVERED, stats: {} });
+
+    expect(file.discovery).toEqual({ pages: null, agencies: null, review: null, stoppedReason: null });
+    expect(partialDiscoveryRefusal(file, false)).toBeNull();
+    expect(describeCandidateFile(file)).toContain("stopped_reason=unknown");
+  });
+
+  it.each([
+    ["an object without candidates", { review: [], stats: {} }],
+    ["candidates that are not a list", { candidates: { id: "x" } }],
+    ["a scalar", "candidates.json"],
+    ["null", null],
+    ["a non-object candidate", { candidates: [DISCOVERED[0], "bidnet_oh_columbus"] }],
+  ])("refuses %s before anything is validated", (_label, value) => {
+    expect(() => parseCandidateFile(value)).toThrow(CandidateFileError);
+  });
+});
+
+/**
+ * The documented handoff, end to end: `discover-sources > file`, then
+ * `npm run source:register -- --file file --dry-run` (docs/operations/source-discovery.md §4).
+ * QA 2026-09-23 C08b: this used to exit 1 with "candidates is not iterable".
+ */
+describe("register-sources CLI", () => {
+  let directory: string;
+
+  beforeEach(() => {
+    directory = mkdtempSync(join(tmpdir(), "apsi-discovery-contract-"));
+  });
+
+  afterEach(() => {
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  function dryRun(document: unknown, ...extra: string[]) {
+    const file = join(directory, "candidates.json");
+    writeFileSync(file, JSON.stringify(document));
+    return spawnSync(
+      process.execPath,
+      [join(process.cwd(), "node_modules/tsx/dist/cli.mjs"), "scripts/register-sources.ts", "--file", file, "--dry-run", ...extra],
+      { cwd: process.cwd(), encoding: "utf8" },
+    );
+  }
+
+  it("dry-runs the discover-sources output as written", () => {
+    const result = dryRun(discoveryDocument());
+
+    expect(result.stderr).toBe("");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("discover-sources output: 43 pages, 4 agencies, stopped_reason=exhausted");
+    expect(result.stdout).toContain("Dry run: 3 candidates");
+    for (const discovered of DISCOVERED) {
+      expect(result.stdout).toContain(`  ${discovered.id}: OK`);
+    }
+    expect(result.stdout).toContain("Dry run: 3 valid, 0 invalid");
+  });
+
+  it("answers a partial run the way the real run would, and lets the operator opt in", () => {
+    const refused = dryRun(discoveryDocument({ stopped_reason: "waf_challenge", pages: 7 }));
+    expect(refused.status).toBe(1);
+    expect(refused.stdout).toContain("Dry run: 3 valid, 0 invalid");
+    expect(refused.stderr).toContain('stats.stopped_reason = "waf_challenge", 7 pages');
+    expect(refused.stderr).toContain("--allow-partial");
+
+    const allowed = dryRun(discoveryDocument({ stopped_reason: "waf_challenge", pages: 7 }), "--allow-partial");
+    expect(allowed.status).toBe(0);
+  });
+
+  it("names the problem instead of crashing on a file of the wrong shape", () => {
+    const result = dryRun({ review: [], stats: {} });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("expected the discover-sources output");
+    expect(result.stderr).not.toContain("TypeError");
   });
 });
 

@@ -8,6 +8,8 @@ import { createMysqlPool, runMysqlMigrations } from "@/server/db/mysql";
 import { getBidByIdFromMysql, getBidByIdFromRepository } from "@/server/bids/repository";
 import { queryBidsFromDatabase, queryBidsFromMysql } from "@/server/bids/service";
 import { getBidDescription } from "@/lib/bid-description";
+import { registerSourcesInMysql, type SourceCandidate } from "../../../scripts/register-sources";
+import { listCrawlableSourcesFromMysql } from "./source-registry";
 import { importCrawlerJsonRunIntoSqlite } from "./sqlite-json-importer";
 import { importCrawlerJsonRunIntoMysql, type CrawlerJsonRunPayload } from "./mysql-json-importer";
 
@@ -79,6 +81,49 @@ describe.runIf(process.env.RUN_CRAWLER_INTEGRATION === "1")("offline crawler / H
         await admin.query(`DROP DATABASE IF EXISTS \`${databaseName}\``);
         await admin.end();
       }
+    });
+
+    it("keeps discovered city sources gated until approval and preserves governance on re-registration", async () => {
+      const candidate: SourceCandidate = {
+        id: "bidnet_co_boulder_city_mysql_test",
+        label: "City of Boulder (BidNet)",
+        issuerType: "city",
+        stateCode: "CO",
+        baseUrl: "https://www.bidnetdirect.com/colorado/city-of-boulder/solicitations/open-bids",
+        jurisdictionLevel: "city",
+        jurisdictionName: "Boulder city",
+        fipsCode: "0807850",
+        providerFamily: "bidnet",
+        cadence: "daily",
+        fetchConfig: { base_url: "https://www.bidnetdirect.com/colorado/city-of-boulder/solicitations/open-bids" },
+      };
+      const now = "2026-09-23T00:00:00.000Z";
+
+      expect(await registerSourcesInMysql(mysql, [candidate], now)).toEqual({ inserted: 1, errors: [] });
+      const [pending] = await mysql.query(
+        "SELECT approval_status, approved_for_ingestion FROM data_sources WHERE id = ?",
+        [candidate.id],
+      );
+      expect(pending).toEqual([expect.objectContaining({ approval_status: null, approved_for_ingestion: null })]);
+      expect((await listCrawlableSourcesFromMysql(mysql)).map((source) => source.id)).not.toContain(candidate.id);
+
+      await mysql.query(
+        "UPDATE data_sources SET approval_status = 'approved', approved_for_ingestion = 1, legal_review_status = 'approved_public' WHERE id = ?",
+        [candidate.id],
+      );
+      expect(await registerSourcesInMysql(mysql, [{ ...candidate, label: "City of Boulder Updated (BidNet)" }], now))
+        .toEqual({ inserted: 1, errors: [] });
+      const [approved] = await mysql.query(
+        "SELECT label, approval_status, approved_for_ingestion, legal_review_status FROM data_sources WHERE id = ?",
+        [candidate.id],
+      );
+      expect(approved).toEqual([expect.objectContaining({
+        label: "City of Boulder Updated (BidNet)",
+        approval_status: "approved",
+        approved_for_ingestion: 1,
+        legal_review_status: "approved_public",
+      })]);
+      expect((await listCrawlableSourcesFromMysql(mysql)).map((source) => source.id)).toContain(candidate.id);
     });
 
     it("retains detail content and attachments after repeated real MySQL imports", async () => {

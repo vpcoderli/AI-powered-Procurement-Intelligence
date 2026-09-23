@@ -39,6 +39,89 @@ interface RegisterResult {
   errors: Array<{ id: string; errors: string[] }>;
 }
 
+/** The only `stats.stopped_reason` that means the directory walk ran off its last page. */
+const COMPLETE_DISCOVERY_RUN = "exhausted";
+
+export interface CandidateFile {
+  candidates: SourceCandidate[];
+  /**
+   * Set when the file is `discover-sources` output (`{candidates, review, existingMatches,
+   * stats}`); null for a bare candidate array such as `data/seed-sources/*.json`.
+   */
+  discovery: {
+    pages: number | null;
+    agencies: number | null;
+    review: number | null;
+    stoppedReason: string | null;
+  } | null;
+}
+
+export class CandidateFileError extends Error {}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Accepts both shapes a candidate file comes in: the `discover-sources` document as that
+ * command writes it (docs/operations/source-discovery.md §3), and a bare `SourceCandidate[]`.
+ * Anything else is refused before a single row is validated or written.
+ */
+export function parseCandidateFile(value: unknown): CandidateFile {
+  let candidates: unknown;
+  let discovery: CandidateFile["discovery"] = null;
+
+  if (Array.isArray(value)) {
+    candidates = value;
+  } else if (value !== null && typeof value === "object" && Array.isArray((value as { candidates?: unknown }).candidates)) {
+    const document = value as { candidates: unknown[]; review?: unknown; stats?: unknown };
+    const stats = (document.stats !== null && typeof document.stats === "object" ? document.stats : {}) as Record<string, unknown>;
+    candidates = document.candidates;
+    discovery = {
+      pages: numberOrNull(stats.pages),
+      agencies: numberOrNull(stats.agencies),
+      review: Array.isArray(document.review) ? document.review.length : null,
+      stoppedReason: typeof stats.stopped_reason === "string" ? stats.stopped_reason : null,
+    };
+  } else {
+    throw new CandidateFileError(
+      "expected the discover-sources output ({ \"candidates\": [...], \"stats\": {...}, ... }) or a bare array of candidates",
+    );
+  }
+
+  const list = candidates as unknown[];
+  const notAnObject = list.findIndex((entry) => entry === null || typeof entry !== "object" || Array.isArray(entry));
+  if (notAnObject !== -1) {
+    throw new CandidateFileError(`candidates[${notAnObject}] is not a JSON object`);
+  }
+  return { candidates: list as SourceCandidate[], discovery };
+}
+
+/**
+ * A partial discovery run (WAF challenge, page budget, fetch failure, looping pages) still
+ * yields valid candidates -- but registering it as if it were the whole directory is how
+ * agencies go missing without anyone noticing. Returns the refusal message, or null.
+ */
+export function partialDiscoveryRefusal(file: CandidateFile, allowPartial: boolean): string | null {
+  const reason = file.discovery?.stoppedReason;
+  if (!reason || reason === COMPLETE_DISCOVERY_RUN || allowPartial) return null;
+  return (
+    `discover-sources stopped early (stats.stopped_reason = "${reason}", ${file.discovery?.pages ?? "?"} pages): ` +
+    "these candidates are not the whole directory. Re-run discovery, or pass --allow-partial " +
+    "to register this subset knowingly."
+  );
+}
+
+/** One line for the operator saying what the file is before anything is validated. */
+export function describeCandidateFile(file: CandidateFile): string {
+  if (!file.discovery) return `Candidate array: ${file.candidates.length} candidates`;
+  const { pages, agencies, review, stoppedReason } = file.discovery;
+  return (
+    `discover-sources output: ${pages ?? "?"} pages, ${agencies ?? "?"} agencies, ` +
+    `stopped_reason=${stoppedReason ?? "unknown"}; ${file.candidates.length} candidates, ${review ?? "?"} in review`
+  );
+}
+
 /**
  * Bulk-upsert candidate sources into `data_sources`, keyed on `id`. Only the
  * machine-derivable columns below are ever written; governance columns (approval_status,
@@ -151,22 +234,50 @@ async function main() {
   const args = process.argv.slice(2);
   const fileIndex = args.indexOf("--file");
   if (fileIndex === -1 || !args[fileIndex + 1]) {
-    console.error("Usage: npx tsx scripts/register-sources.ts --file candidates.json [--dry-run]");
+    console.error("Usage: npx tsx scripts/register-sources.ts --file candidates.json [--dry-run] [--allow-partial]");
     process.exitCode = 1;
     return;
   }
 
   const filePath = args[fileIndex + 1];
   const dryRun = args.includes("--dry-run");
+  const allowPartial = args.includes("--allow-partial");
 
-  const candidates: SourceCandidate[] = JSON.parse(readFileSync(filePath, "utf-8"));
+  let file: CandidateFile;
+  try {
+    file = parseCandidateFile(JSON.parse(readFileSync(filePath, "utf-8")));
+  } catch (error) {
+    console.error(`Cannot use ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+    return;
+  }
+  const { candidates } = file;
+  console.log(describeCandidateFile(file));
+  if (file.discovery && !file.discovery.stoppedReason) {
+    console.warn("Warning: the file carries no stats.stopped_reason, so nothing says the directory walk finished.");
+  }
+  // Decided once, up front: a dry run must answer exactly what the real run would.
+  const refusal = partialDiscoveryRefusal(file, allowPartial);
 
   if (dryRun) {
     console.log(`Dry run: ${candidates.length} candidates`);
+    let invalid = 0;
     for (const c of candidates) {
       const errors = validateCandidate(c);
+      if (errors.length > 0) invalid++;
       console.log(`  ${c.id}: ${errors.length === 0 ? "OK" : errors.join(", ")}`);
     }
+    console.log(`Dry run: ${candidates.length - invalid} valid, ${invalid} invalid`);
+    if (refusal) {
+      console.error(`A real run would refuse this file: ${refusal}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (refusal) {
+    console.error(refusal);
+    process.exitCode = 1;
     return;
   }
 
