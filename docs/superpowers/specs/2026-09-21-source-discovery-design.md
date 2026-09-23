@@ -71,13 +71,15 @@ discover-sources (Python CLI, 只读)
   "timeout_seconds": 30,
   "levels": ["county", "city"],
   "states": ["OH", "CO"],
+  "existing_sources": [{ "id": "bidnet_oh_franklin", "label": "Franklin County, OH (BidNet)", "state_code": "OH",
+                         "base_url": "https://www.bidnetdirect.com/franklin-county-oh/solicitations/open-bids",
+                         "jurisdiction_level": "county" }],
   "existing_ids": ["bidnet_co_denver"],
-  "existing_base_urls": ["https://www.bidnetdirect.com/colorado/..."],
-  "existing_sources": [{ "id": "bidnet_oh_franklin", "label": "Franklin County, OH (BidNet)", "state_code": "OH" }]
+  "existing_base_urls": ["https://www.bidnetdirect.com/colorado/..."]
 }
 ```
 
-`states` 省略表示全部；给出明确列表时，**组无法解析出州码的机构不计入结果**，只计入 `stats.unresolved_state_skipped`（否则 `states: ["OH"]` 会把 `mitn`、`bgis` 等非州组一并带出）。`existing_*` 用于去重；`existing_sources` 用于给库里已有（尤其是 404）的源反查目录建议。
+`states` 省略表示全部；给出明确列表时，**组无法解析出州码的机构不计入结果**，只计入 `stats.unresolved_state_skipped`（否则 `states: ["OH"]` 会把 `mitn`、`bgis` 等非州组一并带出）。`existing_sources` 用于给库里已有（尤其是 404）的源反查目录建议，其 `base_url` 同时参与去重；`existing_base_urls` 用于去重；`existing_ids` 只占用 id。去重按**租户**而不是 id 判定，只给 `existing_ids` 而没有任何已登记地址的请求退出码 2——见文末 2026-09-23 修订。
 
 响应（stdout，单个 JSON；诊断走 stderr；逐项失败不影响整体，退出码 0；请求非法退出码 2）：
 
@@ -110,7 +112,7 @@ discover-sources (Python CLI, 只读)
 }
 ```
 
-`candidates[]` 的前十个字段与 `frontend/scripts/register-sources.ts` 的 `SourceCandidate` **逐字段一致**（多出的 `discovery` 块被该脚本忽略，仅供人工审阅）。
+`candidates[]` 的前十个字段与 `frontend/scripts/register-sources.ts` 的 `SourceCandidate` **逐字段一致**（多出的 `discovery` 块被该脚本忽略，仅供人工审阅）。整份响应文件可原样交给 `source:register`（2026-09-23 修订）。
 
 ### 4.3 抓取规则
 
@@ -163,7 +165,7 @@ discover-sources (Python CLI, 只读)
 
 ### 4.6 与既有源的关系
 
-`existing_sources` 里的每一项，按机构名 `name_key` 在目录里反查；命中就写进 `existingMatches` 并给出建议 `baseUrl`。这能直接回答 2026-09-16 遗留的四个 404 源：要么给出正确租户路径，要么用"目录里查无此机构"支持把它标 `blocked`。**只建议，不写库。**
+`existing_sources` 里的每一项，按机构名 `name_key` 在目录里反查；命中就写进 `existingMatches` 并给出建议 `baseUrl`。这能直接回答 2026-09-16 遗留的四个 404 源：要么给出正确租户路径，要么用"目录里查无此机构"支持把它标 `blocked`。**只建议，不写库。** 建议地址只给州与级别都确认一致的命中（2026-09-23 修订）。
 
 ## 5. 成本与礼貌（2026-09-21 实测修正）
 
@@ -188,3 +190,13 @@ discover-sources (Python CLI, 只读)
 - 契约测试：生成的 `candidates[]` 必须通过 `register-sources.ts` 的 `validateCandidate`（Node 侧加一个读 fixture JSON 的测试）。
 - 真机：全量跑一次（43 页 / 2,036 家 / 2 分 55 秒），结果 819 候选 + 1,217 待审阅，存档于 `ops-evidence/`，详见[运维记录](../../operations/source-discovery.md)的实测小节。
 - 反向校验：用生成的 Census 表复核库里既有源的 `fips_code`。2026-09-21 首次复核就抓出一处：种子文件给 `bidnet_co_city_aurora` 的 `0803455` 实际是 Arvada，Aurora 应为 `0804000`，种子与数据库均已更正；其余 9 条全部一致。这正是本功能存在的意义。
+
+## 8. 2026-09-23 修订（QA 报告 C06 / C07 / C08b）
+
+测试报告 `docs/qa/crawler-discovery-test-report-2026-09-23.md` 的三处 P1 缺陷，按下面三条规则修正；实现在 `crawler/apsi_crawler/discovery_service.py` 与 `frontend/scripts/register-sources.ts`，操作说明在[运维记录](../../operations/source-discovery.md)第 3、4、7 节。
+
+1. **"已注册"按租户判定，id 只是名字（C06）。** 原实现在查 GEOID 前只凭 `base_id in existing_ids` 就判重复，`Boulder County` 与 `City of Boulder` 的 `name_key` 同为 `boulder`，市级租户因此被当成县源 `bidnet_co_boulder` 吞掉。BidNet 的租户身份是 slug（`/solicitations` 前的最后一段）：同一租户既有 `/<组>/<slug>` 又有根级别名 `/<slug>`，全量目录 2,036 个 slug 两两不同、无一跨组。现规则：slug 命中已登记地址（`existing_sources[].base_url` 或 `existing_base_urls`）才算 `already_registered`；只撞 id 的照常成为候选并加后缀。附带修掉一处报告未列出的反向缺陷：原候选 `bidnet_co_aurora`（`/colorado/city-of-aurora`）与已登记的 `bidnet_co_city_aurora`（根级别名 `/city-of-aurora`）是同一租户，整条 URL 比较认不出来。只给 id 不给地址的请求无从判重，改为退出码 2，而不是悄悄把每个已登记租户再产出一遍。平台相关的 slug 规则登记在 `TENANT_KEYS`，接第二个平台时要一起加。
+2. **反查只对州与级别都确认一致的命中给地址（C07）。** 源的级别取请求里的 `jurisdiction_level`（即 `data_sources.jurisdiction_level`），否则按目录机构同一套规则分类其 `label`。名字对得上但级别不同记 `level_mismatch`，任一方缺州码记 `state_unconfirmed`，任一方级别为 `unknown` 记 `level_unconfirmed`；这三种仍列出机构名、但 `suggestedBaseUrl` 为 `null`，且只在没有已确认的 `exact` / `partial` 时才列出。§4.6 原先"反查忽略分类"的考虑——404 的县源可能在目录里挂着别的名字——由这三档保留为人工线索，但不再以可直接写回的地址出现。
+3. **发现输出与注册脚本共用一个文件契约（C08b）。** `register-sources.ts` 接受 `discover-sources` 原样输出或裸 `SourceCandidate[]`，其他形状报错退出 1。`stats.stopped_reason` 不是 `exhausted`（`max_pages` / `waf_challenge` / `fetch_failed` / `no_new_links`）的文件真实运行一律拒收，`--dry-run` 同样退出 1 以如实预告，`--allow-partial` 显式放行——部分结果单条都对，错在被当成整个目录。
+
+未改动：`classified_unknown`（361 条，其中 80 条含 `Township`）仍按决策 3 留在待审阅，是否把 Township 纳入目标辖区需要先定口径，再扩展分类与 FIPS 映射。

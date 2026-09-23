@@ -16,6 +16,8 @@
 
 `discover-tenant` 只生成连字符变体，第三种形态永远试不出来。而且机构名与租户 slug 本来就不是一一对应（`Franklin County Children Services` → `franklincountychildrensservices`）。
 
+反过来，**同一个租户可以有两条路径**：目录里登记的是 `/colorado/city-of-aurora/…`，平台同时接受根级别名 `/city-of-aurora/…`，库里的 `bidnet_co_city_aurora` 存的正是后者。所以判断"是不是同一个租户"既不能比整条 URL，也不能比我们的 id，只能比 **slug**（`/solicitations` 之前的最后一段）：2026-09-21 全量目录 2,036 个租户的 slug 两两不同，也没有一个 slug 出现在两个组下。第 3 节的去重就按它来。
+
 正确做法是**读平台自己公布的机构目录**：路径由平台给出，不由我们构造。`discover-tenant` 仍然保留——它便宜、适合单个源的 404 快速复核；`discover-sources` 是批量、权威的那条路。
 
 ## 2. 目录与分页端点（2026-09-21 实测）
@@ -35,15 +37,17 @@
 
 这是 Python CLI，从 `crawler/` 目录运行，stdin 收一个 JSON 请求，stdout 吐一个 JSON 文档。**没有 npm 包装脚本**：包装除了多一层间接什么也不加，而请求体里的 `states`、`max_pages`、`existing_*` 本来就要按每次跑的范围手写。
 
-小批量试跑（先只跑一个州）：
+只要一个州：
 
 ```bash
 cd crawler
-echo '{"platform":"bidnet","states":["OH"],"max_pages":20}' \
+echo '{"platform":"bidnet","states":["OH"]}' \
   | python -m apsi_crawler.cli discover-sources > /tmp/candidates-oh.json
 ```
 
-全平台（约 200–400 页，按 3 秒间隔约 10–20 分钟，见第 8 节）：
+**`states` 只过滤结果，不减少翻页**：目录是全平台一份、按机构名分页的，单州运行同样要翻完整个目录（2026-09-21 实测 43 页、约 3 分钟）。别为了"试跑"压低 `max_pages`——那样 `stopped_reason` 会是 `max_pages`，该州排在后面几页的机构就静悄悄地不见了，注册脚本也会拒收这份文件（第 4 节）。
+
+全平台（2026-09-21 实测 43 页 / 2,036 家，3 秒间隔约 3 分钟，见第 8 节）：
 
 ```bash
 cd crawler
@@ -63,15 +67,17 @@ echo '{"platform":"bidnet","max_pages":400,"min_interval_seconds":3}' \
 | `max_pages` | `400` | 目录分页上限，钳制到 1..2000 |
 | `min_interval_seconds` | `3` | 每次请求之间的最小间隔，钳制到 0..60 |
 | `timeout_seconds` | `30` | 单次请求超时，钳制到 1..300 |
-| `existing_ids` | `[]` | 库里已有的源 id，用于去重 |
-| `existing_base_urls` | `[]` | 库里已有的 `base_url`，用于去重（忽略大小写与结尾斜杠） |
-| `existing_sources` | `[]` | `{id, label, state_code}` 数组，用于反查目录，见第 7 节 |
+| `existing_sources` | `[]` | 库里已有的源：`{id, label, state_code, base_url, jurisdiction_level}`，除 `id` 外都可省。`base_url` 用于去重，`jurisdiction_level` 用于反查时确认级别（第 7 节） |
+| `existing_ids` | `[]` | 只**占用** id（新候选撞上就加 `_2`），不用于判定"已注册" |
+| `existing_base_urls` | `[]` | 已注册租户的地址，用于去重；与 `existing_ids` 是两张互不对应的清单 |
 
-数值字段**静默钳制**（写 `max_pages: 0` 得到 1），结构字段（`levels`、`states`、`existing_*` 的类型）**报错退出 2**。取现有源填 `existing_*` 的 SQL：
+数值字段**静默钳制**（写 `max_pages: 0` 得到 1），结构字段（`levels`、`states`、`existing_*` 的类型）**报错退出 2**。推荐直接把下面这条 SQL 的结果行当 `existing_sources` 传入——一行同时给出 id、租户地址和级别：
 
 ```sql
-SELECT id, label, state_code, base_url FROM data_sources WHERE provider_family = 'bidnet';
+SELECT id, label, state_code, base_url, jurisdiction_level FROM data_sources WHERE provider_family = 'bidnet';
 ```
+
+**"已注册"只看租户，不看 id**（2026-09-23 QA C06）。一家机构的租户 slug 命中已登记的 `base_url`（`existing_sources[].base_url` 或 `existing_base_urls`）才算重复；只撞上已有 id 的是**另一个租户**，照常成为候选并加后缀。`Boulder County` 与 `City of Boulder` 的 `name_key` 都是 `boulder`：库里已有县源 `bidnet_co_boulder` 时，市级租户 `/colorado/city-of-boulder` 以 `bidnet_co_boulder_2` 进候选，而不是被当成已注册吞掉。因此**只给 `existing_ids`、不给任何已登记地址的请求会以退出码 2 拒绝**——没有地址就判不了重复，每个已登记租户都会以带后缀的新 id 再冒出来一次。
 
 ### 响应
 
@@ -84,7 +90,7 @@ SELECT id, label, state_code, base_url FROM data_sources WHERE provider_family =
 }
 ```
 
-`candidates[]` 的前十个字段与 `frontend/scripts/register-sources.ts` 的 `SourceCandidate` **逐字段一致**，可以直接喂给 `source:register`；多出来的 `discovery` 块（`agencyName` / `group` / `matchedOn` / `confidence` / `matchedPrefix`）只给审阅的人看，注册脚本会忽略它。跨语言契约由两侧测试共同守住：`crawler/tests/test_discover_sources_cli.py` 与 `frontend/scripts/register-sources.test.ts`。
+**整份输出文件可以原样交给 `source:register`**（2026-09-23 QA C08b 之前它只认裸数组，按文档操作会报 `candidates is not iterable`）。`candidates[]` 的前十个字段与 `frontend/scripts/register-sources.ts` 的 `SourceCandidate` **逐字段一致**；多出来的 `discovery` 块（`agencyName` / `group` / `matchedOn` / `confidence` / `matchedPrefix`）只给审阅的人看，注册脚本会忽略它。跨语言契约由两侧测试共同守住：`crawler/tests/test_discover_sources_cli.py` 与 `frontend/scripts/register-sources.test.ts`。
 
 `stats` 各字段：
 
@@ -94,10 +100,10 @@ SELECT id, label, state_code, base_url FROM data_sources WHERE provider_family =
 | `county` / `city` / `special_district` / `unknown` | 分类桶。恒等式：四者之和 **等于** `agencies` |
 | `unmatched` | 进到 FIPS 匹配那一步却没匹配上的 county/city 数（`ambiguous` + `not_found`） |
 | `prefix_matched` | 靠"郡名前缀"规则拿到 GEOID 的候选数，即 `confidence: "jurisdiction_prefix"` 的条数，见第 6 节 |
-| `duplicates` | 因 `existing_ids` / `existing_base_urls` 命中而跳过的机构数 |
+| `duplicates` | 租户已登记（slug 命中 `existing_sources[].base_url` / `existing_base_urls`）而跳过的机构数 |
 | `harvest_duplicates` | 翻页过程中重复出现的租户路径数（采集器自己的去重计数，与上面一条不是一回事） |
 | `unresolved_state_skipped` | 带 `states` 过滤时，采集器**自己**丢掉的无州码机构数。不带过滤时恒为 0（那时无州码机构会照常交过来，进 `review` 的 `unresolved_state`） |
-| `stopped_reason` | `exhausted` / `max_pages` / `waf_challenge` / `no_new_links` |
+| `stopped_reason` | `exhausted`（翻到最后一页，唯一表示"完整"的值）/ `max_pages` / `waf_challenge` / `fetch_failed`（普通抓取错误）/ `no_new_links`（翻页开始重复）。后四个都是**部分结果**：CLI 照样退出 0，已采集的部分照常返回 |
 | `duration_ms` | 本次发现耗时 |
 
 看到 `stopped_reason: "waf_challenge"` 就**不要立刻重跑**——那正是招来限流的动作。隔一段时间、缩小 `states` 范围再跑。
@@ -125,6 +131,14 @@ cd frontend
 npm run source:register -- --file /tmp/candidates-oh.json --dry-run
 ```
 
+注册脚本接受两种文件：`discover-sources` 的原样输出，或裸 `SourceCandidate[]` 数组（`data/seed-sources/*.json` 就是后者）。其他形状直接报错退出 1，不会写库。读到发现输出时先打印一行摘要，确认这份文件是什么再往下看：
+
+```
+discover-sources output: 43 pages, 2036 agencies, stopped_reason=exhausted; 819 candidates, 1217 in review
+```
+
+`stopped_reason` 不是 `exhausted` 的文件，**真实运行一律拒收**（退出 1，不写库）；`--dry-run` 照常逐条校验，但同样以退出 1 告诉你真跑会被拒。部分结果里的候选单条都是对的，问题在于它不是整个目录——当成全量注册，是机构悄悄漏掉的方式。确认只想注册这一部分时加 `--allow-partial`。文件里没有 `stopped_reason`（例如人工删掉了 `stats`）时只打警告，因为那已经不是发现命令的原样输出了。
+
 注册进来的行 `approval_status` 为 NULL，也就是[治理拦截](./local-source-approval.md#1-什么是治理拦截)状态，不会被调度器碰到。发现这一步**没有**、也不该有任何绕过门禁的能力。
 
 ## 5. 人工审阅要看什么
@@ -144,7 +158,7 @@ npm run source:register -- --file /tmp/candidates-oh.json --dry-run
 | `classified_unknown` | 名字看不出级别（如 `Mid-Ohio Regional Planning Commission`） | 人工判断；多数也是特别区 |
 | `level_not_requested` | 被本次 `levels` 排除 | 下次放开 `levels` 再跑 |
 | `unresolved_state` | 采购组不是州（`mitn`、`bgis` 等），推断不出州码 | 人工补州码后手写候选。**只在不带 `states` 的全量跑里出现**——带过滤时这些机构由采集器直接丢掉，只在 `stats.unresolved_state_skipped` 里留个数 |
-| `already_registered` | 命中 `existing_ids` / `existing_base_urls`，`detail` 是撞上的 id | 正常，说明库里已有 |
+| `already_registered` | 租户 slug 命中已登记地址。`detail` 是持有该租户的源 id（请求里用 `existing_sources[].base_url` 给出时），否则是命中的那条已登记地址 | 正常，说明库里已有。只撞 id 不会进这里 |
 | `ambiguous_match` | 同州同名多条，`detail` 列出候选 GEOID | 人工挑一条，手写 `fipsCode` |
 | `no_fips_match` | Census 表里查无此名，且郡名前缀规则也没救回来 | 人工查实际辖区后补 `fipsCode`；查不到就别注册 |
 | `unusable_name` | 归一化后名字为空 | 极罕见，人工处理 |
@@ -183,7 +197,7 @@ npm run source:register -- --file /tmp/candidates-oh.json --dry-run
 
 ### id 规则
 
-`bidnet_<州码小写>_<name_key>`（非字母数字折成 `_`），例如 `Cuyahoga County` (OH) → `bidnet_oh_cuyahoga`。同一次运行内撞名（或撞上 `existing_ids` 里的已有 id）时追加 `_2`、`_3`。
+`bidnet_<州码小写>_<name_key>`（非字母数字折成 `_`），例如 `Cuyahoga County` (OH) → `bidnet_oh_cuyahoga`。同一次运行内撞名，或撞上请求里任何已有 id（`existing_ids` 与 `existing_sources[].id`），追加 `_2`、`_3`。id 只是名字：撞 id 永远不等于"已注册"，见第 3 节。
 
 ## 7. 收尾 2026-09-16 遗留的四个 404 源
 
@@ -196,23 +210,30 @@ cat <<'JSON' | python -m apsi_crawler.cli discover-sources > /tmp/pending.json
   "platform": "bidnet",
   "states": ["OH", "WY"],
   "existing_sources": [
-    {"id": "bidnet_oh_city_columbus", "label": "City of Columbus, OH (BidNet)", "state_code": "OH"},
-    {"id": "bidnet_oh_cuyahoga",      "label": "Cuyahoga County, OH (BidNet)",  "state_code": "OH"},
-    {"id": "bidnet_oh_franklin",      "label": "Franklin County, OH (BidNet)",  "state_code": "OH"},
-    {"id": "bidnet_wy_laramie",       "label": "Laramie County, WY (BidNet)",   "state_code": "WY"}
+    {"id": "bidnet_oh_city_columbus", "label": "City of Columbus, OH (BidNet)", "state_code": "OH", "jurisdiction_level": "city"},
+    {"id": "bidnet_oh_cuyahoga",      "label": "Cuyahoga County, OH (BidNet)",  "state_code": "OH", "jurisdiction_level": "county"},
+    {"id": "bidnet_oh_franklin",      "label": "Franklin County, OH (BidNet)",  "state_code": "OH", "jurisdiction_level": "county"},
+    {"id": "bidnet_wy_laramie",       "label": "Laramie County, WY (BidNet)",   "state_code": "WY", "jurisdiction_level": "county"}
   ]
 }
 JSON
 python3 -c 'import json;print(json.dumps(json.load(open("/tmp/pending.json"))["existingMatches"],indent=2))'
 ```
 
-反查**忽略分类**：一个今天 404 的 county 源，在目录里很可能登记成我们会判为特别区的名字（`Franklin County` → `Franklin County Children Services`）。每个源恰好得到下面三种结论之一：
+反查先按 `name_key` 找名字对得上的目录行，再**确认州与级别**（2026-09-23 QA C07）：只有双方州码都已知且相同、级别都已知且相同，才给 `suggestedBaseUrl`。源的级别取请求里的 `jurisdiction_level`，没给就按目录机构同一套规则分类它的 `label`。原因是 `Boulder County` 与 `City of Boulder` 的 `name_key` 都是 `boulder`：修复前县源 `bidnet_co_boulder` 会同时收到两条 `exact`，采纳第二条就等于把县源的 `base_url` 换成市级租户——县的招标从此漏抓，辖区数据也跟着错。
+
+名字对得上、但州或级别确认不了的行**不丢**（"目录里有个同名的别级机构"本身也是线索），只是不给地址。结论按下表逐级取第一个非空的一档，每个源至少一行：
 
 | `confidence` | 含义 | 处理 |
 | --- | --- | --- |
-| `exact` | 归一化名字完全一致 | 核对页面标题确属本辖区 → 在数据源表把 `base_url` 改成 `suggestedBaseUrl` → 重跑前置检查 → 走批准表单 |
-| `partial` | 目录名字是库里名字的扩展（或反之），可能有多条 | **逐条打开看**。确认是同一个采购单位才写回；拿不准就留空 |
+| `exact` | 归一化名字完全一致，州、级别均已确认 | 核对页面标题确属本辖区 → 在数据源表把 `base_url` 改成 `suggestedBaseUrl` → 重跑前置检查 → 走批准表单 |
+| `partial` | 目录名字是库里名字的扩展（或反之），州、级别均已确认，可能有多条 | **逐条打开看**。确认是同一个采购单位才写回；拿不准就留空 |
+| `level_mismatch` | 名字对得上，但双方级别不同（县源对上了市、特别区等） | `suggestedBaseUrl` 为 `null`。**不要**写回——那是另一个辖区。需要看租户地址时，按 `agencyName` 去 `candidates[]` / `review[]` 里找 |
+| `state_unconfirmed` | 名字对得上，但有一方没有州码（机构所属组解析不出州，或源没填 `state_code`） | `suggestedBaseUrl` 为 `null`。先查清机构属于哪个州再说 |
+| `level_unconfirmed` | 名字对得上、州一致，但有一方级别是 `unknown` | `suggestedBaseUrl` 为 `null`。请求里补上 `jurisdiction_level` 通常就能确认 |
 | `none` | 目录里查无此机构 | 这就是把该行标 `blocked` 的证据：`PATCH /api/admin/data-sources/[id]`，`approvalStatus=blocked`、`approvalNotes` 写明"2026-09-21 目录反查未命中" |
+
+同一行名字既对不上级别、又缺州码时，记 `level_mismatch`——矛盾比缺证据更说明问题。只要有一条确认过的 `exact` 或 `partial`，下面几档就不再列出。
 
 `existingMatches` **只建议、不写库**，写回 `base_url` 仍然是管理端上的一次人工确认操作（`local-source-approval.md` 第 4.2 节）。
 
@@ -220,9 +241,9 @@ python3 -c 'import json;print(json.dumps(json.load(open("/tmp/pending.json"))["e
 
 ## 8. 成本与礼貌
 
-- 目录每页约 50 家。全平台上万家机构 ≈ 200–400 页，按默认 3 秒间隔约 **10–20 分钟**一次。
+- 目录每页 48 家。2026-09-21 实测全平台 43 页 / 2,036 家，按默认 3 秒间隔约 **3 分钟**一次（设计时按"上万家、200–400 页"估的上限偏大）。
 - **手动、低频**：建议按季度或有需要时才跑，不做 worker、不进调度。这是有意的决策 5。
-- 先用 `states` 小批量试跑（一个州通常一两页），确认分类与匹配结果合理，再考虑全量。
+- 用 `states` 只审一个州的结果很方便，但它**不省翻页**：单州运行同样翻完整个目录（第 3 节）。
 - `max_pages` 是硬上限，触顶记 `stopped_reason: "max_pages"`，不会无限翻。
 - 全程复用 crawler 的浏览器请求头与最小间隔；遇挑战立刻停，不重试、不加压。
 
@@ -272,13 +293,15 @@ python3 -m apsi_crawler.cli discover-sources < request.json > candidates.json
 | 候选 | **819**（市 561 + 郡 258；精确 716 + 辖区前缀 103） |
 | 待审阅 | 1,217（特别区 730、未知 361、无 FIPS 匹配 119、已注册 6、歧义 1） |
 
+> **2026-09-23 修正后按同一份目录离线重放**（QA 报告 C06/C07，见 `docs/qa/crawler-discovery-test-report-2026-09-23.md` 的"修复结果"一节）：候选仍是 819、待审阅仍是 1,217、已注册仍是 6，但其中两条换了人——`City of Boulder`（`/colorado/city-of-boulder`，GEOID `0807850`）原先因为撞上县源 id 被吞掉，现在以 `bidnet_co_boulder_2` 进候选；原候选 `bidnet_co_aurora`（`/colorado/city-of-aurora`）其实就是已登记的 `bidnet_co_city_aurora`（根级别名 `/city-of-aurora`），现在按 slug 判为已注册。`Washtenaw County` 仍是已注册，但理由从"撞 id"变成了"slug 命中根级别名 `/washtenaw-county`"。`bidnet_co_boulder` 的反查只剩 `Boulder County` 一条 `exact`。
+
 候选覆盖的州（前几位）：CO 179、MI 160、NY 104、CA 47、TX 43、AZ 42、NJ 37。
 
 ### 两轮之间修掉的问题
 
 首轮 659 个候选、1,377 条待审阅。差异全部来自 `mitn` 组：它是 BidNet 的密歇根组（`/mitn` 标题为 "Michigan Bids…"，正文写明 "Michigan Inter-governmental Trade Network"），但 slug 不是州名，此前解析不出州码，导致 167 个郡/市机构被搁置在 `unresolved_state`。映射为 MI 后候选增加 160 个。
 
-同一处修正还顺带消除了一个错误建议：首轮反查曾给俄亥俄的 `bidnet_oh_franklin` 建议密歇根的 "Village of Franklin"——反查按州过滤，但机构所属组解析不出州码时会放行。这也说明**当某个组不在 `/purchasing-groups` 清单上时（例如 `bgis`），仍可能出现跨州建议**，实测运行要盯住 `stats.unresolved_state_skipped`。
+同一处修正还顺带消除了一个错误建议：首轮反查曾给俄亥俄的 `bidnet_oh_franklin` 建议密歇根的 "Village of Franklin"——反查按州过滤，但机构所属组解析不出州码时会放行。2026-09-23 起这条路也堵上了：州码缺失的一方只会得到不带地址的 `state_unconfirmed`（这个例子里县对市，记 `level_mismatch`），不再是 `exact` 建议（第 7 节）。
 
 ### 2026-09-16 遗留的四个源，目录给出的答案
 
