@@ -5,8 +5,36 @@ from pathlib import Path
 from apsi_crawler import cli
 from apsi_crawler.adapters import registry
 from apsi_crawler.adapters.task import task_source_from_payload
+from apsi_crawler.spiders.co_bidnet import bidnet_list_url
 
 CONTRACT_PATH = Path(__file__).parent / "fixtures" / "contracts" / "fetch_task_v1.json"
+DENVER_CLOSED = Path(__file__).parent / "fixtures" / "bidnet_denver_closed_bids_2026_09_24.html"
+DENVER_OPEN = Path(__file__).parent / "fixtures" / "bidnet_denver_open_bids_2026_09_24.html"
+DENVER_BASE_URL = (
+    "https://www.bidnetdirect.com/colorado/city-and-county-of-denver-general-services-purchasing"
+    "/solicitations/open-bids"
+)
+
+
+def _stub_bidnet_paged_fetch(monkeypatch, html):
+    """Serve a fixed BidNet list page for every requested URL, recording each URL asked for.
+
+    Never touches the network: this replaces `LIST_HTML_FETCHERS["bidnet"].fetch_list_html`,
+    which is the paged walk's only fetcher (`list_extraction._fetch_paginated_page`) --
+    `page_reader`/`page_url`/`parse_list_html` are untouched.
+    """
+    requested_urls = []
+
+    def fetch_list_html(source, url, session=None, timeout=30):
+        requested_urls.append(url)
+        return html, url, 200
+
+    monkeypatch.setitem(
+        registry.LIST_HTML_FETCHERS,
+        "bidnet",
+        registry.BIDNET_LIST_HTML_ADAPTER._replace(fetch_list_html=fetch_list_html),
+    )
+    return requested_urls
 
 
 def test_python_can_consume_the_node_generated_contract():
@@ -105,13 +133,25 @@ def test_fetch_task_reads_every_directly_read_field_by_its_real_key(monkeypatch,
     values chosen to differ from every fallback/short-circuit -- so each of the four
     keys is load-bearing: reading the wrong key changes the outcome, and the same
     renames all fail this test.
+
+    The probe's `provider_family` is deliberately NOT "bidnet": that platform's list-HTML
+    adapter now has a `page_reader` (2026-09-24 paged BidNet walk), so `run_list_stage`
+    would route it into `run_paginated_list_extraction` regardless of this test's
+    `PLATFORM_ADAPTERS` stub, reaching for a real list-HTML fetcher and hitting the
+    network. This test's subject is `resolve_adapter`'s field-reading, not BidNet's list
+    stage, so it uses a probe-only platform family that resolves to neither
+    `LIST_HTML_FETCHERS` nor a real `PLATFORM_ADAPTERS` entry -- keeping it on the plain
+    single-page adapter route. See
+    test_a_paged_bidnet_task_reads_its_pagination_request_fields_by_their_real_keys and
+    test_a_stop_before_makes_a_paged_bidnet_task_stop_at_the_window below for the paged
+    route's own field-reading probes.
     """
     payload = {
         "task_id": "tsk_field_probe",
         "source_id": "zz_probe_platform_source",  # deliberately not in DEDICATED_ADAPTERS
         "label": "Contract Field Probe",
         "state_code": "CO",
-        "provider_family": "bidnet",
+        "provider_family": "zz_probe_family",  # not bidnet -- see docstring above
         "jurisdiction_level": "county",  # distinct from task.py's "state" fallback
         "fetch_config": {"base_url": "https://example.gov"},
         "limit": 7,
@@ -125,10 +165,11 @@ def test_fetch_task_reads_every_directly_read_field_by_its_real_key(monkeypatch,
         seen["jurisdiction"] = source.jurisdiction
         return [{"id": "probe:1", "title": "stub", "source": source.source_label}]
 
-    # Only the "bidnet" platform adapter is stubbed. If provider_family were read under
-    # the wrong key, resolve_adapter would see provider_family=None for a source_id with
-    # no dedicated adapter and raise AdapterNotFoundError instead of reaching this stub.
-    monkeypatch.setitem(registry.PLATFORM_ADAPTERS, "bidnet", probe_adapter)
+    # Only the probe-only "zz_probe_family" platform adapter is stubbed. If provider_family
+    # were read under the wrong key, resolve_adapter would see provider_family=None for a
+    # source_id with no dedicated adapter and raise AdapterNotFoundError instead of reaching
+    # this stub.
+    monkeypatch.setitem(registry.PLATFORM_ADAPTERS, "zz_probe_family", probe_adapter)
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
 
     exit_code = cli.main(["fetch-task"])
@@ -140,6 +181,87 @@ def test_fetch_task_reads_every_directly_read_field_by_its_real_key(monkeypatch,
     assert seen["limit"] == 7
     assert seen["query"] == "road repair"
     assert seen["jurisdiction"] == "county"
+
+
+def test_a_paged_bidnet_task_reads_its_pagination_request_fields_by_their_real_keys(monkeypatch, capsys):
+    """`list_kind`, `start_page` and `max_pages` all equal the Python side's own defaults
+    ("open", 1, 4) in the committed contract fixture, so a renamed key on either side would
+    silently reproduce those defaults -- the same fallback/short-circuit collision this
+    file's docstrings warn about for limit/query/provider_family/jurisdiction_level. This
+    probe uses non-default values for all three so each is load-bearing: reading the wrong
+    key changes the outcome.
+
+    `provider_family: "bidnet"` with a `source_id` absent from `DEDICATED_ADAPTERS` resolves
+    a BidNet `ListHtmlAdapter` with a `page_reader`, so `run_list_stage` takes the paged
+    route (`run_paginated_list_extraction`) unconditionally -- exactly the routing rule that
+    made the old all-bidnet probe above unsafe to keep once Task 4 wired it into `cli.py`.
+    Here that routing is the point: `LIST_HTML_FETCHERS["bidnet"].fetch_list_html` is stubbed
+    so the walk never leaves this process.
+    """
+    monkeypatch.delenv("SCRAPLING_EXTRACTOR_URL", raising=False)
+    html = DENVER_CLOSED.read_text(encoding="utf-8")
+    requested_urls = _stub_bidnet_paged_fetch(monkeypatch, html)
+
+    payload = {
+        "task_id": "tsk_paged_probe",
+        "source_id": "zz_probe_paged_source",  # deliberately not in DEDICATED_ADAPTERS
+        "label": "City and County of Denver General Services Purchasing (BidNet)",
+        "state_code": "CO",
+        "provider_family": "bidnet",
+        "fetch_config": {"base_url": DENVER_BASE_URL},
+        "limit": None,
+        "list_kind": "closed",  # distinct from the "open" default
+        "start_page": 3,  # distinct from the "1" default
+        "max_pages": 2,  # distinct from the "4" default -- the closed fixture always links a
+        # next page, so an unread max_pages would let the walk run right past it
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+
+    exit_code = cli.main(["fetch-task"])
+    result = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert result["status"] == "success"
+    # The FIRST page fetched must be the closed list's page 3 -- proof list_kind/start_page
+    # actually drove the fetched URL, not just an echo back into metadata.
+    assert requested_urls[0] == bidnet_list_url(DENVER_BASE_URL, "closed", 3)
+    pagination = result["metadata"]["pagination"]
+    assert pagination["list_kind"] == "closed"
+    assert pagination["start_page"] == 3
+    assert pagination["pages_fetched"] == 2
+    assert pagination["stopped_reason"] == "max_pages"
+
+
+def test_a_stop_before_makes_a_paged_bidnet_task_stop_at_the_window(monkeypatch, capsys):
+    """`stop_before` has no fallback default at all -- when the key is absent the walk never
+    checks a window -- so any non-null value is load-bearing on its own: a renamed key would
+    silently read `None` and the walk would run to exhaustion instead of stopping at the
+    "window" reason this test asserts.
+    """
+    monkeypatch.delenv("SCRAPLING_EXTRACTOR_URL", raising=False)
+    html = DENVER_OPEN.read_text(encoding="utf-8")
+    _stub_bidnet_paged_fetch(monkeypatch, html)
+
+    payload = {
+        "task_id": "tsk_window_probe",
+        "source_id": "zz_probe_window_source",  # deliberately not in DEDICATED_ADAPTERS
+        "label": "City and County of Denver General Services Purchasing (BidNet)",
+        "state_code": "CO",
+        "provider_family": "bidnet",
+        "fetch_config": {"base_url": DENVER_BASE_URL},
+        "limit": None,
+        "stop_before": "2030-01-01",  # later than every row on the open fixture (max 2026-10-13)
+    }
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+
+    exit_code = cli.main(["fetch-task"])
+    result = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert result["status"] == "success"
+    pagination = result["metadata"]["pagination"]
+    assert pagination["pages_fetched"] == 1
+    assert pagination["stopped_reason"] == "window"
 
 
 def test_contract_enrichment_block_parses_to_disabled_defaults():
