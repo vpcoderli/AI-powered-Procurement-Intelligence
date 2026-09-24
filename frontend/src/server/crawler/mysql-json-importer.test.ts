@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { importCrawlerJsonRunIntoMysql } from "./mysql-json-importer";
+import { importCrawlerJsonRunIntoMysql, type CrawlerJsonRunPayload } from "./mysql-json-importer";
 
 const NOW = "2026-06-01T00:00:00.000Z";
 
@@ -166,24 +166,30 @@ describe("crawler JSON MySQL importer", () => {
     expect(capturedSql).toContain("jurisdiction_name");
     expect(capturedSql).toContain("fips_code");
 
+    // Positions, not fixed end-of-array offsets: lifecycle columns (2026-09-24 phase 1) are
+    // appended after fips_code, so jurisdiction columns are no longer the last three.
     const columnNames = capturedSql
       .slice(capturedSql.indexOf("(") + 1, capturedSql.indexOf(")"))
       .split(",")
       .map((column) => column.trim());
-    expect(columnNames.at(-3)).toBe("jurisdiction_level");
-    expect(columnNames.at(-2)).toBe("jurisdiction_name");
-    expect(columnNames.at(-1)).toBe("fips_code");
-    expect(capturedValues.at(-3)).toBe("state");
-    expect(capturedValues.at(-2)).toBe("California");
-    expect(capturedValues.at(-1)).toBe("06");
+    const levelIndex = columnNames.indexOf("jurisdiction_level");
+    const nameIndex = columnNames.indexOf("jurisdiction_name");
+    const fipsIndex = columnNames.indexOf("fips_code");
+    expect(levelIndex).toBeGreaterThanOrEqual(0);
+    expect(nameIndex).toBe(levelIndex + 1);
+    expect(fipsIndex).toBe(nameIndex + 1);
+    expect(capturedValues[levelIndex]).toBe("state");
+    expect(capturedValues[nameIndex]).toBe("California");
+    expect(capturedValues[fipsIndex]).toBe("06");
   });
 
   it("persists null jurisdiction columns when a payload (e.g. SAM.gov) does not carry the keys", async () => {
+    let capturedSql = "";
     let capturedValues: unknown[] = [];
     const mysql = {
       beginTransaction: async () => {}, commit: async () => {}, rollback: async () => {},
       execute: async (sql: string, values: unknown[] = []) => {
-        if (sql.includes("INSERT INTO bids")) capturedValues = values;
+        if (sql.includes("INSERT INTO bids")) { capturedSql = sql; capturedValues = values; }
         return [{ affectedRows: 1 }, undefined] as [unknown, unknown?];
       },
       query: async () => [[], undefined] as [unknown[], unknown?],
@@ -209,9 +215,13 @@ describe("crawler JSON MySQL importer", () => {
       ],
     });
 
-    expect(capturedValues.at(-3)).toBeNull();
-    expect(capturedValues.at(-2)).toBeNull();
-    expect(capturedValues.at(-1)).toBeNull();
+    const columnNames = capturedSql
+      .slice(capturedSql.indexOf("(") + 1, capturedSql.indexOf(")"))
+      .split(",")
+      .map((column) => column.trim());
+    expect(capturedValues[columnNames.indexOf("jurisdiction_level")]).toBeNull();
+    expect(capturedValues[columnNames.indexOf("jurisdiction_name")]).toBeNull();
+    expect(capturedValues[columnNames.indexOf("fips_code")]).toBeNull();
   });
 
   it("uses one acquired connection for reads, writes, commit, and release", async () => {
@@ -318,6 +328,42 @@ describe("crawler JSON MySQL importer", () => {
   });
 });
 
+describe("bid lifecycle in the MySQL importer (2026-09-24 phase 1)", () => {
+  const T0 = "2026-09-24T00:00:00.000Z";
+  const T1 = "2026-09-25T00:00:00.000Z";
+  function bid(id: string) {
+    return {
+      id: `bidnet_co_denver:${id}`, source: "Denver (BidNet)", source_bid_id: id, dedupe_key: `bidnet_co_denver:${id}`,
+      title: `Bid ${id}`, description: "", issuer_name: "Denver", issuer_type: "state", state_code: "CO",
+      source_url: `https://www.bidnetdirect.com/x/${id}`, lifecycle_status: "open", is_active: 1, solicitation_number: `N-${id}`,
+      first_seen_at: T0, last_seen_at: T0, created_at: T0, updated_at: T0,
+    };
+  }
+  function run(rows: Record<string, unknown>[], complete: boolean, at: string): CrawlerJsonRunPayload {
+    return { source: "bidnet_co_denver", runId: `run_${at}`, status: "success", startedAt: at, finishedAt: at, metadata: { pagination: { list_kind: "open", complete } }, bids: rows };
+  }
+
+  it("writes the lifecycle columns and closes delisted bids inside the transaction", async () => {
+    const mysql = createFakeMysql();
+    await importCrawlerJsonRunIntoMysql(mysql, run([bid("1"), bid("2")], true, T0));
+    const result = await importCrawlerJsonRunIntoMysql(mysql, run([bid("1")], true, T1));
+
+    expect(result.delistedCount).toBe(1);
+    expect(mysql.bids.get("bidnet_co_denver:1")).toMatchObject({ lifecycle_status: "open", is_active: 1, solicitation_number: "N-1" });
+    expect(mysql.bids.get("bidnet_co_denver:2")).toMatchObject({ lifecycle_status: "closed", is_active: 0, updated_at: T1 });
+    expect(JSON.parse(String(mysql.bids.get("bidnet_co_denver:2")!.raw_payload))).toMatchObject({ lifecycle: { closed_reason: "delisted" } });
+  });
+
+  it("leaves open bids alone after an incomplete run", async () => {
+    const mysql = createFakeMysql();
+    await importCrawlerJsonRunIntoMysql(mysql, run([bid("1"), bid("2")], true, T0));
+    const result = await importCrawlerJsonRunIntoMysql(mysql, run([bid("1")], false, T1));
+
+    expect(result).not.toHaveProperty("delistedCount");
+    expect(mysql.bids.get("bidnet_co_denver:2")).toMatchObject({ lifecycle_status: "open" });
+  });
+});
+
 let sequence = 0;
 function payload(overrides: Record<string, unknown> = {}) {
   return { source: "il_bidbuy", runId: `run_${sequence++}`, status: "success" as const, startedAt: NOW, bids: [{ id: "bid_1", source: "Illinois BidBuy", dedupe_key: "il_bidbuy:1", title: "Road Repair", state_code: "IL", source_url: "https://x/1", ...overrides }] };
@@ -359,6 +405,11 @@ function createFakeMysql() {
         if (attachments[index].bid_id === values[0]) attachments.splice(index, 1);
       }
     }
+    if (sql.includes("UPDATE bids SET lifecycle_status = 'closed'")) {
+      const [rawPayload, updatedAt, id] = values as [string, string, string];
+      const current = bids.get(String(id));
+      if (current) bids.set(String(id), { ...current, lifecycle_status: "closed", is_active: 0, raw_payload: rawPayload, updated_at: updatedAt });
+    }
     return [{ affectedRows: 1 }, undefined];
   };
   const query = async (sql: string, values: unknown[] = []): Promise<[unknown[], unknown?]> => {
@@ -370,6 +421,10 @@ function createFakeMysql() {
     if (sql.includes("FROM bids WHERE id = ?")) return [[...bids.values()].filter((row) => row.id === values[0]), undefined];
     if (sql.includes("FROM bids WHERE dedupe_key = ?")) return [[...bids.values()].filter((row) => row.dedupe_key === values[0]), undefined];
     if (sql.includes("FROM bid_attachments WHERE")) return [attachments.filter((row) => row.bid_id === values[0]), undefined];
+    if (sql.includes("lifecycle_status = 'open'") && sql.includes("LIKE ?")) {
+      const prefix = String(values[0]).replace(/:%$/, ":").replace(/!(.)/g, "$1");
+      return [[...bids.values()].filter((row) => String(row.id).startsWith(prefix) && (row.lifecycle_status ?? "open") === "open"), undefined];
+    }
     return [[], undefined];
   };
   const connection = {

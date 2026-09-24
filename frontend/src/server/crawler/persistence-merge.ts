@@ -1,6 +1,8 @@
+import { mergeLifecycleFields } from "./lifecycle";
+
 type JsonRecord = Record<string, unknown>;
 
-const detailFields = ["description", "full_description", "original_category", "contact_name", "contact_email", "contact_phone", "published_date"];
+const detailFields =["description", "full_description", "original_category", "contact_name", "contact_email", "contact_phone", "published_date"];
 
 function record(value: unknown): JsonRecord {
   if (typeof value === "string") {
@@ -92,6 +94,7 @@ export function mergePersistedBid(incoming: JsonRecord, existing: JsonRecord = {
       },
     };
   }
+  Object.assign(merged, mergeLifecycleFields(incoming, existing));
   return merged;
 }
 

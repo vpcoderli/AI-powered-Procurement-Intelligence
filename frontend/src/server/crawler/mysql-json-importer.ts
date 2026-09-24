@@ -5,6 +5,7 @@ import { mergePersistedAttachments, mergePersistedBid } from "./persistence-merg
 import { CrawlerPersistenceError, persistenceFailurePayload, validateCrawlerImport } from "./persistence-errors";
 import { CrawlerLeaseLostError, type CrawlerLeaseFence } from "./execution-context";
 import { assertPersistenceLease } from "./persistence-lease";
+import { delistedRawPayload, delistingApplies, sourceBidIdLikePattern, withLifecycleMetadata } from "./lifecycle";
 
 export interface MysqlCrawlerImportStore {
   query: (sql: string, values?: unknown[]) => Promise<[unknown[], unknown?]>;
@@ -27,6 +28,7 @@ export interface CrawlerJsonImportResult {
   insertedCount: number;
   updatedCount: number;
   logCount: number;
+  delistedCount?: number;
 }
 
 type JsonRecord = Record<string, unknown>;
@@ -87,6 +89,9 @@ const bidColumns = [
   "jurisdiction_level",
   "jurisdiction_name",
   "fips_code",
+  "lifecycle_status",
+  "awarded_date",
+  "solicitation_number",
 ] as const;
 
 const bidUpdateColumns = bidColumns.filter((column) =>
@@ -202,7 +207,10 @@ function valueByColumn(row: JsonRecord, column: typeof bidColumns[number], fallb
   if (column === "updated_at") return stringValue(row.updated_at, fallbackTimestamp);
   if (column === "jurisdiction_level") return optionalString(row.jurisdiction_level);
   if (column === "jurisdiction_name") return optionalString(row.jurisdiction_name);
-  return optionalString(row.fips_code);
+  if (column === "fips_code") return optionalString(row.fips_code);
+  if (column === "lifecycle_status") return stringValue(row.lifecycle_status, "open");
+  if (column === "awarded_date") return optionalString(row.awarded_date);
+  return optionalString(row.solicitation_number);
 }
 
 async function upsertBid(mysql: MysqlCrawlerImportStore, row: JsonRecord, fallbackTimestamp: string) {
@@ -264,6 +272,25 @@ async function mergeAttachments(mysql: MysqlCrawlerImportStore, row: JsonRecord,
       ${update}
     `, attachmentColumns.map((column) => attachment[column]));
   }
+}
+
+async function delistMissingOpenBids(mysql: MysqlCrawlerImportStore, sourceId: string, seen: Set<string>, at: string) {
+  const rows = await mysqlSelectMany<{ id: string; raw_payload: unknown }>(
+    mysql,
+    "SELECT id, raw_payload FROM bids WHERE id LIKE ? ESCAPE '!' AND lifecycle_status = 'open' FOR UPDATE",
+    [sourceBidIdLikePattern(sourceId)],
+  );
+  let delisted = 0;
+  for (const row of rows) {
+    if (seen.has(String(row.id))) continue;
+    await mysqlExecute(
+      mysql,
+      "UPDATE bids SET lifecycle_status = 'closed', is_active = 0, raw_payload = ?, updated_at = ? WHERE id = ?",
+      [delistedRawPayload(row.raw_payload, at), at, row.id] as never[],
+    );
+    delisted += 1;
+  }
+  return delisted;
 }
 
 async function insertCrawlerLog(
@@ -331,17 +358,22 @@ export async function importCrawlerJsonRunIntoMysql(
     const bidRows = payload.bids ?? [];
     let insertedCount = 0;
     let updatedCount = 0;
+    const seen = new Set<string>();
     for (const row of bidRows) {
       const result = await upsertBid(connection, row, payload.startedAt);
       if (result.status === "inserted") insertedCount += 1;
       else updatedCount += 1;
+      seen.add(result.id);
       await mergeAttachments(connection, row, result.id, payload.startedAt);
     }
+    const delisted = delistingApplies(payload)
+      ? await delistMissingOpenBids(connection, payload.source, seen, payload.finishedAt ?? payload.startedAt)
+      : null;
     const counts = { fetchedCount: bidRows.length, insertedCount, updatedCount };
-    await insertCrawlerLog(connection, payload, counts);
+    await insertCrawlerLog(connection, delisted === null ? payload : withLifecycleMetadata(payload, delisted), counts);
     await checkLease(true);
     await connection.commit();
-    return { ...counts, logCount: 1 };
+    return { ...counts, logCount: 1, ...(delisted === null ? {} : { delistedCount: delisted }) };
   } catch (error) {
     const failure = error instanceof CrawlerLeaseLostError ? error : new CrawlerPersistenceError(error);
     if (began && connection) {

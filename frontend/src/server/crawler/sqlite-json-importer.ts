@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { bidAttachments, bids, crawlerLocks, crawlerLogs } from "@/server/db/schema";
 import type { CrawlerJsonImportResult, CrawlerJsonRunPayload } from "./mysql-json-importer";
@@ -9,8 +9,9 @@ import { mergePersistedAttachments, mergePersistedBid, snakeCaseRecord } from ".
 import { CrawlerPersistenceError, persistenceFailurePayload, validateCrawlerImport } from "./persistence-errors";
 import { CrawlerLeaseLostError, type CrawlerLeaseFence } from "./execution-context";
 import { assertPersistenceLease } from "./persistence-lease";
+import { delistedRawPayload, delistingApplies, sourceBidIdLikePattern, withLifecycleMetadata } from "./lifecycle";
 
-type SqliteImportStore = Pick<AppDatabase, "select" | "insert">;
+type SqliteImportStore = Pick<AppDatabase, "select" | "insert" | "update">;
 
 type JsonRecord = Record<string, unknown>;
 
@@ -84,6 +85,9 @@ function bidUpdateValues(row: JsonRecord, fallbackTimestamp: string) {
     jurisdictionLevel: optionalString(row.jurisdiction_level),
     jurisdictionName: optionalString(row.jurisdiction_name),
     fipsCode: optionalString(row.fips_code),
+    lifecycleStatus: stringValue(row.lifecycle_status, "open"),
+    awardedDate: optionalString(row.awarded_date),
+    solicitationNumber: optionalString(row.solicitation_number),
     lastSeenAt: stringValue(row.last_seen_at, fallbackTimestamp),
     updatedAt: stringValue(row.updated_at, fallbackTimestamp),
   };
@@ -162,6 +166,24 @@ function upsertBid(db: SqliteImportStore, row: JsonRecord, fallbackTimestamp: st
   return { id, status: existing ? "updated" : "inserted" };
 }
 
+function delistMissingOpenBids(db: SqliteImportStore, sourceId: string, seen: Set<string>, at: string) {
+  const rows = db
+    .select({ id: bids.id, rawPayload: bids.rawPayload })
+    .from(bids)
+    .where(and(sql`${bids.id} LIKE ${sourceBidIdLikePattern(sourceId)} ESCAPE '!'`, eq(bids.lifecycleStatus, "open")))
+    .all();
+  let delisted = 0;
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    db.update(bids)
+      .set({ lifecycleStatus: "closed", isActive: 0, rawPayload: delistedRawPayload(row.rawPayload, at), updatedAt: at })
+      .where(eq(bids.id, row.id))
+      .run();
+    delisted += 1;
+  }
+  return delisted;
+}
+
 function insertCrawlerLog(
   db: SqliteImportStore,
   payload: CrawlerJsonRunPayload,
@@ -208,16 +230,21 @@ export function importCrawlerJsonRunIntoSqlite(
       const bidRows = payload.bids ?? [];
       let insertedCount = 0;
       let updatedCount = 0;
+      const seen = new Set<string>();
       for (const row of bidRows) {
         const result = upsertBid(transaction, row, payload.startedAt);
         if (result.status === "inserted") insertedCount += 1;
         else updatedCount += 1;
+        seen.add(result.id);
         mergeAttachments(transaction, row, result.id, payload.startedAt);
       }
+      const delisted = delistingApplies(payload)
+        ? delistMissingOpenBids(transaction, payload.source, seen, payload.finishedAt ?? payload.startedAt)
+        : null;
       const counts = { fetchedCount: bidRows.length, insertedCount, updatedCount };
-      insertCrawlerLog(transaction, payload, counts);
+      insertCrawlerLog(transaction, delisted === null ? payload : withLifecycleMetadata(payload, delisted), counts);
       checkLease();
-      return { ...counts, logCount: 1 };
+      return { ...counts, logCount: 1, ...(delisted === null ? {} : { delistedCount: delisted }) };
     }, lease ? { behavior: "immediate" } : undefined);
   } catch (error) {
     const failure = error instanceof CrawlerLeaseLostError ? error : new CrawlerPersistenceError(error);
