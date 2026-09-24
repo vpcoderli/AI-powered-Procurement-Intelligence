@@ -2910,6 +2910,9 @@ def main():
     page = (ROOT / "crawler/tests/fixtures/bidnet_denver_open_bids_2026_09_24.html").read_text(encoding="utf-8")
     without_row, removed = re.subn(r'<tr data-index="\d+"[^>]*>(?:(?!</tr>).)*' + REMOVED + r".*?</tr>", "", page, count=1, flags=re.S)
     assert removed == 1, "the saved page must contain the row to remove"
+    # BidNet prints the list total; a walk is only complete when the ids it collected match it.
+    assert "6 Open Solicitations" in without_row, "the saved page must print its total"
+    without_row = without_row.replace("6 Open Solicitations", "5 Open Solicitations", 1)
     base_url = "https://www.bidnetdirect.com/colorado/city-and-county-of-denver-general-services-purchasing/solicitations/open-bids"
     task = {
         "task_id": "offline-lifecycle", "source_id": "bidnet_co_denver",
