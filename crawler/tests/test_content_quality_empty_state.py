@@ -80,6 +80,8 @@ def test_page_without_an_empty_phrase_is_not_an_empty_state():
         "No solicitations available.",
         "No results found.",
         "There are currently no open opportunities.",
+        "There are no closed bids at this time.",
+        "There are no awarded bids at this time.",
     ],
 )
 def test_recognizes_every_contract_phrase(phrase):

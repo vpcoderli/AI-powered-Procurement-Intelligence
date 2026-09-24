@@ -142,6 +142,8 @@ def is_login_html(html):
 # explicit statement that the list is empty, never a generic "nothing to show" chrome string.
 _EMPTY_LIST_RE = re.compile(
     r"no open bids"
+    r"|no closed bids"
+    r"|no awarded bids"
     r"|no open solicitations"
     r"|no solicitations (?:are )?(?:currently )?available"
     r"|no results found"
