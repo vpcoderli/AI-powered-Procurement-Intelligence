@@ -89,12 +89,12 @@
 
 状态流转在 `persistence-merge.ts` 里统一实现，两种数据库共用，在每次运行的同一个事务里完成：
 
-- **开放列表完整抓完**（最后一页没有"下一页"，且没有被页数或条数上限截断）时：本次出现的 → `open`；该源此前 `open`、本次没出现的 → `closed`，`raw_payload.lifecycle.closed_reason = "delisted"`。"该源的招标"用导入器现有的来源键圈定：`bids.source`，即源的 label（招标 id 为 `<label>:<source_bid_id>`）。核实为空的租户（`metadata.emptyState`）同样按"完整抓完、零条出现"处理。
+- **开放列表完整抓完**（最后一页没有"下一页"，且没有被页数或条数上限截断）时：本次出现的 → `open`；该源此前 `open`、本次没出现的 → `closed`，`raw_payload.lifecycle.closed_reason = "delisted"`。"该源的招标"按招标 id 前缀 `<source_id>:` 圈定（归一化器生成的 id 与 `dedupe_key` 都是 `<source_id>:<source_bid_id>`，不随 label 改变）。核实为空的租户（`metadata.emptyState`）同样按"完整抓完、零条出现"处理。
 - 抓取失败或被截断：**一律不改**任何状态。
 - closed 列表出现的 → `closed`，并补截止日。awarded 列表出现的 → `awarded`，并写 `awarded_date`。
 - `awarded` 永远不会被降回 `closed`；开放列表再次出现则按平台现状回到 `open`。
 - 这些规则只对能报告"列表完整"的适配器生效，本期是 BidNet。州级源等其余适配器行为不变。
-- 保存搜索提醒的匹配器只看本次**新变为 `open`** 的招标，closed/awarded 永不触发提醒。
+- 保存搜索提醒的匹配器经搜索服务只看 `is_active`（即 open）的招标——这是现有行为，closed/awarded 因此永不触发提醒，不需要改匹配器。
 
 ### 5.2 BidNet 列表解析升级
 
@@ -263,7 +263,7 @@ discover-sources（阶段 2 规则）→ 人工审阅 → npm run source:registe
 ### 8.3 入库
 
 - 历史行按 closed/awarded 状态、`is_active = 0` 入库；已存在的招标只更新状态与日期（§5.1 规则）。
-- 历史任务不运行匹配器与通知器，匹配器本身也只看新变为 open 的招标，双保险。
+- 历史任务不运行匹配器与通知器；匹配器本身也只看 open 招标（§5.1），双保险。
 
 ### 8.4 搜索与展示
 
@@ -287,7 +287,7 @@ discover-sources（阶段 2 规则）→ 人工审阅 → npm run source:registe
 
 | 对象 | 变化 |
 | --- | --- |
-| `bids` | + `lifecycle_status`、`awarded_date`、`solicitation_number`；+ 索引 `(source, lifecycle_status)` |
+| `bids` | + `lifecycle_status`、`awarded_date`、`solicitation_number`（下架检测走主键前缀，不需要新索引） |
 | `data_sources` | + `consecutive_empty_runs`、`precheck_requested_at` |
 | 新表 `platform_reviews` | §7.1 |
 | 新表 `source_list_sync` | §8.2 |
@@ -344,4 +344,3 @@ discover-sources（阶段 2 规则）→ 人工审阅 → npm run source:registe
 | closed/awarded 列表倒序假设（只在 Denver 核实过） | 阶段 4 开工抽查多个租户；页数上限兜底 |
 | Bonfire 公开字段范围、robots 与 ToS | 并行线 Columbus 开工 |
 | Franklin、Cuyahoga 自有站的 robots 与 ToS、页面稳定性 | 并行线开工 |
-| 招标按源 label 关联数据源：改 label 会让旧招标脱钩、下架检测也随之失效（现有行为，本期沿用同一个键，不改） | 实施时在运维文档注明"改 label 前先评估" |
