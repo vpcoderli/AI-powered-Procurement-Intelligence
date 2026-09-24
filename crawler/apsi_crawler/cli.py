@@ -25,7 +25,9 @@ from apsi_crawler.errors import VerifiedEmptyListError
 from apsi_crawler.robots_fetch import InvalidRobotsRequestError, fetch_robots
 from apsi_crawler.list_extraction import (
     resolve_list_extraction_config,
+    resolve_pagination_request,
     run_list_extraction,
+    run_paginated_list_extraction,
 )
 from apsi_crawler.live_validation import (
     BETA_DEDICATED_STATE_SOURCES,
@@ -323,11 +325,11 @@ def _adapter_list_stats(bids):
 
 
 def run_list_stage(source, adapter, payload, query, limit):
-    """Produce the list-stage bids plus `metadata.listExtraction` (contract C1).
+    """Produce the list-stage bids, `metadata.listExtraction` and (paged adapters) `metadata.pagination`.
 
     Scrapling is the MAIN path whenever the sidecar is configured and the adapter can hand over
-    raw list HTML; otherwise (and on any sidecar problem) the adapter's own parser runs. Either
-    way exactly one list request reaches the portal.
+    raw list HTML; otherwise (and on any sidecar problem) the adapter's own parser runs. Paged
+    adapters (BidNet) walk the list page by page on the same rule, one request per page.
     """
     fetch_config = payload.get("fetch_config")
     list_adapter = resolve_list_html_adapter(source.id, payload.get("provider_family"))
@@ -336,11 +338,17 @@ def run_list_stage(source, adapter, payload, query, limit):
         os.environ.get("SCRAPLING_EXTRACTOR_URL", "").strip(),
         list_adapter is not None,
     )
-    if config["mode"] != "scrapling":
-        bids = adapter(source, query=query, limit=limit)
-        return bids, _adapter_list_stats(bids)
+    if list_adapter is not None and list_adapter.page_reader is not None:
+        request = resolve_pagination_request(payload)
+        return run_paginated_list_extraction(source, list_adapter, config, request, query=query, limit=limit)
 
-    return run_list_extraction(source, list_adapter, config, query=query, limit=limit)
+    single_page_limit = limit if limit is not None else 25
+    if config["mode"] != "scrapling":
+        bids = adapter(source, query=query, limit=single_page_limit)
+        return bids, _adapter_list_stats(bids), None
+
+    bids, stats = run_list_extraction(source, list_adapter, config, query=query, limit=single_page_limit)
+    return bids, stats, None
 
 
 def fetch_task(payload):
@@ -354,7 +362,8 @@ def fetch_task(payload):
     run_id = str(uuid4())
     task_id = payload.get("task_id")
     source_id = payload.get("source_id")
-    limit = int(payload.get("limit") or 25)
+    raw_limit = payload.get("limit")
+    limit = int(raw_limit) if raw_limit not in (None, "") else None
     query = payload.get("query")
     date_range = payload.get("date_range")
     metadata = {"mode": "live", "query": query, "limit": limit, "task_id": task_id}
@@ -365,7 +374,7 @@ def fetch_task(payload):
         metadata["adapter"] = getattr(adapter, "__name__", "unknown")
 
         try:
-            bids, list_stats = run_list_stage(source, adapter, payload, query, limit)
+            bids, list_stats, pagination = run_list_stage(source, adapter, payload, query, limit)
         except VerifiedEmptyListError as error:
             if not error.tenant_confirmed:
                 # An empty phrase we could not tie to THIS tenant (404 shell, wrong slug,
@@ -380,6 +389,8 @@ def fetch_task(payload):
                 "method": error.method, "items": 0, "diagnostics": {}, "rendered": False,
                 "extractor": None, "fallback_reason": None,
             }
+            if error.pagination is not None:
+                metadata["pagination"] = dict(error.pagination)
             finished_at = now_iso()
             result = _json_run_payload(
                 source=source.id,
@@ -413,6 +424,13 @@ def fetch_task(payload):
         bids, date_filter_stats = apply_date_window(bids, date_range)
         if date_filter_stats is not None:
             metadata["dateFilter"] = date_filter_stats
+        if pagination is not None:
+            # A date window drops rows the walk did see, so the run can no longer prove which
+            # open bids disappeared; enrichment detail fetches hit the same platform budget.
+            if date_filter_stats is not None:
+                pagination["complete"] = False
+            pagination["requests_made"] += int(enrichment_stats.get("attempted") or 0)
+            metadata["pagination"] = pagination
 
         finished_at = now_iso()
         duration_ms = int((perf_counter() - started) * 1000)

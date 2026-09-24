@@ -445,3 +445,93 @@ def test_sidecar_failure_falls_back_to_the_adapter_parser(monkeypatch, capsys):
     assert [bid["source_bid_id"] for bid in result["bids"]] == ["4512345"]
     assert result["metadata"]["listExtraction"]["method"] == "adapter_fallback"
     assert result["metadata"]["listExtraction"]["fallback_reason"].startswith("extractor_unreachable")
+
+
+DENVER_OPEN = Path(__file__).parent / "fixtures" / "bidnet_denver_open_bids_2026_09_24.html"
+DENVER_TASK = {
+    "task_id": "tsk_denver",
+    "source_id": "bidnet_co_denver",
+    "label": "City and County of Denver General Services Purchasing (BidNet)",
+    "state_code": "CO",
+    "provider_family": "bidnet",
+    "fetch_config": {
+        "base_url": "https://www.bidnetdirect.com/colorado/city-and-county-of-denver-general-services-purchasing/solicitations/open-bids"
+    },
+    "limit": None,
+}
+
+
+def test_bidnet_tasks_report_complete_pagination_and_lifecycle_fields(monkeypatch, capsys):
+    monkeypatch.delenv("SCRAPLING_EXTRACTOR_URL", raising=False)
+    _stub_bidnet_list_html(monkeypatch, DENVER_OPEN.read_text(encoding="utf-8"))
+
+    exit_code, result = _run(DENVER_TASK, monkeypatch, capsys)
+
+    assert exit_code == 0
+    assert result["metadata"]["pagination"] == {
+        "list_kind": "open", "start_page": 1, "pages_fetched": 1, "next_page": None,
+        "stopped_reason": "exhausted", "requests_made": 1, "complete": True,
+    }
+    assert len(result["bids"]) == 6
+    first = result["bids"][0]
+    assert (first["solicitation_number"], first["lifecycle_status"], first["is_active"]) == ("11205A", "open", 1)
+    assert first["raw_payload"]["detail_access"]["platform"] == "BidNet"
+
+
+def test_a_date_window_makes_a_bidnet_run_incomplete(monkeypatch, capsys):
+    monkeypatch.delenv("SCRAPLING_EXTRACTOR_URL", raising=False)
+    _stub_bidnet_list_html(monkeypatch, DENVER_OPEN.read_text(encoding="utf-8"))
+
+    _code, result = _run(dict(DENVER_TASK, date_range={"from": "2026-09-01", "to": None}), monkeypatch, capsys)
+
+    assert result["metadata"]["pagination"]["complete"] is False
+
+
+def test_an_explicit_limit_below_the_row_count_makes_the_run_incomplete(monkeypatch, capsys):
+    monkeypatch.delenv("SCRAPLING_EXTRACTOR_URL", raising=False)
+    _stub_bidnet_list_html(monkeypatch, DENVER_OPEN.read_text(encoding="utf-8"))
+
+    _code, result = _run(dict(DENVER_TASK, limit=3), monkeypatch, capsys)
+
+    assert len(result["bids"]) == 3
+    assert result["metadata"]["pagination"]["complete"] is False
+    assert result["metadata"]["pagination"]["stopped_reason"] == "limit"
+
+
+def test_a_verified_empty_bidnet_page_reports_complete_pagination(monkeypatch, capsys):
+    monkeypatch.delenv("SCRAPLING_EXTRACTOR_URL", raising=False)
+    _stub_bidnet_list_html(monkeypatch, ERIE_FIXTURE.read_text(encoding="utf-8"))
+
+    _code, result = _run(ERIE_TASK, monkeypatch, capsys)
+
+    assert result["status"] == "success"
+    assert result["metadata"]["pagination"]["complete"] is True
+
+
+def test_an_unknown_list_kind_fails_the_task(monkeypatch, capsys):
+    monkeypatch.delenv("SCRAPLING_EXTRACTOR_URL", raising=False)
+    _stub_bidnet_list_html(monkeypatch, DENVER_OPEN.read_text(encoding="utf-8"))
+
+    exit_code, result = _run(dict(DENVER_TASK, list_kind="pending"), monkeypatch, capsys)
+
+    assert exit_code == 1
+    assert result["errorCode"] == "ValueError"
+
+
+def test_non_paged_sources_keep_the_default_limit_and_report_no_pagination(monkeypatch, capsys):
+    seen = []
+
+    def adapter(source, query=None, limit=25, **kwargs):
+        seen.append(limit)
+        return [{"id": f"{source.id}:1", "title": "Road Repair", "source": source.source_label}]
+
+    monkeypatch.setitem(registry.DEDICATED_ADAPTERS, "plain_limit_source", adapter)
+
+    _code, result = _run(
+        {"task_id": "tsk_pl", "source_id": "plain_limit_source", "label": "Plain", "state_code": "CA", "fetch_config": {}, "limit": None},
+        monkeypatch,
+        capsys,
+    )
+
+    assert seen == [25]
+    assert "pagination" not in result["metadata"]
