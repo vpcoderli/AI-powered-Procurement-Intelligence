@@ -113,3 +113,35 @@ def test_full_description_duplicating_the_description_with_punctuation_is_droppe
     raw = {"id": "1", "title": "Road repair", "description": "Replace pavement", "full_description": "Replace pavement."}
     bid = normalize_state_opportunity(raw, get_source("il_bidbuy"))
     assert bid["full_description"] is None
+
+
+def test_lifecycle_fields_default_to_an_open_bid_without_a_number():
+    bid = normalize_state_opportunity({"id": "X-1", "title": "Road repair"}, get_source("ca_caleprocure"))
+
+    assert bid["lifecycle_status"] == "open"
+    assert bid["is_active"] == 1
+    assert bid["awarded_date"] is None
+    assert bid["solicitation_number"] is None
+
+
+def test_lifecycle_fields_pass_through_and_drive_is_active():
+    raw = {
+        "id": "0000419153",
+        "title": "Hearing Officers",
+        "lifecycle_status": "awarded",
+        "awarded_date": "07/09/2026",
+        "solicitation_number": " 50018 ",
+    }
+    bid = normalize_state_opportunity(raw, get_source("ca_caleprocure"))
+
+    assert bid["lifecycle_status"] == "awarded"
+    assert bid["is_active"] == 0
+    assert bid["awarded_date"] == "07/09/2026"
+    assert bid["solicitation_number"] == "50018"
+
+
+def test_an_unknown_lifecycle_value_is_treated_as_open():
+    bid = normalize_state_opportunity(
+        {"id": "X-2", "title": "Paving", "lifecycle_status": "pending"}, get_source("ca_caleprocure")
+    )
+    assert (bid["lifecycle_status"], bid["is_active"]) == ("open", 1)

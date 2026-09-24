@@ -27,6 +27,14 @@ def _first_present(raw, keys, default=None):
     return default
 
 
+_LIFECYCLE_STATUSES = ("open", "closed", "awarded")
+
+
+def _lifecycle_status(raw):
+    value = (_clean_text(raw.get("lifecycle_status")) or "").lower()
+    return value if value in _LIFECYCLE_STATUSES else "open"
+
+
 def _quality_flags(raw, source_url, deadline_date):
     flags = []
     if (
@@ -62,6 +70,7 @@ def normalize_state_opportunity(raw, source):
     source_url = _first_present(raw, ("source_url", "url", "link"), source.base_url)
     deadline_date = _first_present(raw, ("deadline_date", "due_date", "response_deadline"))
     timestamp = now_iso()
+    lifecycle_status = _lifecycle_status(raw)
 
     return {
         "id": f"{source.id}:{source_bid_id}",
@@ -85,7 +94,10 @@ def normalize_state_opportunity(raw, source):
         "contact_email": raw.get("contact_email"),
         "contact_phone": raw.get("contact_phone"),
         "source_url": source_url,
-        "is_active": 1,
+        "is_active": 1 if lifecycle_status == "open" else 0,
+        "lifecycle_status": lifecycle_status,
+        "awarded_date": _first_present(raw, ("awarded_date",)),
+        "solicitation_number": _first_present(raw, ("solicitation_number",)),
         "raw_payload": raw,
         "source_confidence": raw.get("source_confidence", "medium"),
         "quality_flags_json": raw.get("quality_flags_json", _quality_flags(raw, source_url, deadline_date)),
