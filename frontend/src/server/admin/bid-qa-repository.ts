@@ -298,6 +298,9 @@ function mysqlBidRow(row: Record<string, unknown>): BidRow {
     jurisdictionLevel: mysqlNullableString(row, "jurisdiction_level"),
     jurisdictionName: mysqlNullableString(row, "jurisdiction_name"),
     fipsCode: mysqlNullableString(row, "fips_code"),
+    lifecycleStatus: mysqlString(row, "lifecycle_status", "open"),
+    awardedDate: mysqlNullableString(row, "awarded_date"),
+    solicitationNumber: mysqlNullableString(row, "solicitation_number"),
     createdAt: mysqlString(row, "created_at"),
     updatedAt: mysqlString(row, "updated_at"),
   };

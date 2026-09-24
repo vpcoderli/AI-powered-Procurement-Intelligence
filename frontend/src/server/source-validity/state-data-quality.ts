@@ -887,6 +887,9 @@ function mysqlBidQualityRow(row: Record<string, unknown>): BidRow {
     jurisdictionLevel: mysqlNullableString(row, "jurisdictionLevel"),
     jurisdictionName: mysqlNullableString(row, "jurisdictionName"),
     fipsCode: mysqlNullableString(row, "fipsCode"),
+    lifecycleStatus: mysqlString(row, "lifecycleStatus", "open"),
+    awardedDate: mysqlNullableString(row, "awardedDate"),
+    solicitationNumber: mysqlNullableString(row, "solicitationNumber"),
     createdAt: mysqlString(row, "createdAt"),
     updatedAt: mysqlString(row, "updatedAt"),
   };
@@ -954,6 +957,7 @@ function mysqlDataSourceQualityRow(row: Record<string, unknown>): DataSourceRow 
     lastSuccessAt: mysqlNullableString(row, "lastSuccessAt"),
     lastFailureAt: mysqlNullableString(row, "lastFailureAt"),
     consecutiveFailures: mysqlNumber(row, "consecutiveFailures", 0),
+    consecutiveEmptyRuns: mysqlNumber(row, "consecutiveEmptyRuns", 0),
     robotsTxtStatus: mysqlNullableString(row, "robotsTxtStatus"),
     robotsTxtCheckedAt: mysqlNullableString(row, "robotsTxtCheckedAt"),
     robotsTxtHash: mysqlNullableString(row, "robotsTxtHash"),
@@ -1070,6 +1074,9 @@ async function mysqlStateDataQualityDataset(mysql: MysqlStateDataQualityReader):
           jurisdiction_level AS jurisdictionLevel,
           jurisdiction_name AS jurisdictionName,
           fips_code AS fipsCode,
+          lifecycle_status AS lifecycleStatus,
+          awarded_date AS awardedDate,
+          solicitation_number AS solicitationNumber,
           created_at AS createdAt,
           updated_at AS updatedAt
         FROM bids
@@ -1140,6 +1147,7 @@ async function mysqlStateDataQualityDataset(mysql: MysqlStateDataQualityReader):
           last_success_at AS lastSuccessAt,
           last_failure_at AS lastFailureAt,
           consecutive_failures AS consecutiveFailures,
+          consecutive_empty_runs AS consecutiveEmptyRuns,
           jurisdiction_level AS jurisdictionLevel,
           jurisdiction_name AS jurisdictionName,
           fips_code AS fipsCode,
