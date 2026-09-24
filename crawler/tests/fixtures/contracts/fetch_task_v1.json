@@ -23,7 +23,11 @@
       "attachment_url_template": null
     }
   },
-  "limit": 25,
+  "limit": null,
   "query": null,
-  "date_range": null
+  "date_range": null,
+  "list_kind": "open",
+  "start_page": 1,
+  "max_pages": 4,
+  "stop_before": null
 }

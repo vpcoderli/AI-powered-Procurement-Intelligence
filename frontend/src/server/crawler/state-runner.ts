@@ -3,6 +3,15 @@ import { crawlerRuntime, type CrawlerExecutionContext } from "./execution-contex
 import type { CrawlerJsonRunPayload } from "./mysql-json-importer";
 import type { CrawlableSource } from "./source-registry";
 
+export type CrawlTaskListKind = "open" | "closed" | "awarded";
+
+/** Pages a paged adapter (BidNet) may walk per run unless `fetch_config.list_pages` says otherwise. */
+export const DEFAULT_LIST_PAGES = 4;
+
+export function listPagesFor(source: Pick<CrawlableSource, "fetchConfig">): number {
+  const raw = source.fetchConfig?.list_pages;
+  return typeof raw === "number" && Number.isInteger(raw) && raw >= 1 && raw <= 50 ? raw : DEFAULT_LIST_PAGES;
+}
 
 export interface CrawlTaskDateRange {
   from: string | null;
@@ -17,10 +26,16 @@ export interface CrawlTaskPayload {
   provider_family: string | null;
   jurisdiction_level: string | null;
   fetch_config: Record<string, unknown>;
-  limit: number;
+  limit: number | null;
   query: string | null;
   /** Published-date window (ISO yyyy-mm-dd, inclusive). Python filters fail-open. */
   date_range: CrawlTaskDateRange | null;
+  /** Which public list to walk (spec 2026-09-24 §5.3); only paged adapters read these. */
+  list_kind: CrawlTaskListKind;
+  start_page: number;
+  max_pages: number;
+  /** ISO yyyy-mm-dd: stop once a whole page is older (history backfill). */
+  stop_before: string | null;
 }
 
 export interface CrawlTaskOptions {
@@ -29,6 +44,10 @@ export interface CrawlTaskOptions {
   query?: string | null;
   postedFrom?: string | null;
   postedTo?: string | null;
+  listKind?: CrawlTaskListKind;
+  startPage?: number;
+  maxPages?: number;
+  stopBefore?: string | null;
 }
 
 export function buildCrawlTaskPayload(
@@ -51,9 +70,13 @@ export function buildCrawlTaskPayload(
     provider_family: source.providerFamily,
     jurisdiction_level: source.jurisdictionLevel,
     fetch_config: fetchConfig,
-    limit: options.limit ?? 25,
+    limit: options.limit ?? null,
     query: options.query ?? null,
     date_range: postedFrom || postedTo ? { from: postedFrom, to: postedTo } : null,
+    list_kind: options.listKind ?? "open",
+    start_page: options.startPage ?? 1,
+    max_pages: options.maxPages ?? listPagesFor(source),
+    stop_before: options.stopBefore ?? null,
   };
 }
 

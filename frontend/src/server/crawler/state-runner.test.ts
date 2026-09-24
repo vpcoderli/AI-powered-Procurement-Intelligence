@@ -1,7 +1,7 @@
 import { execFile, type ExecFileException, type ExecFileOptions } from "node:child_process";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CrawlableSource } from "./source-registry";
-import { buildCrawlTaskPayload, runCrawlTask } from "./state-runner";
+import { buildCrawlTaskPayload, listPagesFor, runCrawlTask } from "./state-runner";
 
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
@@ -39,9 +39,13 @@ describe("buildCrawlTaskPayload", () => {
       provider_family: null,
       jurisdiction_level: "state",
       fetch_config: { base_url: "https://caleprocure.ca.gov" },
-      limit: 25,
+      limit: null,
       query: null,
       date_range: null,
+      list_kind: "open",
+      start_page: 1,
+      max_pages: 4,
+      stop_before: null,
     });
   });
 
@@ -85,6 +89,19 @@ describe("buildCrawlTaskPayload", () => {
     });
     expect(payload.fetch_config).toEqual({});
     expect(payload.fetch_config.base_url).toBeUndefined();
+  });
+
+  it("reads the per-source page budget from fetch_config.list_pages", () => {
+    expect(listPagesFor(source({ fetchConfig: { list_pages: 8 } }))).toBe(8);
+    expect(listPagesFor(source({ fetchConfig: { list_pages: 0 } }))).toBe(4);
+    expect(listPagesFor(source({ fetchConfig: { list_pages: "9" } }))).toBe(4);
+    expect(listPagesFor(source({ fetchConfig: { list_pages: 51 } }))).toBe(4);
+    expect(buildCrawlTaskPayload(source({ fetchConfig: { list_pages: 8 } }), { taskId: "t" }).max_pages).toBe(8);
+  });
+
+  it("passes an explicit history request through", () => {
+    const payload = buildCrawlTaskPayload(source(), { taskId: "t", listKind: "awarded", startPage: 5, maxPages: 2, stopBefore: "2024-09-24" });
+    expect(payload).toMatchObject({ list_kind: "awarded", start_page: 5, max_pages: 2, stop_before: "2024-09-24" });
   });
 });
 
