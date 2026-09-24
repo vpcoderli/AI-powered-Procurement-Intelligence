@@ -1718,6 +1718,43 @@ describe("database schema", () => {
   });
 });
 
+describe("bid lifecycle migration (2026-09-24 phase 1)", () => {
+  it("adds the lifecycle columns to bids and the empty-run counter to data_sources", async () => {
+    const testDb = await createTestDatabase({ seed: false });
+    try {
+      const bidColumns = testDb.db.$client.prepare("PRAGMA table_info(bids)").all() as Array<{ name: string; dflt_value: string | null; notnull: number }>;
+      const lifecycle = bidColumns.find((column) => column.name === "lifecycle_status");
+      expect(lifecycle).toMatchObject({ notnull: 1, dflt_value: "'open'" });
+      expect(bidColumns.map((column) => column.name)).toEqual(expect.arrayContaining(["awarded_date", "solicitation_number"]));
+
+      const sourceColumns = testDb.db.$client.prepare("PRAGMA table_info(data_sources)").all() as Array<{ name: string; dflt_value: string | null; notnull: number }>;
+      expect(sourceColumns.find((column) => column.name === "consecutive_empty_runs")).toMatchObject({ notnull: 1, dflt_value: "0" });
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("closes inactive rows left open by an older database, idempotently", async () => {
+    const testDb = await createTestDatabase({ seed: false });
+    try {
+      const now = "2026-09-24T00:00:00.000Z";
+      testDb.db.$client.prepare(`
+        INSERT INTO bids (id, source, source_bid_id, dedupe_key, title, description, issuer_name, issuer_type,
+          state_code, source_url, is_active, lifecycle_status, first_seen_at, last_seen_at, created_at, updated_at)
+        VALUES ('s:1', 'S', '1', 's:1', 'T', '', 'I', 'state', 'CO', 'https://x', 0, 'open', ?, ?, ?, ?)
+      `).run(now, now, now, now);
+
+      runMigrations(testDb.db);
+      runMigrations(testDb.db);
+
+      const row = testDb.db.$client.prepare("SELECT lifecycle_status AS status FROM bids WHERE id = 's:1'").get() as { status: string };
+      expect(row.status).toBe("closed");
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+});
+
 describe("jurisdiction columns", () => {
   it("exposes jurisdiction columns on data_sources and bids", async () => {
     const testDb = await createTestDatabase({ seed: false });

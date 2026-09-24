@@ -382,6 +382,11 @@ const mysqlColumnMigrations: MysqlColumnMigration[] = [
     columnName: "failure_kind",
     definition: "VARCHAR(191)",
   },
+  // Bid lifecycle + activity tiers (spec 2026-09-24 phase 1).
+  { tableName: "bids", columnName: "lifecycle_status", definition: "LONGTEXT NOT NULL DEFAULT ('open')" },
+  { tableName: "bids", columnName: "awarded_date", definition: "LONGTEXT" },
+  { tableName: "bids", columnName: "solicitation_number", definition: "LONGTEXT" },
+  { tableName: "data_sources", columnName: "consecutive_empty_runs", definition: "INT NOT NULL DEFAULT 0" },
 ];
 
 export function mysqlColumnMigrationStatements() {
@@ -424,6 +429,11 @@ export function mysqlIndexMigrationStatements() {
   return mysqlIndexMigrations.map(
     (migration) => `CREATE INDEX ${migration.indexName} ON ${migration.tableName}(${migration.columns.join(", ")})`,
   );
+}
+
+/** Idempotent data fixes that run after every column and index migration. */
+export function mysqlDataMigrationStatements(): string[] {
+  return ["UPDATE bids SET lifecycle_status = 'closed' WHERE is_active = 0 AND lifecycle_status = 'open'"];
 }
 
 function indexMigrationColumnNameSet() {
@@ -583,6 +593,11 @@ export async function runMysqlMigrations(pool: Pool = createMysqlPool()): Promis
 
       throw error;
     }
+  }
+
+  for (const statement of mysqlDataMigrationStatements()) {
+    await pool.query(statement);
+    appliedStatements += 1;
   }
 
   await pool.query(

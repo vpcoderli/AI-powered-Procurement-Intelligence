@@ -296,6 +296,9 @@ export function runMigrations(db: AppDatabase) {
       jurisdiction_level TEXT,
       jurisdiction_name TEXT,
       fips_code TEXT,
+      lifecycle_status TEXT NOT NULL DEFAULT 'open',
+      awarded_date TEXT,
+      solicitation_number TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -816,6 +819,7 @@ export function runMigrations(db: AppDatabase) {
       last_success_at TEXT,
       last_failure_at TEXT,
       consecutive_failures INTEGER NOT NULL DEFAULT 0,
+      consecutive_empty_runs INTEGER NOT NULL DEFAULT 0,
       robots_txt_status TEXT,
       robots_txt_checked_at TEXT,
       robots_txt_hash TEXT,
@@ -1111,6 +1115,12 @@ export function runMigrations(db: AppDatabase) {
   addBidColumn("jurisdiction_level", "TEXT");
   addBidColumn("jurisdiction_name", "TEXT");
   addBidColumn("fips_code", "TEXT");
+  addBidColumn("lifecycle_status", "TEXT NOT NULL DEFAULT 'open'");
+  addBidColumn("awarded_date", "TEXT");
+  addBidColumn("solicitation_number", "TEXT");
+  // Rows written before lifecycle tracking: an inactive bid is not open. Idempotent, so it runs
+  // on every migration (spec 2026-09-24 §5.1).
+  sqlite.exec("UPDATE bids SET lifecycle_status = 'closed' WHERE is_active = 0 AND lifecycle_status = 'open'");
   sqlite.exec("CREATE INDEX IF NOT EXISTS idx_bids_fips_code ON bids(fips_code)");
 
   const bidAttachmentColumns = new Set(
@@ -1278,5 +1288,6 @@ export function runMigrations(db: AppDatabase) {
   addDataSourceColumn("jurisdiction_name", "TEXT");
   addDataSourceColumn("fips_code", "TEXT");
   addDataSourceColumn("fetch_config", "TEXT");
+  addDataSourceColumn("consecutive_empty_runs", "INTEGER NOT NULL DEFAULT 0");
   sqlite.exec("CREATE INDEX IF NOT EXISTS idx_data_sources_jurisdiction ON data_sources(jurisdiction_level, state_code)");
 }

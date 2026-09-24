@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   isMysqlDatabaseUrlConfigured,
   mysqlColumnMigrationStatements,
+  mysqlDataMigrationStatements,
   mysqlIndexColumnModification,
   mysqlIndexMigrationStatements,
   mysqlMigrationStatements,
@@ -147,5 +148,21 @@ describe("mysql migrations cover the attachment repair columns (C4)", () => {
     expect(mysqlIndexColumnModification({ dataType: "text", isNullable: "NO", columnDefault: "draft" })).toBe(
       "VARCHAR(191) NOT NULL DEFAULT 'draft'",
     );
+  });
+});
+
+describe("mysql migrations cover the bid lifecycle columns (2026-09-24 phase 1)", () => {
+  it("adds the lifecycle and empty-run columns to existing databases", () => {
+    const joined = mysqlColumnMigrationStatements().join("\n");
+    expect(joined).toContain("bids ADD COLUMN lifecycle_status LONGTEXT NOT NULL DEFAULT ('open')");
+    expect(joined).toContain("bids ADD COLUMN awarded_date LONGTEXT");
+    expect(joined).toContain("bids ADD COLUMN solicitation_number LONGTEXT");
+    expect(joined).toContain("data_sources ADD COLUMN consecutive_empty_runs INT NOT NULL DEFAULT 0");
+  });
+
+  it("backfills closed lifecycle for inactive rows", () => {
+    expect(mysqlDataMigrationStatements()).toEqual([
+      "UPDATE bids SET lifecycle_status = 'closed' WHERE is_active = 0 AND lifecycle_status = 'open'",
+    ]);
   });
 });

@@ -487,6 +487,9 @@ export const bids = sqliteTable(
     jurisdictionLevel: text("jurisdiction_level"),
     jurisdictionName: text("jurisdiction_name"),
     fipsCode: text("fips_code"),
+    lifecycleStatus: text("lifecycle_status").notNull().default("open"),
+    awardedDate: text("awarded_date"),
+    solicitationNumber: text("solicitation_number"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -1373,6 +1376,7 @@ export const dataSources = sqliteTable("data_sources", {
   lastSuccessAt: text("last_success_at"),
   lastFailureAt: text("last_failure_at"),
   consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  consecutiveEmptyRuns: integer("consecutive_empty_runs").notNull().default(0),
   // Data-source compliance ledger (P1-2): ToS/robots.txt legal review tracking.
   // This is a signal/triage + audit-trail layer only. Actual legal sign-off is a
   // human/legal action recorded here, never inferred by code. See
