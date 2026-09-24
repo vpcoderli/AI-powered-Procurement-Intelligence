@@ -41,7 +41,7 @@ Scrapling 仍是列表解析的主路径：抓到的每一页 HTML 交给抽取 
 
 只有翻页**自然走到底**（`stopped_reason = "exhausted"`）、从第 1 页开始、每一页 Scrapling 解析出的招标 id 与该页读取器看到的 id 完全一致、没有被 `limit` / `query` 截断、第 1 页打印的总数（例如页面上的"97 Open Solicitations"）每一页都一致且等于收集到的不重复招标数、第 1 页 `<title>` 确实是本租户名字（源 label 去掉"(Platform)"后缀和结尾", XX"州码后逐字比较）——这些条件同时满足时 `metadata.pagination.complete` 才是 `true`。第 1 节的下架动作只在 `complete = true` 时触发。
 
-第 1 页本身一行都读不出来是单独一种情形（`crawler/apsi_crawler/list_extraction.py` 的 `_raise_empty_first_page()`），不算上面的翻页流程：只有当适配器自己的解析器也确认这是"已验证空态"（`VerifiedEmptyListError`：租户确认 + 命中窄集合空态文案）、且第 1 页 `<title>` 确认了租户身份时，才按 `complete = true` 的零条成功处理（`stopped_reason` 固定为 `exhausted`）。第 1 页如果打印着一个大于 0 的总数，却一行都读不出来（Scrapling 和适配器都读不出），这不算空态，是页面结构出了问题：直接抛出 `ListPageReadError`，让整次运行以 `status: "failure"` 收场，而不会被安静地当成"这源确实没有招标"去清空原有的 open 招标。
+第 1 页本身一行都读不出来是单独一种情形（`crawler/apsi_crawler/list_extraction.py` 的 `_raise_empty_first_page()`），不算上面的翻页流程：只有当适配器自己的解析器也确认这是"已验证空态"（`VerifiedEmptyListError`：租户确认 + 命中窄集合空态文案）、第 1 页 `<title>` 确认了租户身份、且从第 1 页开始时，才按 `complete = true` 的零条成功处理（`stopped_reason` 固定为 `exhausted`）。第 1 页如果打印着一个大于 0 的总数，却一行都读不出来（Scrapling 和适配器都读不出），这不算空态，是页面结构出了问题：直接抛出 `ListPageReadError`，让整次运行以 `status: "failure"` 收场，而不会被安静地当成"这源确实没有招标"去清空原有的 open 招标。
 
 ## 3. 会员锁：BidNet 详情页锁住的字段
 
