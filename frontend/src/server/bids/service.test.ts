@@ -238,4 +238,14 @@ describe("bid service", () => {
     expect((await removeSavedBid("anon_a", "2")).savedBidIds).toEqual([]);
     expect((await getSavedBids("anon_b")).savedBidIds).toEqual(["2"]);
   });
+
+  it("finds a bid by its solicitation number", async () => {
+    repositoryListBids.mockImplementationOnce(async () => [
+      { ...cloneBids()[0], id: "bidnet_co_denver:0000435942", title: "Jail and Courthouse Security Systems", solicitationNumber: "1049A-2026" } as Bid,
+    ]);
+
+    const result = await queryBidsFromDatabase({ injected: true } as never, { q: "1049a-2026" }, { referenceDate });
+
+    expect(result.bids.map((bid) => bid.id)).toEqual(["bidnet_co_denver:0000435942"]);
+  });
 });

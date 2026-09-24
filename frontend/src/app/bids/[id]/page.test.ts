@@ -97,4 +97,12 @@ describe("bid detail pursuit panel", () => {
     expect(zh).toContain("不保证外部源站一定可用。");
     expect(zh).not.toContain("保证可下载");
   });
+
+  it("shows the solicitation number, a non-open lifecycle and the members-only notice", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+    expect(page).toContain('import { BidAccessNotice } from "@/components/bids/BidAccessNotice"');
+    expect(page).toContain("bid.detailAccess ? (");
+    expect(page).toContain('t("detail.solicitationNumber")');
+    expect(page).toContain("detail.lifecycle_");
+  });
 });

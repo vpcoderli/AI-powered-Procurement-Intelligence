@@ -56,6 +56,7 @@ function matchesKeyword(bid: Bid, q: string) {
 
   return [
     bid.title,
+    bid.solicitationNumber ?? "",
     bid.description,
     bid.fullDescription ?? "",
     bid.issuerName,

@@ -36,6 +36,10 @@ export interface Bid {
   tags: string[];
   isActive: boolean;
   saved: boolean;
+  solicitationNumber?: string;
+  lifecycleStatus?: "open" | "closed" | "awarded";
+  awardedDate?: string;
+  detailAccess?: { platform: string; restricted: Array<"description" | "documents" | "contact"> } | null;
 }
 
 const US_STATE_NAMES_BY_CODE: Record<string, string> = {

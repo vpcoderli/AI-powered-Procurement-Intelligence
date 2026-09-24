@@ -1,3 +1,6 @@
+import type { BidDetailAccess } from "@/lib/bid-access";
+import type { BidLifecycleStatus } from "@/lib/bid-lifecycle";
+
 export interface BidAttachment {
   name: string;
   url: string;
@@ -43,5 +46,10 @@ export interface Bid {
   detailArchiveError: string;
   saved: boolean;
   isActive: boolean;
+  solicitationNumber: string;
+  lifecycleStatus: BidLifecycleStatus;
+  awardedDate: string;
+  /** Platform-locked detail fields, e.g. BidNet members-only description/documents/contact. */
+  detailAccess: BidDetailAccess | null;
   updatedAt?: string;
 }

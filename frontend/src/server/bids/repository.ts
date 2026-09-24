@@ -1,6 +1,8 @@
 import { and, asc, eq, inArray, ne } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { bidAttachments, bids, savedBids, users } from "@/server/db/schema";
+import { detailAccessFromRawPayload } from "@/lib/bid-access";
+import { bidLifecycleStatusOf } from "@/lib/bid-lifecycle";
 import { attachmentDownloadUrl } from "./attachments";
 import type { Bid } from "./domain";
 
@@ -105,6 +107,9 @@ interface MysqlBidRow {
   detailChecksumSha256: string | null;
   detailArchiveError: string | null;
   isActive: number;
+  lifecycleStatus: string | null;
+  awardedDate: string | null;
+  solicitationNumber: string | null;
   updatedAt: string;
 }
 
@@ -220,6 +225,10 @@ function toBid(
     detailArchiveError: row.detailArchiveError ?? "",
     saved: savedBidIds.has(row.id),
     isActive: row.isActive === 1,
+    solicitationNumber: row.solicitationNumber ?? "",
+    lifecycleStatus: bidLifecycleStatusOf(row.lifecycleStatus) ?? (row.isActive === 1 ? "open" : "closed"),
+    awardedDate: row.awardedDate ?? "",
+    detailAccess: detailAccessFromRawPayload(row.rawPayload),
     updatedAt: row.updatedAt,
   };
 }
@@ -258,6 +267,10 @@ function toBidFromMysql(
     detailArchiveError: row.detailArchiveError ?? "",
     saved: savedBidIds.has(row.id),
     isActive: row.isActive === 1,
+    solicitationNumber: row.solicitationNumber ?? "",
+    lifecycleStatus: bidLifecycleStatusOf(row.lifecycleStatus) ?? (row.isActive === 1 ? "open" : "closed"),
+    awardedDate: row.awardedDate ?? "",
+    detailAccess: detailAccessFromRawPayload(row.rawPayload),
     updatedAt: row.updatedAt,
   };
 }
@@ -327,6 +340,9 @@ export async function listBidsFromMysql(mysql: MysqlBidsReader, savedBidIds: str
       detail_checksum_sha256 AS detailChecksumSha256,
       detail_archive_error AS detailArchiveError,
       is_active AS isActive,
+      lifecycle_status AS lifecycleStatus,
+      awarded_date AS awardedDate,
+      solicitation_number AS solicitationNumber,
       updated_at AS updatedAt
     FROM bids
     WHERE display_status <> 'suppressed'
@@ -413,6 +429,9 @@ export async function getBidByIdFromMysql(mysql: MysqlBidsReader, id: string) {
         detail_checksum_sha256 AS detailChecksumSha256,
         detail_archive_error AS detailArchiveError,
         is_active AS isActive,
+        lifecycle_status AS lifecycleStatus,
+        awarded_date AS awardedDate,
+        solicitation_number AS solicitationNumber,
         updated_at AS updatedAt
       FROM bids
       WHERE id = ? AND display_status <> 'suppressed'

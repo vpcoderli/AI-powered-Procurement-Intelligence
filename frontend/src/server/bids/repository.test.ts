@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { bidAttachments, bids as bidRows, organizations, users } from "@/server/db/schema";
+import { bidAttachments, bids, bids as bidRows, organizations, users } from "@/server/db/schema";
 import {
   acceptWorkspaceInvitation,
   inviteWorkspaceMember,
@@ -309,5 +309,29 @@ describe("bid repository", () => {
 
     expect(await listSavedBidIds(testDb.db, "user_target")).toEqual(["2", "3", "1"]);
     expect(await listSavedBidIds(testDb.db, "anon_source")).toEqual(["1", "2"]);
+  });
+});
+
+describe("bid lifecycle fields (2026-09-24 phase 1)", () => {
+  it("maps number, lifecycle, award date and members-only access onto the Bid", async () => {
+    const testDb = await createTestDatabase({ seed: false });
+    try {
+      const now = "2026-09-24T00:00:00.000Z";
+      testDb.db.insert(bids).values({
+        id: "bidnet_co_denver:0000419153", source: "Denver (BidNet)", sourceBidId: "0000419153", dedupeKey: "bidnet_co_denver:0000419153",
+        title: "Hearing Officers", description: "", issuerName: "Denver", issuerType: "state", stateCode: "CO",
+        sourceUrl: "https://www.bidnetdirect.com/x", isActive: 0, lifecycleStatus: "awarded", awardedDate: "07/09/2026",
+        solicitationNumber: "50018", rawPayload: JSON.stringify({ detail_access: { platform: "BidNet", restricted: ["description", "documents", "contact"] } }),
+        firstSeenAt: now, lastSeenAt: now, createdAt: now, updatedAt: now,
+      }).run();
+
+      const bid = await getBidByIdFromRepository(testDb.db, "bidnet_co_denver:0000419153");
+      expect(bid).toMatchObject({
+        solicitationNumber: "50018", lifecycleStatus: "awarded", awardedDate: "07/09/2026", isActive: false,
+        detailAccess: { platform: "BidNet", restricted: ["description", "documents", "contact"] },
+      });
+    } finally {
+      await testDb.cleanup();
+    }
   });
 });

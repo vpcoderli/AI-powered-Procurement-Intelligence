@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useSavedBids } from "@/context/SavedBidsContext";
+import { BidAccessNotice } from "@/components/bids/BidAccessNotice";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { Button as BaseButton, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -393,6 +394,16 @@ export default function BidDetailsPage() {
           <span className="flex min-w-0 items-center gap-1.5 break-words text-sm font-medium uppercase text-slate-500">
             <Building2 size={14} className="text-slate-400" /> {bid.issuerName}
           </span>
+          {bid.solicitationNumber ? (
+            <span className="break-words text-sm font-medium text-slate-500">
+              {t("detail.solicitationNumber")} {bid.solicitationNumber}
+            </span>
+          ) : null}
+          {bid.lifecycleStatus && bid.lifecycleStatus !== "open" ? (
+            <Badge variant="outline" className="rounded-md border-slate-300 bg-slate-100 px-2.5 py-1 font-medium text-slate-700">
+              {t(`detail.lifecycle_${bid.lifecycleStatus}`)}{bid.awardedDate ? ` · ${bid.awardedDate}` : ""}
+            </Badge>
+          ) : null}
         </div>
         <h1 className="winbids-title break-words">{bid.title}</h1>
       </section>
@@ -604,6 +615,11 @@ export default function BidDetailsPage() {
           <CardTitle className="text-lg font-semibold text-slate-900">{t("detail.detailedDescription")}</CardTitle>
         </CardHeader>
         <CardContent className="p-6 bg-slate-50/50">
+          {bid.detailAccess ? (
+            <div className="mb-4">
+              <BidAccessNotice access={bid.detailAccess} sourceUrl={bid.sourceUrl} />
+            </div>
+          ) : null}
           <div className="prose prose-slate max-w-none text-slate-700 whitespace-pre-wrap leading-relaxed">
             {getBidDescription(bid)}
           </div>
