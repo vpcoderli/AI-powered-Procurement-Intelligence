@@ -49,6 +49,10 @@ describe("validateCandidate", () => {
     const errors = validateCandidate(candidate({ jurisdictionLevel: "planet" }));
     expect(errors).toContainEqual(expect.stringContaining("jurisdictionLevel"));
   });
+
+  it("accepts the township level", () => {
+    expect(validateCandidate(candidate({ jurisdictionLevel: "township", issuerType: "township" }))).toEqual([]);
+  });
 });
 
 /**

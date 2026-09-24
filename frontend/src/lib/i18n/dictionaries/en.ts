@@ -1207,6 +1207,7 @@ export const en = {
     batchRunLevel_state: "State",
     batchRunLevel_county: "County",
     batchRunLevel_city: "City",
+    batchRunLevel_township: "Township / town",
     batchRunLevel_special_district: "Special district",
     batchRunStateFilter: "State",
     batchRunAllStates: "All states",

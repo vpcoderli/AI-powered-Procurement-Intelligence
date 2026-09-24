@@ -17,7 +17,7 @@ export const CADENCE_INTERVAL_MS = {
 /** Backoff cap: no matter how many consecutive failures, retry waits at most 7 days. */
 const MAX_BACKOFF_MS = 7 * DAY_MS;
 
-const JURISDICTION_ORDER = ["federal", "state", "county", "city", "special_district"];
+const JURISDICTION_ORDER = ["federal", "state", "county", "city", "township", "special_district"];
 
 export function cadenceIntervalMs(cadence: string): number | null {
   if (cadence === "manual") return null;

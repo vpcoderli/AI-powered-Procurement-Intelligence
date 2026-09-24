@@ -22,7 +22,7 @@ import { useLanguage } from "@/lib/i18n/LanguageContext";
  * as postedFrom/postedTo. No new backend routes or queue infrastructure.
  */
 
-export const BATCH_JURISDICTION_LEVELS = ["federal", "state", "county", "city", "special_district"] as const;
+export const BATCH_JURISDICTION_LEVELS = ["federal", "state", "county", "city", "township", "special_district"] as const;
 export type BatchJurisdictionLevel = (typeof BATCH_JURISDICTION_LEVELS)[number];
 
 export const BATCH_WINDOW_PRESETS = ["all", "last7", "last30", "last90", "custom"] as const;
@@ -153,7 +153,7 @@ export function filterBatchEntries(
 }
 
 export function countBatchEntriesByLevel(entries: BatchRunEntry[]): Record<BatchJurisdictionLevel, number> {
-  const counts = { federal: 0, state: 0, county: 0, city: 0, special_district: 0 };
+  const counts = { federal: 0, state: 0, county: 0, city: 0, township: 0, special_district: 0 };
   for (const entry of entries) counts[entry.level] += 1;
   return counts;
 }

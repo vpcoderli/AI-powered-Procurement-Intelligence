@@ -48,6 +48,10 @@ describe("batchJurisdictionLevelOf", () => {
     expect(batchJurisdictionLevelOf(adminSource({ jurisdictionLevel: null }))).toBe("state");
     expect(batchJurisdictionLevelOf(adminSource({ jurisdictionLevel: null, issuerType: "federal" }))).toBe("federal");
   });
+
+  it("accepts township as a known level", () => {
+    expect(batchJurisdictionLevelOf(adminSource({ jurisdictionLevel: "township" }))).toBe("township");
+  });
 });
 
 describe("buildBatchRunEntries", () => {
@@ -97,6 +101,7 @@ describe("filterBatchEntries / countBatchEntriesByLevel", () => {
       state: 1,
       county: 1,
       city: 1,
+      township: 0,
       special_district: 0,
     });
   });

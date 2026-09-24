@@ -105,6 +105,17 @@ describe("selectDueSources", () => {
     expect(ordered).toEqual(["federal", "state", "county", "city", "special_district"]);
   });
 
+  describe("township ordering", () => {
+    it("runs townships after cities and before special districts", () => {
+      const due = selectDueSources([
+        source({ id: "sd", jurisdictionLevel: "special_district" }),
+        source({ id: "twp", jurisdictionLevel: "township" }),
+        source({ id: "city", jurisdictionLevel: "city" }),
+      ], NOW);
+      expect(due.map((entry) => entry.id)).toEqual(["city", "twp", "sd"]);
+    });
+  });
+
   it("treats a null jurisdiction level as lowest priority, after all named levels", () => {
     const city = source({ id: "city", jurisdictionLevel: "city" });
     const unknown = source({ id: "unknown", jurisdictionLevel: null });

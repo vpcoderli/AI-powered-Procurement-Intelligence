@@ -66,7 +66,7 @@ interface StateCrawlerRunRouteDependencies {
  * Resolves run candidates from `data_sources` the same way the configured (scheduled) runner
  * does, via `listCrawlableSources`/`listCrawlableSourcesFromMysql` — which already applies the
  * NULL-tolerant governance gate (see source-registry.ts). Every fetch-task-runnable issuer
- * type is included (state, county, city, special_district); only `federal` is excluded,
+ * type is included (state, county, city, township, special_district); only `federal` is excluded,
  * because SAM.gov has its own sibling route (`/api/crawler/sam-gov/run`) and its own runner.
  * Used only for the "no ids requested" (run everything) path below.
  */

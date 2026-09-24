@@ -1209,6 +1209,7 @@ export const zh: Dictionary = {
     batchRunLevel_state: "州",
     batchRunLevel_county: "县/郡",
     batchRunLevel_city: "市",
+    batchRunLevel_township: "镇/镇区",
     batchRunLevel_special_district: "特别区",
     batchRunStateFilter: "州",
     batchRunAllStates: "全部州",

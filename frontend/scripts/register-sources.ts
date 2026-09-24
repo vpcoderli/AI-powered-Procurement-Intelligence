@@ -19,7 +19,7 @@ export interface SourceCandidate {
   fetchConfig: Record<string, unknown>;
 }
 
-const VALID_JURISDICTION_LEVELS = new Set(["federal", "state", "county", "city", "special_district"]);
+const VALID_JURISDICTION_LEVELS = new Set(["federal", "state", "county", "city", "township", "special_district"]);
 const VALID_CADENCES = new Set(["hourly", "daily", "weekly", "manual"]);
 
 export function validateCandidate(c: SourceCandidate): string[] {
