@@ -15,6 +15,7 @@ Two invariants this module exists to keep:
 """
 
 import os
+import re
 from datetime import date, datetime
 from urllib.parse import urlparse
 
@@ -38,6 +39,13 @@ DEFAULT_LIST_PAGES = 4
 MAX_LIST_PAGES = 50
 _MAX_START_PAGE = 100000
 _READER_FIELDS = ("solicitation_number", "region", "lifecycle_status", "list_kind", "detail_access")
+# A source's label is its display name plus decoration: a platform suffix in parens and,
+# sometimes, a trailing ", XX" state code -- neither of which the tenant's own page title ever
+# carries. Stripping them is what lets `_title_names_tenant` compare the two directly instead of
+# relying on `content_quality.tenant_is_confirmed`'s single-token match, which a word as generic
+# as "Services" can satisfy against a completely unrelated tenant's page (2026-09-24 review).
+_LABEL_PAREN_RE = re.compile(r"\([^)]*\)")
+_LABEL_STATE_SUFFIX_RE = re.compile(r",\s*[A-Za-z]{2}$")
 
 
 class ListPageReadError(Exception):
@@ -252,8 +260,8 @@ def _stats(method, items, diagnostics, rendered, extractor, fallback_reason):
     }
 
 
-def _fetch_list_html(source, list_adapter, config, session, renderer, timeout, url=None):
-    url = url or list_adapter.list_url(source)
+def _fetch_list_html(source, list_adapter, config, session, renderer, timeout):
+    url = list_adapter.list_url(source)
     if not config["render"]:
         html, final_url, _status = list_adapter.fetch_list_html(source, url, session=session, timeout=timeout)
         return html, final_url, False
@@ -365,10 +373,41 @@ def resolve_pagination_request(payload):
     }
 
 
-def _overlay_reader_fields(record, reader_record):
-    """Sidecar row + what only the adapter's reader knows about the same bid on the same page."""
+def _tenant_display_name(label):
+    """The label stripped of its "(Platform)" suffix and any trailing ", XX" state code."""
+    name = _LABEL_PAREN_RE.sub("", label or "").strip()
+    name = _LABEL_STATE_SUFFIX_RE.sub("", name).strip()
+    return " ".join(name.split())
+
+
+def _title_names_tenant(title, label):
+    """Whether page 1's own `<title>` names the tenant `label` claims to be, whitespace-collapsed
+    and case-insensitive. Deliberately a whole-string comparison, not a token match: a shared
+    generic word (e.g. "Services") must never "confirm" the wrong tenant's empty page."""
+    if not title:
+        return False
+    collapsed_title = " ".join(str(title).split())
+    return collapsed_title.casefold() == _tenant_display_name(label).casefold()
+
+
+def _overlay_reader_fields(record, reader_record, list_kind):
+    """Sidecar row + what only the adapter's reader knows about the same bid on the same page.
+
+    A sidecar row with no matching reader row is one the reader never corroborated -- it still
+    fails that page's coverage check (see `run_paginated_list_extraction`) -- but it still needs
+    *some* lifecycle, and the normalizer's blanket "open" default would reopen a bid on a
+    closed/awarded walk. Give it the list's own default status instead, and, on the awarded list,
+    treat whatever date the sidecar found as an award date rather than a deadline (the same
+    correction the reader itself applies to rows it does recognize).
+    """
     if not reader_record:
-        return record
+        merged = dict(record)
+        merged["list_kind"] = list_kind
+        merged["lifecycle_status"] = list_kind
+        if list_kind == "awarded":
+            merged["awarded_date"] = merged.get("deadline_date")
+            merged["deadline_date"] = None
+        return merged
     merged = dict(record)
     for field in _READER_FIELDS:
         if reader_record.get(field) is not None:
@@ -382,7 +421,7 @@ def _overlay_reader_fields(record, reader_record):
     return merged
 
 
-def _page_bids(source, config, extractor, html, final_url, reading):
+def _page_bids(source, config, extractor, html, final_url, reading, list_kind):
     """Rows of one fetched page: `(bids, method, diagnostics, fallback_reason)`."""
     if config["mode"] != "scrapling":
         return [normalize_state_opportunity(record, source) for record in reading.records], "adapter", {}, None
@@ -399,7 +438,7 @@ def _page_bids(source, config, extractor, html, final_url, reading):
         )
         records = [record for record in (_record_from_item(item, source) for item in payload["items"][: config["max_items"]]) if record]
         if records:
-            merged = [_overlay_reader_fields(record, by_id.get(record["source_bid_id"])) for record in records]
+            merged = [_overlay_reader_fields(record, by_id.get(record["source_bid_id"]), list_kind) for record in records]
             return [normalize_state_opportunity(record, source) for record in merged], "scrapling", payload.get("diagnostics", {}), None
         reason = "no_items: extractor returned no usable rows"
     except ListExtractionError as error:
@@ -407,18 +446,38 @@ def _page_bids(source, config, extractor, html, final_url, reading):
     return [normalize_state_opportunity(record, source) for record in reading.records], "adapter_fallback", {}, reason
 
 
-def _raise_empty_first_page(source, list_adapter, html, config, request):
+def _fetch_paginated_page(source, list_adapter, session, timeout, url):
+    """Fetch one page of a paginated walk.
+
+    Always through the adapter's own `fetch_list_html`, never through `config["render"]`'s
+    browser sidecar: that is what applies BidNet's 3-second WAF-politeness spacing and turns an
+    HTTP 202 challenge into a classified error (`co_bidnet._fetch_bidnet_page`). A paged walk can
+    make many more requests than the single-page stage in one run, so skipping that spacing to
+    render instead would be exactly the "rapid back-to-back sweep" that trips the WAF.
+    """
+    html, final_url, _status = list_adapter.fetch_list_html(source, url, session=session, timeout=timeout)
+    return html, final_url
+
+
+def _raise_empty_first_page(source, list_adapter, html, config, request, title):
     """Page 1 had no rows at all: the adapter's parser decides, as the single-page stage does."""
-    pagination = {
-        "list_kind": request["list_kind"], "start_page": request["start_page"], "pages_fetched": 1,
-        "next_page": None, "stopped_reason": "exhausted", "requests_made": 1, "complete": True,
-    }
     method = "scrapling" if config["mode"] == "scrapling" else "adapter"
     try:
-        list_adapter.parse_list_html(source, html, query=None, limit=1)
+        list_adapter.parse_list_html(source, html, query=None, limit=1, list_kind=request["list_kind"])
     except VerifiedEmptyListError as error:
+        pagination = {
+            "list_kind": request["list_kind"], "start_page": request["start_page"], "pages_fetched": 1,
+            "next_page": None, "stopped_reason": "exhausted", "requests_made": 1,
+            "complete": (
+                error.tenant_confirmed
+                and _title_names_tenant(title, source.source_label)
+                and request["start_page"] == 1
+            ),
+        }
         raise VerifiedEmptyListError(error.marker, error.tenant_confirmed, method=method, pagination=pagination) from error
-    raise ListPageReadError("{0}: the page reader found no rows the adapter parser could read".format(source.id))
+    raise ListPageReadError(
+        "{0}: the page reader found no rows on a page the adapter's own parser could read".format(source.id)
+    )
 
 
 def run_paginated_list_extraction(
@@ -436,13 +495,30 @@ def run_paginated_list_extraction(
     """Page through one list of an adapter that can read its own pagination.
 
     Returns `(bids, metadata.listExtraction, metadata.pagination)`. Each page is fetched exactly
-    once. Rows come from the sidecar in scrapling mode (the adapter's parser is the per-page
-    fallback) and from the adapter's parser otherwise; the adapter's page reader supplies the
-    number, the lifecycle and the next page. `complete` is true only when the walk reached a page
-    without a next link, nothing was cut by `limit`/`query`, and every row the reader saw is in
-    the result -- the one condition under which the importers may close delisted bids.
+    once, always through the adapter's own fetcher (`renderer`/`config["render"]` are accepted for
+    interface symmetry with the single-page stage but never used here -- see
+    `_fetch_paginated_page`). Rows come from the sidecar in scrapling mode (the adapter's parser is
+    the per-page fallback) and from the adapter's parser otherwise; the adapter's page reader
+    supplies the number, the lifecycle and the next page.
+
+    `complete` is true only when ALL of the following hold -- each one guards a way a partial walk
+    could otherwise look finished, which matters because the importers close every open bid of
+    this source a `complete: True` run did not return:
+      * the walk reached a page with no next link on its own (`stopped_reason == "exhausted"`);
+      * it started at page 1 -- a walk starting later never saw the earlier pages;
+      * every page's row ids exactly match what the page's own reader saw there (not just a
+        superset: a sidecar-only row the reader never corroborated is as suspect as a dropped one);
+      * no page the reader could not read at all was treated as the end of the list (that page
+        stops the walk immediately instead, `stopped_reason == "unreadable_page"`);
+      * nothing was cut by `limit` or `query`;
+      * the next link was never a page already fetched (`stopped_reason == "repeated_page"`);
+      * page 1's own printed result total is known, every page agreed on it, and the number of
+        unique bids collected equals it;
+      * page 1's own `<title>` names the source's tenant (guards a misconfigured `base_url` or a
+        weak `tenant_is_confirmed` token match from ever being called "complete").
     """
     list_kind = request["list_kind"]
+    label = source.source_label
     extractor_url = config.get("extractor_url")
     if config["mode"] == "scrapling" and extractor is None:
         extractor = ListExtractorClient(extractor_url)
@@ -450,26 +526,58 @@ def run_paginated_list_extraction(
     url = list_adapter.page_url(source, list_kind, request["start_page"])
     page_number = request["start_page"]
     bids, methods = [], []
+    seen_ids, fetched_urls = set(), set()
     diagnostics, fallback_reason = None, None
-    covered, rendered, pages_fetched = True, False, 0
+    covered, pages_fetched = True, 0
     stopped_reason, next_page = "exhausted", None
+    expected_total, totals_match, tenant_ok, truncated = None, True, False, False
 
     while True:
-        html, final_url, page_rendered = _fetch_list_html(source, list_adapter, config, session, renderer, timeout, url=url)
+        if url in fetched_urls:
+            # A next link that loops back to an already-fetched page (seen once with a tenant
+            # whose "next" wrongly pointed at page 1): re-fetching it would just repeat forever.
+            stopped_reason = "repeated_page"
+            break
+        fetched_urls.add(url)
+
+        html, final_url = _fetch_paginated_page(source, list_adapter, session, timeout, url)
         pages_fetched += 1
-        rendered = rendered or page_rendered
         reading = list_adapter.page_reader(source, html, list_kind)
-        page_bids, method, page_diagnostics, reason = _page_bids(source, config, extractor, html, final_url, reading)
+        page_bids, method, page_diagnostics, reason = _page_bids(source, config, extractor, html, final_url, reading, list_kind)
         if pages_fetched == 1 and not page_bids and not reading.records:
-            _raise_empty_first_page(source, list_adapter, html, config, request)
+            _raise_empty_first_page(source, list_adapter, html, config, request, reading.title)
 
         methods.append(method)
         diagnostics = page_diagnostics if diagnostics is None else diagnostics
         fallback_reason = fallback_reason or reason
+
+        reader_ids = {record["source_bid_id"] for record in reading.records}
         page_ids = {bid["source_bid_id"] for bid in page_bids}
-        if any(record["source_bid_id"] not in page_ids for record in reading.records):
+        if not reader_ids:
+            # The reader could not read this page at all -- a layout change, or a blank
+            # interstitial mid-walk. Trusting it as "the last page" (it may even have no next
+            # link of its own) could delist every bid after it, so stop here instead, without
+            # merging whatever the sidecar alone thought it saw.
+            stopped_reason = "unreadable_page"
+            break
+        if reader_ids != page_ids:
             covered = False
-        bids.extend(page_bids)
+
+        if pages_fetched == 1:
+            expected_total = reading.total
+            tenant_ok = _title_names_tenant(reading.title, label)
+        totals_match = totals_match and reading.total is not None and reading.total == expected_total
+
+        new_bids = [bid for bid in page_bids if bid["source_bid_id"] not in seen_ids]
+        seen_ids.update(bid["source_bid_id"] for bid in new_bids)
+        bids.extend(new_bids)
+
+        if limit is not None and query is None and len(bids) >= int(limit):
+            bids = bids[: int(limit)]
+            stopped_reason = "limit"
+            next_page = (reading.next_page or page_number + 1) if reading.next_url is not None else None
+            truncated = True
+            break
 
         stop_before = request["stop_before"]
         if stop_before and reading.records and all(
@@ -486,22 +594,21 @@ def run_paginated_list_extraction(
         url = reading.next_url
         page_number = reading.next_page or page_number + 1
 
-    truncated = False
     if query:
+        # Whether the filtered set happens to keep every row or not, a query only ever asked for
+        # a subset -- it can never be used to prove the whole list was seen.
         query_text = query.lower()
         bids = [bid for bid in bids if query_text in " ".join(str(value) for value in bid.values()).lower()]
         truncated = True
-    if limit is not None and len(bids) > int(limit):
-        bids = bids[: int(limit)]
-        truncated = True
-        stopped_reason = "limit"
+        if limit is not None and len(bids) > int(limit):
+            bids = bids[: int(limit)]
 
     overall = "adapter_fallback" if "adapter_fallback" in methods else methods[0]
     stats = _stats(
         overall,
         len(bids),
         diagnostics or {},
-        rendered,
+        False,
         extractor_url if config["mode"] == "scrapling" else None,
         fallback_reason,
     )
@@ -512,6 +619,15 @@ def run_paginated_list_extraction(
         "next_page": next_page,
         "stopped_reason": stopped_reason,
         "requests_made": pages_fetched,
-        "complete": stopped_reason == "exhausted" and covered and not truncated,
+        "complete": (
+            stopped_reason == "exhausted"
+            and request["start_page"] == 1
+            and covered
+            and not truncated
+            and tenant_ok
+            and expected_total is not None
+            and totals_match
+            and len(seen_ids) == expected_total
+        ),
     }
     return bids, stats, pagination

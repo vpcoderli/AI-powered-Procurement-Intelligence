@@ -18,6 +18,8 @@ FIXTURES = Path(__file__).parent / "fixtures"
 OPEN = (FIXTURES / "bidnet_denver_open_bids_2026_09_24.html").read_text(encoding="utf-8")
 CLOSED = (FIXTURES / "bidnet_denver_closed_bids_2026_09_24.html").read_text(encoding="utf-8")
 AWARDED = (FIXTURES / "bidnet_denver_awarded_bids_2026_09_24.html").read_text(encoding="utf-8")
+AURORA = (FIXTURES / "bidnet_aurora_open_bids_with_hidden_empty_row.html").read_text(encoding="utf-8")
+ERIE = (FIXTURES / "bidnet_erie_no_open_bids.html").read_text(encoding="utf-8")
 DENVER_URL = (
     "https://www.bidnetdirect.com/colorado/city-and-county-of-denver-general-services-purchasing"
     "/solicitations/open-bids"
@@ -155,6 +157,35 @@ def test_list_url_from_a_root_alias_tenant():
 def test_list_url_rejects_unknown_kinds_and_pages(kind, page):
     with pytest.raises(ValueError):
         bidnet_list_url(DENVER_URL, kind, page)
+
+
+def test_reader_parses_the_results_total_and_the_page_title():
+    denver_name = "City and County of Denver General Services Purchasing"
+    open_page = read_bidnet_list_page(_denver(), OPEN, "open")
+    closed_page = read_bidnet_list_page(_denver(), CLOSED, "closed")
+    awarded_page = read_bidnet_list_page(_denver(), AWARDED, "awarded")
+
+    assert (open_page.total, open_page.title) == (6, denver_name)
+    assert (closed_page.total, closed_page.title) == (2191, denver_name)
+    assert (awarded_page.total, awarded_page.title) == (383, denver_name)
+
+    aurora_url = "https://www.bidnetdirect.com/city-of-aurora/solicitations/open-bids"
+    aurora_source = TaskSource(
+        id="bidnet_co_aurora", name="City of Aurora (BidNet)", source_label="City of Aurora (BidNet)",
+        jurisdiction="city", state_code="CO", base_url=aurora_url, fetch_config={"base_url": aurora_url},
+    )
+    aurora_page = read_bidnet_list_page(aurora_source, AURORA, "open")
+    assert (aurora_page.total, aurora_page.title) == (16, "City of Aurora")
+
+
+def test_a_verified_empty_page_has_no_total_but_still_reads_its_title():
+    erie_url = "https://www.bidnetdirect.com/new-york/erie-county/solicitations/open-bids"
+    erie_source = TaskSource(
+        id="bidnet_ny_erie", name="Erie County, NY (BidNet)", source_label="Erie County, NY (BidNet)",
+        jurisdiction="county", state_code="NY", base_url=erie_url, fetch_config={"base_url": erie_url},
+    )
+    page = read_bidnet_list_page(erie_source, ERIE, "open")
+    assert (page.total, page.title) == (None, "Erie County")
 
 
 def test_parse_keeps_the_selected_list_kind_in_the_raw_payload():

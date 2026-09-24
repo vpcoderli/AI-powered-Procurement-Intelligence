@@ -28,7 +28,9 @@ _LIST_KIND_PATHS = {"open": "open-bids", "closed": "closed-bids", "awarded": "aw
 #: can say so instead of rendering blanks -- we never log in to fetch them.
 BIDNET_DETAIL_ACCESS = {"restricted": ["description", "documents", "contact"], "platform": "BidNet"}
 
-BidnetListPage = namedtuple("BidnetListPage", ("records", "next_url", "next_page"))
+BidnetListPage = namedtuple(
+    "BidnetListPage", ("records", "next_url", "next_page", "total", "title"), defaults=(None, None)
+)
 
 _ROW_RE = re.compile(r'<tr[^>]+class="[^"]*mets-table-row[^"]*"[^>]*>(.*?)</tr>', re.I | re.S)
 _LINK_RE = re.compile(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.I | re.S)
@@ -44,6 +46,12 @@ _NEXT_BLOCK_RE = re.compile(r"mets-page-navigation-next[^>]*>(.*?)</div>", re.I 
 _HREF_RE = re.compile(r'href="([^"]+)"', re.I)
 _PAGE_NUMBER_RE = re.compile(r'data-page-number="(\d+)"', re.I)
 _PAGE_PARAM_RE = re.compile(r"(?:[?&]pageNumber=|/page)(\d+)", re.I)
+# Printed identically on every page of a given list ("2,191 Closed Solicitations"), never on a
+# genuinely empty list: the paginated stage uses it to prove a walk collected the whole list
+# rather than just whatever the reader happened to be able to parse (spec 2026-09-24 §5.3 C3).
+_TOTAL_RE = re.compile(r'class="simpleResultsNumResults"[^>]*>\s*([\d,]+)', re.I | re.S)
+_TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
+_TITLE_SUFFIX = " - Bid Opportunities"
 
 # bidnetdirect.com fronts every state/county tenant page with AWS WAF Bot Control. Rapid
 # back-to-back sweeps (dozens of tenant pages within seconds — verified 2026-08-21 after
@@ -185,10 +193,39 @@ def bidnet_next_page(html):
     return url, int(number.group(1)) if number else None
 
 
+def _list_total(html):
+    """The list's whole-list result count, e.g. 2191 from "2,191 Closed Solicitations". `None`
+    when the page carries no such element at all (BidNet omits it on a verified-empty list)."""
+    match = _TOTAL_RE.search(html or "")
+    if not match:
+        return None
+    try:
+        return int(match.group(1).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _list_title(html):
+    """The tenant's own name from `<title>`, e.g. "Erie County" from "Erie County - Bid
+    Opportunities and RFPs | BidNet Direct". `None` when the page has no `<title>` at all."""
+    match = _TITLE_RE.search(html or "")
+    if not match:
+        return None
+    text = _strip_tags(match.group(1)).split(_TITLE_SUFFIX)[0].strip()
+    return text or None
+
+
 def read_bidnet_list_page(source, html, list_kind="open"):
-    """One fetched BidNet list page: its raw records and where the next page is."""
+    """One fetched BidNet list page: its raw records, where the next page is, and the page's own
+    result total and title (the paginated list stage's proof that a walk read the whole list)."""
     next_url, next_page = bidnet_next_page(html)
-    return BidnetListPage(_records_from_html(html, source.source_label, list_kind), next_url, next_page)
+    return BidnetListPage(
+        _records_from_html(html, source.source_label, list_kind),
+        next_url,
+        next_page,
+        _list_total(html),
+        _list_title(html),
+    )
 
 
 def bidnet_list_url(base_url, list_kind="open", page=1):
