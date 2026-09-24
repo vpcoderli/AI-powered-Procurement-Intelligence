@@ -14,7 +14,7 @@ class VerifiedEmptyListError(Exception):
     failure, otherwise a genuinely broken source would quietly look healthy forever.
     """
 
-    def __init__(self, marker, tenant_confirmed, method="adapter", message=None):
+    def __init__(self, marker, tenant_confirmed, method="adapter", message=None, pagination=None):
         super().__init__(
             message
             or "list page reports an empty result ({0}; tenant_confirmed={1})".format(marker, tenant_confirmed)
@@ -22,6 +22,8 @@ class VerifiedEmptyListError(Exception):
         self.marker = marker
         self.tenant_confirmed = bool(tenant_confirmed)
         self.method = method
+        # Set by the paged list stage: an empty first page is a complete, one-page walk.
+        self.pagination = pagination
 
     def as_metadata(self):
         """The `metadata.emptyState` object from contract C1."""

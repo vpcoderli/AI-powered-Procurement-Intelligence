@@ -11,9 +11,11 @@ from apsi_crawler.sources.state_sources import SPECIAL_FETCHERS
 from apsi_crawler.spiders.bonfire import fetch_bonfire_opportunities
 from apsi_crawler.spiders.ca_caleprocure import fetch_ca_caleprocure_opportunities
 from apsi_crawler.spiders.co_bidnet import (
+    bidnet_list_url,
     fetch_bidnet_list_html,
     fetch_bidnet_opportunities,
     parse_bidnet_list_html,
+    read_bidnet_list_page,
 )
 from apsi_crawler.spiders.fl_mfmp import fetch_fl_mfmp_opportunities
 from apsi_crawler.spiders.generic_state import (
@@ -77,7 +79,14 @@ DEDICATED_ADAPTERS = {
 # two different parsers (the sidecar, then the adapter's own regex). Adapters that page through
 # JSON APIs or need per-row requests are deliberately absent: there is no single HTML document
 # to share, so the "never more than one list request" invariant could not hold.
-ListHtmlAdapter = namedtuple("ListHtmlAdapter", ("name", "list_url", "fetch_list_html", "parse_list_html"))
+#
+# `page_url` / `page_reader` are set only for adapters that can read their own pagination; the
+# paged list stage (list_extraction.run_paginated_list_extraction) runs exactly for those.
+ListHtmlAdapter = namedtuple(
+    "ListHtmlAdapter",
+    ("name", "list_url", "fetch_list_html", "parse_list_html", "page_url", "page_reader"),
+    defaults=(None, None),
+)
 
 
 def _bidnet_list_url(source):
@@ -94,8 +103,17 @@ def _generic_list_url(source):
     return url
 
 
+def _bidnet_page_url(source, list_kind, page):
+    return bidnet_list_url(_bidnet_list_url(source), list_kind, page)
+
+
 BIDNET_LIST_HTML_ADAPTER = ListHtmlAdapter(
-    "bidnet", _bidnet_list_url, fetch_bidnet_list_html, parse_bidnet_list_html
+    "bidnet",
+    _bidnet_list_url,
+    fetch_bidnet_list_html,
+    parse_bidnet_list_html,
+    _bidnet_page_url,
+    read_bidnet_list_page,
 )
 GENERIC_LIST_HTML_ADAPTER = ListHtmlAdapter(
     "generic", _generic_list_url, fetch_generic_state_list_html, parse_generic_state_list_html

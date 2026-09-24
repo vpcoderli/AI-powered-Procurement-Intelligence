@@ -15,6 +15,7 @@ Two invariants this module exists to keep:
 """
 
 import os
+from datetime import date, datetime
 from urllib.parse import urlparse
 
 import requests
@@ -31,6 +32,16 @@ MAX_ITEMS_CEILING = 500
 _EXTRACT_TIMEOUT = 20.0
 _RENDER_TIMEOUT_HEADROOM = 15
 _DIAGNOSTIC_VALUES = ("selector", "heuristic", "not_found")
+
+LIST_KINDS = ("open", "closed", "awarded")
+DEFAULT_LIST_PAGES = 4
+MAX_LIST_PAGES = 50
+_MAX_START_PAGE = 100000
+_READER_FIELDS = ("solicitation_number", "region", "lifecycle_status", "list_kind", "detail_access")
+
+
+class ListPageReadError(Exception):
+    """The page reader and the adapter parser disagree about whether a page has rows."""
 
 
 class ListExtractionError(Exception):
@@ -241,8 +252,8 @@ def _stats(method, items, diagnostics, rendered, extractor, fallback_reason):
     }
 
 
-def _fetch_list_html(source, list_adapter, config, session, renderer, timeout):
-    url = list_adapter.list_url(source)
+def _fetch_list_html(source, list_adapter, config, session, renderer, timeout, url=None):
+    url = url or list_adapter.list_url(source)
     if not config["render"]:
         html, final_url, _status = list_adapter.fetch_list_html(source, url, session=session, timeout=timeout)
         return html, final_url, False
@@ -313,3 +324,194 @@ def run_list_extraction(
     except VerifiedEmptyListError as error:
         raise VerifiedEmptyListError(error.marker, error.tenant_confirmed, method="scrapling") from error
     return bids, _stats("adapter_fallback", len(bids), {}, rendered, extractor_url, fallback_reason)
+
+
+def _iso_date(value):
+    try:
+        return datetime.strptime(str(value).strip(), "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def _list_date(record, list_kind):
+    """The date a list is ordered by: award date on the awarded list, closing date otherwise."""
+    value = record.get("awarded_date" if list_kind == "awarded" else "deadline_date")
+    try:
+        return datetime.strptime(str(value).strip(), "%m/%d/%Y").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def resolve_pagination_request(payload):
+    """`list_kind` / `start_page` / `max_pages` / `stop_before` from a fetch-task payload.
+
+    Numbers clamp like every other knob here; a list kind or date the crawler cannot act on
+    raises ValueError, which fetch-task reports as a failed run instead of guessing.
+    """
+    payload = payload or {}
+    list_kind = payload.get("list_kind") or "open"
+    if list_kind not in LIST_KINDS:
+        raise ValueError("list_kind must be one of: {0}".format(", ".join(LIST_KINDS)))
+    stop_before = payload.get("stop_before")
+    if stop_before is not None:
+        stop_before = _iso_date(stop_before)
+        if stop_before is None:
+            raise ValueError("stop_before must be an ISO yyyy-mm-dd date")
+    return {
+        "list_kind": list_kind,
+        "start_page": _clamp(payload.get("start_page"), 1, _MAX_START_PAGE, 1, int),
+        "max_pages": _clamp(payload.get("max_pages"), 1, MAX_LIST_PAGES, DEFAULT_LIST_PAGES, int),
+        "stop_before": stop_before,
+    }
+
+
+def _overlay_reader_fields(record, reader_record):
+    """Sidecar row + what only the adapter's reader knows about the same bid on the same page."""
+    if not reader_record:
+        return record
+    merged = dict(record)
+    for field in _READER_FIELDS:
+        if reader_record.get(field) is not None:
+            merged[field] = reader_record[field]
+    # The reader knows which date is which (the awarded list's second date is an award date,
+    # which generic heuristics read as a deadline).
+    merged["deadline_date"] = reader_record.get("deadline_date")
+    merged["awarded_date"] = reader_record.get("awarded_date")
+    if not merged.get("published_date"):
+        merged["published_date"] = reader_record.get("published_date")
+    return merged
+
+
+def _page_bids(source, config, extractor, html, final_url, reading):
+    """Rows of one fetched page: `(bids, method, diagnostics, fallback_reason)`."""
+    if config["mode"] != "scrapling":
+        return [normalize_state_opportunity(record, source) for record in reading.records], "adapter", {}, None
+    by_id = {record["source_bid_id"]: record for record in reading.records}
+    try:
+        payload = validate_list_extraction(
+            extractor.extract_list(
+                html,
+                final_url,
+                item_selector=config["item_selector"],
+                selectors=config["selectors"] or None,
+                max_items=config["max_items"],
+            )
+        )
+        records = [record for record in (_record_from_item(item, source) for item in payload["items"][: config["max_items"]]) if record]
+        if records:
+            merged = [_overlay_reader_fields(record, by_id.get(record["source_bid_id"])) for record in records]
+            return [normalize_state_opportunity(record, source) for record in merged], "scrapling", payload.get("diagnostics", {}), None
+        reason = "no_items: extractor returned no usable rows"
+    except ListExtractionError as error:
+        reason = "{0}: {1}".format(getattr(error, "reason", "extractor_unreachable"), error)
+    return [normalize_state_opportunity(record, source) for record in reading.records], "adapter_fallback", {}, reason
+
+
+def _raise_empty_first_page(source, list_adapter, html, config, request):
+    """Page 1 had no rows at all: the adapter's parser decides, as the single-page stage does."""
+    pagination = {
+        "list_kind": request["list_kind"], "start_page": request["start_page"], "pages_fetched": 1,
+        "next_page": None, "stopped_reason": "exhausted", "requests_made": 1, "complete": True,
+    }
+    method = "scrapling" if config["mode"] == "scrapling" else "adapter"
+    try:
+        list_adapter.parse_list_html(source, html, query=None, limit=1)
+    except VerifiedEmptyListError as error:
+        raise VerifiedEmptyListError(error.marker, error.tenant_confirmed, method=method, pagination=pagination) from error
+    raise ListPageReadError("{0}: the page reader found no rows the adapter parser could read".format(source.id))
+
+
+def run_paginated_list_extraction(
+    source,
+    list_adapter,
+    config,
+    request,
+    query=None,
+    limit=None,
+    session=None,
+    extractor=None,
+    renderer=None,
+    timeout=30,
+):
+    """Page through one list of an adapter that can read its own pagination.
+
+    Returns `(bids, metadata.listExtraction, metadata.pagination)`. Each page is fetched exactly
+    once. Rows come from the sidecar in scrapling mode (the adapter's parser is the per-page
+    fallback) and from the adapter's parser otherwise; the adapter's page reader supplies the
+    number, the lifecycle and the next page. `complete` is true only when the walk reached a page
+    without a next link, nothing was cut by `limit`/`query`, and every row the reader saw is in
+    the result -- the one condition under which the importers may close delisted bids.
+    """
+    list_kind = request["list_kind"]
+    extractor_url = config.get("extractor_url")
+    if config["mode"] == "scrapling" and extractor is None:
+        extractor = ListExtractorClient(extractor_url)
+
+    url = list_adapter.page_url(source, list_kind, request["start_page"])
+    page_number = request["start_page"]
+    bids, methods = [], []
+    diagnostics, fallback_reason = None, None
+    covered, rendered, pages_fetched = True, False, 0
+    stopped_reason, next_page = "exhausted", None
+
+    while True:
+        html, final_url, page_rendered = _fetch_list_html(source, list_adapter, config, session, renderer, timeout, url=url)
+        pages_fetched += 1
+        rendered = rendered or page_rendered
+        reading = list_adapter.page_reader(source, html, list_kind)
+        page_bids, method, page_diagnostics, reason = _page_bids(source, config, extractor, html, final_url, reading)
+        if pages_fetched == 1 and not page_bids and not reading.records:
+            _raise_empty_first_page(source, list_adapter, html, config, request)
+
+        methods.append(method)
+        diagnostics = page_diagnostics if diagnostics is None else diagnostics
+        fallback_reason = fallback_reason or reason
+        page_ids = {bid["source_bid_id"] for bid in page_bids}
+        if any(record["source_bid_id"] not in page_ids for record in reading.records):
+            covered = False
+        bids.extend(page_bids)
+
+        stop_before = request["stop_before"]
+        if stop_before and reading.records and all(
+            (_list_date(record, list_kind) or date.max) < stop_before for record in reading.records
+        ):
+            stopped_reason = "window"
+            break
+        if reading.next_url is None:
+            break
+        if pages_fetched >= request["max_pages"]:
+            stopped_reason = "max_pages"
+            next_page = reading.next_page or page_number + 1
+            break
+        url = reading.next_url
+        page_number = reading.next_page or page_number + 1
+
+    truncated = False
+    if query:
+        query_text = query.lower()
+        bids = [bid for bid in bids if query_text in " ".join(str(value) for value in bid.values()).lower()]
+        truncated = True
+    if limit is not None and len(bids) > int(limit):
+        bids = bids[: int(limit)]
+        truncated = True
+        stopped_reason = "limit"
+
+    overall = "adapter_fallback" if "adapter_fallback" in methods else methods[0]
+    stats = _stats(
+        overall,
+        len(bids),
+        diagnostics or {},
+        rendered,
+        extractor_url if config["mode"] == "scrapling" else None,
+        fallback_reason,
+    )
+    pagination = {
+        "list_kind": list_kind,
+        "start_page": request["start_page"],
+        "pages_fetched": pages_fetched,
+        "next_page": next_page,
+        "stopped_reason": stopped_reason,
+        "requests_made": pages_fetched,
+        "complete": stopped_reason == "exhausted" and covered and not truncated,
+    }
+    return bids, stats, pagination
