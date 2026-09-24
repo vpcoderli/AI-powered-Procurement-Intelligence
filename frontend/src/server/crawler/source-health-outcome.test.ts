@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { dataSources } from "@/server/db/schema";
 import type { RunCrawlerSourceOnceResult } from "./orchestrator";
-import { recordSourceHealthOutcome } from "./source-health-outcome";
+import { isVerifiedEmptyRun, recordSourceHealthOutcome } from "./source-health-outcome";
 
 const NOW = "2026-09-16T00:00:00.000Z";
 const LATER = "2026-09-16T06:00:00.000Z";
@@ -97,5 +97,14 @@ describe("recordSourceHealthOutcome", () => {
     );
 
     expect(readSource()).toMatchObject({ lastFailureAt: LATER, consecutiveFailures: 4 });
+  });
+});
+
+describe("isVerifiedEmptyRun", () => {
+  const base = { ok: true as const, source: "s", status: "success" as const, alertMatching: { evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0 }, notification: { queued: 0, sent: 0, skipped: 0, failed: 0 } };
+  it("is true only for a zero-row success that carries a verified empty state", () => {
+    expect(isVerifiedEmptyRun({ ...base, runner: { ok: true, source: "s", status: "success", stdout: "", stderr: "", fetchedCount: 0, payload: { metadata: { emptyState: { verified: true } } } } })).toBe(true);
+    expect(isVerifiedEmptyRun({ ...base, runner: { ok: true, source: "s", status: "success", stdout: "", stderr: "", fetchedCount: 3, payload: { metadata: {} } } })).toBe(false);
+    expect(isVerifiedEmptyRun({ ok: false, source: "s", status: "blocked", reason: "x" } as never)).toBe(false);
   });
 });

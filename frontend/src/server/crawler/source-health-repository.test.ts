@@ -162,3 +162,31 @@ describe("source health repository MySQL runtime", () => {
     ]);
   });
 });
+
+describe("consecutive empty runs", () => {
+  it("counts verified-empty successes and resets on a run with bids", async () => {
+    const testDb = await createTestDatabase({ seed: false });
+    try {
+      const now = "2026-09-24T00:00:00.000Z";
+      testDb.db.insert(dataSources).values({ id: "bidnet_co_boulder", label: "Boulder", issuerType: "county", stateCode: "CO", isEnabled: 1, cadence: "daily", createdAt: now, updatedAt: now }).run();
+      const count = () => testDb.db.select().from(dataSources).where(eq(dataSources.id, "bidnet_co_boulder")).get()!.consecutiveEmptyRuns;
+
+      recordSourceSuccess(testDb.db, "bidnet_co_boulder", now, { emptyVerified: true });
+      recordSourceSuccess(testDb.db, "bidnet_co_boulder", now, { emptyVerified: true });
+      expect(count()).toBe(2);
+      recordSourceSuccess(testDb.db, "bidnet_co_boulder", now);
+      expect(count()).toBe(0);
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("uses the same rule in MySQL", async () => {
+    const executed: Array<{ sql: string; values: unknown[] }> = [];
+    const pool = { query: async () => [[], undefined], execute: async (sql: string, values: unknown[] = []) => { executed.push({ sql, values }); return [{}, undefined]; } } as never;
+    await recordSourceSuccessInMysql(pool, "s", "t", { emptyVerified: true });
+    await recordSourceSuccessInMysql(pool, "s", "t");
+    expect(executed[0].sql).toContain("consecutive_empty_runs = consecutive_empty_runs + 1");
+    expect(executed[1].sql).toContain("consecutive_empty_runs = 0");
+  });
+});

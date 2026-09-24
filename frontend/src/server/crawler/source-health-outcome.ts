@@ -12,10 +12,11 @@ export async function recordSourceHealthOutcome(
 ): Promise<void> {
   try {
     if (result.ok) {
+      const outcome = { emptyVerified: isVerifiedEmptyRun(result) };
       if (options.mysql) {
-        await recordSourceSuccessInMysql(options.mysql, sourceId, at);
+        await recordSourceSuccessInMysql(options.mysql, sourceId, at, outcome);
       } else {
-        recordSourceSuccess(options.database, sourceId, at);
+        recordSourceSuccess(options.database, sourceId, at, outcome);
       }
       return;
     }
@@ -49,6 +50,14 @@ export async function recordSourceHealthOutcome(
       }),
     );
   }
+}
+
+/** A successful run whose zero rows are a verified, tenant-confirmed empty list. */
+export function isVerifiedEmptyRun(result: RunCrawlerSourceOnceResult): boolean {
+  if (!result.ok) return false;
+  const metadata = result.runner?.payload?.metadata;
+  return result.runner?.fetchedCount === 0 &&
+    Boolean(metadata && typeof metadata === "object" && (metadata as Record<string, unknown>).emptyState);
 }
 
 /** Include structured Python failures even when stderr is empty. */

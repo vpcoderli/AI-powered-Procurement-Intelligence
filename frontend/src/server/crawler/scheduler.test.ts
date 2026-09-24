@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CrawlableSource } from "./source-registry";
-import { cadenceIntervalMs, nextDueAt, selectDueSources } from "./scheduler";
+import { cadenceIntervalMs, effectiveIntervalMs, nextDueAt, QUIET_SOURCE_EMPTY_RUNS, selectDueSources } from "./scheduler";
 
 const NOW = new Date("2026-07-29T12:00:00.000Z");
 
@@ -203,5 +203,31 @@ describe("selectDueSources", () => {
     );
     const result = selectDueSources(sources, NOW, { platformConcurrencyCap: 5 });
     expect(result).toHaveLength(5);
+  });
+});
+
+describe("activity tiers (spec 2026-09-24 §5.5)", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  it("checks a quiet local source weekly and a busy one on its own cadence", () => {
+    expect(effectiveIntervalMs(source({ jurisdictionLevel: "county", consecutiveEmptyRuns: QUIET_SOURCE_EMPTY_RUNS }))).toBe(7 * DAY);
+    expect(effectiveIntervalMs(source({ jurisdictionLevel: "township", consecutiveEmptyRuns: 5 }))).toBe(7 * DAY);
+    expect(effectiveIntervalMs(source({ jurisdictionLevel: "city", consecutiveEmptyRuns: 2 }))).toBe(DAY);
+    expect(effectiveIntervalMs(source({ jurisdictionLevel: "county" }))).toBe(DAY);
+  });
+
+  it("never stretches state or federal sources, and never shortens a slower cadence", () => {
+    expect(effectiveIntervalMs(source({ jurisdictionLevel: "state", consecutiveEmptyRuns: 9 }))).toBe(DAY);
+    expect(effectiveIntervalMs(source({ jurisdictionLevel: "county", cadence: "weekly", consecutiveEmptyRuns: 9 }))).toBe(7 * DAY);
+    expect(effectiveIntervalMs(source({ cadence: "manual" }))).toBeNull();
+  });
+
+  it("leaves a quiet county out of today's due list", () => {
+    const yesterday = new Date(NOW.getTime() - 25 * 60 * 60 * 1000).toISOString();
+    const due = selectDueSources([
+      source({ id: "busy", jurisdictionLevel: "county", lastSuccessAt: yesterday }),
+      source({ id: "quiet", jurisdictionLevel: "county", lastSuccessAt: yesterday, consecutiveEmptyRuns: 3 }),
+    ], NOW);
+    expect(due.map((entry) => entry.id)).toEqual(["busy"]);
   });
 });

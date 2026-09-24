@@ -19,15 +19,30 @@ const MAX_BACKOFF_MS = 7 * DAY_MS;
 
 const JURISDICTION_ORDER = ["federal", "state", "county", "city", "township", "special_district"];
 
+/** Levels activity tiering applies to (spec 2026-09-24 §5.5). */
+export const LOCAL_JURISDICTION_LEVELS: ReadonlySet<string> = new Set(["county", "city", "township", "special_district"]);
+/** A local source verified empty this many runs in a row is checked weekly until bids reappear. */
+export const QUIET_SOURCE_EMPTY_RUNS = 3;
+
 export function cadenceIntervalMs(cadence: string): number | null {
   if (cadence === "manual") return null;
   return CADENCE_INTERVAL_MS[cadence as keyof typeof CADENCE_INTERVAL_MS] ?? CADENCE_INTERVAL_MS.daily;
 }
 
+export function effectiveIntervalMs(
+  source: Pick<CrawlableSource, "cadence" | "jurisdictionLevel" | "consecutiveEmptyRuns">,
+): number | null {
+  const interval = cadenceIntervalMs(source.cadence);
+  if (interval === null) return null;
+  const quiet = LOCAL_JURISDICTION_LEVELS.has(source.jurisdictionLevel ?? "") &&
+    (source.consecutiveEmptyRuns ?? 0) >= QUIET_SOURCE_EMPTY_RUNS;
+  return quiet ? Math.max(interval, CADENCE_INTERVAL_MS.weekly) : interval;
+}
+
 export function nextDueAt(source: CrawlableSource): string | null {
   const anchor = source.consecutiveFailures > 0 ? source.lastFailureAt ?? source.lastSuccessAt : source.lastSuccessAt;
   if (!anchor) return null;
-  const interval = cadenceIntervalMs(source.cadence);
+  const interval = effectiveIntervalMs(source);
   if (interval === null) return null;
 
   const failures = Math.max(0, source.consecutiveFailures);

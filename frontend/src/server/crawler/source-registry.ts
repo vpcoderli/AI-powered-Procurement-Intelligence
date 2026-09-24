@@ -18,6 +18,8 @@ export interface CrawlableSource {
   lastSuccessAt: string | null;
   lastFailureAt?: string | null;
   consecutiveFailures: number;
+  /** Verified-empty successes in a row (spec 2026-09-24 §5.5); absent in older fixtures. */
+  consecutiveEmptyRuns?: number;
 }
 
 export interface MysqlSourceStore {
@@ -63,6 +65,7 @@ function toCrawlableSource(row: typeof dataSources.$inferSelect): CrawlableSourc
     lastSuccessAt: row.lastSuccessAt ?? null,
     lastFailureAt: row.lastFailureAt ?? null,
     consecutiveFailures: row.consecutiveFailures ?? 0,
+    consecutiveEmptyRuns: row.consecutiveEmptyRuns ?? 0,
   };
 }
 
@@ -123,6 +126,7 @@ interface MysqlSourceRow {
   lastSuccessAt: string | null;
   lastFailureAt?: string | null;
   consecutiveFailures: number | string | null;
+  consecutiveEmptyRuns?: number | string | null;
 }
 
 const MYSQL_SOURCE_COLUMNS = `
@@ -139,7 +143,8 @@ const MYSQL_SOURCE_COLUMNS = `
   fetch_config AS fetchConfig,
   last_success_at AS lastSuccessAt,
   last_failure_at AS lastFailureAt,
-  consecutive_failures AS consecutiveFailures
+  consecutive_failures AS consecutiveFailures,
+  consecutive_empty_runs AS consecutiveEmptyRuns
 `;
 
 function toCrawlableSourceFromMysqlRow(row: MysqlSourceRow): CrawlableSource {
@@ -158,6 +163,7 @@ function toCrawlableSourceFromMysqlRow(row: MysqlSourceRow): CrawlableSource {
     lastSuccessAt: row.lastSuccessAt ?? null,
     lastFailureAt: row.lastFailureAt ?? null,
     consecutiveFailures: Number(row.consecutiveFailures ?? 0),
+    consecutiveEmptyRuns: Number(row.consecutiveEmptyRuns ?? 0),
   };
 }
 

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { mysqlExecute } from "@/server/db/mysql-runtime";
 import { dataSources } from "@/server/db/schema";
@@ -14,9 +14,19 @@ export interface MysqlHealthStore {
   execute: (sql: string, values?: never[]) => Promise<[unknown, unknown?]>;
 }
 
-export function recordSourceSuccess(db: AppDatabase, sourceId: string, at: string): void {
+export interface SourceSuccessOutcome {
+  /** The run succeeded with zero rows because the tenant verifiably lists nothing. */
+  emptyVerified?: boolean;
+}
+
+export function recordSourceSuccess(db: AppDatabase, sourceId: string, at: string, outcome: SourceSuccessOutcome = {}): void {
   db.update(dataSources)
-    .set({ lastSuccessAt: at, consecutiveFailures: 0, updatedAt: at })
+    .set({
+      lastSuccessAt: at,
+      consecutiveFailures: 0,
+      consecutiveEmptyRuns: outcome.emptyVerified ? sql`${dataSources.consecutiveEmptyRuns} + 1` : 0,
+      updatedAt: at,
+    })
     .where(eq(dataSources.id, sourceId))
     .run();
 }
@@ -25,11 +35,14 @@ export async function recordSourceSuccessInMysql(
   pool: MysqlHealthStore,
   sourceId: string,
   at: string,
+  outcome: SourceSuccessOutcome = {},
 ): Promise<void> {
   await mysqlExecute(
     pool,
     `UPDATE data_sources
-     SET last_success_at = ?, consecutive_failures = 0, updated_at = ?
+     SET last_success_at = ?, consecutive_failures = 0,
+         consecutive_empty_runs = ${outcome.emptyVerified ? "consecutive_empty_runs + 1" : "0"},
+         updated_at = ?
      WHERE id = ?`,
     [at, at, sourceId] as never[],
   );
