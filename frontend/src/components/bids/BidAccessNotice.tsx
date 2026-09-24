@@ -23,7 +23,7 @@ export function BidAccessNotice({ access, sourceUrl }: { access: BidDetailAccess
           rel="noreferrer"
           className={cn(buttonVariants({ variant: "outline", size: "sm" }), "w-full break-all sm:w-auto")}
         >
-          <ExternalLink className="mr-2 h-4 w-4" /> {t("detail.viewOnPlatform").replace("{platform}", access.platform)}
+          <ExternalLink className="mr-2 h-4 w-4" aria-hidden="true" /> {t("detail.viewOnPlatform").replace("{platform}", access.platform)}
         </a>
       ) : null}
     </div>

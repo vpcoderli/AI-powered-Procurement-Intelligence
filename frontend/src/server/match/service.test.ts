@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { MOCK_BIDS } from "@/lib/mock-data";
+import { toServerBidFixture } from "@/server/bids/test-fixtures";
 import { calculateBidMatch } from "./service";
 
 describe("match score service", () => {
   it("scores a bid higher when profile state and keywords match", () => {
-    const bid = MOCK_BIDS.find((item) => item.stateCode === "CA")!;
+    const bid = toServerBidFixture(MOCK_BIDS.find((item) => item.stateCode === "CA")!);
 
     const result = calculateBidMatch(bid, {
       userId: "user_match",
@@ -27,7 +28,7 @@ describe("match score service", () => {
   });
 
   it("returns missing-profile hints for an empty profile", () => {
-    const result = calculateBidMatch(MOCK_BIDS[0], {
+    const result = calculateBidMatch(toServerBidFixture(MOCK_BIDS[0]), {
       userId: "user_empty",
       companyName: "",
       businessTypes: [],
@@ -52,10 +53,10 @@ describe("match score service", () => {
 
   it("matches contract values when the amount contains comma separators", () => {
     const result = calculateBidMatch(
-      {
+      toServerBidFixture({
         ...MOCK_BIDS[0],
         amount: "$1,000,000",
-      },
+      }),
       {
         userId: "user_contract",
         companyName: "Capital Supply",
@@ -78,7 +79,7 @@ describe("match score service", () => {
 
   it("explains certification matches", () => {
     const result = calculateBidMatch(
-      {
+      toServerBidFixture({
         ...MOCK_BIDS[0],
         title: "SBE supplier opportunity",
         description: "",
@@ -89,7 +90,7 @@ describe("match score service", () => {
         tags: [],
         amount: "",
         deadlineDate: "",
-      },
+      }),
       {
         userId: "user_cert",
         companyName: "Certified Supply",

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MOCK_BIDS } from "@/lib/mock-data";
 import * as bidService from "@/server/bids/service";
+import { toServerBidFixture } from "@/server/bids/test-fixtures";
 import { GET } from "./route";
 
 vi.mock("@/server/bids/service", () => ({
@@ -15,11 +16,7 @@ describe("GET /api/bids/[id]", () => {
   });
 
   it("returns a bid by id", async () => {
-    getBidById.mockResolvedValueOnce({
-      ...MOCK_BIDS[0],
-      attachments: [...MOCK_BIDS[0].attachments],
-      tags: [...MOCK_BIDS[0].tags],
-    });
+    getBidById.mockResolvedValueOnce(toServerBidFixture(MOCK_BIDS[0]));
 
     const response = await GET(new Request("http://localhost/api/bids/1"), {
       params: Promise.resolve({ id: "1" }),

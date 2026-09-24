@@ -3,6 +3,7 @@ import { MOCK_BIDS } from "@/lib/mock-data";
 import * as principal from "@/server/auth/principal";
 import { ANONYMOUS_USER_COOKIE_NAME } from "@/server/bids/user";
 import * as bidService from "@/server/bids/service";
+import { toServerBidFixture } from "@/server/bids/test-fixtures";
 import * as matchService from "@/server/match/service";
 import * as marketingFunnel from "@/server/marketing/funnel";
 import type { BidMatchResult } from "@/server/match/types";
@@ -78,7 +79,7 @@ describe("GET /api/bids/[id]/match", () => {
   });
 
   it("returns a public anonymous match without reading or persisting a profile", async () => {
-    const bid = MOCK_BIDS[1];
+    const bid = toServerBidFixture(MOCK_BIDS[1]);
     getBidById.mockResolvedValueOnce(bid);
     calculateBidMatch.mockReturnValueOnce(match);
 
@@ -107,7 +108,7 @@ describe("GET /api/bids/[id]/match", () => {
       tier: "free",
       features: [],
     });
-    const bid = MOCK_BIDS[1];
+    const bid = toServerBidFixture(MOCK_BIDS[1]);
     getBidById.mockResolvedValueOnce(bid);
     getSupplierProfile.mockResolvedValueOnce(profile);
     calculateBidMatch.mockReturnValueOnce(match);
@@ -133,7 +134,7 @@ describe("GET /api/bids/[id]/match", () => {
       tier: "free",
       features: [],
     });
-    const bid = MOCK_BIDS[1];
+    const bid = toServerBidFixture(MOCK_BIDS[1]);
     getBidById.mockResolvedValueOnce(bid);
     getSupplierProfile.mockResolvedValueOnce(profile);
     calculateBidMatch.mockReturnValueOnce(match);

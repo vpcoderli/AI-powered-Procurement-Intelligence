@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MOCK_BIDS } from "@/lib/mock-data";
 import * as bidService from "@/server/bids/service";
+import { toServerBidFixture } from "@/server/bids/test-fixtures";
 import { GET } from "./route";
 
 vi.mock("@/server/bids/service", () => ({
@@ -28,7 +29,7 @@ describe("GET /api/bids", () => {
 
   it("returns filtered bids and normalized filters", async () => {
     queryBids.mockResolvedValueOnce({
-      bids: [{ ...MOCK_BIDS[0], attachments: [...MOCK_BIDS[0].attachments], tags: [...MOCK_BIDS[0].tags] }],
+      bids: [toServerBidFixture(MOCK_BIDS[0])],
       total: 1,
       filters: {
         q: "cloud",

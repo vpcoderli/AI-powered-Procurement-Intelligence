@@ -34,6 +34,10 @@ const baseBid: Bid = {
   detailArchiveError: "",
   saved: false,
   isActive: true,
+  solicitationNumber: "",
+  lifecycleStatus: "open",
+  awardedDate: "",
+  detailAccess: null,
 };
 
 const intent = (id: string, status: IntentSummary["status"]): IntentSummary => ({

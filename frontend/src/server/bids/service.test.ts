@@ -9,6 +9,7 @@ import {
   removeSavedBidId,
   saveSavedBidId,
 } from "./repository";
+import { toServerBidFixture } from "./test-fixtures";
 import {
   getBidById,
   getSavedBids,
@@ -36,12 +37,14 @@ const repositorySaveSavedBidId = vi.mocked(saveSavedBidId);
 const repositoryRemoveSavedBidId = vi.mocked(removeSavedBidId);
 
 function cloneBids(savedBidIds: string[] = []): Bid[] {
-  return MOCK_BIDS.map((bid) => ({
-    ...bid,
-    attachments: [...bid.attachments],
-    tags: [...bid.tags],
-    saved: savedBidIds.includes(bid.id),
-  }));
+  return MOCK_BIDS.map((bid) =>
+    toServerBidFixture({
+      ...bid,
+      attachments: [...bid.attachments],
+      tags: [...bid.tags],
+      saved: savedBidIds.includes(bid.id),
+    }),
+  );
 }
 
 function bidById(id: string) {

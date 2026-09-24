@@ -84,6 +84,10 @@ const refreshResponse: QualificationRefreshResponse = {
       detailArchiveError: "",
       saved: false,
       isActive: true,
+      solicitationNumber: "",
+      lifecycleStatus: "open",
+      awardedDate: "",
+      detailAccess: null,
     },
     status: "intent_added",
     generated: {
