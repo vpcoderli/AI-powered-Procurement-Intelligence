@@ -116,7 +116,7 @@
 
 结果新增：
 
-- `metadata.pagination = {start_page, pages_fetched, next_page, complete, requests_made, stopped_reason}`，其中 `stopped_reason` 为 `exhausted` / `max_pages` / `window` / `limit`；
+- `metadata.pagination = {start_page, pages_fetched, next_page, complete, requests_made, stopped_reason}`，其中 `stopped_reason` 为 `exhausted` / `max_pages` / `window` / `limit` / `unreadable_page` / `repeated_page`；
 - 每条招标多出 `lifecycle_status`、`solicitation_number`、`awarded_date`；
 - `raw_payload.detail_access = {"restricted": ["description", "documents", "contact"], "platform": "BidNet"}`。
 

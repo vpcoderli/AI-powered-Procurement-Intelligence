@@ -87,6 +87,8 @@ flowchart TD
 
 页面明确写明"没有在招项目"时不再算解析失败。`content_quality.detect_empty_list` 要求同时满足：HTTP 200 且非 WAF 挑战页、命中窄集合的空态文案、并且源标签的特征词出现在标题或正文中（租户确认）。三条齐全则 `status = "success"`、`bids = []`、`metadata.emptyState = {verified, marker, tenant_confirmed, method}`，`validateCrawlerImport` 与第 5 节的 `dateFilter` 零条规则并列接受这种零条成功，源健康按成功回写；缺租户确认仍按空结果失败，避免抓错页面的源永远"成功"。
 
+BidNet 等自己会翻页的适配器还能在 `fetch-task` 请求里带上 `list_kind`（`open` / `closed` / `awarded`，默认 `open`）、`start_page`（默认 1）、`max_pages`（默认 4，源可在 `fetch_config.list_pages` 里按 1–50 调整）与 `stop_before`（ISO 日期，历史回补用），由 `crawler/apsi_crawler/list_extraction.py` 的 `run_paginated_list_extraction()` 驱动；适配器自己的"页面读取器"（`page_reader`，BidNet 是 `read_bidnet_list_page()`）负责读出每页的下一页链接、页码、打印总数和 `<title>`。**每页仍然只发一次列表请求**：Scrapling 解析出的行按 `source_bid_id` 与该页读取器看到的行逐条覆盖合并——读取器认识的字段（编号、地区、状态、日期）覆盖 sidecar 的猜测，读取器没认出来的行仍然保留但套用整页的默认状态（例如 awarded 列表上一条只有 sidecar 认出的行会被按"已中标"处理，而不是被归一化器默认成 `open`）；同时逐页比对两条路径看到的招标 id 集合，任何一页对不上都会让这次运行判为不完整。`metadata.pagination = {list_kind, start_page, pages_fetched, next_page, stopped_reason, requests_made, complete}` 里的 `stopped_reason` 目前有六种：`exhausted`（自然翻完）、`max_pages`（到页数上限）、`window`（碰到 `stop_before`）、`limit`（够了调用方要的条数）、`unreadable_page`（某页读取器一行都读不出来，该页 Scrapling 解析出的行仍会保留但翻页立即停止，这次运行永远不算 `complete`）、`repeated_page`（"下一页"绕回了已经抓过的页面）。`complete = true` 要求翻页自然到底、从第 1 页开始、每页两条路径的招标 id 完全一致、没被 `limit` / `query` 截断、第 1 页的打印总数每页一致且等于去重后条数、且第 1 页 `<title>` 确认了租户身份；套了发布日期过滤（`date_range`）的运行永远不算完整。翻页固定走适配器自己的请求方法（沿用既有礼貌节流），不会因为 `list_extraction.render: true` 就改走渲染 sidecar——翻页一次运行的请求数远高于单页阶段，改走渲染正是触发 WAF 挑战的"密集连续扫段"。运维见[招标生命周期、BidNet 翻页与平台预算](../operations/bid-lifecycle-and-crawl-budget.md)。
+
 县/市/特别区行在人工批准前由 `orchestrator.ts` 的 `blockedReasonFor()` 拦截，Python 不会启动。`POST /api/admin/data-sources/[id]/precheck`（`src/server/admin/source-precheck.ts`，admin/operator）为这一决定提供证据：robots.txt 扫描 → 跳过门禁但不入库的 `limit=5` 试抓 → 仅在 404 时调用只读的 `discover-tenant`，返回 `ready | empty | needs_fix` 判定、robots 结论、试抓样本与所用列表解析器，以及可选的 `suggestedBaseUrl`（由管理员确认后才写回 `base_url`），并把结论落到 `robots_txt_*` / `live_health_*`。批准本身仍走既有的 `PATCH /api/admin/data-sources/[id]`，一次写入批准列与合规台账列。同平台限流由 `platform-deferral.ts` 处理：同 `provider_family` 的源间隔 `CRAWLER_PLATFORM_MIN_INTERVAL_MS`，其中一个遇挑战/限流后本批剩余同平台源记 `status: "deferred"`（不回写健康、不重试）。操作手册见 [`docs/operations/local-source-approval.md`](../operations/local-source-approval.md)。
 
 ## 4c. 数据源主动发现（在上述链路之前）
@@ -102,6 +104,8 @@ flowchart TD
 日期窗口在补全之后执行，缺失或无法解析的日期保留。合法零条成功必须带有效窗口、`kept=0`、正整数 dropped、`unparsed=0`；两种数据库都落成功日志。未经说明的空列表拒绝入库。
 
 SQLite/MySQL 在同一事务写招标、附件和运行日志；MySQL 使用一个借用连接。任一写入失败回滚；释放连接后尽力写独立失败日志，因此单连接池不会等待自己。失败结果是 `CrawlerPersistenceError`，不更新成功时间、不发送本次成功提醒。数据库完全不可用时只能返回错误，不能保证错误日志入库。
+
+**招标生命周期与下架**同样在这个事务里完成：`bids` 新增 `lifecycle_status`（`open` / `closed` / `awarded`）、`awarded_date`、`solicitation_number` 三列，`is_active` 恒等于 `lifecycle_status = 'open'`。两个 JSON 导入器共用的 `persistence-merge.ts`（`mergeLifecycleFields`）在合并每条招标时做状态流转：已经是 `awarded` 的招标不会被本次的 `closed` 结果降级，其余情况以本次抓到的状态为准。只有当一次开放列表运行 `status = "success"` 且 `metadata.pagination.complete = true` 时（`lifecycle.ts` 的 `delistingApplies()`），导入器才会在同一个事务里把该源本次没有出现的其余 `open` 招标批量置为 `closed`（`raw_payload.lifecycle.closed_reason = "delisted"`），"该源"按招标 id 前缀 `<source_id>:` 圈定；失败、被截断、带日期窗口的运行一律不做这次下架。运维见[招标生命周期、BidNet 翻页与平台预算](../operations/bid-lifecycle-and-crawl-budget.md)。
 
 详情展示通过 `getBidDescription` 选择有效正文；搜索与提醒查询包含 full_description。Scrapling 发现远程附件链接不代表文件已经下载，附件归档仍由既有归档流程负责。
 
