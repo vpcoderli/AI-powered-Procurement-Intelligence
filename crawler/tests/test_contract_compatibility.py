@@ -51,12 +51,11 @@ def test_fetch_task_echoes_task_id_from_the_contract_payload(monkeypatch, capsys
     payload.get("taskId") instead of payload.get("task_id") -- actually fails this test.
 
     limit and query are asserted too, but they are NOT discriminating for this
-    particular fixture: fetch_task's own fallback behaviour
-    (`int(payload.get("limit") or 25)`, and `payload.get("query")` defaulting to None)
-    happens to produce the exact same values the fixture already carries (limit=25,
-    query=null). A renamed key would silently reproduce these values here. task_id has
-    no such fallback, so the taskId assertion below is the one that is genuinely
-    protected by this test. See
+    particular fixture: the fixture carries limit=null, and fetch_task's own fallback
+    behaviour (`int(payload.get("limit") or 25)`) converts it to 25; query=null in the
+    fixture equals the default when the key is absent entirely. A renamed key would
+    silently reproduce these values here. task_id has no such fallback, so the taskId
+    assertion below is the one that is genuinely protected by this test. See
     test_fetch_task_reads_every_directly_read_field_by_its_real_key below for value
     choices that close that gap for limit/query/provider_family/jurisdiction_level.
     """
@@ -77,7 +76,7 @@ def test_fetch_task_echoes_task_id_from_the_contract_payload(monkeypatch, capsys
     assert exit_code == 0
     assert result["status"] == "success"
     assert result["taskId"] == payload["task_id"]
-    assert seen["limit"] == payload["limit"]
+    assert seen["limit"] == (payload["limit"] if payload["limit"] is not None else 25)
     assert seen["query"] == payload["query"]
 
 
@@ -86,8 +85,8 @@ def test_fetch_task_reads_every_directly_read_field_by_its_real_key(monkeypatch,
     jurisdiction_level are read under their correct keys, because its own sample values
     collide with fallback/short-circuit behaviour on the Python side:
 
-    - limit=25 in the fixture equals fetch_task's own `or 25` fallback default, so a
-      renamed key ("Limit") would silently produce the identical value.
+    - limit=null in the fixture gets folded to fetch_task's own `or 25` fallback default
+      (25), so a renamed key ("Limit") would silently produce the identical value.
     - query=null in the fixture equals the default when the key is absent entirely, so
       a renamed key ("Query") would also silently produce the identical value.
     - jurisdiction_level="state" in the fixture equals task.py's own
