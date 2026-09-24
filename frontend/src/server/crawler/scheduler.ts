@@ -2,6 +2,8 @@ import type { CrawlableSource } from "./source-registry";
 
 export interface SchedulerOptions {
   platformConcurrencyCap?: number;
+  /** Families spending a request budget are not capped per tick; the budget limits them. */
+  uncappedFamilies?: ReadonlySet<string>;
 }
 
 const DEFAULT_PLATFORM_CONCURRENCY_CAP = 10;
@@ -144,7 +146,7 @@ export function selectDueSources(
   const cap = options?.platformConcurrencyCap ?? DEFAULT_PLATFORM_CONCURRENCY_CAP;
   const familyCounts = new Map<string, number>();
   return interleaved.filter((s) => {
-    if (s.providerFamily === null) return true;
+    if (s.providerFamily === null || options?.uncappedFamilies?.has(s.providerFamily)) return true;
     const count = familyCounts.get(s.providerFamily) ?? 0;
     if (count >= cap) return false;
     familyCounts.set(s.providerFamily, count + 1);

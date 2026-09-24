@@ -11,13 +11,26 @@ import {
   type RunCrawlerSourceOnceResult,
 } from "./orchestrator";
 import { recordSourceHealthOutcome } from "./source-health-outcome";
-import { PlatformDeferralTracker, platformDeferredResult, type PlatformDeferralOptions } from "./platform-deferral";
+import {
+  PlatformDeferralTracker,
+  isPlatformThrottleSignature,
+  platformDeferredResult,
+  type PlatformDeferralOptions,
+} from "./platform-deferral";
+import {
+  DEFAULT_TICK_MS,
+  PlatformPauseRegistry,
+  PlatformTickBudget,
+  platformBudgetsFromEnv,
+  platformPauseMs,
+  requestsMadeOf,
+} from "./platform-budget";
 import type { CrawlerExecutionContext } from "./execution-context";
 import { persistCrawlTaskResult } from "./crawl-task-persistence";
 import { runSamGovCrawler } from "./sam-gov-runner";
 import { listCrawlableSources, listCrawlableSourcesFromMysql, type CrawlableSource } from "./source-registry";
 import { selectDueSources } from "./scheduler";
-import { runCrawlTask, type CrawlTaskOptions, type CrawlTaskResult } from "./state-runner";
+import { listPagesFor, runCrawlTask, type CrawlTaskOptions, type CrawlTaskResult } from "./state-runner";
 
 export { buildCrawlerFailureInput } from "./source-health-outcome";
 
@@ -37,6 +50,14 @@ export interface RunConfiguredCrawlerSourcesOnceOptions {
   runCrawlerSourceOnce?: ConfiguredRunner;
   /** Contract C7 knobs (injectable sleeper/interval); defaults come from the environment. */
   platformDeferral?: PlatformDeferralOptions;
+  /** Hourly request budgets per provider_family (spec 2026-09-24 §5.5); defaults from CRAWLER_PLATFORM_BUDGETS over `bidnet=60`. */
+  platformBudgets?: Map<string, number | null>;
+  /** Length of one worker tick: a tick may spend budget × tickMs / 1 h. Defaults to 15 minutes. */
+  tickMs?: number;
+  /** The worker passes one registry for its lifetime so a pause outlives a tick; default: fresh per call. */
+  platformPauses?: PlatformPauseRegistry;
+  /** Wall clock for pauses (tests). */
+  clock?: () => number;
 }
 
 export function parseStateCrawlerLimit() {
@@ -68,17 +89,48 @@ export async function runConfiguredCrawlerSourcesOnce(
     ? await listCrawlableSourcesFromMysql(options.mysql)
     : listCrawlableSources(options.database);
 
-  const dueSources = selectDueSources(allSources, now);
+  // Per-platform hourly request budget (spec 2026-09-24 §5.5): a tick may spend at most its
+  // share of each budgeted family's hourly allowance, and a family that just answered with a
+  // throttle signature is paused for CRAWLER_PLATFORM_PAUSE_MS regardless of budget. Neither
+  // check contacts the source, records a result, or consumes a retry — the source stays due
+  // for a later tick.
+  const budget = new PlatformTickBudget(options.platformBudgets ?? platformBudgetsFromEnv(), options.tickMs ?? DEFAULT_TICK_MS);
+  const pauses = options.platformPauses ?? new PlatformPauseRegistry();
+  const clock = options.clock ?? (() => Date.now());
+  const pauseMs = platformPauseMs();
+  const skipped = new Map<string, { paused: number; budget: number }>();
+  const skip = (family: string, reason: "paused" | "budget") => {
+    const counts = skipped.get(family) ?? { paused: 0, budget: 0 };
+    counts[reason] += 1;
+    skipped.set(family, counts);
+  };
+
+  // Budgeted families are no longer subject to the flat per-tick concurrency cap; the budget
+  // itself decides how many of them run this tick.
+  const dueSources = selectDueSources(allSources, now, { uncappedFamilies: budget.budgetedFamilies() });
   const results: RunCrawlerSourceOnceResult[] = [];
   const platform = new PlatformDeferralTracker(options.platformDeferral);
 
   for (const source of dueSources) {
+    const family = source.providerFamily;
     const isSamGov = source.id === "sam_gov" || source.issuerType === "federal";
 
+    // Same-tick throttle first: the existing C7 behavior reports these as `deferred` results.
     const throttledBy = platform.deferredBy(source);
     if (throttledBy) {
       // Never contacted: no health write-back, no notifications, no retry.
       results.push(platformDeferredResult(source.id, throttledBy));
+      continue;
+    }
+    // Paused by an earlier tick, or out of this tick's budget: not contacted, not a result,
+    // still due next tick.
+    if (family && pauses.pausedUntil(family, clock()) !== null) {
+      skip(family, "paused");
+      continue;
+    }
+    const reserved = budget.isBudgeted(family) ? budget.reserve(family, listPagesFor(source)) : null;
+    if (budget.isBudgeted(family) && reserved === null) {
+      skip(family, "budget");
       continue;
     }
     await platform.waitForPlatformSlot(source);
@@ -105,8 +157,14 @@ export async function runConfiguredCrawlerSourcesOnce(
     }
 
     results.push(result);
+    if (reserved !== null && family) budget.settle(family, reserved, requestsMadeOf(result) ?? reserved);
     platform.observe(source, result);
+    if (family && isPlatformThrottleSignature(result)) pauses.pause(family, clock() + pauseMs);
     await recordSourceHealthOutcome(options, source.id, result, (options.now ?? new Date()).toISOString());
+  }
+
+  for (const [family, counts] of skipped) {
+    console.info(JSON.stringify({ event: "crawler_platform_sources_skipped", family, ...counts }));
   }
 
   return results;

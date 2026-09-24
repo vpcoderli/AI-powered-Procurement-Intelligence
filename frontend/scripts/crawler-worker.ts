@@ -2,6 +2,7 @@ import { createDatabase } from "../src/server/db/client";
 import { closeResolvedMysqlPool, isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "../src/server/db/mysql";
 import { runMigrations } from "../src/server/db/migrate";
 import { parseStateCrawlerLimit, runConfiguredCrawlerSourcesOnce } from "../src/server/crawler/configured-runner";
+import { PlatformPauseRegistry } from "../src/server/crawler/platform-budget";
 import { createLogger } from "../src/lib/observability/logger";
 import { captureException } from "../src/lib/observability/sentry";
 
@@ -244,6 +245,9 @@ async function main() {
   const retryingRunCrawlerSourceOnce = createRetryingRunCrawlerSourceOnce(defaultRunCrawlerSourceOnce);
   const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : undefined;
   const notifier = createRetryingCrawlerNotifier(db, mysql);
+  // One registry for the worker's whole lifetime: a platform pause (spec 2026-09-24 §5.5) must
+  // outlive the tick that observed the throttle signature.
+  const platformPauses = new PlatformPauseRegistry();
 
   try {
     while (!stopping) {
@@ -254,6 +258,8 @@ async function main() {
         stateRunnerOptions: { limit: parseStateCrawlerLimit() },
         runCrawlerSourceOnce: retryingRunCrawlerSourceOnce,
         notifier,
+        platformPauses,
+        tickMs: intervalMs(),
       });
       workerLogger.info("crawler_run_completed", { results });
 

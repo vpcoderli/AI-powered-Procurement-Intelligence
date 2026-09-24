@@ -9,6 +9,7 @@ import { runSamGovCrawler } from "./sam-gov-runner";
 import { runCrawlTask } from "./state-runner";
 import { importCrawlerJsonRunIntoSqlite } from "./sqlite-json-importer";
 import type { CrawlerJsonRunPayload } from "./mysql-json-importer";
+import { PlatformPauseRegistry } from "./platform-budget";
 import {
   buildCrawlerFailureInput,
   parseStateCrawlerLimit,
@@ -16,8 +17,13 @@ import {
 } from "./configured-runner";
 
 // Mocked so the "threads stateRunnerOptions" test can observe exactly what configured-runner.ts
-// passes into each runner without spawning a real python3 subprocess.
-vi.mock("./state-runner", () => ({ runCrawlTask: vi.fn() }));
+// passes into each runner without spawning a real python3 subprocess. Partial mock: configured-
+// runner.ts also imports `listPagesFor` from this module (for the platform request budget), so
+// the factory keeps every real export and only replaces `runCrawlTask`.
+vi.mock("./state-runner", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./state-runner")>()),
+  runCrawlTask: vi.fn(),
+}));
 vi.mock("./sam-gov-runner", () => ({ runSamGovCrawler: vi.fn() }));
 // Partial mock: everything delegates to the real implementation (so the "imports crawler JSON
 // payloads" describe block below exercises the real SQLite importer against `testDb.db`)
@@ -416,6 +422,78 @@ describe("runConfiguredCrawlerSourcesOnce reads sources from the database", () =
     });
 
     expect(attempted).toEqual(["closes_the_loop"]);
+  });
+
+  it("stops starting a platform's sources once the tick budget is spent", async () => {
+    for (const id of ["bidnet_a", "bidnet_b", "bidnet_c"]) insertSource(id, { providerFamily: "bidnet", lastSuccessAt: null });
+    const attempted: string[] = [];
+    await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db, owner: "test", now: new Date(NOW), matcher: noopMatcher, notifier: noopNotifier,
+      platformDeferral: { minIntervalMs: 0 }, platformBudgets: new Map([["bidnet", 8]]), tickMs: 60 * 60 * 1000,
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
+        attempted.push(options.source);
+        return { ok: true, source: options.source, status: "success" };
+      }) as never,
+    });
+    // Each run reserves 4 pages and reports no request count, so 8 covers two runs.
+    expect(attempted).toEqual(["bidnet_a", "bidnet_b"]);
+  });
+
+  it("refunds unused pages so cheap runs keep going", async () => {
+    for (const id of ["bidnet_a", "bidnet_b", "bidnet_c"]) insertSource(id, { providerFamily: "bidnet", lastSuccessAt: null });
+    const attempted: string[] = [];
+    await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db, owner: "test", now: new Date(NOW), matcher: noopMatcher, notifier: noopNotifier,
+      platformDeferral: { minIntervalMs: 0 }, platformBudgets: new Map([["bidnet", 5]]), tickMs: 60 * 60 * 1000,
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
+        attempted.push(options.source);
+        return {
+          ok: true, source: options.source, status: "success",
+          runner: { ok: true, source: options.source, status: "success", stdout: "", stderr: "", fetchedCount: 1, payload: { metadata: { pagination: { requests_made: 1 } } } },
+          alertMatching: { evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0 }, notification: { queued: 0, sent: 0, skipped: 0, failed: 0 },
+        };
+      }) as never,
+    });
+    expect(attempted).toEqual(["bidnet_a", "bidnet_b"]);
+  });
+
+  it("keeps a throttled platform paused across ticks that share a pause registry", async () => {
+    insertSource("bidnet_a", { providerFamily: "bidnet", lastSuccessAt: null });
+    insertSource("bidnet_b", { providerFamily: "bidnet", lastSuccessAt: null });
+    const pauses = new PlatformPauseRegistry();
+    let clock = 0;
+    const attempted: string[] = [];
+    const run = () => runConfiguredCrawlerSourcesOnce({
+      database: testDb.db, owner: "test", now: new Date(NOW), matcher: noopMatcher, notifier: noopNotifier,
+      platformDeferral: { minIntervalMs: 0 }, platformPauses: pauses, clock: () => clock,
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
+        attempted.push(options.source);
+        return { ok: false, source: options.source, status: "failure", runner: { ok: false, source: options.source, status: "failure", stdout: "", stderr: "challenge", errorCode: "BidNetChallengeError" } };
+      }) as never,
+    });
+
+    await run();
+    expect(attempted).toEqual(["bidnet_a"]);
+    clock = 29 * 60 * 1000;
+    await run();
+    expect(attempted).toEqual(["bidnet_a"]);
+    clock = 31 * 60 * 1000;
+    await run();
+    expect(attempted[1]).toBeDefined();
+  });
+
+  it("lets a budgeted platform run past the ten-per-tick cap", async () => {
+    for (let index = 0; index < 12; index += 1) insertSource(`bidnet_${String(index).padStart(2, "0")}`, { providerFamily: "bidnet", lastSuccessAt: null });
+    const attempted: string[] = [];
+    await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db, owner: "test", now: new Date(NOW), matcher: noopMatcher, notifier: noopNotifier,
+      platformDeferral: { minIntervalMs: 0 }, platformBudgets: new Map([["bidnet", 1000]]), tickMs: 60 * 60 * 1000,
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
+        attempted.push(options.source);
+        return { ok: true, source: options.source, status: "success" };
+      }) as never,
+    });
+    expect(attempted).toHaveLength(12);
   });
 });
 
