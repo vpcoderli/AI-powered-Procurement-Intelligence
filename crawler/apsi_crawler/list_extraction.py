@@ -459,8 +459,21 @@ def _fetch_paginated_page(source, list_adapter, session, timeout, url):
     return html, final_url
 
 
-def _raise_empty_first_page(source, list_adapter, html, config, request, title):
-    """Page 1 had no rows at all: the adapter's parser decides, as the single-page stage does."""
+def _raise_empty_first_page(source, list_adapter, html, config, request, title, total):
+    """Page 1 had no rows at all: the adapter's parser decides, as the single-page stage does.
+
+    A positive printed total contradicts an empty list outright: BidNet never prints one on a
+    genuinely empty list (Erie's own empty page has none at all). A page that reports zero rows to
+    both the reader and the adapter's own parser while still claiming a positive total is a layout
+    break, not a verified empty tenant -- reported loudly (`ListPageReadError`, which `fetch_task`'s
+    generic `except Exception` turns into a failed run) rather than as a zero-row success that
+    would let `delistingApplies` close every open bid of the source.
+    """
+    if total is not None and total > 0:
+        raise ListPageReadError(
+            "{0}: page 1 printed a total of {1} but the reader and the adapter's own parser both "
+            "found zero rows -- not a verified empty list".format(source.id, total)
+        )
     method = "scrapling" if config["mode"] == "scrapling" else "adapter"
     try:
         list_adapter.parse_list_html(source, html, query=None, limit=1, list_kind=request["list_kind"])
@@ -508,8 +521,10 @@ def run_paginated_list_extraction(
       * it started at page 1 -- a walk starting later never saw the earlier pages;
       * every page's row ids exactly match what the page's own reader saw there (not just a
         superset: a sidecar-only row the reader never corroborated is as suspect as a dropped one);
-      * no page the reader could not read at all was treated as the end of the list (that page
-        stops the walk immediately instead, `stopped_reason == "unreadable_page"`);
+      * no page the reader could not read at all was treated as the end of the list -- the walk
+        stops there immediately instead (`stopped_reason == "unreadable_page"`) and never follows
+        that page's next link, keeping any sidecar rows already found there without ever letting
+        them count toward completeness;
       * nothing was cut by `limit` or `query`;
       * the next link was never a page already fetched (`stopped_reason == "repeated_page"`);
       * page 1's own printed result total is known, every page agreed on it, and the number of
@@ -545,7 +560,7 @@ def run_paginated_list_extraction(
         reading = list_adapter.page_reader(source, html, list_kind)
         page_bids, method, page_diagnostics, reason = _page_bids(source, config, extractor, html, final_url, reading, list_kind)
         if pages_fetched == 1 and not page_bids and not reading.records:
-            _raise_empty_first_page(source, list_adapter, html, config, request, reading.title)
+            _raise_empty_first_page(source, list_adapter, html, config, request, reading.title, reading.total)
 
         methods.append(method)
         diagnostics = page_diagnostics if diagnostics is None else diagnostics
@@ -556,9 +571,20 @@ def run_paginated_list_extraction(
         if not reader_ids:
             # The reader could not read this page at all -- a layout change, or a blank
             # interstitial mid-walk. Trusting it as "the last page" (it may even have no next
-            # link of its own) could delist every bid after it, so stop here instead, without
-            # merging whatever the sidecar alone thought it saw.
+            # link of its own) could delist every bid after it, so the walk stops here and never
+            # follows this page's own next link. But Scrapling is the main list-extraction path
+            # (CLAUDE.md), not the reader: any sidecar rows already found on this same page are
+            # still kept (deduplicated and limit-truncated like any other page) rather than
+            # thrown away -- a reader-only layout break degrades to fewer/uncorroborated rows
+            # instead of turning every run into a zero-row failure. They just can never make this
+            # walk "complete" (adapter mode has no sidecar rows, so nothing changes there).
             stopped_reason = "unreadable_page"
+            new_bids = [bid for bid in page_bids if bid["source_bid_id"] not in seen_ids]
+            seen_ids.update(bid["source_bid_id"] for bid in new_bids)
+            bids.extend(new_bids)
+            if limit is not None and query is None and len(bids) > int(limit):
+                bids = bids[: int(limit)]
+                stopped_reason = "limit"
             break
         if reader_ids != page_ids:
             covered = False

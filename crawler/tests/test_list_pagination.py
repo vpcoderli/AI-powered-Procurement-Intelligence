@@ -11,6 +11,7 @@ from apsi_crawler.adapters.task import TaskSource
 from apsi_crawler.errors import VerifiedEmptyListError
 from apsi_crawler.list_extraction import (
     ListExtractionError,
+    ListPageReadError,
     resolve_list_extraction_config,
     resolve_pagination_request,
     run_paginated_list_extraction,
@@ -50,6 +51,32 @@ LOOPING_PAGE = (
 NO_ROWS_FOR_THE_READER = "<html><head><title>{0}</title></head><body>No table rows here.</body></html>".format(
     DENVER_TITLE
 )
+
+# Same, but with its own (dangerous) next link -- proving an unreadable page 2 never gets followed
+# even while its sidecar rows are kept.
+NO_ROWS_FOR_THE_READER_WITH_NEXT_LINK = (
+    "<html><head><title>{0}</title></head><body>No table rows here."
+    '<div class="mets-page-navigation-next"><a href="/colorado/city-and-county-of-denver-general-'
+    'services-purchasing/solicitations/closed-bids?pageNumber=3&selectedContent=BUYER">Next</a></div>'
+    "</body></html>"
+).format(DENVER_TITLE)
+
+# A layout break, not an empty list: the reader finds zero rows, but the page still prints a
+# positive total and a (newly-visible) "no open bids" phrase -- round-2 finding #1's repro.
+FALSE_EMPTY_WITH_POSITIVE_TOTAL = (
+    "<html><head><title>{0}</title></head><body>"
+    '<span class="simpleResultsNumResults">16 Open Solicitations</span>'
+    "<p>There are no open bids at this time.</p>"
+    "</body></html>"
+).format(DENVER_TITLE)
+
+# Same shape, but BidNet's own zero-total case: still a genuine verified-empty list.
+FALSE_EMPTY_WITH_ZERO_TOTAL = (
+    "<html><head><title>{0}</title></head><body>"
+    '<span class="simpleResultsNumResults">0 Open Solicitations</span>'
+    "<p>There are no open bids at this time.</p>"
+    "</body></html>"
+).format(DENVER_TITLE)
 
 
 def _source(label="City and County of Denver General Services Purchasing (BidNet)", base_url=DENVER + "/solicitations/open-bids"):
@@ -253,7 +280,10 @@ def test_sidecar_failure_falls_back_to_the_reader_rows_per_page():
     assert len(bids) == 31 and pagination["complete"] is True
 
 
-def test_reader_finds_nothing_but_the_sidecar_does_makes_the_run_incomplete():
+def test_reader_finds_nothing_but_the_sidecar_does_keeps_the_sidecar_rows_and_stops():
+    # Scrapling is the main list-extraction path (CLAUDE.md): a row the reader could not
+    # corroborate is still kept, not thrown away -- it just cannot make the walk "complete", and
+    # the walk still stops here rather than trust a page it could not itself read.
     fetcher = PagedFetcher({DENVER + "/solicitations/closed-bids?selectedContent=BUYER": NO_ROWS_FOR_THE_READER})
     extractor = Extractor(lambda html: [{
         "title": "Ghost row", "url": "https://www.bidnetdirect.com/colorado/9999999?x",
@@ -264,7 +294,37 @@ def test_reader_finds_nothing_but_the_sidecar_does_makes_the_run_incomplete():
         _source(), fetcher.adapter(), _scrapling_config(), _request(), extractor=extractor
     )
 
-    assert len(bids) == 0  # an uncorroborated sidecar row is never trusted on its own
+    assert len(bids) == 1
+    ghost = bids[0]
+    assert ghost["source_bid_id"] == "9999999"
+    assert (ghost["lifecycle_status"], ghost["raw_payload"]["list_kind"]) == ("closed", "closed")
+    assert pagination["stopped_reason"] == "unreadable_page"
+    assert pagination["complete"] is False
+
+
+def test_an_unreadable_page_two_keeps_its_sidecar_rows_but_never_follows_its_next_link():
+    fetcher = PagedFetcher({
+        DENVER + "/solicitations/closed-bids?selectedContent=BUYER": CLOSED,
+        PAGE_TWO: NO_ROWS_FOR_THE_READER_WITH_NEXT_LINK,
+    })
+
+    def items_for(html):
+        # Page 1's real rows for the real fixture; page 2 has none for this regex to find, so it
+        # falls back to one ghost row standing in for "the sidecar still saw something here".
+        found = _sidecar_items(html)
+        return found if found else [{
+            "title": "Ghost row", "url": "https://www.bidnetdirect.com/colorado/9999999?x",
+            "published_date": None, "deadline_date": None, "source_bid_id": "9999999", "issuer_name": None,
+        }]
+
+    bids, _stats, pagination = run_paginated_list_extraction(
+        _source(), fetcher.adapter(), _scrapling_config(), _request(), extractor=Extractor(items_for)
+    )
+
+    assert fetcher.urls == [DENVER + "/solicitations/closed-bids?selectedContent=BUYER", PAGE_TWO]  # page 3 never fetched
+    assert len(bids) == 26  # page 1's 25 real rows plus page 2's one uncorroborated sidecar row
+    ghost = next(bid for bid in bids if bid["source_bid_id"] == "9999999")
+    assert (ghost["lifecycle_status"], ghost["raw_payload"]["list_kind"]) == ("closed", "closed")
     assert pagination["stopped_reason"] == "unreadable_page"
     assert pagination["complete"] is False
 
@@ -355,6 +415,29 @@ def test_an_empty_first_page_is_a_verified_empty_list_with_complete_pagination()
         "list_kind": "open", "start_page": 1, "pages_fetched": 1, "next_page": None,
         "stopped_reason": "exhausted", "requests_made": 1, "complete": True,
     }
+
+
+def test_a_positive_total_on_a_verified_empty_looking_page_is_never_trusted_as_empty():
+    # BidNet never prints a total on a genuinely empty list (Erie's own empty page has none at
+    # all): a page that looks empty to both the reader and the empty-marker check, yet still
+    # prints "16 Open Solicitations", is a layout break, not a verified empty tenant.
+    fetcher = PagedFetcher({DENVER + "/solicitations/open-bids": FALSE_EMPTY_WITH_POSITIVE_TOTAL})
+
+    with pytest.raises(ListPageReadError) as error:
+        run_paginated_list_extraction(_source(), fetcher.adapter(), _adapter_config(), _request(list_kind="open"))
+
+    assert "bidnet_co_denver" in str(error.value)
+    assert "16" in str(error.value)
+
+
+def test_a_zero_total_is_still_a_verified_empty_list():
+    fetcher = PagedFetcher({DENVER + "/solicitations/open-bids": FALSE_EMPTY_WITH_ZERO_TOTAL})
+
+    with pytest.raises(VerifiedEmptyListError) as error:
+        run_paginated_list_extraction(_source(), fetcher.adapter(), _adapter_config(), _request(list_kind="open"))
+
+    assert error.value.tenant_confirmed is True
+    assert error.value.pagination["complete"] is True
 
 
 def test_an_empty_page_confirming_the_wrong_tenant_is_incomplete():
