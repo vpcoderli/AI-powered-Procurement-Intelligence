@@ -41,6 +41,8 @@ Scrapling 仍是列表解析的主路径：抓到的每一页 HTML 交给抽取 
 
 只有翻页**自然走到底**（`stopped_reason = "exhausted"`）、从第 1 页开始、每一页 Scrapling 解析出的招标 id 与该页读取器看到的 id 完全一致、没有被 `limit` / `query` 截断、第 1 页打印的总数（例如页面上的"97 Open Solicitations"）每一页都一致且等于收集到的不重复招标数、第 1 页 `<title>` 确实是本租户名字（源 label 去掉"(Platform)"后缀和结尾", XX"州码后逐字比较）——这些条件同时满足时 `metadata.pagination.complete` 才是 `true`。第 1 节的下架动作只在 `complete = true` 时触发。
 
+第 1 页本身一行都读不出来是单独一种情形（`crawler/apsi_crawler/list_extraction.py` 的 `_raise_empty_first_page()`），不算上面的翻页流程：只有当适配器自己的解析器也确认这是"已验证空态"（`VerifiedEmptyListError`：租户确认 + 命中窄集合空态文案）、且第 1 页 `<title>` 确认了租户身份时，才按 `complete = true` 的零条成功处理（`stopped_reason` 固定为 `exhausted`）。第 1 页如果打印着一个大于 0 的总数，却一行都读不出来（Scrapling 和适配器都读不出），这不算空态，是页面结构出了问题：直接抛出 `ListPageReadError`，让整次运行以 `status: "failure"` 收场，而不会被安静地当成"这源确实没有招标"去清空原有的 open 招标。
+
 ## 3. 会员锁：BidNet 详情页锁住的字段
 
 BidNet 把发标机构、正文、招标文件、采购联系人这四类信息锁在会员登录之后（`crawler/apsi_crawler/spiders/co_bidnet.py` 的 `BIDNET_DETAIL_ACCESS = {"restricted": ["description", "documents", "contact"], "platform": "BidNet"}`，写进每条招标记录的 `raw_payload.detail_access`）。APSi 不注册 BidNet 账号、不登录、不代抓这些字段——库里这些字段本来就是空的，不是抓取失败。
@@ -49,7 +51,7 @@ BidNet 把发标机构、正文、招标文件、采购联系人这四类信息�
 
 ## 4. 平台请求预算
 
-`CRAWLER_PLATFORM_BUDGETS` 按"平台每小时请求数"配置，格式 `bidnet=60,bonfire=30`，某个平台写 `unlimited` 表示不设上限；不设该变量时只有 `bidnet` 有默认预算（`frontend/src/server/crawler/platform-budget.ts` 的 `DEFAULT_PLATFORM_BUDGETS = { bidnet: 60 }`）。没有被预算表覆盖的平台不受这套机制约束，沿用旧的"每 tick 每平台最多 10 个源"并发上限；受预算约束的平台从这个并发上限里排除（预算本身就是限流器，不需要再叠加并发上限）。
+`CRAWLER_PLATFORM_BUDGETS` 按"平台每小时请求数"配置，格式 `bidnet=60,bonfire=30`；不设该变量时只有 `bidnet` 有默认预算（`frontend/src/server/crawler/platform-budget.ts` 的 `DEFAULT_PLATFORM_BUDGETS = { bidnet: 60 }`）。某个平台写 `unlimited` 只是不给它算"每小时额度"（`PlatformTickBudget` 构造时直接跳过 `perHour === null` 的平台，不放进 `allowance`），**不等于这个平台不受任何数量限制**：`unlimited` 和"完全没写进 `CRAWLER_PLATFORM_BUDGETS`"其实是同一种效果——两者都不在 `budgetedFamilies()`（也就是 `configured-runner.ts` 传给调度器的 `uncappedFamilies`）里，因此都要退回旧的"每 tick 每平台最多 10 个源"并发上限（`scheduler.ts` 的 `selectDueSources()`）。真正跳过这个并发上限、只按预算走的，只有写了具体数字（如 `bidnet=60`）的平台。
 
 每个 tick 能花的额度 = `⌊平台每小时额度 × tick 时长 ÷ 1 小时⌋`，下限 1（`PlatformTickBudget`）。worker 默认一个 tick 15 分钟（`DEFAULT_TICK_MS`，跟 `CRAWLER_WORKER_INTERVAL_MS` 是同一个值），按公式默认每 tick 给 `bidnet` 15 次请求额度。每个源开跑前按它这次最多会翻的页数（`listPagesFor()`，默认 4）预扣额度，跑完后按实际 `metadata.pagination.requests_made`（翻页次数 + 详情补全请求数）多退少补。额度不够时这个源本 tick 直接跳过——不算失败、不占重试次数，下一个 tick 还会正常排上。
 
