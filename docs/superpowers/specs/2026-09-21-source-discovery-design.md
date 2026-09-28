@@ -79,6 +79,8 @@ discover-sources (Python CLI, 只读)
 }
 ```
 
+上面的示例保留 2026-09-21 原样；`levels` 的默认值 2026-09-24 起改为 `["county", "city", "township"]`（见 2026-09-24 设计 §6.5）。
+
 `states` 省略表示全部；给出明确列表时，**组无法解析出州码的机构不计入结果**，只计入 `stats.unresolved_state_skipped`（否则 `states: ["OH"]` 会把 `mitn`、`bgis` 等非州组一并带出）。`existing_sources` 用于给库里已有（尤其是 404）的源反查目录建议，其 `base_url` 同时参与去重；`existing_base_urls` 用于去重；`existing_ids` 只占用 id。去重按**租户**而不是 id 判定，只给 `existing_ids` 而没有任何已登记地址的请求退出码 2——见文末 2026-09-23 修订。
 
 响应（stdout，单个 JSON；诊断走 stderr；逐项失败不影响整体，退出码 0；请求非法退出码 2）：
@@ -112,7 +114,7 @@ discover-sources (Python CLI, 只读)
 }
 ```
 
-`candidates[]` 的前十个字段与 `frontend/scripts/register-sources.ts` 的 `SourceCandidate` **逐字段一致**（多出的 `discovery` 块被该脚本忽略，仅供人工审阅）。整份响应文件可原样交给 `source:register`（2026-09-23 修订）。
+`candidates[]` 的前十一个字段与 `frontend/scripts/register-sources.ts` 的 `SourceCandidate` **逐字段一致**（多出的 `discovery` 块被该脚本忽略，仅供人工审阅）。整份响应文件可原样交给 `source:register`（2026-09-23 修订）。
 
 ### 4.3 抓取规则
 

@@ -98,7 +98,7 @@ SELECT id, label, state_code, base_url, jurisdiction_level FROM data_sources WHE
 | --- | --- |
 | `pages` / `agencies` | 实际翻了几页、拿到几家机构 |
 | `county` / `city` / `township` / `special_district` / `unknown` | 分类桶。恒等式：五者之和 **等于** `agencies` |
-| `unmatched` | 进到 FIPS 匹配那一步却没匹配上的 county/city 数（`ambiguous` + `not_found`） |
+| `unmatched` | 进到 FIPS 匹配那一步却没匹配上的 county/city/township 数（`ambiguous` + `not_found`） |
 | `prefix_matched` | 靠"郡名前缀"规则拿到 GEOID 的候选数，即 `confidence: "jurisdiction_prefix"` 的条数，见第 6 节 |
 | `duplicates` | 租户已登记（slug 命中 `existing_sources[].base_url` / `existing_base_urls`）而跳过的机构数 |
 | `harvest_duplicates` | 翻页过程中重复出现的租户路径数（采集器自己的去重计数，与上面一条不是一回事） |
@@ -194,7 +194,7 @@ discover-sources output: 43 pages, 2036 agencies, stopped_reason=exhausted; 819 
 
 ### FIPS 匹配（`match_jurisdiction`）
 
-- 归一化 `name_key`：转小写、去标点、折叠空格、去前缀 `city of` / `town of` / `village of` / `county of` / `city and county of` / `township of` / `charter township of`（`charter township of` 排在 `township of` 前面，名字以它开头时不会只剥掉 `township of` 剩下孤零零的 `charter`）、反复去后缀 `county` / `parish` / `borough` / `city` / `town` / `village` / `township` / `twp`——剥掉 `township` / `twp` 后如果剩下的末词是 `charter`，一并剥掉（"Delta Charter Township" → `delta`）。
+- 归一化 `name_key`：转小写、去标点、折叠空格、去前缀 `city of` / `town of` / `village of` / `county of` / `city and county of` / `township of` / `charter township of`、反复去后缀 `county` / `parish` / `borough` / `city` / `town` / `village` / `township` / `twp`——剥掉 `township` / `twp` 后如果剩下的末词是 `charter`，一并剥掉（"Delta Charter Township" → `delta`）。
 - 在**同一州内**按 `name_key` 精确匹配；`county` 查 county 行，`city` 查 place 行，`township` **只查 `cousub` 行**——Census 把 town/township 单独存一张表，与郡、市镇村分开（第 9 节）。唯一命中 → `discovery.confidence: "exact"`，`discovery.matchedPrefix: null`。
 - 机构名里带 "Charter" 时，`township` 的匹配只在名字以 "... charter township" 结尾的行里找；不带 "Charter" 时普通 township 与 charter township 两类都在候选之内——名字没提 "Charter"，不代表实际不是 charter township。
 - **郡名前缀规则**（仅 `county`、仅在精确匹配失败后）：机构名以 `<X> County` / `<X> Parish` 开头，且 `<X>` 在该州唯一对应一个郡时，取那个郡的 GEOID，记 `discovery.confidence: "jurisdiction_prefix"`、`discovery.matchedPrefix: "<X> County"`，计入 `stats.prefix_matched`。这样 `Alameda County Public Works Agency`、`Archuleta County Sheriff's Office` 这类**郡下属采购部门**才能进候选，而不是被整批丢掉。**`township` 与 `city` 都没有这条前缀规则**，只有 `county` 有。
@@ -293,6 +293,8 @@ python3 scripts/refresh_jurisdictions.py \
 - 发现结果是某一时刻的目录快照。机构会上线、改名、退出平台，所以每次批量注册前都应重新跑一次，而不是复用旧的 `candidates.json`。
 - **已知限制（未修）：`Charter Township of Port Huron` 会被判成特别区**。特别区规则里的整词 `port` 命中了 "Port Huron" 里的 "Port"，而特别区规则排在 `township` 之前，所以这条机构名分类成 `special_district`，进 `review` 而不是候选。
 - **已知限制（未修）：Utah 的 "metro township" 匹配不到**。Census 把 Copperton、Emigration Canyon、Kearns、Magna、White City 这五个 Utah 地名登记成建制市镇（`place`，LSAD 是 "metro township"），不是县以下行政区（`cousub`）；`township` 级别只查 `cousub` 行，所以名字含 "township" 又指向这五处之一的机构会匹配失败，落进 `review`（`no_fips_match`）而不是候选。附带影响：`township`/`twp` 加入 `name_key` 的尾部去除词之后，这五个 `place` 行的 key 从整段变成去掉最后一词（如 `kearns metro township` → `kearns metro`）；地名表和郡表里没有别的名字撞上这五个新 key，其余匹配结果不受影响。
+- **已知限制（未修）：密歇根 charter township 的 Census 名可能不带 charter**。机构名带 "Charter" 时只匹配 `… charter township` 行（第 6 节规则），而 Census 把 Brighton / Northville / East China 这三个 charter township 记为普通的 `Brighton township` 等 → `no_fips_match`。2026-09-21 目录里有 3 家这样的机构。放宽（同州没有 charter 行时回退到普通 township 行，仍是精确、同州、唯一）需要先改设计稿，本轮不改。
+- **已知限制（未修）：Census 记为 place 的 town 政府**。8 个 town 州里叫 "Town of X" 的机构按 `township` 只查 `cousub` 行；马萨诸塞采用市政府形式的 town 在 Census 里是 place `X Town city`（表里 13 行），所以 `Town of West Springfield` → `no_fips_match`（阶段 2 之前它按 city 配到 place `2577890`）；康涅狄格的合并市镇同理（`Town of Hartford` 查不到，`City of Hartford` 能配上）。这是阶段 2 唯一的匹配回退。修法（例如把 `… Town city` 行纳入 township 匹配并把 designation 记为 `town`）需要先改设计稿，本轮不改；**不要**加盲目的 place 回退——`Town of Rye` → `Rye city` 正是阶段 2 修掉的错误。
 
 ## 首轮实测（2026-09-21，全量 BidNet）
 

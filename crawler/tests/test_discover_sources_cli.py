@@ -18,7 +18,7 @@ from apsi_crawler.discovery_service import (
 )
 
 
-# The ten fields `frontend/scripts/register-sources.ts` declares on `SourceCandidate`.
+# The eleven fields `frontend/scripts/register-sources.ts` declares on `SourceCandidate`.
 # `frontend/scripts/register-sources.test.ts` asserts the Node side of the same contract.
 SOURCE_CANDIDATE_FIELDS = {
     "id",

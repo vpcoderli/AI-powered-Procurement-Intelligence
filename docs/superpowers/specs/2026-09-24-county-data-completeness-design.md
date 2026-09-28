@@ -199,6 +199,8 @@
 - **注册脚本的建议保护**（`frontend/scripts/register-sources.ts`）：候选的 `baseUrl` 命中 `existingMatches` 里某条已确认（`exact`/`partial`）建议——即这个租户其实该配给某个已有源——时，`source:register` 默认**扣下这条候选不注册**，只打印应执行的 `PATCH /api/admin/data-sources/<id>`；确认建议是错的（例如反查命中的其实是该辖区下独立发标的一个部门，而不是辖区本身）时加 `--allow-suggested` 照常注册。这就是 §6.4 "按运行手册改指旧行，不另注册新 id" 在代码里的落实方式。
 - **更正 §6.2**："地名表和郡表里没有以这些词结尾的名字，现有匹配结果不变"不完全准确：Census 地名表里恰有五个以 "metro township" 结尾的 Utah 地名（Copperton、Emigration Canyon、Kearns、Magna、White City）。`township`/`twp` 加入后缀去除词后，它们的 `name_key` 从整段变为去掉最后一词（如 `kearns metro township` → `kearns metro`）。因为没有别的郡/市名字与这五个新 key 冲突，"匹配结果不变"这个结论仍然成立，但准确说法是"没有产生新的冲突"，而不是"这些 key 没有变化"。
 - **已知限制，本阶段未修**：`Charter Township of Port Huron` 会被分类成 `special_district`（特别区规则里的整词 `port` 排在 township 规则之前，先一步命中）；Utah 的 "metro township" 在 Census 里登记成建制市镇（`place`），不是县以下行政区（`cousub`），`township` 级别只查 `cousub` 表，所以这类机构匹配不到，落进 `review`。
+- **已知限制，本阶段未修**：密歇根 charter township 的 Census 名可能不带 charter。机构名带 "Charter" 时只匹配 `… charter township` 行（§6.3 规则），而 Census 把 Brighton / Northville / East China 这三个 charter township 记为普通的 `Brighton township` 等 → `no_fips_match`；2026-09-21 目录里有 3 家这样的机构。放宽（同州没有 charter 行时回退到普通 township 行，仍是精确、同州、唯一）需要先改设计稿，本轮不改。
+- **已知限制，本阶段未修**：Census 记为 place 的 town 政府。8 个 town 州里叫 "Town of X" 的机构按 `township` 只查 `cousub` 行；马萨诸塞采用市政府形式的 town 在 Census 里是 place `X Town city`（表里 13 行），所以 `Town of West Springfield` → `no_fips_match`（阶段 2 之前它按 city 配到 place `2577890`）；康涅狄格的合并市镇同理（`Town of Hartford` 查不到，`City of Hartford` 能配上）。这是阶段 2 唯一的匹配回退。修法（例如把 `… Town city` 行纳入 township 匹配并把 designation 记为 `town`）需要先改设计稿，本轮不改；**不要**加盲目的 place 回退——`Town of Rye` → `Rye city` 正是阶段 2 修掉的错误。
 
 ## 7. 阶段 3：批量接入与治理
 

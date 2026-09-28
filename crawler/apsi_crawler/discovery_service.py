@@ -518,7 +518,7 @@ def discover_sources(
         taken_ids.add(source_id)
         candidates.append(
             {
-                # The ten fields below are `SourceCandidate` in
+                # The eleven fields below are `SourceCandidate` in
                 # `frontend/scripts/register-sources.ts`, field for field. Changing one means
                 # changing both, and `register-sources.test.ts` fails when they drift.
                 "id": source_id,

@@ -305,8 +305,9 @@ def harvest_bidnet(request, session=None, sleep=None, fetch_html=None):
     length of the list actually returned — deduped and `states`-filtered — so a consumer that
     classifies that list can keep its own counts summing to it. `stats.duplicates` records how
     many repeated tenant paths were dropped on the way, and `stats.unresolved_state_skipped` how
-    many were excluded by a `states` filter because their group resolves to no state (always 0
-    when no filter is active). Alongside those, `pages` and `stopped_reason`:
+    many were excluded by a `states` filter because neither the name's comma-state nor the group
+    resolves a state (always 0 when no filter is active). Alongside those, `pages` and
+    `stopped_reason`:
 
     * `exhausted`    — the platform offered no `Next` control; the walk finished naturally.
     * `no_new_links` — a page repeated tenant paths already seen, so paging is looping.
@@ -319,9 +320,9 @@ def harvest_bidnet(request, session=None, sleep=None, fetch_html=None):
 
     `request` keys: `max_pages` (400), `min_interval_seconds` (3), `timeout_seconds` (30) and
     `states` (two-letter codes; omitted/empty means all). An explicit `states` filter excludes
-    agencies whose group resolves to no state (`bgis`, ...) and counts them in
-    `stats.unresolved_state_skipped`; they are only returned on an unfiltered run, where the
-    caller routes them into its review list.
+    agencies for which neither the name's comma-state nor the group resolves a state (`bgis`,
+    ...) and counts them in `stats.unresolved_state_skipped`; they are only returned on an
+    unfiltered run, where the caller routes them into its review list.
 
     Nothing here writes anything anywhere.
     """
