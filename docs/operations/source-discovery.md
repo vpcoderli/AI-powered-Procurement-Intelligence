@@ -250,6 +250,8 @@ python3 -c 'import json;print(json.dumps(json.load(open("/tmp/pending.json"))["e
 
 **同一次运行里当心重复登记**：给 `bidnet_oh_franklin` 建议 `…/franklincountychildrensservices/…` 的那一次运行，`candidates[]` 里**同时**会有一条指向同一租户的 `bidnet_oh_franklin_county_children_services`（郡名前缀规则捞回来的）。两边都落库就等于把同一个租户页按两个 id 抓两遍。二选一：要么把已有行的 `base_url` 改过去、从 `candidates.json` 里删掉那条新候选，要么注册新候选、把旧行标 `blocked`。把旧行的 `base_url` 放进 `existing_base_urls` 是防不住的——旧行存的正是那个 404 的地址。
 
+**已处置（2026-09-28，阶段 3 首步）**：`bidnet_wy_laramie` 按上表 `partial` 处理——`PATCH` 把 `base_url` 改指 `/colorado/laramiecountywyominggovernment/solicitations/open-bids`，前置检查 `empty`（robots 通过、`empty_verified`、Scrapling 路径），按 2026-09-16 六源同一套台账批准（复核人 apsi.lily@gmail.com、ToS `https://www.bidnetdirect.com/tsandcs`、下次复核 2027-09-28），首轮运行 `success`（空态）。`bidnet_oh_franklin` 保持 `blocked`；Franklin County Children Services 作为**新源** `bidnet_oh_franklin_county_children_services` 注册（用只含这一条的裸数组文件，避开 `--allow-suggested` 的全有或全无），前置检查 `empty`，同一套台账批准，首轮运行 `success`。Columbus、Cuyahoga 仍 `none`、仍 `blocked`。设计稿 §9 并行线里"4 个新源/改指源预检通过、首次运行成功（Cuyahoga 主门户与 Columbus 文件除外）"这一条至此达成。
+
 ## 8. 成本与礼貌
 
 - 目录每页 48 家。2026-09-21 实测全平台 43 页 / 2,036 家，按默认 3 秒间隔约 **3 分钟**一次（设计时按"上万家、200–400 页"估的上限偏大）。
@@ -418,3 +420,13 @@ python3 -m apsi_crawler.cli discover-sources < request.json > candidates.json
 - **同键的郡与市，`_2` 后缀取决于目录顺序。** `City of Muskegon, MI` 与 `Muskegon County` 都键到 `muskegon`：线上按目录顺序市拿到 `bidnet_mi_muskegon`、郡拿到 `bidnet_mi_muskegon_2`，离线回放里正相反。注册时 `source:register` 会按库里已有的 id 重新加后缀，slug 去重保证同一租户不会登记两次，但**不要**凭 id 猜它是郡还是市——看 `jurisdictionLevel` 和 `baseUrl`。
 
 **§12.2 阶段 2 验收**：新增 township/town 候选 144 个（已记录）；纽约 11 个 town 的 GEOID 全部正确——10 个拿到 10 位 town GEOID，Town of Clinton 按设计因两个同名 town 进歧义而不是错配到村/市；`bidnet_wy_laramie` 拿到 `partial` 建议。三项均达成。注册候选是阶段 3 的事，本轮没有写 `data_sources`。
+
+## 阶段 3 首步：候选审阅与注册（2026-09-28）
+
+设计稿 §7.4 的流程是"人工审阅 → `source:register` 落未批准行 → 预检入队 → 带台账的批量批准"。前两步已完成，后两步（§7.1 平台级审查、§7.2 预检入队、§7.3 带台账批量批准）是待建代码。
+
+**审阅**（`ops-evidence/phase3-review.py`，报告 `ops-evidence/phase3-candidate-review-2026-09-28.md`）：955 个候选无重复 id / URL、GEOID 无空、`--dry-run` 953 条有效；脚本扣下 2 条（FCCS、Laramie，见第 7 节的处置）；103 条郡下属部门租户（54 个郡，Maricopa County 一家 40 个，39 个郡只有部门没有本部）经确认全部注册；`Chemung County/City of Elmira` 落郡级可接受；cadence 全部保持 `daily`（活跃度分层会把连续 3 次空跑的源降为每周）。
+
+**注册**（本地 MySQL，`DATABASE_URL` 需显式导出，脚本不读 `.env.local`）：953 条 + FCCS 1 条，`data_sources` 由 66 行增至 1,020 行，0 错误。新行 `approval_status IS NULL`、`is_enabled = 1`、`cadence = daily`，全部在治理拦截中，调度器不会碰到；按层级：郡 258（含 FCCS）、市 552、township 144。**这 952 条不要逐条手工批准**——等 §7.1–7.3 建好后走带台账的批量批准。
+
+**未捞回、留待人工**：9 条同州同名 township（`ambiguous_match`）；`no_fips_match` 里约 20 条像政府本部的机构（3 个 MI charter township、West Springfield、"City of Troy - MI/NY" 这类不带逗号的州名后缀、Mt./MT. 缩写、2024 表里还没有的 Keystone CO、已撤销的 South Nyack、两个合并/联合采购主体）。
