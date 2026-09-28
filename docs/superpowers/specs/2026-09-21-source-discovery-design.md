@@ -125,6 +125,8 @@ discover-sources (Python CLI, 只读)
 
 ### 4.4 分类规则（决策 3：只要 county / city）
 
+> 2026-09-28 注：自 2026-09-24 设计稿 §6 起，`township`（含八个 town 州的 town）也进候选，默认 `levels` 为 `["county", "city", "township"]`；本节保留当时的决策记录不改。
+
 按机构名（大小写不敏感）判定，优先级从上到下：
 
 | 级别 | 规则 |

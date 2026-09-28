@@ -1,10 +1,12 @@
 # County Data Completeness — Phase 2 (Discovery: Townships, Towns, Cross-State) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make `discover-sources` find Township/Town governments (a new `township` candidate level backed by Census county subdivisions), stop mismatching New York towns to same-name villages/cities, and honour a state an agency writes after a comma (Laramie County, WY listed under BidNet's colorado group) — then re-run discovery and record the result.
 
 **Architecture:** Pure-function changes in the crawler's discovery stack: a new `apsi_crawler/us_states.py` reads a "comma + state" marker; `apsi_crawler/jurisdictions` gains a `township` level (classification, `name_key` forms, a `cousub` table level with a charter-township filter); the Census refresh script learns the county-subdivision gazetteer; the BidNet harvester takes the name's state over the group's; `discovery_service` emits township candidates with `bidnet_<st>_<key>_<town|township>` ids and a `discovery.stateSource`. `register-sources` holds back a candidate whose tenant the reverse lookup already suggests for an existing source. Discovery stays read-only and manual.
+
+**Status (2026-09-28): complete.** Tasks 1–8 implemented and reviewed (61d7ec4..2ff243b); the whole-branch review's docs-only fixes landed in e1f32a9. Task 9's live run first stopped on `waf_challenge` three times — a detector false positive (BidNet now embeds the AWS WAF SDK `<script src=…/challenge.js>` on ordinary 200 pages), fixed as an added Task 9a (7fe5d73, comment follow-up 1c90060) before the run succeeded (43 pages, 2,037 agencies, `exhausted`). Acceptance (spec §12.2, phase 2) is recorded in `docs/operations/source-discovery.md` "第二轮实测（阶段 2，2026-09-28）": 144 township candidates, the eleven NY towns resolved (10 town GEOIDs + Clinton ambiguous by design), `bidnet_wy_laramie` → `partial`. Two plan-level rule questions raised by the review for a spec amendment, not changed here: the charter-only matching rule (drops MI charter townships whose Census name is plain) and the cousub-only township lookup (drops MA "Town city" places).
 
 **Tech Stack:** Python 3.9-compatible crawler (stdlib + `requests`, pytest), Census 2024 gazetteer files, TypeScript/tsx script + Vitest for `register-sources`.
 
@@ -69,7 +71,7 @@ Waves (parallel inside a wave, disjoint files): **A** = 1, 2, 6 · **B** = 3, 4,
 - Consumes: nothing.
 - Produces: `STATE_NAMES: dict[str, str]` (lowercase full name → USPS code, 50 states + DC), `STATE_CODES: frozenset[str]`, `name_state(name) -> str | None`, `strip_state_suffix(name) -> str`. Tasks 4 and 5 import them as `from apsi_crawler.us_states import name_state, strip_state_suffix`. The module is standalone on purpose: importing it must not import `apsi_crawler.jurisdictions` (the discovery CLI keeps that lazy).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `crawler/tests/test_us_states.py`:
 
@@ -172,12 +174,12 @@ def test_importing_the_module_does_not_import_the_jurisdiction_table_package():
     assert completed.stdout.strip() == "False"
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_us_states.py`
 Expected: FAIL — `ModuleNotFoundError: No module named 'apsi_crawler.us_states'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Create `crawler/apsi_crawler/us_states.py`:
 
@@ -280,12 +282,12 @@ def strip_state_suffix(name):
     return name.strip()
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_us_states.py`
 Expected: PASS (all cases).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crawler/apsi_crawler/us_states.py crawler/tests/test_us_states.py
@@ -308,7 +310,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: nothing.
 - Produces: `classify_agency(name, state_code=None)` may now return `"township"`; `match_jurisdiction("township", state_code, name, table=None, allow_prefix=True)` looks up the `"cousub"` table level; `load_jurisdictions()` returns `{"county", "place", "cousub"}`; `TOWN_TOWNSHIP_STATES: frozenset[str]` exported. Task 3's refresh script writes `level = cousub` rows keyed by this `name_key`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `crawler/tests/fixtures/jurisdictions/sample_us_jurisdictions.tsv`, append these rows (tab-separated, same six columns as the existing rows; GEOIDs are sample values):
 
@@ -475,12 +477,12 @@ def test_the_township_level_reads_only_county_subdivisions(sample_table):
     assert match_jurisdiction("township", "NJ", "Township of Waterford", sample_table)["geoid"] == "3400776340"
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_jurisdictions.py`
 Expected: FAIL — `ImportError: cannot import name 'TOWN_TOWNSHIP_STATES'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `crawler/apsi_crawler/jurisdictions/__init__.py`:
 
@@ -636,7 +638,7 @@ _CHARTER_TOWNSHIP_SUFFIX = " charter township"
 
 (The rest of the function — the `ambiguous` and `exact` returns — is unchanged.) In its docstring add after the `prefix` paragraph: ``Townships (`"township"`) read only the `cousub` rows; a name containing "Charter" keeps only "... charter township" rows; they never get a prefix rule.``
 
-- [ ] **Step 4: Re-key the committed table (names unchanged)**
+- [x] **Step 4: Re-key the committed table (names unchanged)**
 
 The bundled TSV stores `name_key` per row and `test_bundled_table_keys_agree_with_name_key` checks it against `name_key(name)`. Recompute the column in place — no download:
 
@@ -658,12 +660,12 @@ git diff --stat -- data/us_jurisdictions.tsv
 
 Expected: `1 file changed, 5 insertions(+), 5 deletions(-)` — exactly the five Utah `… metro township` rows. Any other count means `name_key` changed more than planned: stop and report.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_jurisdictions.py tests/test_discover_sources_cli.py`
 Expected: PASS. (`test_discover_sources_cli.py` uses the real classifier in one test; none of its agencies are townships.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add crawler/apsi_crawler/jurisdictions/__init__.py crawler/tests/test_jurisdictions.py crawler/tests/fixtures/jurisdictions/sample_us_jurisdictions.tsv crawler/data/us_jurisdictions.tsv
@@ -684,7 +686,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: Task 2 (`name_key`, the `cousub` table level in `load_jurisdictions`/`match_jurisdiction`).
 - Produces: `refresh_jurisdictions.py --cousubs-zip PATH`; `COUSUBS_URL`; `select_cousubs(rows)`; `render_table(entries, generated_on, counties, places, cousubs)`; the TSV header gains `# source_cousubs:` and `# cousub_filter:` lines and `# rows: <c> counties + <p> places + <s> cousubs`. Task 7 runs it for real.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `crawler/tests/test_jurisdictions.py`, refresh section:
 
@@ -765,12 +767,12 @@ def test_refresh_never_downloads_when_every_zip_is_local(tmp_path, gazetteers, m
 
 (`# rows: 2 counties + 3 places + 3 cousubs`: the places fixture keeps Aurora, Oklahoma City and Anchorage; the Parish village has no usable key.)
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_jurisdictions.py -k refresh`
 Expected: FAIL — `error: unrecognized arguments: --cousubs-zip`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `crawler/scripts/refresh_jurisdictions.py`:
 
@@ -884,12 +886,12 @@ and change the `render_table(...)` call to:
     table = render_table(entries, datetime.date.today().isoformat(), len(counties), len(places), len(cousubs))
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_jurisdictions.py`
 Expected: PASS (the committed-table tests are unaffected until Task 7).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crawler/scripts/refresh_jurisdictions.py crawler/tests/test_jurisdictions.py
@@ -910,7 +912,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: Task 1 (`name_state`).
 - Produces: every `HarvestedAgency` dict gains `"state_source": "name" | "group" | None`; `state_code` is the name's state when the name states one after a comma, else the group's. The `states` filter in `_result` therefore uses the name's state (a `["WY"]` run reaches Laramie inside the colorado group). Task 5 reads `state_source`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `crawler/tests/test_discovery_bidnet.py`:
 
@@ -970,12 +972,12 @@ def test_a_states_filter_uses_the_state_the_name_gives():
     assert [agency["name"] for agency in colorado["agencies"]] == ["Adams County"]
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_discovery_bidnet.py`
 Expected: FAIL — `KeyError: 'state_source'` / dict mismatch.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `crawler/apsi_crawler/discovery/bidnet.py`:
 
@@ -1016,12 +1018,12 @@ from apsi_crawler.us_states import name_state
   ("Laramie County, Wyoming Government" under `colorado` is WY); `state_source` says which.
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_discovery_bidnet.py tests/test_discover_sources_cli.py`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crawler/apsi_crawler/discovery/bidnet.py crawler/tests/test_discovery_bidnet.py
@@ -1042,7 +1044,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: Task 1 (`strip_state_suffix`), Task 2 (`classify_agency` may return `"township"`; `match_jurisdiction("township", ...)` returns the Census name, e.g. `"Rye town"`), Task 4 (`agency["state_source"]`, optional — absent means `"group"`).
 - Produces: `CANDIDATE_LEVELS = ("county", "city", "township")`; `ALL_LEVELS` gains `"township"`; township candidate ids `<platform>_<st>_<segment>_<town|township>`; `candidate["discovery"]["stateSource"]`; `stats["township"]`. The `discover-sources` wire format change is documented in Task 8.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `crawler/tests/test_discover_sources_cli.py`:
 
@@ -1248,12 +1250,12 @@ def test_a_township_source_is_confirmed_only_against_a_township_row():
     ]
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_discover_sources_cli.py`
 Expected: FAIL — `KeyError: 'township'` in stats, level `township` sent to review as `classified_township`, and missing `stateSource`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `crawler/apsi_crawler/discovery_service.py`:
 
@@ -1382,12 +1384,12 @@ def _township_designation(census_name):
 
 8. In the module docstring, change `* `classify` — agency name -> county | city | special_district | unknown (contract C2)` to `* `classify` — agency name -> county | city | township | special_district | unknown (contract C2)`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_discover_sources_cli.py tests/test_discovery_bidnet.py tests/test_jurisdictions.py`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crawler/apsi_crawler/discovery_service.py crawler/tests/test_discover_sources_cli.py
@@ -1408,7 +1410,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: the `discover-sources` document's `existingMatches[]` (`{sourceId, agencyName, suggestedBaseUrl, confidence}`), unchanged.
 - Produces: `CandidateFile.suggested: Map<string, string>` (tenant URL → existing source id, from `exact`/`partial` entries with a URL); `splitSuggestedCandidates(file, allowSuggested): { register: SourceCandidate[]; heldBack: HeldBackCandidate[] }`; CLI flag `--allow-suggested`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `frontend/scripts/register-sources.test.ts`:
 
@@ -1486,12 +1488,12 @@ describe("suggested tenants (spec 2026-09-24 §6.4)", () => {
   });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd frontend && npx vitest run scripts/register-sources.test.ts`
 Expected: FAIL — `splitSuggestedCandidates` is not exported / `suggested` undefined.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `frontend/scripts/register-sources.ts`:
 
@@ -1584,12 +1586,12 @@ function heldBackLine(held: HeldBackCandidate): string {
 
 (The dry-run and real-run branches already iterate `candidates`, which is now the registerable subset.)
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd frontend && npx vitest run scripts/register-sources.test.ts && npm run lint`
 Expected: PASS; lint clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/scripts/register-sources.ts frontend/scripts/register-sources.test.ts
@@ -1613,7 +1615,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Precondition (controller):** this task downloads three public files from `https://www2.census.gov/geo/docs/maps-data/data/gazetteer/2024_Gazetteer/` — `2024_Gaz_counties_national.zip` (≈142 KB), `2024_Gaz_place_national.zip` (≈1.2 MB), `2024_Gaz_cousubs_national.zip` (≈1.5 MB). The controller obtains the user's approval before dispatching it.
 
-- [ ] **Step 1: Regenerate**
+- [x] **Step 1: Regenerate**
 
 Run: `cd crawler && python3 scripts/refresh_jurisdictions.py`
 Expected output includes `counties: 3222 rows in, 3222 kept` (or the 2024 file's count), the `places:` line with the same kept count as before (19512), a `cousubs:` line, and `changes against the committed table`: `added` = the new cousub rows only, `removed: 0`, `renamed: 0`. If any county/place row is removed or renamed, stop and report — that means the counties/places files changed upstream.
@@ -1631,7 +1633,7 @@ grep -E '^cousub\s+36[0-9]{8}\s+NY\s+Rye town' data/us_jurisdictions.tsv
 
 Expected: a cousub count between 12000 and 20000, and one `Rye town` row. Record the exact count in the report.
 
-- [ ] **Step 2: Update the committed-table tests**
+- [x] **Step 2: Update the committed-table tests**
 
 In `crawler/tests/test_jurisdictions.py`:
 
@@ -1689,7 +1691,7 @@ def test_bundled_table_answers_the_spec_examples(bundled_table):
 
 If an assertion here disagrees with the generated table (for example Census spells a town differently), do not weaken it: stop and report the actual TSV row(s) (`grep -i '<name>' data/us_jurisdictions.tsv`).
 
-- [ ] **Step 3: Add a township to the real-collaborator discovery test**
+- [x] **Step 3: Add a township to the real-collaborator discovery test**
 
 In `crawler/tests/test_discover_sources_cli.py`, `test_the_real_collaborators_resolve_with_their_contract_signatures`:
 - append `agency("Town of Rye", "/new-york/townofrye", group="new-york", state_code="NY"),` to `agencies` (just before the Columbus school district);
@@ -1714,12 +1716,12 @@ In `crawler/tests/test_discover_sources_cli.py`, `test_the_real_collaborators_re
 
 and change `stats["prefix_matched"] == 1` context: keep it; add `assert stats["township"] == 1`.
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `cd crawler && python3 -m pytest -q`
 Expected: PASS (whole crawler suite).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crawler/data/us_jurisdictions.tsv crawler/tests/test_jurisdictions.py crawler/tests/test_discover_sources_cli.py
@@ -1740,7 +1742,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: Tasks 1–7 as built. Verify every fact against the code before writing it.
 
-- [ ] **Step 1: Runbook**
+- [x] **Step 1: Runbook**
 
 In `docs/operations/source-discovery.md`:
 1. §3 request table: `levels` default `["county","city","township"]`, allowed values county / city / township.
@@ -1752,15 +1754,15 @@ In `docs/operations/source-discovery.md`:
 7. §9 refresh: three gazetteers, the `--cousubs-zip` flag, the cousub filter (FUNCSTAT A + name suffix), the header lines.
 8. §10 boundaries / known limitations: `Charter Township of Port Huron` → `special_district` (whole word `port`); Utah metro townships are places, not county subdivisions → review; the five Utah metro-township place keys changed (`kearns metro`).
 
-- [ ] **Step 2: CLAUDE.md**
+- [x] **Step 2: CLAUDE.md**
 
 In the "Source discovery (upstream of all that)" paragraph: classification now `county | city | township | special_district | unknown`; township/town rules; the Census table carries `cousub` rows (active towns/townships) next to counties and places; township ids carry `_town`/`_township`; a state written after a comma outranks the purchasing group (`discovery.stateSource`) and a trailing ", XX" is not part of the matched name; stats identity with five buckets; `source:register` holds back tenants suggested for an existing source unless `--allow-suggested`. One paragraph, concise.
 
-- [ ] **Step 3: Spec notes**
+- [x] **Step 3: Spec notes**
 
 In `docs/superpowers/specs/2026-09-24-county-data-completeness-design.md` §6, add a short "实施补充（阶段 2）" list: the trailing-state rule; the register guard; §6.2's "no names end in these words" corrected (five Utah metro-township places change key); the two known limitations.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add docs/operations/source-discovery.md CLAUDE.md docs/superpowers/specs/2026-09-24-county-data-completeness-design.md
@@ -1773,7 +1775,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 9: Verification and the phase-2 discovery run (controller only)
 
-- [ ] **Step 1: Gates**
+- [x] **Step 1: Gates**
 
 ```bash
 cd crawler && python3 -m pytest -q
@@ -1781,14 +1783,14 @@ cd ../frontend && npm run test && npm run lint
 ```
 Expected: all pass.
 
-- [ ] **Step 2: Build `existing_sources` from the local MySQL (read-only)**
+- [x] **Step 2: Build `existing_sources` from the local MySQL (read-only)**
 
 ```bash
 docker exec winbids-mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" winbids -N -e "SELECT JSON_ARRAYAGG(JSON_OBJECT(\"id\", id, \"label\", label, \"state_code\", state_code, \"base_url\", base_url, \"jurisdiction_level\", jurisdiction_level)) FROM data_sources WHERE provider_family = \"bidnet\""' 2>/dev/null > /tmp/existing.json
 ```
 Write the request `{"platform": "bidnet", "existing_sources": <that array>}` to `ops-evidence/bidnet-discovery-<date>.request.json`.
 
-- [ ] **Step 3: Run discovery (read-only, ~45 requests at 3 s)**
+- [x] **Step 3: Run discovery (read-only, ~45 requests at 3 s)**
 
 No crawl or precheck may run against BidNet at the same time.
 
@@ -1797,7 +1799,7 @@ cd crawler && python3 -m apsi_crawler.cli discover-sources < ../ops-evidence/bid
 ```
 Expected: exit 0, `stats.stopped_reason == "exhausted"`. On `waf_challenge`: stop, wait, do not retry immediately.
 
-- [ ] **Step 4: Acceptance (spec §12.2, phase 2)**
+- [x] **Step 4: Acceptance (spec §12.2, phase 2)**
 
 From the output JSON, record:
 - `stats` (all buckets; the five-bucket identity holds);
@@ -1809,7 +1811,7 @@ From the output JSON, record:
 
 Compare with the 2026-09-21 archive (80 townships and ~70 towns were `classified_unknown` / `no_fips_match`).
 
-- [ ] **Step 5: Record and commit**
+- [x] **Step 5: Record and commit**
 
 Add a "第二轮实测（阶段 2，<date>）" section to `docs/operations/source-discovery.md` with the numbers above, then:
 

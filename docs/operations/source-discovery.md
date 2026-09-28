@@ -342,3 +342,79 @@ python3 -m apsi_crawler.cli discover-sources < request.json > candidates.json
 实测衡量过两条"安全"的补救规则，均不划算，故**未实现**：剥离机构名尾部的州缩写只救回 6 条，重音折叠 0 条。剩下的大多是"City of X 某某局"这类部门后缀，要救得对地名表做最长前缀匹配，而那会把 "City of Glendale Heights" 误配到 Glendale。这类按设计留在待审阅里由人判断。
 
 郡一级不存在同类问题：`<X> County 某某局` 有 "County" 这个边界词，已由辖区前缀规则收回 103 条。
+
+## 第二轮实测（阶段 2，2026-09-28）
+
+阶段 2（township/town 发现，设计稿 `docs/superpowers/specs/2026-09-24-county-data-completeness-design.md` §6，验收标准 §12.2）合入后的实测分两步：先用 2026-09-21 那份目录快照做**离线回放**（同一份输入、只换代码，量的是代码本身带来的变化），再对目录**线上重跑**一次。门禁先过：`crawler` pytest 852 通过、`frontend` vitest 2,166 通过、lint 干净（4ee18ca）。请求体 `ops-evidence/bidnet-discovery-2026-09-28.request.json`，`existing_sources` 是本地 MySQL `data_sources` 里全部 10 个 BidNet 行（带 `jurisdiction_level`）。
+
+### 离线回放（2026-09-21 目录快照 × 阶段 2 代码）
+
+`ops-evidence/phase2-replay.py` 把 2026-09-21 存档里每家机构的机构名、租户 URL、采购组还原成采集器的输出（2,036 家，URL 重建 0 处不一致），经 `discover_sources(harvest=…)` 注入，不碰网络；页序丢失只会影响撞 id 时的 `_2` 后缀。输出存档 `ops-evidence/bidnet-discovery-2026-09-28.replay-of-2026-09-21.json`，数字由 `ops-evidence/phase2-acceptance.py` 统计（该目录 gitignore，不入库）。
+
+| 指标 | 2026-09-21（阶段 2 前的代码） | 回放（阶段 2 代码） |
+| --- | --- | --- |
+| 分类 | 郡 286、市 659、特别区 730、未知 361 | 郡 286、市 576、**township 163**、特别区 730、未知 281（五者之和 2,036 = 机构数） |
+| 候选 | 819（郡 258 + 市 561） | **955**（郡 259 + 市 552 + **township 144**） |
+| 待审阅 | 1,217（特别区 730、未知 361、无 FIPS 匹配 119、已注册 6、歧义 1） | 1,081（特别区 730、未知 281、无 FIPS 匹配 55、已注册 6、歧义 9） |
+| 反查 `bidnet_wy_laramie` | `none` | **`partial`** → `/colorado/laramiecountywyominggovernment` |
+| `discovery.stateSource = "name"` | （无此字段） | 1 个候选（Laramie County, Wyoming Government） |
+
+**township 候选 144 个**：`_town` 76、`_township` 68；按州 NY 53、MI 43、NJ 25、RI 18、MA 4、VT 1；全部 `exact`，GEOID 全部 10 位；144 个机构名都含 town / township / twp。
+
+**纽约 11 个 town**（§12.2 的硬指标）：首轮把它们当 `city` 配到了 7 位的村/市 place GEOID（`bidnet_ny_colonie` → `3617332` 是 Colonie 村），回放后 10 个成为 `township` 候选并拿到 10 位 town GEOID，Town of Clinton 按设计进 `ambiguous_match`（纽约有两个 Clinton town：`3601916397`、`3602716408`），没有一个再配到村/市：
+
+| 机构 | 首轮（错配到 place） | 回放 |
+| --- | --- | --- |
+| Town of Colonie | `bidnet_ny_colonie` → 3617332 | `bidnet_ny_colonie_town` → 3600117343 |
+| Town of DeRuyter | 3620390 | `bidnet_ny_deruyter_town` → 3605320401 |
+| Town of Ithaca | 3638077 | `bidnet_ny_ithaca_town` → 3610938088 |
+| Town of Mamaroneck | 3644831 | `bidnet_ny_mamaroneck_town` → 3611944842 |
+| Town of New Paltz | 3650551 | `bidnet_ny_new_paltz_town` → 3611150562 |
+| Town of Newburgh | 3650034（`bidnet_ny_newburgh_2`） | `bidnet_ny_newburgh_town` → 3607150045 |
+| Town of Ossining | 3655530 | `bidnet_ny_ossining_town` → 3611955541 |
+| Town of Pawling | 3656814 | `bidnet_ny_pawling_town` → 3602756825 |
+| Town of Rye | 3664309（`bidnet_ny_rye_2`） | `bidnet_ny_rye_town` → 3611964320 |
+| Town of Tupper Lake | 3675671 | `bidnet_ny_tupper_lake_town` → 3603375676 |
+| Town of Clinton | `bidnet_ny_clinton_2` | `ambiguous_match`（两个 Clinton town） |
+
+**歧义 9 条**：8 条是同州同名 township——NY Town of Clinton；MI Bloomfield / Bruce / Deerfield / Park / Richmond / Tyrone Township；NJ Township of Hopewell——都按"不猜"的规则留给人判。另 1 条 City of Garden City（MI，village 与 city 同键）是首轮就有的那条。
+
+**无 FIPS 匹配 119 → 55**（"未知" 361 → 281）：减少的都是被 township 规则收回的 town / township。剩下 55 条里 14 条名字含 town / township，分四类：
+
+- 某 town 的下属部门或机构（Colonie IDA、Mount Hope Highway Department、Exeter Emergency Management、Los Gatos Parks & Public Works、North Hempstead CDA、Clinton Historical Society、Superior Township Clerk）——按设计不匹配。
+- **3 个密歇根 charter township**（Brighton、Northville、East China）：机构名带 "Charter"，Census 的 cousub 名却只是 `Brighton township` 等，"含 Charter 只配 charter 行"的规则（第 6 节）让它们落空。
+- **MA 的 "Town city"**：`Town of West Springfield` 在 Census 里是 place `West Springfield Town city`（采用市政府形式的 town），不在 town / township 后缀过滤后的 cousub 表里；首轮它以 `city` 配到了该 place，回放后反而落空——阶段 2 唯一的匹配回退。
+- 缩写与新建制：`Mt. Olive Township`（NJ，表里是 `Mount Olive township`）、`Town of MT. Crested Butte`（CO，`Mount Crested Butte town`）按"不做模糊匹配"留在待审阅；`Town of Keystone`（CO，2024 年建制）在 2024 gazetteer 里还没有行。
+
+第二、三类记为已知局限：是否在阶段 3 放宽（同州没有 charter 行时回退到普通 township 行；把 `… Town city` 纳入 township 匹配）由人决定，本轮不改规则。
+
+**回归对比**：首轮 819 个候选里 3 个不再是候选，均有解释——`bidnet_co_aurora`（就是已登记的 `bidnet_co_city_aurora`，slug 去重）、`bidnet_ny_clinton_2`（改判歧义）、`bidnet_ma_west_springfield`（Town city）。10 个纽约 town 换了 GEOID（上表），其余郡/市候选的 GEOID 一个都没变。新增郡/市候选 5 个：City of Boulder（去重修正）、Laramie County（逗号后州名规则，郡前缀匹配到 `56021`）、`City of Conway, SC` / `City of Muskegon, MI` / `City of South Fulton, GA`（拖尾州名规则，首轮都是无 FIPS 匹配）。
+
+**反查**：`bidnet_wy_laramie` 得到 `partial` 建议（`Laramie County, Wyoming Government`，在 colorado 组下，`stateSource = "name"`），处置见第 7 节；同一家机构也以 `bidnet_wy_laramie_county_wyoming_government` 出现在候选里，`source:register` 会把它扣下并打印应做的 PATCH。`bidnet_oh_franklin` 仍是 Franklin County Children Services 的 `partial`，结论不变（另一采购主体，不要指过去）。已批准的 6 个源 `exact` 且地址与登记一致；Columbus、Cuyahoga 仍 `none`。
+
+### 线上重跑（2026-09-28）
+
+- 07:21Z 第一次全量运行：目录第 1 页即返回 WAF 挑战，`stopped_reason = "waf_challenge"`、0 页、共 1 次请求，运行按边界立即停止（当天早些时候刚跑过 6 个 BidNet 源的完整开放列表，见 `bid-lifecycle-and-crawl-budget.md` 第 7 节）。
+- 07:33Z 冷却约 10 分钟后单页探测：仍是挑战。
+- 08:04Z 再冷却约 30 分钟后单页探测：仍是挑战（三次都卡在采集器的第一个请求 `/purchasing-groups`，各 1 次请求）。
+- 08:26Z 诊断探测（同一套浏览器请求头，只发 1 次 GET，保存状态与正文）：`/purchasing-groups` 返回 **HTTP 200**、完整页面（53,593 字节，标题 "Government Purchasing Groups | BidNet Direct"，49 个采购组链接），但 `looks_like_waf_challenge()` 判为挑战。原因：BidNet 现在在每个普通页面里都嵌入 AWS WAF 的 SDK 脚本 `<script src="https://….sdk.awswaf.com/…/challenge.js" defer>`，探测器的子串标记 `awswaf` / `challenge.js` 命中了这个脚本地址——**三次"挑战"都是探测器误判，不是拦截**。蜘蛛侧（`spiders/co_bidnet.py`）只按 HTTP 202 判定，所以同一天早上的 6 个租户列表运行不受影响。修复见 `7fe5d73`（`crawler/apsi_crawler/discovery/bidnet.py`；注释补充 `1c90060`）：先剥掉带 `src` 的外链 script 元素再匹配标记（真实拦截页会在内联脚本里运行 `AwsWafIntegration.checkForceRefresh()`，而且通常是 202，两条路都照旧停止运行）；真实页面存为 fixture `crawler/tests/fixtures/discovery/bidnet_purchasing_groups_with_waf_sdk.html`。
+- 08:52:58Z 修复后第二次全量运行（在 `7fe5d73` 上）：exit 0，`stopped_reason = "exhausted"`，43 页（连同 `/purchasing-groups` 共 44 次请求，3 秒间隔），2 分 52 秒，2,037 家机构——比 2026-09-21 多 1 家（新登记的特别区 Alfred-Almond Central School）。输出存档 `ops-evidence/bidnet-discovery-2026-09-28.json`。
+
+| 指标 | 线上重跑（2026-09-28） |
+| --- | --- |
+| 分类 | 郡 286、市 576、township 163、特别区 731、未知 281（五者之和 2,037 = 机构数） |
+| 候选 | **955**（郡 259 + 市 552 + township 144） |
+| 待审阅 | 1,082（特别区 731、未知 281、无 FIPS 匹配 55、已注册 6、歧义 9） |
+| township 候选 | 144：`_town` 76、`_township` 68；NY 53、MI 43、NJ 25、RI 18、MA 4、VT 1；全部 `exact`，GEOID 全部 10 位 |
+| 纽约 11 个 town | 10 个 township 候选（GEOID 与上表逐一相同）+ Town of Clinton `ambiguous_match`（两个 Clinton town） |
+| 反查 | 6 个已批准源 `exact` 且地址一致；`bidnet_wy_laramie` **`partial`** → `/colorado/laramiecountywyominggovernment`；`bidnet_oh_franklin` `partial`（另一采购主体，不指过去）；Columbus / Cuyahoga `none` |
+| `discovery.stateSource = "name"` | 1 个候选（Laramie County, Wyoming Government） |
+
+与离线回放逐项一致：除了那 1 家新特别区，分类、候选、待审阅、歧义、无 FIPS 匹配的每一个数字都相同。候选覆盖的州（前几位）：MI 204、CO 179、NY 146、NJ 62、CA 47、TX 43、AZ 42、GA 28（首轮是 CO 179、MI 160、NY 104——密歇根和纽约的增量就是 township）。
+
+两点顺带的观察：
+
+- **租户 slug 会变。** Chautauqua County（NY）2026-09-21 的路径是 `/new-york/chautauqua-county`，今天是 `/new-york/chautauquacounty`。去重按 slug，所以一个已登记的源如果被平台改了 slug，会在下一次发现里显示为"未登记"并再次成为候选——审阅时看到同名同州的候选，先核对旧行的 `base_url` 是否已经 404，改指旧行而不是另注册。
+- **同键的郡与市，`_2` 后缀取决于目录顺序。** `City of Muskegon, MI` 与 `Muskegon County` 都键到 `muskegon`：线上按目录顺序市拿到 `bidnet_mi_muskegon`、郡拿到 `bidnet_mi_muskegon_2`，离线回放里正相反。注册时 `source:register` 会按库里已有的 id 重新加后缀，slug 去重保证同一租户不会登记两次，但**不要**凭 id 猜它是郡还是市——看 `jurisdictionLevel` 和 `baseUrl`。
+
+**§12.2 阶段 2 验收**：新增 township/town 候选 144 个（已记录）；纽约 11 个 town 的 GEOID 全部正确——10 个拿到 10 位 town GEOID，Town of Clinton 按设计因两个同名 town 进歧义而不是错配到村/市；`bidnet_wy_laramie` 拿到 `partial` 建议。三项均达成。注册候选是阶段 3 的事，本轮没有写 `data_sources`。
