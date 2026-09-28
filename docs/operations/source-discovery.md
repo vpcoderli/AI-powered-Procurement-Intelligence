@@ -83,14 +83,14 @@ SELECT id, label, state_code, base_url, jurisdiction_level FROM data_sources WHE
 
 ```json
 {
-  "candidates": [ { …SourceCandidate 十个字段…, "discovery": {…} } ],
+  "candidates": [ { …SourceCandidate 十一个字段…, "discovery": {…} } ],
   "review":     [ { "agencyName", "tenantUrl", "group", "reason", "detail" } ],
   "existingMatches": [ { "sourceId", "agencyName", "suggestedBaseUrl", "confidence" } ],
   "stats": { … }
 }
 ```
 
-**整份输出文件可以原样交给 `source:register`**（2026-09-23 QA C08b 之前它只认裸数组，按文档操作会报 `candidates is not iterable`）。`candidates[]` 的前十个字段与 `frontend/scripts/register-sources.ts` 的 `SourceCandidate` **逐字段一致**；多出来的 `discovery` 块（`agencyName` / `group` / `matchedOn` / `confidence` / `matchedPrefix` / `stateSource`）只给审阅的人看，注册脚本会忽略它。`stateSource` 是 `"name"` 还是 `"group"`，即这条候选的州码是从机构名逗号后读出来的、还是沿用了采购组，见第 6 节"跨州命名"。跨语言契约由两侧测试共同守住：`crawler/tests/test_discover_sources_cli.py` 与 `frontend/scripts/register-sources.test.ts`。
+**整份输出文件可以原样交给 `source:register`**（2026-09-23 QA C08b 之前它只认裸数组，按文档操作会报 `candidates is not iterable`）。`candidates[]` 的前十一个字段与 `frontend/scripts/register-sources.ts` 的 `SourceCandidate` **逐字段一致**；多出来的 `discovery` 块（`agencyName` / `group` / `matchedOn` / `confidence` / `matchedPrefix` / `stateSource`）只给审阅的人看，注册脚本会忽略它。`stateSource` 是 `"name"` 还是 `"group"`，即这条候选的州码是从机构名逗号后读出来的、还是沿用了采购组，见第 6 节"跨州命名"。跨语言契约由两侧测试共同守住：`crawler/tests/test_discover_sources_cli.py` 与 `frontend/scripts/register-sources.test.ts`。
 
 `stats` 各字段：
 
@@ -194,7 +194,7 @@ discover-sources output: 43 pages, 2036 agencies, stopped_reason=exhausted; 819 
 
 ### FIPS 匹配（`match_jurisdiction`）
 
-- 归一化 `name_key`：转小写、去标点、折叠空格、去前缀 `city of` / `town of` / `village of` / `county of` / `city and county of` / `township of` / `charter township of`（`charter township of` 排在 `township of` 前面试，名字以它开头时不会只剥掉 `township of` 剩下孤零零的 `charter`）、反复去后缀 `county` / `parish` / `borough` / `city` / `town` / `village` / `township` / `twp`——剥掉 `township` / `twp` 后如果剩下的末词是 `charter`，一并剥掉（"Delta Charter Township" → `delta`）。
+- 归一化 `name_key`：转小写、去标点、折叠空格、去前缀 `city of` / `town of` / `village of` / `county of` / `city and county of` / `township of` / `charter township of`（`charter township of` 排在 `township of` 前面，名字以它开头时不会只剥掉 `township of` 剩下孤零零的 `charter`）、反复去后缀 `county` / `parish` / `borough` / `city` / `town` / `village` / `township` / `twp`——剥掉 `township` / `twp` 后如果剩下的末词是 `charter`，一并剥掉（"Delta Charter Township" → `delta`）。
 - 在**同一州内**按 `name_key` 精确匹配；`county` 查 county 行，`city` 查 place 行，`township` **只查 `cousub` 行**——Census 把 town/township 单独存一张表，与郡、市镇村分开（第 9 节）。唯一命中 → `discovery.confidence: "exact"`，`discovery.matchedPrefix: null`。
 - 机构名里带 "Charter" 时，`township` 的匹配只在名字以 "... charter township" 结尾的行里找；不带 "Charter" 时普通 township 与 charter township 两类都在候选之内——名字没提 "Charter"，不代表实际不是 charter township。
 - **郡名前缀规则**（仅 `county`、仅在精确匹配失败后）：机构名以 `<X> County` / `<X> Parish` 开头，且 `<X>` 在该州唯一对应一个郡时，取那个郡的 GEOID，记 `discovery.confidence: "jurisdiction_prefix"`、`discovery.matchedPrefix: "<X> County"`，计入 `stats.prefix_matched`。这样 `Alameda County Public Works Agency`、`Archuleta County Sheriff's Office` 这类**郡下属采购部门**才能进候选，而不是被整批丢掉。**`township` 与 `city` 都没有这条前缀规则**，只有 `county` 有。
