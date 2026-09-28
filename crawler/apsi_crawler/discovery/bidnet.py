@@ -111,9 +111,22 @@ _NEXT_BUTTON_RE = re.compile(
 )
 _GROUP_LIST_RE = re.compile(r"<ul[^>]*\bclass=\"[^\"]*txtBullet[^\"]*\"[^>]*>(.*?)</ul>", re.I | re.S)
 _GROUP_LINK_RE = re.compile(r"<a\b[^>]*\bhref=\"([^\"]*)\"[^>]*>(.*?)</a>", re.I | re.S)
+# An external script element: a `<script>` tag that carries a `src` attribute, together with its
+# (normally empty) body up to `</script>`. Stripped before WAF-marker matching -- see
+# `_WAF_BODY_MARKERS` below for why a `src` pointing at the bot-mitigation vendor is not, on its
+# own, evidence of a challenge.
+_EXTERNAL_SCRIPT_RE = re.compile(
+    r"<script\b[^>]*\bsrc\s*=\s*[\"'][^\"']*[\"'][^>]*>.*?</script>", re.I | re.S
+)
 
-# Markers of the AWS WAF interstitial. Deliberately specific: a directory page that merely
-# mentions "verification" must not be mistaken for a challenge.
+# Markers of the AWS WAF interstitial, matched only after every external script element has been
+# stripped from the body (`_EXTERNAL_SCRIPT_RE`). 2026-09-28: BidNet now loads the AWS WAF SDK as
+# an external script on every ordinary page too, so a `<script src="...">` merely naming the
+# vendor's domain or a `challenge.js` filename is never by itself evidence of a challenge -- the
+# real interstitial instead runs the SDK's own integration inline, as a second, non-external
+# script (and is normally HTTP 202, handled separately by `WAF_CHALLENGE_STATUS`). Deliberately
+# specific otherwise: a directory page that merely mentions "verification" must not be mistaken
+# for a challenge.
 _WAF_BODY_MARKERS = (
     "awswaf",
     "aws-waf-token",
@@ -140,8 +153,15 @@ def tenant_url(tenant_path):
 
 
 def looks_like_waf_challenge(html):
-    """True when the body is the bot-challenge interstitial rather than a directory page."""
-    lowered = (html or "").lower()
+    """True when the body is the bot-challenge interstitial rather than a directory page.
+
+    External script elements are stripped first (`_EXTERNAL_SCRIPT_RE`): BidNet now serves the
+    AWS WAF SDK as one of those on every ordinary page, and its `src` alone must not be mistaken
+    for the interstitial that SDK guards against -- that interstitial runs the SDK's own
+    integration inline instead of only loading it.
+    """
+    stripped = _EXTERNAL_SCRIPT_RE.sub("", html or "")
+    lowered = stripped.lower()
     return any(marker in lowered for marker in _WAF_BODY_MARKERS)
 
 

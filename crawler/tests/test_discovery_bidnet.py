@@ -42,6 +42,7 @@ PAGE_1 = _fixture("bidnet_participating_buyers_page1.html")
 PAGE_2 = _fixture("bidnet_participating_buyers_page2.html")
 LAST_PAGE = _fixture("bidnet_participating_buyers_last_page.html")
 GROUPS = _fixture("bidnet_purchasing_groups.html")
+GROUPS_WITH_WAF_SDK = _fixture("bidnet_purchasing_groups_with_waf_sdk.html")
 WAF_CHALLENGE = _fixture("bidnet_waf_challenge.html")
 
 
@@ -262,6 +263,27 @@ def test_the_challenge_interstitial_is_recognised_and_real_pages_are_not():
     assert looks_like_waf_challenge(WAF_CHALLENGE) is True
     assert looks_like_waf_challenge(PAGE_1) is False
     assert looks_like_waf_challenge(GROUPS) is False
+    # 2026-09-28: BidNet now embeds the AWS WAF SDK loader on ordinary pages too (see the
+    # new fixture's own header comment). Loading the SDK is not evidence of a challenge.
+    assert looks_like_waf_challenge(GROUPS_WITH_WAF_SDK) is False
+
+
+def test_an_external_waf_sdk_script_is_not_a_challenge_but_the_inline_integration_is():
+    # The SDK loader alone (an external <script src> pointing at *.sdk.awswaf.com) is what
+    # BidNet now serves on every ordinary page -- it must not trip the detector by itself.
+    sdk_script_only = (
+        "<html><head>"
+        '<script src="https://x.sdk.awswaf.com/x/y/challenge.js" defer></script>'
+        "</head><body><p>Ordinary page copy.</p></body></html>"
+    )
+    assert looks_like_waf_challenge(sdk_script_only) is False
+
+    # The real interstitial runs the integration inline instead of only loading the SDK.
+    with_inline_integration = sdk_script_only.replace(
+        "</body>",
+        "<script>AwsWafIntegration.checkForceRefresh()</script></body>",
+    )
+    assert looks_like_waf_challenge(with_inline_integration) is True
 
 
 def test_the_paging_url_is_exactly_the_endpoint_the_contract_names():
@@ -373,6 +395,40 @@ def test_a_challenge_on_the_groups_page_stops_before_any_directory_request():
             "unresolved_state_skipped": 0,
         },
     }
+
+
+def test_a_202_on_the_groups_page_stops_before_any_directory_request():
+    # Same as above, but the challenge arrives as a status code rather than a body -- the
+    # groups page gets the same two-shape handling as every directory page does.
+    def challenge():
+        error = HtmlPageError("HTML request failed with status 202: challenge")
+        error.status_code = 202
+        raise error
+
+    result, fetcher, _ = _run(PAGE_1, overrides={GROUPS_URL: challenge})
+
+    assert fetcher.calls == [GROUPS_URL]
+    assert result["stats"]["stopped_reason"] == "waf_challenge"
+    assert result["stats"]["pages"] == 0
+    assert result["agencies"] == []
+
+
+def test_a_full_harvest_treats_the_waf_sdk_groups_page_as_an_ordinary_directory_page():
+    # 2026-09-28 regression: BidNet's AWS WAF SDK loader script on `/purchasing-groups`
+    # must not stop the walk before it starts.
+    result, fetcher, _ = _run(PAGE_1, LAST_PAGE, overrides={GROUPS_URL: GROUPS_WITH_WAF_SDK})
+
+    assert fetcher.calls == [GROUPS_URL, directory_page_url(1), directory_page_url(2)]
+    assert result["stats"]["stopped_reason"] == "exhausted"
+    assert result["stats"]["pages"] >= 1
+    assert len(result["agencies"]) > 0
+    # The purchasing-group slugs parsed off the new fixture were threaded through the walk
+    # as `known_groups`: "mitn" is one of them, and it is the group page 1's first agency
+    # belongs to (test_page_one_yields_every_agency_card_with_a_clean_name_and_tenant_path).
+    known_slugs = {group["slug"] for group in parse_purchasing_groups(GROUPS_WITH_WAF_SDK)}
+    assert "mitn" in known_slugs
+    assert result["agencies"][0]["tenant_path"] == "/mitn/35thdistrictcourt"
+    assert result["agencies"][0]["group"] == "mitn"
 
 
 def test_a_plain_failure_on_the_groups_page_does_not_abort_the_harvest():
