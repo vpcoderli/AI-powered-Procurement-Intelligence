@@ -649,6 +649,7 @@ def _gazetteer_zip(path, columns, rows):
 
 COUNTY_COLUMNS = ("USPS", "GEOID", "ANSICODE", "NAME", "ALAND", "AWATER", "INTPTLAT", "INTPTLONG")
 PLACE_COLUMNS = ("USPS", "GEOID", "ANSICODE", "NAME", "LSAD", "FUNCSTAT", "ALAND", "INTPTLAT")
+COUSUB_COLUMNS = ("USPS", "GEOID", "GEOIDFQ", "ANSICODE", "NAME", "FUNCSTAT", "ALAND", "INTPTLAT")
 
 
 @pytest.fixture
@@ -674,14 +675,32 @@ def gazetteers(tmp_path):
             ("NY", "3656341", "0979529", "Parish village", "47", "A", "1", "43.4"),
         ],
     )
-    return counties, places
+    cousubs = _gazetteer_zip(
+        tmp_path / "cousubs.zip",
+        COUSUB_COLUMNS,
+        [
+            ("NY", "3611964320", "0600000US3611964320", "00979446", "Rye town", "A", "1", "40.9"),
+            ("MI", "2612509180", "0600000US2612509180", "01626016", "Bloomfield charter township", "A", "1", "42.6"),
+            ("MI", "2609968700", "0600000US2609968700", "01626945", "Richmond township", "A", "1", "42.8"),
+            # A city is also a county subdivision in NY; the place table already has it.
+            ("NY", "3611964309", "0600000US3611964309", "00979445", "Rye city", "A", "1", "40.9"),
+            # Not a functioning general-purpose government (inactive / statistical).
+            ("PA", "4200100010", "0600000US4200100010", "01216001", "Hamiltonban township", "I", "1", "39.8"),
+            ("VA", "5100191480", "0600000US5100191480", "01928456", "District 1", "S", "1", "37.0"),
+            # Active, but not a town or township.
+            ("ME", "2302991385", "0600000US2302991385", "00582664", "Macwahoc plantation", "A", "1", "45.6"),
+        ],
+    )
+    return counties, places, cousubs
 
 
 def test_refresh_keeps_governmental_places_and_drops_statistical_ones(tmp_path, gazetteers, capsys):
-    counties, places = gazetteers
+    counties, places, cousubs = gazetteers
     output = tmp_path / "us_jurisdictions.tsv"
 
-    assert _refresh_module().main(["--counties-zip", counties, "--places-zip", places, "--output", str(output)]) == 0
+    assert _refresh_module().main(
+        ["--counties-zip", counties, "--places-zip", places, "--cousubs-zip", cousubs, "--output", str(output)]
+    ) == 0
 
     written = output.read_text(encoding="utf-8")
     assert "Aurora city" in written and "Anchorage municipality" in written
@@ -698,14 +717,18 @@ def test_refresh_keeps_governmental_places_and_drops_statistical_ones(tmp_path, 
 
 
 def test_refresh_writes_the_provenance_header_and_trims_padded_columns(tmp_path, gazetteers):
-    counties, places = gazetteers
+    counties, places, cousubs = gazetteers
     output = tmp_path / "us_jurisdictions.tsv"
-    _refresh_module().main(["--counties-zip", counties, "--places-zip", places, "--output", str(output)])
+    _refresh_module().main(
+        ["--counties-zip", counties, "--places-zip", places, "--cousubs-zip", cousubs, "--output", str(output)]
+    )
 
     lines = output.read_text(encoding="utf-8").splitlines()
     header = [line for line in lines if line.startswith("#")]
     assert any("2024_Gaz_counties_national.zip" in line for line in header)
     assert any("2024_Gaz_place_national.zip" in line for line in header)
+    assert any("2024_Gaz_cousubs_national.zip" in line for line in header)
+    assert any(line.startswith("# cousub_filter: ") for line in header)
     assert any(line.startswith("# generated: ") for line in header)
     assert lines[len(header)] == "level\tgeoid\tstate\tname\tname_key"
     # No padding survives into the table.
@@ -713,10 +736,12 @@ def test_refresh_writes_the_provenance_header_and_trims_padded_columns(tmp_path,
 
 
 def test_refresh_is_rerunnable_and_reports_what_changed(tmp_path, gazetteers, capsys):
-    counties, places = gazetteers
+    counties, places, cousubs = gazetteers
     module = _refresh_module()
     output = tmp_path / "us_jurisdictions.tsv"
-    module.main(["--counties-zip", counties, "--places-zip", places, "--output", str(output)])
+    module.main(
+        ["--counties-zip", counties, "--places-zip", places, "--cousubs-zip", cousubs, "--output", str(output)]
+    )
     capsys.readouterr()
 
     next_places = _gazetteer_zip(
@@ -728,7 +753,9 @@ def test_refresh_is_rerunnable_and_reports_what_changed(tmp_path, gazetteers, ca
             ("TN", "4701520", "1226000", "Athens city", "25", "A", "1", "35.4"),   # added
         ],                                                                          # Oklahoma City removed
     )
-    module.main(["--counties-zip", counties, "--places-zip", next_places, "--output", str(output)])
+    module.main(
+        ["--counties-zip", counties, "--places-zip", next_places, "--cousubs-zip", cousubs, "--output", str(output)]
+    )
 
     printed = capsys.readouterr().out
     assert "added: 1" in printed and "place 4701520" in printed
@@ -738,15 +765,55 @@ def test_refresh_is_rerunnable_and_reports_what_changed(tmp_path, gazetteers, ca
 
 
 def test_refresh_dry_run_leaves_the_table_alone(tmp_path, gazetteers):
-    counties, places = gazetteers
+    counties, places, cousubs = gazetteers
     module = _refresh_module()
     output = tmp_path / "us_jurisdictions.tsv"
-    module.main(["--counties-zip", counties, "--places-zip", places, "--output", str(output)])
+    module.main(
+        ["--counties-zip", counties, "--places-zip", places, "--cousubs-zip", cousubs, "--output", str(output)]
+    )
     before = output.read_text(encoding="utf-8")
 
-    module.main(["--counties-zip", counties, "--places-zip", places, "--output", str(output), "--dry-run"])
+    module.main(
+        ["--counties-zip", counties, "--places-zip", places, "--cousubs-zip", cousubs,
+         "--output", str(output), "--dry-run"]
+    )
 
     assert output.read_text(encoding="utf-8") == before
+
+
+def test_refresh_keeps_only_active_towns_and_townships(tmp_path, gazetteers, capsys):
+    counties, places, cousubs = gazetteers
+    output = tmp_path / "us_jurisdictions.tsv"
+
+    assert _refresh_module().main(
+        ["--counties-zip", counties, "--places-zip", places, "--cousubs-zip", cousubs, "--output", str(output)]
+    ) == 0
+
+    table = load_jurisdictions(output)
+    assert sorted(entry["name"] for rows in table["cousub"].values() for entry in rows) == [
+        "Bloomfield charter township",
+        "Richmond township",
+        "Rye town",
+    ]
+    assert all(len(entry["geoid"]) == 10 for rows in table["cousub"].values() for entry in rows)
+    assert match_jurisdiction("township", "NY", "Town of Rye", table)["geoid"] == "3611964320"
+    assert match_jurisdiction("township", "MI", "Charter Township of Bloomfield", table)["geoid"] == "2612509180"
+    assert "cousubs:" in capsys.readouterr().out
+    assert "# rows: 2 counties + 3 places + 3 cousubs" in output.read_text(encoding="utf-8")
+
+
+def test_refresh_never_downloads_when_every_zip_is_local(tmp_path, gazetteers, monkeypatch):
+    module = _refresh_module()
+
+    def no_network(url, timeout=120):
+        raise AssertionError("refresh must not download {0} when a local zip was given".format(url))
+
+    monkeypatch.setattr(module, "download", no_network)
+    counties, places, cousubs = gazetteers
+    assert module.main(
+        ["--counties-zip", counties, "--places-zip", places, "--cousubs-zip", cousubs,
+         "--output", str(tmp_path / "t.tsv")]
+    ) == 0
 
 
 def test_runtime_code_never_imports_the_refresh_script():
