@@ -14,6 +14,8 @@ What this module does and does not do:
   page with AWS WAF Bot Control and a fast sweep gets the whole host challenged.
 * A challenge — HTTP 202, or the interstitial body served with any status — stops the run and
   returns what was already collected. It is never solved or worked around.
+* An agency's state is its purchasing group's, unless the name itself states one after a comma
+  ("Laramie County, Wyoming Government" under `colorado` is WY); `state_source` says which.
 
 Shape of the walk (measured 2026-09-21, fixtures under `tests/fixtures/discovery/`):
 
@@ -32,6 +34,7 @@ import requests
 
 from apsi_crawler.html.public_page import HtmlPageError
 from apsi_crawler.html.public_page import fetch_html as _fetch_html_default
+from apsi_crawler.us_states import name_state
 
 
 class _Challenge(Exception):
@@ -222,13 +225,22 @@ def parse_agency_links(html, known_groups=None):
         if not name:
             continue
         group = path.strip("/").split("/")[0] if path.count("/") == 2 else None
+        group_state = state_code_for_group(group)
+        # Spec 2026-09-24 §6.4: a state the agency writes after a comma outranks the group it
+        # is filed under -- "Laramie County, Wyoming Government" sits in the colorado group.
+        # Only that form counts (`apsi_crawler.us_states.name_state`); the name stays as printed.
+        named_state = name_state(name)
         agencies.append(
             {
                 "name": name,
                 "tenant_path": path,
                 "tenant_url": tenant_url(path),
                 "group": group,
-                "state_code": state_code_for_group(group),
+                "state_code": named_state or group_state,
+                "state_source": (
+                    "name" if named_state and named_state != group_state
+                    else ("group" if group_state else None)
+                ),
             }
         )
     return agencies

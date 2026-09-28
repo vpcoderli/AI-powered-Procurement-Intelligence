@@ -121,6 +121,7 @@ def test_page_one_yields_every_agency_card_with_a_clean_name_and_tenant_path():
         "tenant_url": "https://www.bidnetdirect.com/mitn/35thdistrictcourt/solicitations/open-bids",
         "group": "mitn",
         "state_code": "MI",
+        "state_source": "group",
     }
     assert agencies[5] == {
         "name": "Adams County",
@@ -128,6 +129,7 @@ def test_page_one_yields_every_agency_card_with_a_clean_name_and_tenant_path():
         "tenant_url": "https://www.bidnetdirect.com/colorado/adams-county/solicitations/open-bids",
         "group": "colorado",
         "state_code": "CO",
+        "state_source": "group",
     }
     # The accessible copy is "Organization logo of <name><name>" — none of that leaks through.
     assert not [agency for agency in agencies if "Organization logo" in agency["name"]]
@@ -180,6 +182,7 @@ def test_one_segment_tenants_and_logo_only_cards_are_still_harvested():
         "tenant_url": "https://www.bidnetdirect.com/city-of-aurora/solicitations/open-bids",
         "group": None,
         "state_code": None,
+        "state_source": None,
     }
     assert agencies[2]["group"] == "bgis"
     assert agencies[2]["state_code"] is None
@@ -560,3 +563,54 @@ def test_max_pages_is_clamped_to_at_least_one_page():
     assert result["stats"]["pages"] == 1
     assert result["stats"]["stopped_reason"] == "max_pages"
     assert fetcher.calls == [GROUPS_URL, directory_page_url(1)]
+
+
+# --- a state written after a comma (spec 2026-09-24 §6.4) ------------------------------------
+
+
+def _card(path, name):
+    """One directory card, shaped like the archived pages' markup."""
+    return (
+        '<a id="1" href="{0}" class="mets-command-link"><span class="participatingAgencyGridName">'
+        '<span id="g_1" class="mets-ellipsis mets-ellipsis-wrapper">{1}</span></span></a>'
+    ).format(path, name)
+
+
+LARAMIE_CARD = _card("/colorado/laramiecountywyominggovernment", "Laramie County, Wyoming Government")
+
+
+def test_a_state_written_after_a_comma_outranks_the_purchasing_group():
+    agencies = parse_agency_links(
+        LARAMIE_CARD
+        + _card("/new-york/townofdover", "Town of Dover, NY")
+        + _card("/colorado/cityofidahosprings", "City of Idaho Springs")
+    )
+
+    assert [(agency["state_code"], agency["state_source"]) for agency in agencies] == [
+        ("WY", "name"),
+        ("NY", "group"),
+        ("CO", "group"),
+    ]
+    # The name is kept exactly as printed; only the state is read from it.
+    assert agencies[0]["name"] == "Laramie County, Wyoming Government"
+    assert agencies[0]["group"] == "colorado"
+
+
+def test_a_group_without_a_state_takes_the_state_the_name_gives():
+    (agency,) = parse_agency_links(_card("/bgis/somecity", "Some City, OH"))
+    assert (agency["state_code"], agency["state_source"]) == ("OH", "name")
+
+
+def test_no_state_anywhere_leaves_the_source_empty():
+    (agency,) = parse_agency_links(_card("/bgis/bgis", "BGIS Global Integrated Solutions US LLC"))
+    assert (agency["state_code"], agency["state_source"]) == (None, None)
+
+
+def test_a_states_filter_uses_the_state_the_name_gives():
+    page = "<html><body>" + LARAMIE_CARD + _card("/colorado/adams-county", "Adams County") + "</body></html>"
+
+    wyoming, _, _ = _run(page, request={"states": ["WY"]})
+    colorado, _, _ = _run(page, request={"states": ["CO"]})
+
+    assert [agency["name"] for agency in wyoming["agencies"]] == ["Laramie County, Wyoming Government"]
+    assert [agency["name"] for agency in colorado["agencies"]] == ["Adams County"]
