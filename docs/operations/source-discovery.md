@@ -63,7 +63,7 @@ echo '{"platform":"bidnet","max_pages":400,"min_interval_seconds":3}' \
 | --- | --- | --- |
 | `platform` | `bidnet` | 目前只支持 `bidnet`；其他值退出码 2 |
 | `states` | 省略 = 全部 | 两字母州码数组。**不接受空数组**（省略才是"全部"，空数组多半是脚本出错） |
-| `levels` | `["county","city"]` | 只能从这两个里选。想只要郡就填 `["county"]`，被排除的那一级进 `review` |
+| `levels` | `["county","city","township"]` | 只能从 `county` / `city` / `township` 里选。想只要郡就填 `["county"]`，被排除的那一级进 `review` |
 | `max_pages` | `400` | 目录分页上限，钳制到 1..2000 |
 | `min_interval_seconds` | `3` | 每次请求之间的最小间隔，钳制到 0..60 |
 | `timeout_seconds` | `30` | 单次请求超时，钳制到 1..300 |
@@ -90,14 +90,14 @@ SELECT id, label, state_code, base_url, jurisdiction_level FROM data_sources WHE
 }
 ```
 
-**整份输出文件可以原样交给 `source:register`**（2026-09-23 QA C08b 之前它只认裸数组，按文档操作会报 `candidates is not iterable`）。`candidates[]` 的前十个字段与 `frontend/scripts/register-sources.ts` 的 `SourceCandidate` **逐字段一致**；多出来的 `discovery` 块（`agencyName` / `group` / `matchedOn` / `confidence` / `matchedPrefix`）只给审阅的人看，注册脚本会忽略它。跨语言契约由两侧测试共同守住：`crawler/tests/test_discover_sources_cli.py` 与 `frontend/scripts/register-sources.test.ts`。
+**整份输出文件可以原样交给 `source:register`**（2026-09-23 QA C08b 之前它只认裸数组，按文档操作会报 `candidates is not iterable`）。`candidates[]` 的前十个字段与 `frontend/scripts/register-sources.ts` 的 `SourceCandidate` **逐字段一致**；多出来的 `discovery` 块（`agencyName` / `group` / `matchedOn` / `confidence` / `matchedPrefix` / `stateSource`）只给审阅的人看，注册脚本会忽略它。`stateSource` 是 `"name"` 还是 `"group"`，即这条候选的州码是从机构名逗号后读出来的、还是沿用了采购组，见第 6 节"跨州命名"。跨语言契约由两侧测试共同守住：`crawler/tests/test_discover_sources_cli.py` 与 `frontend/scripts/register-sources.test.ts`。
 
 `stats` 各字段：
 
 | 字段 | 含义 |
 | --- | --- |
 | `pages` / `agencies` | 实际翻了几页、拿到几家机构 |
-| `county` / `city` / `special_district` / `unknown` | 分类桶。恒等式：四者之和 **等于** `agencies` |
+| `county` / `city` / `township` / `special_district` / `unknown` | 分类桶。恒等式：五者之和 **等于** `agencies` |
 | `unmatched` | 进到 FIPS 匹配那一步却没匹配上的 county/city 数（`ambiguous` + `not_found`） |
 | `prefix_matched` | 靠"郡名前缀"规则拿到 GEOID 的候选数，即 `confidence: "jurisdiction_prefix"` 的条数，见第 6 节 |
 | `duplicates` | 租户已登记（slug 命中 `existing_sources[].base_url` / `existing_base_urls`）而跳过的机构数 |
@@ -173,12 +173,20 @@ discover-sources output: 43 pages, 2036 agencies, stopped_reason=exhausted; 819 
 | --- | --- |
 | `special_district` | 名字含 school / district / authority / library / fire / water / sanitation / transit / college / university / port / housing / conservancy / metropolitan / board of |
 | `county` | 名字含 county / parish，或者含 borough **且州是 AK**，且不含上面任一特别区词 |
-| `city` | 名字以 city of / town of / village of / borough of 开头，或以 city / town / village 结尾，或含 borough 且州不是 AK |
+| `township` | 名字含 township / twp（不分州），或者——只在 NY、CT、ME、MA、NH、RI、VT、WI 这八个州——以 town of 开头或以 town 结尾 |
+| `city` | 名字以 city of / village of / borough of 开头，或以 city / village 结尾，或含 borough 且州不是 AK；八个 town-township 州**之外**，"town of …" / "… town" 也落进这一档 |
 | `unknown` | 其余 |
 
-**分类需要州码**，不是可有可无的参数：`borough` 在阿拉斯加是郡的对等物，在新泽西/宾州/康州却是普通市镇。忽略州码会把一批 NJ 的 borough 当成郡送去匹配，然后全部匹配失败进 `review`。所以 `discover_sources` 把每家机构的 `state_code` 一起传给分类器。
+**分类需要州码**，不是可有可无的参数：`borough` 在阿拉斯加是郡的对等物，在新泽西/宾州/康州却是普通市镇；"town" 在纽约、新英格兰各州与威斯康星是有自己政府的县以下行政区（civil township 在当地的叫法），在科罗拉多、新泽西等其余州只是一个普通建制市镇。忽略州码会把一批 NJ 的 borough 当成郡、或者把外州的 town 错当成 township 送去匹配，然后全部匹配失败进 `review`。所以 `discover_sources` 把每家机构的 `state_code` 一起传给分类器。
 
 "City and County of Denver" 同时命中 county 与 city 两条，按 **`county`** 归类——与库里既有 `bidnet_co_denver` 的 `jurisdictionLevel: "county"` 一致。
+
+### 跨州命名：逗号后面的州，与逗号结尾的州
+
+两条独立规则，都只认**逗号**——名字中间提到某个州、但前面没有逗号，从来不算（`City of Idaho Springs`、`City of Iowa Park`、`Colorado River Indian Tribes` 都不受影响）：
+
+- **机构自报的州覆盖采购组**（`apsi_crawler.us_states.name_state`，在 `discovery.bidnet` 里就用上，决定候选的 `state_code`）：名字里任意一个逗号后面紧跟着一个完整州名或两字母州码时，这个州覆盖 BidNet 采购组本身推出来的州——`Laramie County, Wyoming Government` 挂在 BidNet 的 `colorado` 采购组下，但按名字读出来的州是 `WY`。逗号后面接的是"州名 + 辖区词"（`, Washington County`、`, New York City`）不算，那是恰好与州同名的一个地名，不是在报州。名字里出现**两个不同的**逗号尾部州（`Tri-State Authority, NY, NJ`）时谁也证明不了，退回采购组本身的州。候选的 `discovery.stateSource` 记着这次到底是 `"name"` 还是 `"group"`。
+- **逗号结尾的州不算辖区名字的一部分**（`apsi_crawler.us_states.strip_state_suffix`，`discovery_service` 在分类、匹配、生成 id 之前先调用它）：只有整个名字**恰好以** ", <两字母州码>" 或 ", <州全名>" 结尾才会被去掉——`Town of Dover, NY` 按 `Town of Dover` 去分类、匹配、生成 id；`Laramie County, Wyoming Government` 结尾是 "Wyoming Government" 不是单纯的州名，整段原样保留（前一条规则因此还能从里面读出 `Wyoming`）。`label` 与 `discovery.agencyName` 始终保留机构的原名，包括这个州尾巴。
 
 ### 为什么不注册特别区
 
@@ -186,10 +194,11 @@ discover-sources output: 43 pages, 2036 agencies, stopped_reason=exhausted; 819 
 
 ### FIPS 匹配（`match_jurisdiction`）
 
-- 归一化 `name_key`：转小写、去标点、折叠空格、去前缀 `city of` / `town of` / `village of` / `county of` / `city and county of`、去后缀 `county` / `parish` / `borough` / `city` / `town` / `village`。
-- 在**同一州内**按 `name_key` 精确匹配；`county` 查 county 行，`city` 查 place 行。唯一命中 → `discovery.confidence: "exact"`，`discovery.matchedPrefix: null`。
-- **郡名前缀规则**（仅 `county`、仅在精确匹配失败后）：机构名以 `<X> County` / `<X> Parish` 开头，且 `<X>` 在该州唯一对应一个郡时，取那个郡的 GEOID，记 `discovery.confidence: "jurisdiction_prefix"`、`discovery.matchedPrefix: "<X> County"`，计入 `stats.prefix_matched`。这样 `Alameda County Public Works Agency`、`Archuleta County Sheriff's Office` 这类**郡下属采购部门**才能进候选，而不是被整批丢掉。
-- 命中多个（`ambiguous_match`）或零个（`no_fips_match`）→ 不进 `candidates`，进 `review`。
+- 归一化 `name_key`：转小写、去标点、折叠空格、去前缀 `city of` / `town of` / `village of` / `county of` / `city and county of` / `township of` / `charter township of`（`charter township of` 排在 `township of` 前面试，名字以它开头时不会只剥掉 `township of` 剩下孤零零的 `charter`）、反复去后缀 `county` / `parish` / `borough` / `city` / `town` / `village` / `township` / `twp`——剥掉 `township` / `twp` 后如果剩下的末词是 `charter`，一并剥掉（"Delta Charter Township" → `delta`）。
+- 在**同一州内**按 `name_key` 精确匹配；`county` 查 county 行，`city` 查 place 行，`township` **只查 `cousub` 行**——Census 把 town/township 单独存一张表，与郡、市镇村分开（第 9 节）。唯一命中 → `discovery.confidence: "exact"`，`discovery.matchedPrefix: null`。
+- 机构名里带 "Charter" 时，`township` 的匹配只在名字以 "... charter township" 结尾的行里找；不带 "Charter" 时普通 township 与 charter township 两类都在候选之内——名字没提 "Charter"，不代表实际不是 charter township。
+- **郡名前缀规则**（仅 `county`、仅在精确匹配失败后）：机构名以 `<X> County` / `<X> Parish` 开头，且 `<X>` 在该州唯一对应一个郡时，取那个郡的 GEOID，记 `discovery.confidence: "jurisdiction_prefix"`、`discovery.matchedPrefix: "<X> County"`，计入 `stats.prefix_matched`。这样 `Alameda County Public Works Agency`、`Archuleta County Sheriff's Office` 这类**郡下属采购部门**才能进候选，而不是被整批丢掉。**`township` 与 `city` 都没有这条前缀规则**，只有 `county` 有。
+- 命中多个（`ambiguous_match`）或零个（`no_fips_match`）→ 不进 `candidates`，进 `review`。`township` 尤其容易撞上同州同名：密歇根不止一个县下面都有 `Richmond Township`，纽约不止一个郡下面都有 `Town of Clinton`，目录里的机构名又不带郡名，这类一律判 `ambiguous_match`，不猜。
 
 **仍然不做模糊匹配。** 前缀规则不是模糊匹配：它要求机构名以一个**完整、精确、在该州唯一**的郡名开头，命中的是那个郡确切的 GEOID。真正的模糊匹配（编辑距离、词重合度之类）一律不做——一个错的 GEOID 不会报错，只会安静地把这个源挂到别的辖区上，之后所有按辖区的筛选、提醒与统计都跟着错。宁可让人补一个空值，也不猜。
 
@@ -197,7 +206,7 @@ discover-sources output: 43 pages, 2036 agencies, stopped_reason=exhausted; 819 
 
 ### id 规则
 
-`bidnet_<州码小写>_<name_key>`（非字母数字折成 `_`），例如 `Cuyahoga County` (OH) → `bidnet_oh_cuyahoga`。同一次运行内撞名，或撞上请求里任何已有 id（`existing_ids` 与 `existing_sources[].id`），追加 `_2`、`_3`。id 只是名字：撞 id 永远不等于"已注册"，见第 3 节。
+`bidnet_<州码小写>_<name_key>`（非字母数字折成 `_`），例如 `Cuyahoga County` (OH) → `bidnet_oh_cuyahoga`。**`township` 级别多加一段类型词**：`bidnet_<州>_<name_key>_town` 或 `..._township`，取自匹配到的 Census 名称结尾（`Rye town` → `_town`，`Bloomfield charter township` → `_township`）——这段后缀不是撞名以后才追加的 `_2`，而是每条 township 候选都会有的。纽约 `Town of Rye` 与 `City of Rye` 的 `name_key` 都是 `rye`：前者是 `bidnet_ny_rye_town`，后者是普通的 `bidnet_ny_rye`，两个真实存在、都该留着的源不会有一个被挤成看不出意义的 `_2`。同一次运行内仍然撞名，或撞上请求里任何已有 id（`existing_ids` 与 `existing_sources[].id`），照常追加 `_2`、`_3`。id 只是名字：撞 id 永远不等于"已注册"，见第 3 节。
 
 ## 7. 收尾 2026-09-16 遗留的四个 404 源
 
@@ -237,6 +246,8 @@ python3 -c 'import json;print(json.dumps(json.load(open("/tmp/pending.json"))["e
 
 `existingMatches` **只建议、不写库**，写回 `base_url` 仍然是管理端上的一次人工确认操作（`local-source-approval.md` 第 4.2 节）。
 
+**`bidnet_wy_laramie` 现在能被反查修正**：Laramie County, WY 在 BidNet 目录里登记的名字其实是 `Laramie County, Wyoming Government`，挂在 `colorado` 采购组下（不是 `wyoming`）——这正是它此前反查落空、六个候选路径全部 404 的原因。第 6 节的跨州命名规则会从名字本身（逗号后的 "Wyoming"）读出州码 `WY`（`discovery.stateSource: "name"`），不再沿用 `colorado` 组推出的 `CO`，于是同样的反查请求现在会给出 `confidence: "partial"`、`suggestedBaseUrl` 指向该租户（`/colorado/laramiecountywyominggovernment/solicitations/open-bids`）。处理方式与上表的 `partial` 一致：核对页面标题确属 Laramie County 本身后，`PATCH /api/admin/data-sources/bidnet_wy_laramie` 把 `base_url` 改过去，再重跑前置检查——**不要**另外注册一个新源。同一次 `discover-sources` 输出的 `candidates[]` 也会带一条指向同一租户的新候选（如 `bidnet_wy_laramie_county_wyoming_government`）——两边都落库就是同一个租户页被两个 id 抓两遍，与下一段 Franklin 的情形是同一类问题。好在这次不需要手工排查：`source:register`（`frontend/scripts/register-sources.ts`）会替你把关，候选的 `baseUrl` 命中 `existingMatches` 里某条已确认（`exact`/`partial`）建议时，默认**扣下这条候选不注册**，只打印一行提示，例如"改指 `bidnet_wy_laramie`，PATCH `/api/admin/data-sources/bidnet_wy_laramie`"。确认建议是错的时（比如反查命中的其实是该郡下独立发标的一个部门，而不是郡本身），加 `--allow-suggested` 照常把候选注册成新源。
+
 **同一次运行里当心重复登记**：给 `bidnet_oh_franklin` 建议 `…/franklincountychildrensservices/…` 的那一次运行，`candidates[]` 里**同时**会有一条指向同一租户的 `bidnet_oh_franklin_county_children_services`（郡名前缀规则捞回来的）。两边都落库就等于把同一个租户页按两个 id 抓两遍。二选一：要么把已有行的 `base_url` 改过去、从 `candidates.json` 里删掉那条新候选，要么注册新候选、把旧行标 `blocked`。把旧行的 `base_url` 放进 `existing_base_urls` 是防不住的——旧行存的正是那个 404 的地址。
 
 ## 8. 成本与礼貌
@@ -249,15 +260,21 @@ python3 -c 'import json;print(json.dumps(json.load(open("/tmp/pending.json"))["e
 
 ## 9. Census 表怎么刷新
 
-匹配用的是仓库内置的离线表 `crawler/data/us_jurisdictions.tsv`（列 `level` / `geoid` / `state` / `name` / `name_key`，文件头注释记录来源 URL 与生成日期）。运行时**只读**这个文件，不联网。
+匹配用的是仓库内置的离线表 `crawler/data/us_jurisdictions.tsv`（列 `level` / `geoid` / `state` / `name` / `name_key`；`level` 现在有三种：`county`、`place`、`cousub`）。运行时**只读**这个文件，不联网。文件头是一组注释行，记录三个来源 URL（`# source_counties:` / `# source_places:` / `# source_cousubs:`）、两条过滤规则说明（`# place_filter:` / `# cousub_filter:`）和一行行数汇总（`# rows: <郡数> counties + <市镇村数> places + <cousub 数> cousubs`，当前是 `3222 counties + 19512 places + 16092 cousubs`）。
 
 ```bash
 cd crawler
-python3 scripts/refresh_jurisdictions.py        # 下载两个 gazetteer zip，重写 TSV 并打印变化
+python3 scripts/refresh_jurisdictions.py        # 下载三个 gazetteer zip（郡、市镇村、县以下行政区），重写 TSV 并打印变化
 git diff --stat crawler/data/us_jurisdictions.tsv
+
+# 三个 zip 都已经下载到本地时可以离线重跑，各自对应一个 --*-zip 参数：
+python3 scripts/refresh_jurisdictions.py \
+  --counties-zip 2024_Gaz_counties_national.zip \
+  --places-zip 2024_Gaz_place_national.zip \
+  --cousubs-zip 2024_Gaz_cousubs_national.zip
 ```
 
-来源是 Census 年度 gazetteer：`https://www2.census.gov/geo/docs/maps-data/data/gazetteer/<年份>_Gazetteer/` 下的 `<年份>_Gaz_counties_national.zip`（约 142 KB）与 `<年份>_Gaz_place_national.zip`（约 1.2 MB）。脚本会剔除 CDP 等非建制地名，只保留郡与建制市镇村。
+来源是 Census 年度 gazetteer：`https://www2.census.gov/geo/docs/maps-data/data/gazetteer/<年份>_Gazetteer/` 下的 `<年份>_Gaz_counties_national.zip`（约 142 KB）、`<年份>_Gaz_place_national.zip`（约 1.2 MB）与 `<年份>_Gaz_cousubs_national.zip`（县以下行政区，2026-09 新增）。郡文件没有 LSAD 列、整份保留；市镇村文件剔除 CDP 等非建制统计地名；县以下行政区文件只保留 `FUNCSTAT = A`（在运作、提供一般性政府职能）且名字以 `town` 或 `township` 结尾的行（`charter township` 本身以 `township` 结尾，一并收进）——统计性的 CCD、无建制领地、种植地、grant 等一律不收；一个地方如果同时是建制市/镇又被记成县以下行政区，仍然只算市镇村表的一条，不在 `cousub` 里重复出现。
 
 建议**按年刷新**（Census 每年发新版），刷新后：
 
@@ -274,6 +291,8 @@ git diff --stat crawler/data/us_jurisdictions.tsv
 - 不做模糊名称匹配，不自动填 GEOID 猜测值。
 - 本期只接 BidNet。CLI 以 `platform` 字段分派，接第二个平台只需加一个 harvester 和 `discovery_service.PLATFORMS` 里的一行。
 - 发现结果是某一时刻的目录快照。机构会上线、改名、退出平台，所以每次批量注册前都应重新跑一次，而不是复用旧的 `candidates.json`。
+- **已知限制（未修）：`Charter Township of Port Huron` 会被判成特别区**。特别区规则里的整词 `port` 命中了 "Port Huron" 里的 "Port"，而特别区规则排在 `township` 之前，所以这条机构名分类成 `special_district`，进 `review` 而不是候选。
+- **已知限制（未修）：Utah 的 "metro township" 匹配不到**。Census 把 Copperton、Emigration Canyon、Kearns、Magna、White City 这五个 Utah 地名登记成建制市镇（`place`，LSAD 是 "metro township"），不是县以下行政区（`cousub`）；`township` 级别只查 `cousub` 行，所以名字含 "township" 又指向这五处之一的机构会匹配失败，落进 `review`（`no_fips_match`）而不是候选。附带影响：`township`/`twp` 加入 `name_key` 的尾部去除词之后，这五个 `place` 行的 key 从整段变成去掉最后一词（如 `kearns metro township` → `kearns metro`）；地名表和郡表里没有别的名字撞上这五个新 key，其余匹配结果不受影响。
 
 ## 首轮实测（2026-09-21，全量 BidNet）
 

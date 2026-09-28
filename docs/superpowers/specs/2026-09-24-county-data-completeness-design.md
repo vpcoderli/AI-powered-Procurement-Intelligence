@@ -191,6 +191,15 @@
 - 反查的级别确认同样适用于 township。
 - `register-sources.ts` 接受 `township`。
 
+### 实施补充（阶段 2）
+
+阶段 2 实施后，对以上几节做以下补充和更正：
+
+- **逗号结尾的州不算名字的一部分**：机构名整体以 `", <州名/州码>"` 结尾时（如 `Town of Dover, NY`），分类、匹配与生成 id 之前先用 `apsi_crawler.us_states.strip_state_suffix` 去掉这个尾巴，按 `Town of Dover` 处理；`label` 与 `discovery.agencyName` 仍保留原名（含 `, NY`）。这条规则与 §6.4 的"逗号后的州覆盖采购组"（`name_state`）是配合使用的两条独立规则：后者认的是任意一个逗号，前者只认恰好在名字末尾的那一个。
+- **注册脚本的建议保护**（`frontend/scripts/register-sources.ts`）：候选的 `baseUrl` 命中 `existingMatches` 里某条已确认（`exact`/`partial`）建议——即这个租户其实该配给某个已有源——时，`source:register` 默认**扣下这条候选不注册**，只打印应执行的 `PATCH /api/admin/data-sources/<id>`；确认建议是错的（例如反查命中的其实是该辖区下独立发标的一个部门，而不是辖区本身）时加 `--allow-suggested` 照常注册。这就是 §6.4 "按运行手册改指旧行，不另注册新 id" 在代码里的落实方式。
+- **更正 §6.2**："地名表和郡表里没有以这些词结尾的名字，现有匹配结果不变"不完全准确：Census 地名表里恰有五个以 "metro township" 结尾的 Utah 地名（Copperton、Emigration Canyon、Kearns、Magna、White City）。`township`/`twp` 加入后缀去除词后，它们的 `name_key` 从整段变为去掉最后一词（如 `kearns metro township` → `kearns metro`）。因为没有别的郡/市名字与这五个新 key 冲突，"匹配结果不变"这个结论仍然成立，但准确说法是"没有产生新的冲突"，而不是"这些 key 没有变化"。
+- **已知限制，本阶段未修**：`Charter Township of Port Huron` 会被分类成 `special_district`（特别区规则里的整词 `port` 排在 township 规则之前，先一步命中）；Utah 的 "metro township" 在 Census 里登记成建制市镇（`place`），不是县以下行政区（`cousub`），`township` 级别只查 `cousub` 表，所以这类机构匹配不到，落进 `review`。
+
 ## 7. 阶段 3：批量接入与治理
 
 ### 7.1 平台级审查（新表 `platform_reviews`）
