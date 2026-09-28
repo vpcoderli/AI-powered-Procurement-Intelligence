@@ -1,4 +1,7 @@
-"""Census county/place lookup for discovered agencies (contract C2, spec sections 4.4 and 4.5).
+"""Census county/place/county-subdivision lookup for discovered agencies (contract C2).
+
+Spec sections 4.4 and 4.5 of the 2026-09-21 discovery design; townships and towns (the `cousub`
+table level) are spec 2026-09-24 §6.
 
 Pure functions over a table committed at `crawler/data/us_jurisdictions.tsv`; nothing here does
 I/O beyond reading that file, and nothing imports `scripts/refresh_jurisdictions.py` (the refresh
@@ -27,6 +30,7 @@ from pathlib import Path
 __all__ = [
     "BUNDLED_TABLE_PATH",
     "JurisdictionTableError",
+    "TOWN_TOWNSHIP_STATES",
     "classify_agency",
     "load_jurisdictions",
     "match_jurisdiction",
@@ -39,7 +43,7 @@ BUNDLED_TABLE_PATH = Path(__file__).resolve().parents[2] / "data" / "us_jurisdic
 
 TABLE_COLUMNS = ("level", "geoid", "state", "name", "name_key")
 _REQUIRED_COLUMNS = ("level", "geoid", "state", "name")
-_TABLE_LEVELS = ("county", "place")
+_TABLE_LEVELS = ("county", "place", "cousub")
 
 
 class JurisdictionTableError(Exception):
@@ -56,8 +60,12 @@ _APOSTROPHES = "'‘’ʼ´`"
 # because the New Jersey group spells its municipalities that way ("Borough of Alpha"), and the
 # gazetteer spells the same place "Alpha borough" -> both reduce to `alpha`. No Census name in
 # the bundled table starts with "Borough of", so nothing on the table side changes.
+# `charter township of` / `township of` are how Michigan and New Jersey buyers spell a civil
+# township ("Charter Township of Clinton", "Township of Waterford"); Census writes the same
+# government "Clinton charter township" / "Waterford township" (spec 2026-09-24 §6.2).
 _LEADING_FORMS = (
-    "city and county of", "county of", "city of", "town of", "village of", "borough of",
+    "city and county of", "charter township of", "township of", "county of", "city of",
+    "town of", "village of", "borough of",
 )
 
 # Exactly the six designators from spec 4.5, and only where they TRAIL: "Franklin County
@@ -71,7 +79,10 @@ _LEADING_FORMS = (
 # never match (9 of 12 spot-checked lookups). Repeating costs 22 extra colliding keys out of
 # 19,512 places (`Lake City` vs `Lake Village` in AR, `Mason City` vs `Mason` in IL, ...) — and a
 # collision is reported as `ambiguous`, never resolved by guessing, so nothing is mismatched.
-_TRAILING_DESIGNATORS = ("county", "parish", "borough", "city", "town", "village")
+# `township` / `twp` joined these in 2026-09 (spec §6.2). Five Census places end in "metro
+# township" (Kearns, Magna, ... in Utah); their keys lose the last word and keep "metro".
+_TRAILING_DESIGNATORS = ("county", "parish", "borough", "city", "town", "village", "township", "twp")
+_TOWNSHIP_DESIGNATORS = ("township", "twp")
 
 
 def _normalized(value):
@@ -87,8 +98,8 @@ def _normalized(value):
 def name_key(value):
     """The comparison key for a jurisdiction or agency name.
 
-    Lowercase, punctuation folded, whitespace collapsed, one leading `city of`/`town of`/
-    `village of`/`county of`/`city and county of` removed, then every trailing designator
+    Lowercase, punctuation folded, whitespace collapsed, one leading form (`city of`, `town of`,
+    `township of`, `charter township of`, ...) removed, then every trailing designator
     removed, so "Oklahoma City city" (Census), "Oklahoma City" and "City of Oklahoma City" all
     reduce to `oklahoma`.
 
@@ -104,7 +115,11 @@ def name_key(value):
             break
     words = text.split()
     while words and words[-1] in _TRAILING_DESIGNATORS:
-        words.pop()
+        removed = words.pop()
+        # "Delta Charter Township" / Census "Bloomfield charter township": `charter` qualifies
+        # the designator, it is not part of the name.
+        if removed in _TOWNSHIP_DESIGNATORS and len(words) > 1 and words[-1] == "charter":
+            words.pop()
     return " ".join(words)
 
 
@@ -132,26 +147,40 @@ _BOROUGH_RE = re.compile(r"\bborough\b")
 _CITY_LEADING_RE = re.compile(r"^(?:city|town|village|borough) of\b")
 _CITY_TRAILING_RE = re.compile(r"\b(?:city|town|village)$")
 
+_TOWNSHIP_RE = re.compile(r"\b(?:township|twp)\b")
+_TOWN_FORM_RE = re.compile(r"^town of\b|\btown$")
+
+#: Where a "town" is a civil township -- a Census county subdivision with its own government --
+#: rather than an incorporated municipality (spec 2026-09-24 §6.1). Elsewhere (CO, NC, NJ, ...)
+#: a town is an incorporated place and stays a city.
+TOWN_TOWNSHIP_STATES = frozenset(("NY", "CT", "ME", "MA", "NH", "RI", "VT", "WI"))
+
 
 def classify_agency(name, state_code=None):
-    """`"county"` | `"city"` | `"special_district"` | `"unknown"` for a directory agency name.
+    """`"county"` | `"city"` | `"township"` | `"special_district"` | `"unknown"` for a name.
 
-    Priority is top-down per spec 4.4, so a special-district word beats everything ("Aiken County
-    Public Schools" is a school district, not a county) and `county` beats `city` ("City and
-    County of Denver ..." is a county, matching the existing `bidnet_co_denver` row).
+    Priority is top-down (spec 2026-09-21 §4.4, 2026-09-24 §6.1): a special-district word beats
+    everything ("Bloomfield Township Public Library" is a library), `county` beats the rest
+    ("City and County of Denver ..." is a county), then `township`, then `city`.
 
-    `state_code` is optional and only decides how `borough` reads. With the state unknown a
-    borough is treated as a city, because an unmatched city merely goes to review while a wrong
-    county classification also blocks the lookup that would have worked.
+    `township` means the name says township/twp in any state, or -- only where towns are civil
+    townships (`TOWN_TOWNSHIP_STATES`) -- it opens with "town of" or ends in "town". With the
+    state unknown, a town stays a city and a borough is a city: an unmatched city merely goes
+    to review, while a wrong classification also blocks the lookup that would have worked.
     """
     text = _normalized(name)
     if not text:
         return "unknown"
     if _SPECIAL_DISTRICT_RE.search(text):
         return "special_district"
-    alaska = isinstance(state_code, str) and state_code.strip().upper() == "AK"
+    state = state_code.strip().upper() if isinstance(state_code, str) else ""
+    alaska = state == "AK"
     if _COUNTY_RE.search(text) or (alaska and _BOROUGH_RE.search(text)):
         return "county"
+    if _TOWNSHIP_RE.search(text):
+        return "township"
+    if state in TOWN_TOWNSHIP_STATES and _TOWN_FORM_RE.search(text):
+        return "township"
     if _CITY_LEADING_RE.search(text) or _CITY_TRAILING_RE.search(text):
         return "city"
     if not alaska and _BOROUGH_RE.search(text):
@@ -218,7 +247,9 @@ def _default_table():
     return _DEFAULT_TABLE
 
 
-_LEVEL_TABLES = {"county": "county", "city": "place"}
+_LEVEL_TABLES = {"county": "county", "city": "place", "township": "cousub"}
+_CHARTER_RE = re.compile(r"\bcharter\b")
+_CHARTER_TOWNSHIP_SUFFIX = " charter township"
 
 # "<X> County ..." / "<X> Parish ...", capturing through the designator. Anchored at the start,
 # so only a name that OPENS with the jurisdiction qualifies; "Board of Water Works of Pueblo
@@ -266,11 +297,13 @@ def match_jurisdiction(level, state_code, name, table=None, allow_prefix=True):
     resolvable from the jurisdiction its name opens with: `{"status": "prefix", "geoid", "name",
     "matched_prefix"}`. Pass `allow_prefix=False` for exact-only behaviour. Cities never get a
     prefix rule — "Aurora Public Schools" opening with "Aurora" proves nothing about the buyer.
+    Townships (`"township"`) read only the `cousub` rows; a name containing "Charter" keeps only
+    "... charter township" rows; they never get a prefix rule.
     """
     try:
         level_table = _LEVEL_TABLES[level]
     except (KeyError, TypeError):
-        raise ValueError("level must be 'county' or 'city', got {0!r}".format(level))
+        raise ValueError("level must be 'county', 'city' or 'township', got {0!r}".format(level))
 
     state = state_code.strip().upper() if isinstance(state_code, str) else ""
     key = name_key(name)
@@ -279,6 +312,10 @@ def match_jurisdiction(level, state_code, name, table=None, allow_prefix=True):
 
     resolved = table if table is not None else _default_table()
     entries = resolved.get(level_table, {}).get((state, key))
+    if entries and level_table == "cousub" and _CHARTER_RE.search(_normalized(name)):
+        # "Charter Township of Clinton" can only be a charter township. Without the word the
+        # directory may just be abbreviating, so both kinds stay in play (spec §6.3).
+        entries = [entry for entry in entries if entry["name"].casefold().endswith(_CHARTER_TOWNSHIP_SUFFIX)]
     if not entries:
         if allow_prefix and level_table == "county":
             return _prefix_match(state, name, resolved) or {"status": "not_found"}

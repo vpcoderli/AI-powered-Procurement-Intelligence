@@ -18,3 +18,12 @@ place	0820000	CO	Denver city	denver	ignore-me
 place	4701520	TN	Athens city	athens	ignore-me
 place	4701521	TN	Athens town	athens	ignore-me
 place	4055000	OK	Oklahoma City city	oklahoma	ignore-me
+place	3664309	NY	Rye city	rye	ignore-me
+cousub	3611964320	NY	Rye town	rye	ignore-me
+cousub	2612509180	MI	Bloomfield charter township	bloomfield	ignore-me
+cousub	2606509200	MI	Bloomfield township	bloomfield	ignore-me
+cousub	2604522980	MI	Delta charter township	delta	ignore-me
+cousub	2609968700	MI	Richmond township	richmond	ignore-me
+cousub	2610368720	MI	Richmond township	richmond	ignore-me
+cousub	3400776340	NJ	Waterford township	waterford	ignore-me
+cousub	5513302775	WI	Brookfield town	brookfield	ignore-me

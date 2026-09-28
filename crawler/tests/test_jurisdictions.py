@@ -19,6 +19,7 @@ import pytest
 
 from apsi_crawler.jurisdictions import (
     BUNDLED_TABLE_PATH,
+    TOWN_TOWNSHIP_STATES,
     JurisdictionTableError,
     classify_agency,
     load_jurisdictions,
@@ -119,6 +120,34 @@ def test_name_key_handles_empty_and_non_string_input():
     assert name_key("County") == ""
 
 
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("Charter Township of Clinton", "clinton"),
+        ("Township of Lower Merion", "lower merion"),
+        ("Bloomfield Township", "bloomfield"),
+        ("Delta Charter Township", "delta"),
+        ("Bloomfield charter township", "bloomfield"),
+        ("Clinton Twp", "clinton"),
+        ("Clinton Twp.", "clinton"),
+        ("Rye town", "rye"),
+    ],
+)
+def test_name_key_strips_township_forms(value, expected):
+    """Spec 2026-09-24 §6.2: the directory's and Census's township spellings meet in the middle."""
+    assert name_key(value) == expected
+
+
+def test_name_key_strips_charter_only_right_before_township():
+    assert name_key("Charter Oak") == "charter oak"
+    assert name_key("Charter Township") == "charter"
+
+
+def test_utah_metro_townships_lose_only_the_township_word():
+    """Five Census places end in "metro township"; their key changes, nothing else does."""
+    assert name_key("Kearns metro township") == "kearns metro"
+
+
 # --- classify_agency ----------------------------------------------------------------------
 
 
@@ -200,8 +229,6 @@ def test_classifies_cities_towns_and_villages(name):
     "name",
     [
         "Athens",
-        "Andover Township",
-        "Bloomfield Township",
         "Augusta, GA",
         "BGIS Global Integrated Solutions US LLC",
         "Alliance of Rouge Communities",
@@ -263,11 +290,48 @@ def test_special_district_beats_county_and_city():
     assert classify_agency("City of Aurora Water Department") == "special_district"
 
 
+@pytest.mark.parametrize(
+    "name,state",
+    [
+        ("Andover Township", "NJ"),
+        ("Bloomfield Township", "MI"),
+        ("Charter Township of Clinton", "MI"),
+        ("Township of Waterford", "NJ"),
+        ("Clinton Twp", "NJ"),
+        ("Bloomfield Township", None),
+    ],
+)
+def test_township_wording_is_a_township_in_every_state(name, state):
+    assert classify_agency(name, state) == "township"
+
+
+@pytest.mark.parametrize("state", sorted(TOWN_TOWNSHIP_STATES))
+def test_a_town_is_a_township_where_towns_are_civil_townships(state):
+    assert classify_agency("Town of Rye", state) == "township"
+    assert classify_agency("Southampton Town", state) == "township"
+
+
+@pytest.mark.parametrize("state", ["CO", "NC", "NJ", "SC", "CA", None])
+def test_elsewhere_a_town_stays_a_city(state):
+    assert classify_agency("Town of Castle Rock", state) == "city"
+
+
+def test_the_town_states_are_exactly_new_york_new_england_and_wisconsin():
+    assert TOWN_TOWNSHIP_STATES == frozenset(("NY", "CT", "ME", "MA", "NH", "RI", "VT", "WI"))
+
+
+def test_special_districts_and_counties_still_outrank_townships():
+    assert classify_agency("Bloomfield Township Public Library", "MI") == "special_district"
+    assert classify_agency("Berkeley Township Sewerage Authority", "NJ") == "special_district"
+    assert classify_agency("Town of Rye Water District", "NY") == "special_district"
+    assert classify_agency("Township of Franklin (Somerset County)", "NJ") == "county"
+
+
 # --- load_jurisdictions -------------------------------------------------------------------
 
 
 def test_loader_skips_the_header_comment_and_ignores_unknown_columns(sample_table):
-    assert set(sample_table) == {"county", "place"}
+    assert set(sample_table) == {"county", "place", "cousub"}
     entries = sample_table["county"][("OH", "franklin")]
     assert entries == [
         {"level": "county", "geoid": "39049", "state": "OH", "name": "Franklin County", "name_key": "franklin"}
@@ -402,6 +466,59 @@ def test_cities_never_get_a_prefix_rule(sample_table):
 def test_an_unsupported_level_is_a_programming_error(sample_table):
     with pytest.raises(ValueError):
         match_jurisdiction("special_district", "OH", "Franklin County", sample_table)
+
+
+def test_a_town_matches_the_county_subdivision_never_the_same_name_city(sample_table):
+    """Spec 2026-09-24 §1: "Town of Rye" was matched to Rye city; they are two governments."""
+    assert match_jurisdiction("township", "NY", "Town of Rye", sample_table) == {
+        "status": "exact",
+        "geoid": "3611964320",
+        "name": "Rye town",
+    }
+    assert match_jurisdiction("city", "NY", "City of Rye", sample_table)["geoid"] == "3664309"
+
+
+def test_charter_in_the_name_matches_only_a_charter_township(sample_table):
+    for name in ("Charter Township of Bloomfield", "Bloomfield Charter Township"):
+        assert match_jurisdiction("township", "MI", name, sample_table) == {
+            "status": "exact",
+            "geoid": "2612509180",
+            "name": "Bloomfield charter township",
+        }
+
+
+def test_without_charter_both_kinds_stay_in_play(sample_table):
+    result = match_jurisdiction("township", "MI", "Bloomfield Township", sample_table)
+    assert result["status"] == "ambiguous"
+    assert sorted(candidate["name"] for candidate in result["candidates"]) == [
+        "Bloomfield charter township",
+        "Bloomfield township",
+    ]
+
+
+def test_same_name_townships_in_one_state_are_ambiguous_never_guessed(sample_table):
+    result = match_jurisdiction("township", "MI", "Richmond Township", sample_table)
+    assert result["status"] == "ambiguous"
+    assert [candidate["geoid"] for candidate in result["candidates"]] == ["2609968700", "2610368720"]
+
+
+def test_charter_with_no_charter_row_is_not_found(sample_table):
+    assert match_jurisdiction("township", "MI", "Richmond Charter Township", sample_table) == {
+        "status": "not_found"
+    }
+
+
+def test_townships_never_get_a_prefix_rule(sample_table):
+    assert match_jurisdiction("township", "NY", "Town of Rye Police Department", sample_table) == {
+        "status": "not_found"
+    }
+
+
+def test_the_township_level_reads_only_county_subdivisions(sample_table):
+    # A Wisconsin town is in the cousub table; the city table never answers for it.
+    assert match_jurisdiction("township", "WI", "Town of Brookfield", sample_table)["geoid"] == "5513302775"
+    assert match_jurisdiction("city", "WI", "Town of Brookfield", sample_table) == {"status": "not_found"}
+    assert match_jurisdiction("township", "NJ", "Township of Waterford", sample_table)["geoid"] == "3400776340"
 
 
 # --- the committed table ------------------------------------------------------------------
