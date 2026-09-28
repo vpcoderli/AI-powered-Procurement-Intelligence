@@ -1172,23 +1172,30 @@ def test_the_real_collaborators_resolve_with_their_contract_signatures():
         FRANKLIN_CS,
         # Classified with its state: a NJ borough is a municipality, not a county.
         agency("Borough of Freehold", "/new-jersey/freehold", group="new-jersey", state_code="NJ"),
+        agency("Town of Rye", "/new-york/townofrye", group="new-york", state_code="NY"),
         agency("Columbus City School District", "/ohio/columbuscityschools"),
     ]
     response = discover_sources({"platform": "bidnet"}, harvest=fake_harvest(agencies))
 
-    assert [
+    rows = [
         (c["id"], c["jurisdictionLevel"], c["fipsCode"], c["discovery"]["confidence"])
         for c in response["candidates"]
-    ] == [
+    ]
+    assert rows[:4] == [
         ("bidnet_oh_cuyahoga", "county", "39035", "exact"),
         ("bidnet_co_aurora", "city", "0804000", "exact"),
         ("bidnet_oh_franklin_county_children_services", "county", "39049", "jurisdiction_prefix"),
         ("bidnet_nj_freehold", "city", "3425200", "exact"),
     ]
+    rye_id, rye_level, rye_fips, rye_confidence = rows[4]
+    assert (rye_id, rye_level, rye_confidence) == ("bidnet_ny_rye_town", "township", "exact")
+    assert rye_fips.startswith("36119") and len(rye_fips) == 10
+    assert response["candidates"][4]["jurisdictionName"] == "Rye town"
     assert response["candidates"][2]["discovery"]["matchedPrefix"] == "Franklin County"
     assert [entry["reason"] for entry in response["review"]] == ["classified_special_district"]
     stats = response["stats"]
     assert stats["prefix_matched"] == 1
+    assert stats["township"] == 1
     assert (
         stats["county"] + stats["city"] + stats["township"] + stats["special_district"] + stats["unknown"]
         == stats["agencies"]

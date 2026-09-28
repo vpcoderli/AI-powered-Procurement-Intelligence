@@ -531,6 +531,8 @@ def test_bundled_table_header_records_its_provenance():
     assert "2024_Gaz_counties_national.zip" in header
     assert "2024_Gaz_place_national.zip" in header
     assert "generated:" in header
+    assert "2024_Gaz_cousubs_national.zip" in header
+    assert "cousub_filter:" in header
 
 
 def test_bundled_table_covers_every_county_and_only_incorporated_places(bundled_table):
@@ -549,7 +551,7 @@ def test_bundled_table_covers_every_county_and_only_incorporated_places(bundled_
 
 
 def test_bundled_table_keys_agree_with_name_key(bundled_table):
-    for level in ("county", "place"):
+    for level in ("county", "place", "cousub"):
         for (state, key), rows in bundled_table[level].items():
             assert len(state) == 2 and state.isupper()
             for entry in rows:
@@ -625,6 +627,46 @@ def test_bundled_table_answers_the_two_worked_examples(bundled_table):
 def test_bundled_table_is_the_default_when_no_table_is_passed():
     assert match_jurisdiction("county", "CO", "Boulder County")["geoid"] == "08013"
     assert match_jurisdiction("county", "TX", "Bexar County")["geoid"] == "48029"
+
+
+def test_bundled_table_covers_active_towns_and_townships(bundled_table):
+    cousubs = [entry for rows in bundled_table["cousub"].values() for entry in rows]
+    assert 12000 <= len(cousubs) <= 20000
+    assert all(len(entry["geoid"]) == 10 for entry in cousubs)
+    assert all(entry["name"].endswith((" town", " township")) for entry in cousubs)
+
+
+@pytest.mark.parametrize(
+    "town",
+    ["Clinton", "Colonie", "DeRuyter", "Ithaca", "Mamaroneck", "New Paltz", "Newburgh",
+     "Ossining", "Pawling", "Rye", "Tupper Lake"],
+)
+def test_bundled_table_resolves_the_eleven_new_york_towns_to_towns(town, bundled_table):
+    """Spec 2026-09-24 §1: all eleven used to match a same-name village or city (7-digit GEOID).
+
+    A town either resolves to its 10-digit county-subdivision GEOID or, when New York has
+    several towns of that name (Clinton), comes back ambiguous with only towns to choose from.
+    """
+    result = match_jurisdiction("township", "NY", "Town of {0}".format(town), bundled_table)
+    rows = [result] if result["status"] == "exact" else result.get("candidates", [])
+
+    assert rows, result
+    for row in rows:
+        assert row["name"] == "{0} town".format(town)
+        assert len(row["geoid"]) == 10 and row["geoid"].startswith("36")
+
+
+def test_bundled_table_answers_the_spec_examples(bundled_table):
+    # Westchester County is 36119.
+    rye = match_jurisdiction("township", "NY", "Town of Rye", bundled_table)
+    assert rye["status"] == "exact" and rye["geoid"].startswith("36119")
+    # Only a charter township answers a name that says "Charter".
+    for name in ("Charter Township of Clinton", "Delta Charter Township"):
+        result = match_jurisdiction("township", "MI", name, bundled_table)
+        assert result["status"] == "exact", (name, result)
+        assert result["name"].endswith(" charter township")
+    # Michigan has several Richmond townships and the directory gives no county: never guessed.
+    assert match_jurisdiction("township", "MI", "Richmond Township", bundled_table)["status"] == "ambiguous"
 
 
 # --- refresh script (offline, against local zips) -------------------------------------------
