@@ -438,9 +438,10 @@ def harvest_bidnet(request, session=None, sleep=None, fetch_html=None):
 def _result(agencies, pages, duplicates, stopped_reason, wanted_states):
     unresolved_state_skipped = 0
     if wanted_states:
-        # An operator asking for ["OH"] wants Ohio, so an agency under a group that resolves to
-        # no state is excluded rather than smuggled in. It is counted, never silently dropped:
-        # a large count here means the platform groups hide agencies this filter cannot reach.
+        # An operator asking for ["OH"] wants Ohio, so an agency is excluded, not smuggled in,
+        # only when neither its name's comma-state nor its group resolves a state. It is
+        # counted, never silently dropped: a large count here means the platform groups hide
+        # agencies this filter cannot reach.
         kept = []
         for agency in agencies:
             if agency["state_code"] is None:
