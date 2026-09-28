@@ -9,7 +9,7 @@ Three pieces do the work and all three are injectable, so this module can be tes
 a second platform added — without reaching into either of them:
 
 * `harvest`  — the directory harvester (contract C1, `apsi_crawler.discovery.bidnet`)
-* `classify` — agency name -> county | city | special_district | unknown (contract C2)
+* `classify` — agency name -> county | city | township | special_district | unknown (contract C2)
 * `match`    — (level, state, name) -> a Census GEOID (contract C2)
 
 Design and decisions: `docs/superpowers/specs/2026-09-21-source-discovery-design.md` (§4.2 is
@@ -23,6 +23,8 @@ import re
 from time import perf_counter
 from urllib.parse import urlsplit
 
+from apsi_crawler.us_states import strip_state_suffix
+
 
 #: Platform id -> how its candidates are labelled and which `provider_family` they carry.
 #: Adding a second platform means adding a harvester, one row here and one in `TENANT_KEYS`
@@ -32,9 +34,10 @@ PLATFORMS = {
 }
 DEFAULT_PLATFORM = "bidnet"
 
-#: Decision 3: only counties and cities are ever registered. Everything else is reported.
-CANDIDATE_LEVELS = ("county", "city")
-ALL_LEVELS = ("county", "city", "special_district", "unknown")
+#: Decision 3: only governments are registered -- counties, cities and (spec 2026-09-24 §6)
+#: towns/townships. Everything else is reported.
+CANDIDATE_LEVELS = ("county", "city", "township")
+ALL_LEVELS = ("county", "city", "township", "special_district", "unknown")
 
 #: Match statuses that produce a candidate, and the `discovery.confidence` each one carries.
 #: `prefix` means the agency is a *department within* the jurisdiction ("Alameda County Public
@@ -261,6 +264,16 @@ def _tokens(key):
     return [token for token in (key or "").split() if token]
 
 
+def _township_designation(census_name):
+    """`town` for a Census "<X> town", `township` for "<X> township" / "<X> charter township".
+
+    Spec 2026-09-24 §6.3: the type word goes into the id, so the Town of Rye never collides with
+    the City of Rye as `bidnet_ny_rye_2`.
+    """
+    words = (census_name or "").casefold().split()
+    return "town" if words and words[-1] == "town" else "township"
+
+
 def _review_entry(agency, reason, detail=None):
     return {
         "agencyName": (agency.get("name") or "").strip() or None,
@@ -323,7 +336,7 @@ def _existing_matches(existing_sources, classified, name_key, classify):
     index = []
     for agency, agency_level in classified if existing_sources else []:
         name = (agency.get("name") or "").strip()
-        tokens = _tokens(name_key(name)) if name else []
+        tokens = _tokens(name_key(strip_state_suffix(name))) if name else []
         if not tokens:
             continue
         index.append(
@@ -435,10 +448,15 @@ def discover_sources(
         name = (agency.get("name") or "").strip()
         tenant_url = (agency.get("tenant_url") or "").strip()
         state_code = (agency.get("state_code") or "").strip().upper() or None
+        # A trailing ", NY" says where the agency is (the harvester already took the state from
+        # it, spec §6.4); it is not part of the jurisdiction's name, so everything that compares
+        # names uses the name without it. `discovery.agencyName` and the label keep it.
+        base_name = strip_state_suffix(name)
 
         # The state is not decoration: "borough" is a county equivalent in Alaska but an
-        # ordinary municipality in NJ/PA/CT, so the classifier needs it to get those right.
-        level = classify(name, state_code) if name else "unknown"
+        # ordinary municipality in NJ/PA/CT, and "Town of X" is a township only where towns are
+        # civil townships, so the classifier needs it to get those right.
+        level = classify(base_name, state_code) if base_name else "unknown"
         if level not in counts:
             level = "unknown"
         counts[level] += 1
@@ -464,11 +482,10 @@ def discover_sources(
             )
             continue
 
-        segment = _id_segment(name_key(name))
+        segment = _id_segment(name_key(base_name))
         if not segment:
             review.append(_review_entry(agency, "unusable_name"))
             continue
-        base_id = "{0}_{1}_{2}".format(platform, state_code.lower(), segment)
 
         owner = registered.get(tenant_key(tenant_url))
         if owner is not None:
@@ -476,7 +493,7 @@ def discover_sources(
             review.append(_review_entry(agency, "already_registered", owner))
             continue
 
-        matched = match(level, state_code, name, table=jurisdictions) or {"status": "not_found"}
+        matched = match(level, state_code, base_name, table=jurisdictions) or {"status": "not_found"}
         confidence = MATCH_CONFIDENCE.get(matched.get("status"))
         if confidence is None:
             # Still no fuzzy fallback (spec §4.5): a wrong GEOID is worse than a missing one.
@@ -493,7 +510,11 @@ def discover_sources(
         if matched.get("status") == "prefix":
             prefix_matched += 1
 
-        source_id = _unique_id(base_id, taken_ids)
+        if level == "township":
+            segment = "{0}_{1}".format(segment, _township_designation(matched.get("name")))
+        source_id = _unique_id(
+            "{0}_{1}_{2}".format(platform, state_code.lower(), segment), taken_ids
+        )
         taken_ids.add(source_id)
         candidates.append(
             {
@@ -521,6 +542,9 @@ def discover_sources(
                     "matchedOn": level,
                     "confidence": confidence,
                     "matchedPrefix": matched.get("matched_prefix"),
+                    # "name" when the agency wrote its state after a comma and that outranked
+                    # the purchasing group (Laramie County, Wyoming under `colorado`).
+                    "stateSource": agency.get("state_source") or "group",
                 },
             }
         )
@@ -534,6 +558,7 @@ def discover_sources(
             "agencies": len(agencies),
             "county": counts["county"],
             "city": counts["city"],
+            "township": counts["township"],
             "special_district": counts["special_district"],
             "unknown": counts["unknown"],
             "unmatched": unmatched,

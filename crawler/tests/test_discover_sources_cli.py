@@ -34,8 +34,14 @@ SOURCE_CANDIDATE_FIELDS = {
     "fetchConfig",
 }
 
-_NAME_KEY_PREFIXES = ("city and county of ", "city of ", "town of ", "village of ", "county of ")
-_NAME_KEY_SUFFIXES = (" county", " parish", " borough", " city", " town", " village")
+_NAME_KEY_PREFIXES = (
+    "city and county of ", "charter township of ", "township of ", "city of ", "town of ",
+    "village of ", "county of ",
+)
+_NAME_KEY_SUFFIXES = (
+    " county", " parish", " borough", " city", " town", " village", " charter township",
+    " township", " twp",
+)
 
 
 def fake_name_key(value):
@@ -191,6 +197,7 @@ def test_candidate_carries_exactly_the_source_candidate_fields_plus_discovery():
             "matchedOn": "county",
             "confidence": "exact",
             "matchedPrefix": None,
+            "stateSource": "group",
         },
     }
 
@@ -251,6 +258,7 @@ def test_a_county_prefix_match_is_a_candidate_the_reviewer_is_warned_about():
         "matchedOn": "county",
         "confidence": "jurisdiction_prefix",
         "matchedPrefix": "Franklin County",
+        "stateSource": "group",
     }
     assert response["review"] == []
     assert response["stats"]["prefix_matched"] == 1
@@ -753,7 +761,10 @@ def test_level_buckets_sum_to_the_agency_count():
     stats = response["stats"]
 
     assert stats["agencies"] == len(DIRECTORY)
-    assert stats["county"] + stats["city"] + stats["special_district"] + stats["unknown"] == stats["agencies"]
+    assert (
+        stats["county"] + stats["city"] + stats["township"] + stats["special_district"] + stats["unknown"]
+        == stats["agencies"]
+    )
     assert stats["county"] == 4
     assert stats["city"] == 1
     assert stats["special_district"] == 2
@@ -895,6 +906,181 @@ def test_unusable_requests_raise_invalid_source_discovery_request_error(request_
         run(request_payload, agencies=[])
 
 
+# --- townships, towns and the name's own state (spec 2026-09-24 §6) ---------------------------
+
+RYE_TOWN = agency("Town of Rye", "/new-york/townofrye", group="new-york", state_code="NY")
+RYE_CITY = agency("City of Rye", "/new-york/cityofrye", group="new-york", state_code="NY")
+BLOOMFIELD = agency("Charter Township of Bloomfield", "/mitn/bloomfieldtownship", group="mitn", state_code="MI")
+
+TOWNSHIP_LEVELS = {
+    "Town of Rye": "township",
+    "City of Rye": "city",
+    "Charter Township of Bloomfield": "township",
+}
+TOWNSHIP_ROWS = {
+    ("township", "NY", "rye"): {"status": "exact", "geoid": "3611964320", "name": "Rye town"},
+    ("city", "NY", "rye"): {"status": "exact", "geoid": "3664309", "name": "Rye city"},
+    ("township", "MI", "bloomfield"): {
+        "status": "exact",
+        "geoid": "2612509180",
+        "name": "Bloomfield charter township",
+    },
+}
+
+
+def test_township_candidates_carry_the_census_type_word_in_their_id():
+    response = run({}, [RYE_TOWN, BLOOMFIELD], levels=TOWNSHIP_LEVELS, rows=TOWNSHIP_ROWS)
+
+    assert [
+        (c["id"], c["issuerType"], c["jurisdictionLevel"], c["jurisdictionName"], c["fipsCode"])
+        for c in response["candidates"]
+    ] == [
+        ("bidnet_ny_rye_town", "township", "township", "Rye town", "3611964320"),
+        ("bidnet_mi_bloomfield_township", "township", "township", "Bloomfield charter township", "2612509180"),
+    ]
+    assert response["stats"]["township"] == 2
+
+
+def test_a_town_and_a_city_of_the_same_name_get_distinct_ids():
+    response = run({}, [RYE_CITY, RYE_TOWN], levels=TOWNSHIP_LEVELS, rows=TOWNSHIP_ROWS)
+
+    assert [c["id"] for c in response["candidates"]] == ["bidnet_ny_rye", "bidnet_ny_rye_town"]
+
+
+def test_township_is_a_default_level_and_can_be_left_out():
+    default = run({}, [RYE_TOWN], levels=TOWNSHIP_LEVELS, rows=TOWNSHIP_ROWS)
+    narrowed = run({"levels": ["county", "city"]}, [RYE_TOWN], levels=TOWNSHIP_LEVELS, rows=TOWNSHIP_ROWS)
+
+    assert [c["id"] for c in default["candidates"]] == ["bidnet_ny_rye_town"]
+    assert narrowed["candidates"] == []
+    assert [entry["reason"] for entry in narrowed["review"]] == ["level_not_requested"]
+
+
+def test_same_name_townships_go_to_review_never_guessed():
+    richmond = agency("Richmond Township", "/mitn/richmondtownship", group="mitn", state_code="MI")
+    rows = {
+        ("township", "MI", "richmond"): {
+            "status": "ambiguous",
+            "candidates": [
+                {"geoid": "2609968700", "name": "Richmond township"},
+                {"geoid": "2610368720", "name": "Richmond township"},
+            ],
+        }
+    }
+
+    response = run({}, [richmond], levels={"Richmond Township": "township"}, rows=rows)
+
+    assert response["candidates"] == []
+    assert [(entry["reason"], entry["detail"]) for entry in response["review"]] == [
+        ("ambiguous_match", "Richmond township (2609968700); Richmond township (2610368720)")
+    ]
+    assert (response["stats"]["township"], response["stats"]["unmatched"]) == (1, 1)
+
+
+def test_a_trailing_state_is_matched_without_it_but_shown_with_it():
+    dover = agency("Town of Dover, NY", "/new-york/townofdover", group="new-york", state_code="NY")
+    rows = {("township", "NY", "dover"): {"status": "exact", "geoid": "3602720900", "name": "Dover town"}}
+    calls = []
+
+    response = run({}, [dover], levels={"Town of Dover": "township"}, rows=rows, classify_calls=calls)
+
+    assert calls == [("Town of Dover", "NY")]
+    (candidate,) = response["candidates"]
+    assert candidate["id"] == "bidnet_ny_dover_town"
+    assert candidate["label"] == "Town of Dover, NY (BidNet)"
+    assert candidate["discovery"]["agencyName"] == "Town of Dover, NY"
+
+
+LARAMIE = dict(
+    agency(
+        "Laramie County, Wyoming Government",
+        "/colorado/laramiecountywyominggovernment",
+        group="colorado",
+        state_code="WY",
+    ),
+    state_source="name",
+)
+
+
+def test_the_candidate_says_where_its_state_came_from():
+    rows = {
+        **ROWS,
+        ("county", "WY", "laramie county wyoming government"): {
+            "status": "prefix",
+            "geoid": "56021",
+            "name": "Laramie County",
+            "matched_prefix": "Laramie County",
+        },
+    }
+    levels = {"Laramie County, Wyoming Government": "county", "Boulder County": "county"}
+
+    response = run({}, [LARAMIE, BOULDER], levels=levels, rows=rows)
+
+    assert [(c["stateCode"], c["discovery"]["stateSource"]) for c in response["candidates"]] == [
+        ("WY", "name"),
+        ("CO", "group"),
+    ]
+
+
+def test_laramie_gets_a_partial_suggestion_once_its_name_says_wyoming():
+    existing = [
+        {
+            "id": "bidnet_wy_laramie",
+            "label": "Laramie County, WY (BidNet)",
+            "state_code": "WY",
+            "base_url": "https://www.bidnetdirect.com/wyoming/laramiecounty/solicitations/open-bids",
+            "jurisdiction_level": "county",
+        }
+    ]
+
+    response = run(
+        {"existing_sources": existing}, [LARAMIE], levels={"Laramie County, Wyoming Government": "county"}
+    )
+
+    assert response["existingMatches"] == [
+        {
+            "sourceId": "bidnet_wy_laramie",
+            "agencyName": "Laramie County, Wyoming Government",
+            "suggestedBaseUrl": LARAMIE["tenant_url"],
+            "confidence": "partial",
+        }
+    ]
+
+
+def test_a_township_source_is_confirmed_only_against_a_township_row():
+    existing = [
+        {
+            "id": "bidnet_mi_bloomfield_township",
+            "label": "Bloomfield Township (BidNet)",
+            "state_code": "MI",
+            "jurisdiction_level": "township",
+        }
+    ]
+    township_row = agency("Bloomfield Township", "/mitn/bloomfieldtwp", group="mitn", state_code="MI")
+    city_row = agency("City of Bloomfield", "/mitn/cityofbloomfield", group="mitn", state_code="MI")
+    levels = {"Bloomfield Township": "township", "City of Bloomfield": "city"}
+
+    confirmed = run({"existing_sources": existing}, [township_row], levels=levels)
+    mismatched = run({"existing_sources": existing}, [city_row], levels=levels)
+
+    assert confirmed["existingMatches"] == [
+        {
+            "sourceId": "bidnet_mi_bloomfield_township",
+            "agencyName": "Bloomfield Township",
+            "suggestedBaseUrl": township_row["tenant_url"],
+            "confidence": "exact",
+        }
+    ]
+    assert mismatched["existingMatches"] == [
+        {
+            "sourceId": "bidnet_mi_bloomfield_township",
+            "agencyName": "City of Bloomfield",
+            "suggestedBaseUrl": None,
+            "confidence": "level_mismatch",
+        }
+    ]
+
+
 # --- the CLI itself ---------------------------------------------------------------------
 
 
@@ -1003,7 +1189,10 @@ def test_the_real_collaborators_resolve_with_their_contract_signatures():
     assert [entry["reason"] for entry in response["review"]] == ["classified_special_district"]
     stats = response["stats"]
     assert stats["prefix_matched"] == 1
-    assert stats["county"] + stats["city"] + stats["special_district"] + stats["unknown"] == stats["agencies"]
+    assert (
+        stats["county"] + stats["city"] + stats["township"] + stats["special_district"] + stats["unknown"]
+        == stats["agencies"]
+    )
 
 
 def test_cli_reports_an_unexpected_failure_as_one_json_document(monkeypatch, capsys):
