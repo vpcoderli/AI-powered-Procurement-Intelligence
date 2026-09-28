@@ -1823,3 +1823,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 Registering the candidates is phase 3; this phase does not write `data_sources`.
+
+### Task 9a: Detector false positive (added 2026-09-28 by the controller)
+
+- [x] BidNet's ordinary HTTP 200 pages now embed the AWS WAF SDK `<script src="https://….sdk.awswaf.com/…/challenge.js" defer>`, and `looks_like_waf_challenge` matched that URL, stopping every run at its first request. Fixed in 7fe5d73 — external script elements are stripped before marker matching, the real page is the fixture `bidnet_purchasing_groups_with_waf_sdk.html`, three tests (855 total) — with a comment follow-up in 1c90060. HTTP 202 and an inline integration script still stop the run.

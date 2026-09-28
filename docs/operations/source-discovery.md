@@ -388,7 +388,7 @@ python3 -m apsi_crawler.cli discover-sources < request.json > candidates.json
 
 第二、三类记为已知局限：是否在阶段 3 放宽（同州没有 charter 行时回退到普通 township 行；把 `… Town city` 纳入 township 匹配）由人决定，本轮不改规则。
 
-**回归对比**：首轮 819 个候选里 3 个不再是候选，均有解释——`bidnet_co_aurora`（就是已登记的 `bidnet_co_city_aurora`，slug 去重）、`bidnet_ny_clinton_2`（改判歧义）、`bidnet_ma_west_springfield`（Town city）。10 个纽约 town 换了 GEOID（上表），其余郡/市候选的 GEOID 一个都没变。新增郡/市候选 5 个：City of Boulder（去重修正）、Laramie County（逗号后州名规则，郡前缀匹配到 `56021`）、`City of Conway, SC` / `City of Muskegon, MI` / `City of South Fulton, GA`（拖尾州名规则，首轮都是无 FIPS 匹配）。
+**回归对比**（按租户比较）：首轮 819 个候选里 3 个租户不再是候选，均有解释——`bidnet_co_aurora`（就是已登记的 `bidnet_co_city_aurora`，slug 去重）、`bidnet_ny_clinton_2`（改判歧义）、`bidnet_ma_west_springfield`（Town city）。10 个纽约 town 换了 GEOID（上表），其余郡/市候选的 GEOID 一个都没变。新增郡/市候选 5 个：City of Boulder（去重修正）、Laramie County（逗号后州名规则，郡前缀匹配到 `56021`）、`City of Conway, SC` / `City of Muskegon, MI` / `City of South Fulton, GA`（拖尾州名规则，首轮都是无 FIPS 匹配）。同一条规则还让 1 个已有候选换了 id：Madison County, AL 从前缀匹配的 `bidnet_al_madison_county_al` 变成精确匹配的 `bidnet_al_madison`（同一租户、同一 GEOID `01089`）。按 id 比较另有两处改名：纽约 Mamaroneck、Ossining 两个村从 `_2` 回到裸 id——首轮里 Town 与 Village 都被配到了村的 GEOID（`3644831` / `3655530`），现在 town 各自拿到 10 位 GEOID，村保留原 place GEOID。
 
 **反查**：`bidnet_wy_laramie` 得到 `partial` 建议（`Laramie County, Wyoming Government`，在 colorado 组下，`stateSource = "name"`），处置见第 7 节；同一家机构也以 `bidnet_wy_laramie_county_wyoming_government` 出现在候选里，`source:register` 会把它扣下并打印应做的 PATCH。`bidnet_oh_franklin` 仍是 Franklin County Children Services 的 `partial`，结论不变（另一采购主体，不要指过去）。已批准的 6 个源 `exact` 且地址与登记一致；Columbus、Cuyahoga 仍 `none`。
 
@@ -410,7 +410,7 @@ python3 -m apsi_crawler.cli discover-sources < request.json > candidates.json
 | 反查 | 6 个已批准源 `exact` 且地址一致；`bidnet_wy_laramie` **`partial`** → `/colorado/laramiecountywyominggovernment`；`bidnet_oh_franklin` `partial`（另一采购主体，不指过去）；Columbus / Cuyahoga `none` |
 | `discovery.stateSource = "name"` | 1 个候选（Laramie County, Wyoming Government） |
 
-与离线回放逐项一致：除了那 1 家新特别区，分类、候选、待审阅、歧义、无 FIPS 匹配的每一个数字都相同。候选覆盖的州（前几位）：MI 204、CO 179、NY 146、NJ 62、CA 47、TX 43、AZ 42、GA 28（首轮是 CO 179、MI 160、NY 104——密歇根和纽约的增量就是 township）。
+与离线回放逐项一致：除了那 1 家新特别区，分类、候选、待审阅、歧义、无 FIPS 匹配的每一个数字都相同。候选覆盖的州（前几位）：MI 204、CO 179、NY 146、NJ 62、CA 47、TX 43、AZ 42、GA 28（首轮是 CO 179、MI 160、NY 104——密歇根和纽约的增量主要是 township；纽约的 10 个 town 从市一栏挪到了 township 一栏，所以纽约的净增量小于其 53 个 township 候选）。
 
 两点顺带的观察：
 
