@@ -13,6 +13,7 @@ import {
   parseCandidateFile,
   partialDiscoveryRefusal,
   registerSources,
+  splitSuggestedCandidates,
   validateCandidate,
 } from "./register-sources";
 
@@ -316,6 +317,20 @@ describe("register-sources CLI", () => {
     expect(result.stderr).toContain("expected the discover-sources output");
     expect(result.stderr).not.toContain("TypeError");
   });
+
+  it("names the source to repoint instead of registering a suggested tenant", () => {
+    const held = dryRun(laramieDocument());
+    expect(held.status).toBe(0);
+    expect(held.stdout).toContain("Dry run: 1 candidates");
+    expect(held.stdout).toContain(
+      "Held back bidnet_wy_laramie_county_wyoming_government: existingMatches suggests repointing bidnet_wy_laramie",
+    );
+    expect(held.stdout).toContain("PATCH /api/admin/data-sources/bidnet_wy_laramie");
+
+    const allowed = dryRun(laramieDocument(), "--allow-suggested");
+    expect(allowed.stdout).toContain("Dry run: 2 candidates");
+    expect(allowed.stdout).not.toContain("Held back");
+  });
 });
 
 describe("registerSources", () => {
@@ -384,5 +399,56 @@ describe("registerSources", () => {
     const result = registerSources(testDb.db, candidates, NOW);
     expect(result.inserted).toBe(1);
     expect(result.errors).toHaveLength(1);
+  });
+});
+
+const LARAMIE_TENANT = "https://www.bidnetdirect.com/colorado/laramiecountywyominggovernment/solicitations/open-bids";
+
+function laramieDocument() {
+  return {
+    candidates: [
+      candidate({
+        id: "bidnet_wy_laramie_county_wyoming_government",
+        label: "Laramie County, Wyoming Government (BidNet)",
+        stateCode: "WY",
+        baseUrl: LARAMIE_TENANT,
+        jurisdictionName: "Laramie County",
+        fipsCode: "56021",
+        fetchConfig: { base_url: LARAMIE_TENANT },
+      }),
+      candidate(),
+    ],
+    review: [],
+    existingMatches: [
+      { sourceId: "bidnet_wy_laramie", agencyName: "Laramie County, Wyoming Government", suggestedBaseUrl: LARAMIE_TENANT, confidence: "partial" },
+      { sourceId: "bidnet_oh_cuyahoga", agencyName: null, suggestedBaseUrl: null, confidence: "none" },
+      { sourceId: "bidnet_co_boulder", agencyName: "City of Boulder", suggestedBaseUrl: null, confidence: "level_mismatch" },
+    ],
+    stats: { pages: 43, agencies: 2, stopped_reason: "exhausted" },
+  };
+}
+
+describe("suggested tenants (spec 2026-09-24 §6.4)", () => {
+  it("reads exact and partial suggestions from existingMatches, nothing else", () => {
+    const file = parseCandidateFile(laramieDocument());
+
+    expect([...file.suggested.entries()]).toEqual([[LARAMIE_TENANT, "bidnet_wy_laramie"]]);
+    expect(parseCandidateFile([candidate()]).suggested.size).toBe(0);
+  });
+
+  it("holds back a candidate whose tenant should repoint an existing source", () => {
+    const split = splitSuggestedCandidates(parseCandidateFile(laramieDocument()), false);
+
+    expect(split.register.map((c) => c.id)).toEqual(["bidnet_co_denver"]);
+    expect(split.heldBack).toEqual([
+      { id: "bidnet_wy_laramie_county_wyoming_government", baseUrl: LARAMIE_TENANT, sourceId: "bidnet_wy_laramie" },
+    ]);
+  });
+
+  it("registers it anyway when the operator says the suggestion is wrong", () => {
+    const split = splitSuggestedCandidates(parseCandidateFile(laramieDocument()), true);
+
+    expect(split.register).toHaveLength(2);
+    expect(split.heldBack).toEqual([]);
   });
 });

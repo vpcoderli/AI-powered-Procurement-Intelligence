@@ -54,12 +54,35 @@ export interface CandidateFile {
     review: number | null;
     stoppedReason: string | null;
   } | null;
+  /**
+   * Tenant URL -> existing source id, from `existingMatches` entries whose confidence is
+   * `exact` or `partial` (the reverse lookup confirmed state and level). Empty for a bare array.
+   */
+  suggested: Map<string, string>;
 }
 
 export class CandidateFileError extends Error {}
 
 function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+const CONFIRMED_SUGGESTIONS = new Set(["exact", "partial"]);
+
+function suggestedTenants(existingMatches: unknown): Map<string, string> {
+  const suggested = new Map<string, string>();
+  if (!Array.isArray(existingMatches)) return suggested;
+  for (const entry of existingMatches) {
+    if (entry === null || typeof entry !== "object") continue;
+    const { sourceId, suggestedBaseUrl, confidence } = entry as Record<string, unknown>;
+    if (
+      typeof sourceId === "string" && typeof suggestedBaseUrl === "string" && suggestedBaseUrl &&
+      typeof confidence === "string" && CONFIRMED_SUGGESTIONS.has(confidence) && !suggested.has(suggestedBaseUrl)
+    ) {
+      suggested.set(suggestedBaseUrl, sourceId);
+    }
+  }
+  return suggested;
 }
 
 /**
@@ -70,11 +93,12 @@ function numberOrNull(value: unknown): number | null {
 export function parseCandidateFile(value: unknown): CandidateFile {
   let candidates: unknown;
   let discovery: CandidateFile["discovery"] = null;
+  let suggested = new Map<string, string>();
 
   if (Array.isArray(value)) {
     candidates = value;
   } else if (value !== null && typeof value === "object" && Array.isArray((value as { candidates?: unknown }).candidates)) {
-    const document = value as { candidates: unknown[]; review?: unknown; stats?: unknown };
+    const document = value as { candidates: unknown[]; review?: unknown; stats?: unknown; existingMatches?: unknown };
     const stats = (document.stats !== null && typeof document.stats === "object" ? document.stats : {}) as Record<string, unknown>;
     candidates = document.candidates;
     discovery = {
@@ -83,6 +107,7 @@ export function parseCandidateFile(value: unknown): CandidateFile {
       review: Array.isArray(document.review) ? document.review.length : null,
       stoppedReason: typeof stats.stopped_reason === "string" ? stats.stopped_reason : null,
     };
+    suggested = suggestedTenants(document.existingMatches);
   } else {
     throw new CandidateFileError(
       "expected the discover-sources output ({ \"candidates\": [...], \"stats\": {...}, ... }) or a bare array of candidates",
@@ -94,7 +119,7 @@ export function parseCandidateFile(value: unknown): CandidateFile {
   if (notAnObject !== -1) {
     throw new CandidateFileError(`candidates[${notAnObject}] is not a JSON object`);
   }
-  return { candidates: list as SourceCandidate[], discovery };
+  return { candidates: list as SourceCandidate[], discovery, suggested };
 }
 
 /**
@@ -109,6 +134,40 @@ export function partialDiscoveryRefusal(file: CandidateFile, allowPartial: boole
     `discover-sources stopped early (stats.stopped_reason = "${reason}", ${file.discovery?.pages ?? "?"} pages): ` +
     "these candidates are not the whole directory. Re-run discovery, or pass --allow-partial " +
     "to register this subset knowingly."
+  );
+}
+
+export interface HeldBackCandidate {
+  id: string;
+  baseUrl: string;
+  sourceId: string;
+}
+
+/**
+ * Spec 2026-09-24 §6.4: when the reverse lookup suggests repointing an existing source at a
+ * tenant (Laramie County, WY: `bidnet_wy_laramie` onto the tenant BidNet files under
+ * `colorado`), that tenant must not ALSO be registered under a new id. Held-back candidates are
+ * reported, never written; `--allow-suggested` registers them when the suggestion is wrong.
+ */
+export function splitSuggestedCandidates(
+  file: CandidateFile,
+  allowSuggested: boolean,
+): { register: SourceCandidate[]; heldBack: HeldBackCandidate[] } {
+  if (allowSuggested || file.suggested.size === 0) return { register: file.candidates, heldBack: [] };
+  const register: SourceCandidate[] = [];
+  const heldBack: HeldBackCandidate[] = [];
+  for (const c of file.candidates) {
+    const sourceId = file.suggested.get(c.baseUrl);
+    if (sourceId) heldBack.push({ id: c.id, baseUrl: c.baseUrl, sourceId });
+    else register.push(c);
+  }
+  return { register, heldBack };
+}
+
+function heldBackLine(held: HeldBackCandidate): string {
+  return (
+    `Held back ${held.id}: existingMatches suggests repointing ${held.sourceId} to ${held.baseUrl} -- ` +
+    `PATCH /api/admin/data-sources/${held.sourceId} instead, or pass --allow-suggested to register it as a new source.`
   );
 }
 
@@ -234,7 +293,7 @@ async function main() {
   const args = process.argv.slice(2);
   const fileIndex = args.indexOf("--file");
   if (fileIndex === -1 || !args[fileIndex + 1]) {
-    console.error("Usage: npx tsx scripts/register-sources.ts --file candidates.json [--dry-run] [--allow-partial]");
+    console.error("Usage: npx tsx scripts/register-sources.ts --file candidates.json [--dry-run] [--allow-partial] [--allow-suggested]");
     process.exitCode = 1;
     return;
   }
@@ -242,6 +301,7 @@ async function main() {
   const filePath = args[fileIndex + 1];
   const dryRun = args.includes("--dry-run");
   const allowPartial = args.includes("--allow-partial");
+  const allowSuggested = args.includes("--allow-suggested");
 
   let file: CandidateFile;
   try {
@@ -251,8 +311,9 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  const { candidates } = file;
+  const { register: candidates, heldBack } = splitSuggestedCandidates(file, allowSuggested);
   console.log(describeCandidateFile(file));
+  for (const held of heldBack) console.log(heldBackLine(held));
   if (file.discovery && !file.discovery.stoppedReason) {
     console.warn("Warning: the file carries no stats.stopped_reason, so nothing says the directory walk finished.");
   }
