@@ -83,7 +83,7 @@ Spec: `docs/superpowers/specs/2026-09-24-county-data-completeness-design.md` (§
   - `read_bidnet_list_page(source, html, list_kind="open") -> BidnetListPage` — records are raw dicts with keys `source_bid_id, title, description, published_date, deadline_date, awarded_date, solicitation_number, region, lifecycle_status, list_kind, detail_access, issuer_name, source_url, attachments`
   - `parse_bidnet_list_html(source, html, query=None, limit=25, issuer_name=None, list_kind="open")` (signature extended, behavior otherwise unchanged)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `crawler/tests/test_bidnet_list_pages.py`:
 
@@ -274,12 +274,12 @@ In `crawler/tests/test_content_quality_empty_state.py`, extend the parametrized 
 )
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_bidnet_list_pages.py tests/test_content_quality_empty_state.py`
 Expected: FAIL — `ImportError: cannot import name 'BIDNET_DETAIL_ACCESS'` and the two new phrase cases fail.
 
-- [ ] **Step 3: Implement the reader**
+- [x] **Step 3: Implement the reader**
 
 In `crawler/apsi_crawler/content_quality.py` replace `_EMPTY_LIST_RE`:
 
@@ -460,12 +460,12 @@ def parse_bidnet_list_html(source, html, query=None, limit=25, issuer_name=None,
     return [normalize_state_opportunity(record, source) for record in records]
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_bidnet_list_pages.py tests/test_content_quality_empty_state.py tests/test_fetch_task_cli.py tests/test_list_extraction.py tests/test_adapter_registry.py`
 Expected: PASS (existing BidNet tests keep passing: records gained keys, nothing was removed).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crawler/apsi_crawler/spiders/co_bidnet.py crawler/apsi_crawler/content_quality.py crawler/tests/test_bidnet_list_pages.py crawler/tests/test_content_quality_empty_state.py
@@ -486,7 +486,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: raw records from Task 1 (`lifecycle_status`, `awarded_date`, `solicitation_number`).
 - Produces: every normalized bid dict gains `lifecycle_status` (`open`/`closed`/`awarded`, default `open`), `awarded_date` (str|None), `solicitation_number` (str|None); `is_active` is `1` exactly when `lifecycle_status == "open"`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `crawler/tests/test_state_normalizers.py`:
 
@@ -523,12 +523,12 @@ def test_an_unknown_lifecycle_value_is_treated_as_open():
     assert (bid["lifecycle_status"], bid["is_active"]) == ("open", 1)
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_state_normalizers.py`
 Expected: FAIL with `KeyError: 'lifecycle_status'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `crawler/apsi_crawler/normalizers/state_bids.py` add after `_first_present`:
 
@@ -549,12 +549,12 @@ In `normalize_state_opportunity`, compute `lifecycle_status = _lifecycle_status(
         "solicitation_number": _first_present(raw, ("solicitation_number",)),
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd crawler && python3 -m pytest -q`
 Expected: PASS (all suites).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crawler/apsi_crawler/normalizers/state_bids.py crawler/tests/test_state_normalizers.py
@@ -583,7 +583,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `run_paginated_list_extraction(source, list_adapter, config, request, query=None, limit=None, session=None, extractor=None, renderer=None, timeout=30) -> (bids, list_stats, pagination)` where `pagination = {"list_kind", "start_page", "pages_fetched", "next_page", "stopped_reason", "requests_made", "complete"}` and `stopped_reason ∈ {"exhausted", "max_pages", "window", "limit"}`.
   - `ListPageReadError(Exception)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `crawler/tests/test_list_pagination.py`:
 
@@ -788,12 +788,12 @@ def test_only_the_bidnet_list_adapter_is_paginated():
     assert registry.GENERIC_LIST_HTML_ADAPTER.page_reader is None
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_list_pagination.py`
 Expected: FAIL — `ImportError: cannot import name 'resolve_pagination_request'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `crawler/apsi_crawler/errors.py` — extend `VerifiedEmptyListError.__init__`:
 
@@ -1062,12 +1062,12 @@ def run_paginated_list_extraction(
     return bids, stats, pagination
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd crawler && python3 -m pytest -q`
 Expected: PASS (all suites, including `test_list_extraction.py` — the single-page path is untouched).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crawler/apsi_crawler/errors.py crawler/apsi_crawler/adapters/registry.py crawler/apsi_crawler/list_extraction.py crawler/tests/test_list_pagination.py
@@ -1088,7 +1088,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: Task 3 (`resolve_pagination_request`, `run_paginated_list_extraction`, `VerifiedEmptyListError.pagination`).
 - Produces (fetch-task JSON contract, spec §5.3): request keys `list_kind`, `start_page`, `max_pages`, `stop_before`, nullable `limit`; result `metadata.pagination` = `{list_kind, start_page, pages_fetched, next_page, stopped_reason, requests_made, complete}` — present only for paged adapters. `complete` is forced `false` when a date window was applied; `requests_made` includes enrichment detail fetches.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `crawler/tests/test_fetch_task_cli.py`:
 
@@ -1183,12 +1183,12 @@ def test_non_paged_sources_keep_the_default_limit_and_report_no_pagination(monke
     assert "pagination" not in result["metadata"]
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd crawler && python3 -m pytest -q tests/test_fetch_task_cli.py`
 Expected: FAIL — the new tests find no `pagination` key; `seen == [25]` fails because `int(None or 25)` is already 25 but `"pagination"`/`limit=3` assertions fail.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `crawler/apsi_crawler/cli.py`:
 
@@ -1251,12 +1251,12 @@ def run_list_stage(source, adapter, payload, query, limit):
             metadata["pagination"] = pagination
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd crawler && python3 -m pytest -q`
 Expected: PASS (all suites; the four existing BidNet fetch-task tests still pass unchanged).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crawler/apsi_crawler/cli.py crawler/tests/test_fetch_task_cli.py
@@ -1282,7 +1282,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - Columns `bids.lifecycle_status` (TEXT NOT NULL DEFAULT 'open'), `bids.awarded_date` (TEXT), `bids.solicitation_number` (TEXT), `data_sources.consecutive_empty_runs` (INTEGER NOT NULL DEFAULT 0); Drizzle props `lifecycleStatus`, `awardedDate`, `solicitationNumber`, `consecutiveEmptyRuns`.
   - `mysqlDataMigrationStatements(): string[]` exported from `@/server/db/mysql`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `frontend/src/lib/bid-lifecycle.test.ts`:
 
@@ -1363,12 +1363,12 @@ describe("mysql migrations cover the bid lifecycle columns (2026-09-24 phase 1)"
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd frontend && npx vitest run src/lib/bid-lifecycle.test.ts src/server/db/schema.test.ts src/server/db/mysql.test.ts`
 Expected: FAIL (module not found; missing columns; missing export).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `frontend/src/lib/bid-lifecycle.ts`:
 
@@ -1437,12 +1437,12 @@ export function bidLifecycleStatusOf(value: unknown): BidLifecycleStatus | null 
   }
   ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd frontend && npx vitest run src/lib/bid-lifecycle.test.ts src/server/db`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/lib/bid-lifecycle.ts frontend/src/lib/bid-lifecycle.test.ts frontend/src/server/db/migrate.ts frontend/src/server/db/schema.ts frontend/src/server/db/mysql.ts frontend/src/server/db/schema.test.ts frontend/src/server/db/mysql.test.ts
@@ -1473,7 +1473,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
   - `withLifecycleMetadata(payload, delisted: number): CrawlerJsonRunPayload`
   - `CrawlerJsonImportResult.delistedCount?: number` (present only when delisting ran)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `frontend/src/server/crawler/lifecycle.test.ts`:
 
@@ -1690,12 +1690,12 @@ describe("bid lifecycle in the MySQL importer (2026-09-24 phase 1)", () => {
 ```
 (`createFakeMysql` already exposes its `bids` map on the returned store; if it does not, add `bids` to the returned object.)
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd frontend && npx vitest run src/server/crawler/lifecycle.test.ts src/server/crawler/sqlite-json-importer.test.ts src/server/crawler/mysql-json-importer.test.ts`
 Expected: FAIL (module `./lifecycle` missing; lifecycle columns not written).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `frontend/src/server/crawler/lifecycle.ts`:
 
@@ -1864,12 +1864,12 @@ export function withLifecycleMetadata(payload: CrawlerJsonRunPayload, delisted: 
       return { ...counts, logCount: 1, ...(delisted === null ? {} : { delistedCount: delisted }) };
   ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd frontend && npx vitest run src/server/crawler`
 Expected: PASS (existing importer tests unaffected: `delistedCount` only appears when a complete open-list run was imported).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/server/crawler/lifecycle.ts frontend/src/server/crawler/lifecycle.test.ts frontend/src/server/crawler/persistence-merge.ts frontend/src/server/crawler/sqlite-json-importer.ts frontend/src/server/crawler/mysql-json-importer.ts frontend/src/server/crawler/sqlite-json-importer.test.ts frontend/src/server/crawler/mysql-json-importer.test.ts
@@ -1889,7 +1889,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: `DEFAULT_LIST_PAGES = 4`, `listPagesFor(source: Pick<CrawlableSource, "fetchConfig">): number` (reads `fetch_config.list_pages`, integer 1..50); `CrawlTaskPayload` gains `list_kind`, `start_page`, `max_pages`, `stop_before`, and `limit: number | null`; `CrawlTaskOptions` gains `listKind?`, `startPage?`, `maxPages?`, `stopBefore?`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 In `frontend/src/server/crawler/state-runner.test.ts`, change the first expectation's `limit: 25,` to `limit: null,` and add the four new keys to that `toEqual` object:
 
@@ -1920,12 +1920,12 @@ Add (import `listPagesFor` alongside `buildCrawlTaskPayload`):
   });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd frontend && npx vitest run src/server/crawler/state-runner.test.ts`
 Expected: FAIL (`limit` is 25, new keys missing, `listPagesFor` not exported).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `frontend/src/server/crawler/state-runner.ts`:
 
@@ -1963,12 +1963,12 @@ export function listPagesFor(source: Pick<CrawlableSource, "fetchConfig">): numb
     stop_before: options.stopBefore ?? null,
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd frontend && npx vitest run src/server/crawler src/app/api/crawler src/server/admin/source-precheck.test.ts`
 Expected: PASS. If a route/precheck test pins `limit: 25` for a payload built without an explicit limit, update that single expectation to `limit: null` (Python still applies 25 for single-page adapters).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/server/crawler/state-runner.ts frontend/src/server/crawler/state-runner.test.ts
@@ -1993,7 +1993,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: Task 5 (`consecutive_empty_runs`), Task 10 (`township` in `JURISDICTION_ORDER`).
 - Produces: `CrawlableSource.consecutiveEmptyRuns?: number`; `LOCAL_JURISDICTION_LEVELS: ReadonlySet<string>`; `QUIET_SOURCE_EMPTY_RUNS = 3`; `effectiveIntervalMs(source) -> number | null`; `recordSourceSuccess(db, sourceId, at, outcome?: { emptyVerified?: boolean })` and `recordSourceSuccessInMysql(pool, sourceId, at, outcome?)`; `isVerifiedEmptyRun(result: RunCrawlerSourceOnceResult): boolean`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `frontend/src/server/crawler/scheduler.test.ts` (import `effectiveIntervalMs`, `QUIET_SOURCE_EMPTY_RUNS`):
 
@@ -2070,12 +2070,12 @@ describe("isVerifiedEmptyRun", () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd frontend && npx vitest run src/server/crawler/scheduler.test.ts src/server/crawler/source-health-repository.test.ts src/server/crawler/source-health-outcome.test.ts`
 Expected: FAIL (exports missing).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `source-registry.ts`:
 - `CrawlableSource`: add `/** Verified-empty successes in a row (spec 2026-09-24 §5.5); absent in older fixtures. */ consecutiveEmptyRuns?: number;`
@@ -2155,12 +2155,12 @@ export function isVerifiedEmptyRun(result: RunCrawlerSourceOnceResult): boolean 
 ```
 and in `recordSourceHealthOutcome` pass `{ emptyVerified: isVerifiedEmptyRun(result) }` as the fourth argument to both `recordSourceSuccessInMysql` and `recordSourceSuccess`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd frontend && npx vitest run src/server/crawler`
 Expected: PASS. If an existing test pins the old `recordSourceSuccessInMysql` SQL text, update it to the new statement.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/server/crawler/source-registry.ts frontend/src/server/crawler/scheduler.ts frontend/src/server/crawler/source-health-repository.ts frontend/src/server/crawler/source-health-outcome.ts frontend/src/server/crawler/scheduler.test.ts frontend/src/server/crawler/source-health-repository.test.ts frontend/src/server/crawler/source-health-outcome.test.ts
@@ -2184,7 +2184,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: Task 7 (`listPagesFor`), Task 8 (scheduler edits land first), `isPlatformThrottleSignature` from `platform-deferral.ts`.
 - Produces (`@/server/crawler/platform-budget`): `DEFAULT_PLATFORM_BUDGETS`, `DEFAULT_PLATFORM_PAUSE_MS`, `DEFAULT_TICK_MS`, `platformBudgetsFromEnv(env?) -> Map<string, number | null>`, `platformPauseMs(env?) -> number`, `class PlatformTickBudget { budgetedFamilies(); isBudgeted(family); reserve(family, cost): number | null; settle(family, reserved, actual) }`, `class PlatformPauseRegistry { pause(family, untilMs); pausedUntil(family, nowMs): number | null }`, `requestsMadeOf(result) -> number | null`. `SchedulerOptions.uncappedFamilies?: ReadonlySet<string>`. `RunConfiguredCrawlerSourcesOnceOptions` gains `platformBudgets?`, `tickMs?`, `platformPauses?`, `clock?`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `frontend/src/server/crawler/platform-budget.test.ts`:
 
@@ -2335,12 +2335,12 @@ Append to `frontend/src/server/crawler/configured-runner.test.ts` inside the `"r
 ```
 (import `PlatformPauseRegistry` from `./platform-budget` at the top of the test file.)
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd frontend && npx vitest run src/server/crawler/platform-budget.test.ts src/server/crawler/configured-runner.test.ts`
 Expected: FAIL (module missing; options ignored).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `frontend/src/server/crawler/platform-budget.ts`:
 
@@ -2531,12 +2531,12 @@ export function requestsMadeOf(result: RunCrawlerSourceOnceResult): number | nul
 
 `frontend/scripts/crawler-worker.ts`: import `PlatformPauseRegistry` from `../src/server/crawler/platform-budget`; before the `while` loop add `const platformPauses = new PlatformPauseRegistry();` and pass `platformPauses, tickMs: intervalMs(),` in the `runConfiguredCrawlerSourcesOnce({...})` call.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd frontend && npx vitest run src/server/crawler scripts/crawler-worker.test.ts`
 Expected: PASS (existing deferral tests use ≤ 2 BidNet sources, well within the default budget).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/server/crawler/platform-budget.ts frontend/src/server/crawler/platform-budget.test.ts frontend/src/server/crawler/scheduler.ts frontend/src/server/crawler/configured-runner.ts frontend/src/server/crawler/configured-runner.test.ts frontend/scripts/crawler-worker.ts
@@ -2559,7 +2559,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Interfaces:**
 - Produces: `township` accepted by `validateCandidate`; `JURISDICTION_ORDER = ["federal", "state", "county", "city", "township", "special_district"]`; `BATCH_JURISDICTION_LEVELS` includes `"township"` (after `"city"`); i18n key `admin.batchRunLevel_township`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `register-sources.test.ts` — add to `describe("validateCandidate")`:
 ```ts
@@ -2582,12 +2582,12 @@ describe("township ordering", () => {
 ```
 `JurisdictionBatchRunPanel.test.ts`: in `batchJurisdictionLevelOf` add `expect(batchJurisdictionLevelOf(adminSource({ jurisdictionLevel: "township" }))).toBe("township");` and add `township: 0,` to the `countBatchEntriesByLevel` expectation (after `city: 1,`).
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd frontend && npx vitest run scripts/register-sources.test.ts src/server/crawler/scheduler.test.ts src/components/admin/JurisdictionBatchRunPanel.test.ts`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 - `register-sources.ts`: `const VALID_JURISDICTION_LEVELS = new Set(["federal", "state", "county", "city", "township", "special_district"]);`
 - `scheduler.ts`: `const JURISDICTION_ORDER = ["federal", "state", "county", "city", "township", "special_district"];`
@@ -2596,12 +2596,12 @@ Expected: FAIL.
 - `zh.ts` after `batchRunLevel_city: "市",`: `    batchRunLevel_township: "镇/镇区",`
 - `route.ts:69` comment: `(state, county, city, township, special_district)`.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd frontend && npx vitest run scripts/register-sources.test.ts src/server/crawler/scheduler.test.ts src/components/admin && npm run i18n:check`
 Expected: PASS; i18n check reports no new findings.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/scripts/register-sources.ts frontend/scripts/register-sources.test.ts frontend/src/server/crawler/scheduler.ts frontend/src/server/crawler/scheduler.test.ts frontend/src/components/admin/JurisdictionBatchRunPanel.tsx frontend/src/components/admin/JurisdictionBatchRunPanel.test.ts frontend/src/lib/i18n/dictionaries/en.ts frontend/src/lib/i18n/dictionaries/zh.ts frontend/src/app/api/crawler/state/run/route.ts
@@ -2625,7 +2625,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: Task 5 (`bidLifecycleStatusOf`, columns).
 - Produces: `type BidDetailAccess = { platform: string; restricted: Array<"description" | "documents" | "contact"> }`, `detailAccessFromRawPayload(raw: unknown): BidDetailAccess | null` in `@/lib/bid-access`; server `Bid` gains `solicitationNumber: string`, `lifecycleStatus: BidLifecycleStatus`, `awardedDate: string`, `detailAccess: BidDetailAccess | null`; client `Bid` (mock-data) gains the same four as optional; `<BidAccessNotice access sourceUrl />`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 `frontend/src/lib/bid-access.test.ts`:
 ```ts
@@ -2699,12 +2699,12 @@ Append to `frontend/src/app/bids/[id]/page.test.ts`:
   });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `cd frontend && npx vitest run src/lib/bid-access.test.ts src/server/bids "src/app/bids/[id]/page.test.ts"`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `frontend/src/lib/bid-access.ts`:
 ```ts
@@ -2847,12 +2847,12 @@ i18n — `en.ts` `detail` section, after `noAttachments`:
           ) : null}
   ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `cd frontend && npx vitest run src/lib src/server/bids "src/app/bids/[id]/page.test.ts" && npm run i18n:check && npm run lint`
 Expected: PASS; no new i18n findings; lint clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add frontend/src/lib/bid-access.ts frontend/src/lib/bid-access.test.ts frontend/src/components/bids/BidAccessNotice.tsx frontend/src/server/bids/domain.ts frontend/src/server/bids/repository.ts frontend/src/server/bids/service.ts frontend/src/lib/mock-data.ts "frontend/src/app/bids/[id]/page.tsx" "frontend/src/app/bids/[id]/page.test.ts" frontend/src/lib/i18n/dictionaries/en.ts frontend/src/lib/i18n/dictionaries/zh.ts frontend/src/server/bids/repository.test.ts frontend/src/server/bids/service.test.ts
@@ -2874,7 +2874,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: Tasks 1–4 (real reader, paged stage, fetch-task), Tasks 5–7 (importers), the real Scrapling extractor server (`services/scrapling-extractor/server.py` `create_server`).
 - Produces: JSON `{ "first": CrawlerJsonRunPayload, "second": CrawlerJsonRunPayload, "removedId": "bidnet_co_denver:0000436007" }` on stdout.
 
-- [ ] **Step 1: Write the fixture script**
+- [x] **Step 1: Write the fixture script**
 
 `frontend/scripts/fixtures/bidnet-lifecycle-pipeline.py`:
 
@@ -2947,7 +2947,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 2: Write the integration test**
+- [x] **Step 2: Write the integration test**
 
 `frontend/src/server/crawler/bidnet-lifecycle.integration.test.ts`:
 
@@ -3042,7 +3042,7 @@ describe.runIf(process.env.RUN_CRAWLER_INTEGRATION === "1")("BidNet lifecycle th
 `frontend/package.json`: change the script to
 `"test:crawler-integration": "RUN_CRAWLER_INTEGRATION=1 vitest run src/server/crawler/enrichment-pipeline.integration.test.ts src/server/crawler/bidnet-lifecycle.integration.test.ts",`
 
-- [ ] **Step 3: Run it**
+- [x] **Step 3: Run it**
 
 Run (controller supplies a throwaway MySQL, never the `winbids` schema):
 ```bash
@@ -3050,7 +3050,7 @@ cd frontend && CRAWLER_INTEGRATION_PYTHON=../services/scrapling-extractor/.venv/
 ```
 Expected: PASS without MySQL (MySQL block skipped); PASS with `CRAWLER_INTEGRATION_MYSQL_URL` set.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add frontend/scripts/fixtures/bidnet-lifecycle-pipeline.py frontend/src/server/crawler/bidnet-lifecycle.integration.test.ts frontend/package.json
@@ -3069,7 +3069,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `docs/architecture/crawler-enrichment-flow.md` (list stage: paged walk, overlay, `complete`; persistence: lifecycle merge + delisting)
 - Modify: `docs/transferability/environment-variables.md` (two new variables)
 
-- [ ] **Step 1: Write the runbook**
+- [x] **Step 1: Write the runbook**
 
 `docs/operations/bid-lifecycle-and-crawl-budget.md` must cover, each as its own section:
 1. 招标状态：`open → closed → awarded` 的含义；`is_active` 与状态的关系；"已下架"是怎样判定的（只有 `metadata.pagination.complete = true` 的开放列表运行才会关闭本源其余 open 招标；失败、被截断、带日期窗口的运行一律不改）；怎么查：`SELECT lifecycle_status, COUNT(*) FROM bids WHERE id LIKE 'bidnet!_co!_denver:%' ESCAPE '!' GROUP BY 1;`
@@ -3079,9 +3079,9 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 5. 活跃度分层：`consecutive_empty_runs`、连续 3 次核实为空改为每周、出现招标即恢复。
 6. `township` 级别：用于 Township 与 NY/新英格兰/WI 的 town；门禁同县市。
 
-- [ ] **Step 2: Update CLAUDE.md, the architecture doc and the env-var reference** with the same facts, concisely (one paragraph each; the env table gets two rows).
+- [x] **Step 2: Update CLAUDE.md, the architecture doc and the env-var reference** with the same facts, concisely (one paragraph each; the env table gets two rows).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/operations/bid-lifecycle-and-crawl-budget.md CLAUDE.md docs/architecture/crawler-enrichment-flow.md docs/transferability/environment-variables.md
@@ -3094,7 +3094,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ### Task 14: Verification and live acceptance (controller only)
 
-- [ ] **Step 1: Full gates**
+- [x] **Step 1: Full gates**
 
 ```bash
 cd crawler && python3 -m pytest -q
@@ -3104,13 +3104,13 @@ cd ../../frontend && npm run test && npm run lint && npm run i18n:check && npm r
 ```
 Expected: all pass (the i18n check keeps only its fixed `winbids-demo` baseline).
 
-- [ ] **Step 2: Integration against a throwaway MySQL 8 container** (random password, container removed afterwards, never the `winbids` schema): `CRAWLER_INTEGRATION_MYSQL_URL=... CRAWLER_INTEGRATION_PYTHON=../services/scrapling-extractor/.venv/bin/python npm run test:crawler-integration`.
+- [x] **Step 2: Integration against a throwaway MySQL 8 container** (random password, container removed afterwards, never the `winbids` schema): `CRAWLER_INTEGRATION_MYSQL_URL=... CRAWLER_INTEGRATION_PYTHON=../services/scrapling-extractor/.venv/bin/python npm run test:crawler-integration`.
 
-- [ ] **Step 3: Migrate the local dev MySQL** (`winbids-mysql`, additive columns only): `cd frontend && set -a && . ./.env.local && set +a && npm run db:mysql:migrate`.
+- [x] **Step 3: Migrate the local dev MySQL** (`winbids-mysql`, additive columns only): `cd frontend && set -a && . ./.env.local && set +a && npm run db:mysql:migrate`.
 
-- [ ] **Step 4: Live run of the six approved BidNet sources** through the manual run route on the dev server (`CRAWLER_ALLOW_UNAUTHENTICATED_LOCAL_RUN=true`, loopback), body `{"sources": ["bidnet_co_boulder","bidnet_co_city_aurora","bidnet_co_denver","bidnet_co_jefferson","bidnet_mi_washtenaw","bidnet_ny_erie"]}`. Six tenants × 1–2 pages at BidNet's 3 s spacing; stop immediately on any challenge.
+- [x] **Step 4: Live run of the six approved BidNet sources** through the manual run route on the dev server (`CRAWLER_ALLOW_UNAUTHENTICATED_LOCAL_RUN=true`, loopback), body `{"sources": ["bidnet_co_boulder","bidnet_co_city_aurora","bidnet_co_denver","bidnet_co_jefferson","bidnet_mi_washtenaw","bidnet_ny_erie"]}`. Six tenants × 1–2 pages at BidNet's 3 s spacing; stop immediately on any challenge.
 
-- [ ] **Step 5: Acceptance queries** (spec §12.2, phase 1):
+- [x] **Step 5: Acceptance queries** (spec §12.2, phase 1):
 ```sql
 -- no BidNet bid more than 2 days past its deadline is still open
 SELECT id, deadline_date FROM bids

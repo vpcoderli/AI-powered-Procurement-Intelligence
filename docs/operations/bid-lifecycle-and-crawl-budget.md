@@ -78,3 +78,40 @@ BidNet 把发标机构、正文、招标文件、采购联系人这四类信息�
 `township` 是阶段 1 新增的合法 `jurisdiction_level` 取值（commit `c7d30b4`），用于 Township，以及 NY/新英格兰/WI 这些州里叫"town"的建制（跟其他州"Town of X"实际是建制市镇、应归 `city` 不同）。真正把机构名分类成 `township` 的规则是阶段 2 的工作（`discover-sources` 的 `classify_agency`，见设计文档第 6 节）；阶段 1 只是先把这个级别接入枚举和调度：`register-sources.ts` 的合法级别集合、`scheduler.ts` 的辖区排序（`federal, state, county, city, township, special_district`）和活跃度分层集合、管理端批量运行面板的级别下拉与计数、批准对话框、中英文标签（"Township / town" / "镇/镇区"）。
 
 门禁不用为它写任何新代码：`orchestrator.ts` 的 `blockedReasonFor()` 本来就是"辖区级别不是 `federal` / `state` 就必须显式批准"，`township` 天然落在这个分支里，和 county/city/special_district 走同一套治理拦截、前置检查、批准流程，见[县/市级数据源的治理拦截、前置检查与批准](./local-source-approval.md)。
+
+## 7. 首轮实测（2026-09-28，阶段 1 验收）
+
+设计第 12.2 节对阶段 1 的验收标准是两条：BidNet 源不再有截止日已过 2 天以上仍为 `open` 的招标；现有 6 个源的招标都带编号。本节记录第一次在真实 MySQL（本地 `winbids`）上跑通整条链路的结果，命令与查询可以照抄复跑。
+
+**环境。** 整分支终审（最终评审结论 MERGE-READY，见 `.superpowers/sdd/2026-09-24-county-data-completeness-phase1/progress.md`）之后，先 `npm run db:mysql:migrate`：59 条语句应用、183 条跳过，`bids` 新增 `lifecycle_status` / `awarded_date` / `solicitation_number`，`data_sources` 新增 `consecutive_empty_runs`；回填语句把 `is_active = 0` 的旧行置为 `closed`，本库 3,727 条历史招标全部 `is_active = 1`，所以回填了 0 行。然后以 MySQL 模式启动开发服务器，Scrapling 抽取 sidecar 用 `services/scrapling-extractor/run-local.sh` 跑在 `127.0.0.1:8091`，`frontend/.env.development.local` 里放 `CRAWLER_ALLOW_UNAUTHENTICATED_LOCAL_RUN=true`，请求体**不带** `limit`（任何 `limit` 都会让运行不 `complete`，也就不会下架）。
+
+**运行。** 一次 `POST /api/crawler/state/run`，`sources` 为 6 个已批准的 BidNet 租户，2026-09-28 03:18:55 UTC 开始，28.4 秒结束，6/6 成功，没有触发 WAF 挑战。每个源都是 1 页、`stopped_reason = exhausted`、`complete = true`、`requests_made = 1`，列表解析 `metadata.listExtraction.method = scrapling`（主路径，没有回退到适配器解析器）：
+
+| 源 | 运行前 open | 本次抓到 | 新增 | 更新 | 下架（`delisted`） | 运行后 open / closed |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `bidnet_co_city_aurora` | 22 | 16 | 5 | 11 | 11 | 16 / 11 |
+| `bidnet_co_denver` | 13 | 5 | 1 | 4 | 9 | 5 / 9 |
+| `bidnet_co_jefferson` | 9 | 5 | 1 | 4 | 5 | 5 / 5 |
+| `bidnet_mi_washtenaw` | 14 | 10 | 3 | 7 | 7 | 10 / 7 |
+| `bidnet_co_boulder` | 0 | 0（已验证空态） | 0 | 0 | 0 | 0 / 0 |
+| `bidnet_ny_erie` | 0 | 0（已验证空态） | 0 | 0 | 0 | 0 / 0 |
+
+运行前这 4 个有招标的源共 58 条、全部 `open`，其中 33 条截止日已过 2 天以上；运行后共 68 条（新增 10 条），32 条被判定下架（`raw_payload.lifecycle.closed_reason = "delisted"`），26 条运行前就有的招标仍在列表上、保持 `open`。第一节所述"只在 `complete = true` 的开放列表运行里清缺"正是这里发生的事：6 个租户的第 1 页 `<title>` 都与源 label 一致，所以 6 次运行都够格下架。Boulder、Erie 两个空租户的 `consecutive_empty_runs` 记为 1，其余 4 个为 0（第 5 节的活跃度分层从这次开始计数）。
+
+**验收查询（对 `winbids` 直接执行）。**
+
+```sql
+-- 标准 1：没有截止日已过 2 天以上仍为 open 的 BidNet 招标 → 0 行
+SELECT id, deadline_date FROM bids
+WHERE id LIKE 'bidnet!_%' ESCAPE '!' AND lifecycle_status = 'open'
+  AND STR_TO_DATE(deadline_date, '%m/%d/%Y') < CURDATE() - INTERVAL 2 DAY;
+-- 标准 2：当前 open 的 BidNet 招标都带编号 → missing = 0
+SELECT COUNT(*) AS missing FROM bids
+WHERE id LIKE 'bidnet!_%' ESCAPE '!' AND lifecycle_status = 'open' AND COALESCE(solicitation_number, '') = '';
+-- 一致性：is_active 恒等于 lifecycle_status = 'open' → 0
+SELECT COUNT(*) FROM bids WHERE (lifecycle_status = 'open') <> (is_active = 1);
+```
+
+三条查询的结果分别是 **0 行、0、0**，阶段 1 验收通过。运行前基线里 33 条过期 open 招标与运行后 32 条下架之间差的 1 条，是一条仍在租户列表上、本次被更新的招标（26 条保留下来的 open 招标里现在没有任何一条过期），不是漏判。被下架的 32 条是阶段 1 之前入库的旧行，`solicitation_number` 为空且不会再被列表看到，因此第二条查询按设计只看 `open`；新抓到的招标都带编号，例如 `bidnet_co_city_aurora:0000437559` 的 `6162A`、`0000437670` 的 `R-2528`。
+
+**这次没有覆盖到、留给后面阶段的事。** 终审留下三条不阻塞的小问题，归入阶段 3：页面读取器不核对抓到的列表种类是否与请求一致（`base_url` 若误指向 `closed-bids` 会把整页当 open 入库，6 个种子源都指向 `open-bids`，当前不可达）；`seed.ts` / `demo-readiness.ts` 写 `is_active` 时不写 `lifecycle_status`（只影响本地演示数据，下次 migrate 会回填）；MySQL 下架语句的 `SELECT … FOR UPDATE` 可能锁到相邻 id 区间的下一行（并发手动运行会以持久化失败回滚，不会写错数据）。多页租户（`pages_fetched > 1`）和 closed/awarded 列表的翻页这次没有真实样本，仍以离线 fixture 为准，阶段 4 开工时按设计第 14 节抽查。
