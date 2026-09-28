@@ -105,7 +105,7 @@ BidNet 等自己会翻页的适配器还能在 `fetch-task` 请求里带上 `lis
 
 SQLite/MySQL 在同一事务写招标、附件和运行日志；MySQL 使用一个借用连接。任一写入失败回滚；释放连接后尽力写独立失败日志，因此单连接池不会等待自己。失败结果是 `CrawlerPersistenceError`，不更新成功时间、不发送本次成功提醒。数据库完全不可用时只能返回错误，不能保证错误日志入库。
 
-**招标生命周期与下架**同样在这个事务里完成：`bids` 新增 `lifecycle_status`（`open` / `closed` / `awarded`）、`awarded_date`、`solicitation_number` 三列，`is_active` 恒等于 `lifecycle_status = 'open'`。两个 JSON 导入器共用的 `persistence-merge.ts`（`mergeLifecycleFields`）在合并每条招标时做状态流转：已经是 `awarded` 的招标不会被本次的 `closed` 结果降级，其余情况以本次抓到的状态为准。只有当一次开放列表运行 `status = "success"` 且 `metadata.pagination.complete = true` 时（`lifecycle.ts` 的 `delistingApplies()`），导入器才会在同一个事务里把该源本次没有出现的其余 `open` 招标批量置为 `closed`（`raw_payload.lifecycle.closed_reason = "delisted"`），"该源"按招标 id 前缀 `<source_id>:` 圈定；失败、被截断、带日期窗口的运行一律不做这次下架。运维见[招标生命周期、BidNet 翻页与平台预算](../operations/bid-lifecycle-and-crawl-budget.md)。
+**招标生命周期与下架**同样在这个事务里完成：`bids` 新增 `lifecycle_status`（`open` / `closed` / `awarded`）、`awarded_date`、`solicitation_number` 三列，`is_active` 恒等于 `lifecycle_status = 'open'`。两个 JSON 导入器共用的 `persistence-merge.ts` 在合并每条招标时调用 `lifecycle.ts` 的 `mergeLifecycleFields` 做状态流转：已经是 `awarded` 的招标不会被本次的 `closed` 结果降级，其余情况以本次抓到的状态为准。只有当一次开放列表运行 `status = "success"` 且 `metadata.pagination.complete = true` 时（`lifecycle.ts` 的 `delistingApplies()`），导入器才会在同一个事务里把该源本次没有出现的其余 `open` 招标批量置为 `closed`（`raw_payload.lifecycle.closed_reason = "delisted"`），"该源"按招标 id 前缀 `<source_id>:` 圈定；失败、被截断、带日期窗口的运行一律不做这次下架。运维见[招标生命周期、BidNet 翻页与平台预算](../operations/bid-lifecycle-and-crawl-budget.md)。
 
 详情展示通过 `getBidDescription` 选择有效正文；搜索与提醒查询包含 full_description。Scrapling 发现远程附件链接不代表文件已经下载，附件归档仍由既有归档流程负责。
 

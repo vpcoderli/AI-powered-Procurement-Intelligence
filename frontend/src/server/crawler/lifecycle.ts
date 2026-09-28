@@ -37,12 +37,14 @@ export function mergeLifecycleFields(incoming: JsonRecord, existing: JsonRecord 
   };
 }
 
-export function readListPagination(metadata: unknown): { listKind: string; complete: boolean; requestsMade: number | null } | null {
+export function readListPagination(metadata: unknown): { listKind: string | null; complete: boolean; requestsMade: number | null } | null {
   const pagination = record(record(metadata).pagination);
   if (Object.keys(pagination).length === 0) return null;
   const requests = Number(pagination.requests_made);
   return {
-    listKind: typeof pagination.list_kind === "string" ? pagination.list_kind : "open",
+    // No default: a walk that never declared its list kind must not read as an open-list walk,
+    // or delistingApplies would close the source's open bids on it.
+    listKind: typeof pagination.list_kind === "string" ? pagination.list_kind : null,
     complete: pagination.complete === true,
     requestsMade: pagination.requests_made !== undefined && Number.isFinite(requests) && requests >= 0 ? requests : null,
   };

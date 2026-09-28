@@ -399,6 +399,51 @@ def test_a_title_that_does_not_name_the_tenant_is_incomplete():
     assert pagination["complete"] is False
 
 
+def _with_title(html, tenant_name):
+    return re.sub(
+        r"<title>.*?</title>",
+        "<title>{0} - Bid Opportunities | BidNet Direct</title>".format(tenant_name),
+        html,
+        count=1,
+        flags=re.S,
+    )
+
+
+def test_a_tenant_whose_own_name_carries_a_state_suffix_can_still_be_complete():
+    # Discovery labels a tenant by its directory name, and some agencies' own BidNet name ends in
+    # ", XX" (2026-09-21 directory: "Madison County, AL", "Town of Dover, NY", ...). Their page
+    # title keeps that suffix, so the tenant check must accept the label with it — otherwise such
+    # a tenant is never complete and its delisted bids never close.
+    fetcher = PagedFetcher({
+        DENVER + "/solicitations/closed-bids?selectedContent=BUYER": _with_title(_with_total(CLOSED, 31), "Madison County, AL"),
+        PAGE_TWO: _with_title(_with_total(OPEN, 31), "Madison County, AL"),
+    })
+    suffixed_source = _source("Madison County, AL (BidNet)", DENVER + "/solicitations/open-bids")
+
+    _bids, _stats, pagination = run_paginated_list_extraction(
+        suffixed_source, fetcher.adapter(), _adapter_config(), _request()
+    )
+
+    assert pagination["stopped_reason"] == "exhausted"
+    assert pagination["complete"] is True
+
+
+def test_the_state_suffix_alone_never_confirms_a_different_tenant():
+    # Accepting the suffixed form must not loosen the whole-string comparison: a page titled for
+    # another agency in the same state still fails the tenant check.
+    fetcher = PagedFetcher({
+        DENVER + "/solicitations/closed-bids?selectedContent=BUYER": _with_title(_with_total(CLOSED, 31), "Morgan County, AL"),
+        PAGE_TWO: _with_title(_with_total(OPEN, 31), "Morgan County, AL"),
+    })
+    suffixed_source = _source("Madison County, AL (BidNet)", DENVER + "/solicitations/open-bids")
+
+    _bids, _stats, pagination = run_paginated_list_extraction(
+        suffixed_source, fetcher.adapter(), _adapter_config(), _request()
+    )
+
+    assert pagination["complete"] is False
+
+
 def test_an_empty_first_page_is_a_verified_empty_list_with_complete_pagination():
     label = "Erie County, NY (BidNet)"
     fetcher = PagedFetcher({"https://www.bidnetdirect.com/new-york/erie-county/solicitations/open-bids": ERIE})

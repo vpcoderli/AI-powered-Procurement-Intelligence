@@ -44,13 +44,26 @@ describe("delistingApplies", () => {
     expect(delistingApplies(run({}))).toBe(false);
     expect(delistingApplies(run(null))).toBe(false);
   });
+
+  it("never delists on a run that did not declare which list it walked", () => {
+    // A complete walk of an undeclared list kind must not close the source's open bids: only an
+    // explicit open-list walk proves which bids are still listed (spec §5.1).
+    expect(delistingApplies(run({ pagination: { complete: true } }))).toBe(false);
+    expect(delistingApplies(run({ pagination: { list_kind: 7, complete: true } }))).toBe(false);
+    expect(delistingApplies(run({ pagination: { list_kind: "OPEN", complete: true } }))).toBe(false);
+  });
 });
 
 describe("readListPagination", () => {
   it("reads the request count when it is a non-negative number", () => {
     expect(readListPagination({ pagination: { list_kind: "open", complete: true, requests_made: 3 } })).toEqual({ listKind: "open", complete: true, requestsMade: 3 });
-    expect(readListPagination({ pagination: { requests_made: "x" } })).toEqual({ listKind: "open", complete: false, requestsMade: null });
+    expect(readListPagination({ pagination: { requests_made: "x" } })).toEqual({ listKind: null, complete: false, requestsMade: null });
     expect(readListPagination({})).toBeNull();
+  });
+
+  it("reports a missing or non-string list kind as null instead of assuming open", () => {
+    expect(readListPagination({ pagination: { complete: true } })).toEqual({ listKind: null, complete: true, requestsMade: null });
+    expect(readListPagination({ pagination: { list_kind: null, complete: true } })).toEqual({ listKind: null, complete: true, requestsMade: null });
   });
 });
 

@@ -380,6 +380,16 @@ def _tenant_display_name(label):
     return " ".join(name.split())
 
 
+def _tenant_title_forms(label):
+    """Every whole-string spelling page 1's `<title>` may legitimately use for `label`: the label
+    minus its "(Platform)" suffix, both with and without a trailing ", XX" state code. Discovery
+    labels a tenant by its directory name, and some agencies' own BidNet name carries the state
+    ("Madison County, AL", "Town of Dover, NY"): their `<title>` keeps that suffix, so stripping
+    it unconditionally would leave such tenants never `complete` — and never delisted."""
+    with_state = " ".join(_LABEL_PAREN_RE.sub("", label or "").split())
+    return {form.casefold() for form in (with_state, _tenant_display_name(label)) if form}
+
+
 def _title_names_tenant(title, label):
     """Whether page 1's own `<title>` names the tenant `label` claims to be, whitespace-collapsed
     and case-insensitive. Deliberately a whole-string comparison, not a token match: a shared
@@ -387,7 +397,7 @@ def _title_names_tenant(title, label):
     if not title:
         return False
     collapsed_title = " ".join(str(title).split())
-    return collapsed_title.casefold() == _tenant_display_name(label).casefold()
+    return collapsed_title.casefold() in _tenant_title_forms(label)
 
 
 def _overlay_reader_fields(record, reader_record, list_kind):
