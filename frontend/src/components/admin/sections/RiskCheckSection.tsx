@@ -37,8 +37,6 @@ type StateDataQualityFilters = {
 
 export const STATE_DATA_QUALITY_RISK_FILTERS: StateDataQualityRiskFilter[] = ["all", "P0", "P1", "P2"];
 const STATE_DATA_QUALITY_P0_BLOCKER_STATES = ["CA", "FL", "IL", "NY", "TX"] as const;
-const STATE_DATA_QUALITY_P0_BLOCKER_COPY =
-  "CA/FL/IL/NY/TX P0 blockers are state data quality blockers";
 
 export function filterStateDataQualityRows<
   TRow extends { riskLevel: string; reasons: Array<{ code: string }> },
@@ -80,16 +78,20 @@ export function stateAttachmentRealRatio(row: Pick<StateDataQualityRow, "attachm
   return `${real}/${total} (${percent}%)`;
 }
 
-export function stateDataQualityP0BlockerNotice(rows: Array<{ stateCode: string; riskLevel: string }>) {
+/** The notice above the matrix when one of the watched states is a P0 blocker, in the language of `t`; null when none is. */
+export function stateDataQualityP0BlockerNotice(
+  rows: Array<{ stateCode: string; riskLevel: string }>,
+  t: (key: string) => string,
+) {
   const blockerStates = STATE_DATA_QUALITY_P0_BLOCKER_STATES.filter((stateCode) =>
     rows.some((row) => row.stateCode === stateCode && row.riskLevel === "P0"),
   );
 
   if (blockerStates.length === 0) return null;
 
-  return `${STATE_DATA_QUALITY_P0_BLOCKER_COPY}; currently blocked: ${blockerStates.join(
-    "/",
-  )}. These are not live source-health failures.`;
+  return t("admin.stateQualityP0Notice")
+    .replace("{watchlist}", STATE_DATA_QUALITY_P0_BLOCKER_STATES.join("/"))
+    .replace("{states}", blockerStates.join("/"));
 }
 
 function riskCheckTone(ok: boolean) {
@@ -140,8 +142,13 @@ function stateDataQualityRiskTone(riskLevel: StateDataQualityRiskLevel | string)
   return "border-sky-200 bg-sky-50 text-sky-700";
 }
 
-function stateDataQualityRiskFilterLabel(filter: StateDataQualityRiskFilter) {
-  return filter === "all" ? "All" : filter;
+function stateDataQualityRiskFilterLabel(filter: StateDataQualityRiskFilter, t: (key: string) => string) {
+  return filter === "all" ? t("admin.stateQualityFilterAll") : filter;
+}
+
+/** A row's risk level as a badge label: P0/P1/P2 are codes and print as they are, PASS is a word. */
+function stateDataQualityRiskLabel(riskLevel: StateDataQualityRiskLevel | string, t: (key: string) => string) {
+  return riskLevel === "PASS" ? t("admin.stateQualityPass") : riskLevel;
 }
 
 function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) {
@@ -160,7 +167,7 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
     report.actions,
     stateQualityActionRecommendedFilter,
   );
-  const p0BlockerNotice = stateDataQualityP0BlockerNotice(report.rows);
+  const p0BlockerNotice = stateDataQualityP0BlockerNotice(report.rows, t);
 
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-3">
@@ -170,16 +177,16 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
             <Database size={15} />
             {t("admin.stateQualityMatrixTitle")}
             <Badge variant="outline" className={riskCheckTone(report.ok)}>
-              {report.ok ? "PASS" : "P0 blocker review"}
+              {report.ok ? t("admin.stateQualityPass") : t("admin.stateQualityBlockerReview")}
             </Badge>
           </div>
           <div className="mt-1 text-xs leading-5 text-slate-500">
-            Summary: total states, P0/P1/P2 counts, source enablement, bids, attachment real ratio, and reason code.
+            {t("admin.stateQualitySummary")}
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
           <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-700">
-            total states: {report.summary.totalStates}
+            {t("admin.stateQualityTotalStates").replace("{count}", String(report.summary.totalStates))}
           </Badge>
           <Badge variant="outline" className="border-rose-200 bg-rose-50 text-rose-700">
             P0: {report.summary.p0BlockerStates}
@@ -199,13 +206,15 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
       )}
       <div className="mt-3 rounded-md border border-slate-100 bg-slate-50 px-3 py-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-xs font-black uppercase text-slate-700">State data quality action queue</div>
+          <div className="text-xs font-black uppercase text-slate-700">{t("admin.stateQualityActionQueue")}</div>
           <Badge variant="outline" className="border-slate-200 bg-white text-slate-600">
-            {filteredActions.length}/{report.actions.length} actions
+            {t("admin.stateQualityActionCount")
+              .replace("{shown}", String(filteredActions.length))
+              .replace("{total}", String(report.actions.length))}
           </Badge>
         </div>
         <label className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase text-slate-500">
-          Recommended action
+          {t("admin.stateQualityRecommendedAction")}
           <select
             value={stateQualityActionRecommendedFilter}
             onChange={(event) => setStateQualityActionRecommendedFilter(event.target.value)}
@@ -213,13 +222,13 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
           >
             {actionRecommendedOptions.map((action) => (
               <option key={action} value={action}>
-                {action === "all" ? "all recommended actions" : action}
+                {action === "all" ? t("admin.stateQualityAllRecommendedActions") : action}
               </option>
             ))}
           </select>
         </label>
         {filteredActions.length === 0 ? (
-          <div className="mt-2 text-xs font-medium text-slate-500">No state data quality actions are open.</div>
+          <div className="mt-2 text-xs font-medium text-slate-500">{t("admin.stateQualityNoActions")}</div>
         ) : (
           <div className="mt-2 grid gap-2">
             {filteredActions.slice(0, 6).map((action) => (
@@ -244,7 +253,7 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
                     {action.ownerHint}
                   </Badge>
                   <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
-                    {action.dueInHours}h
+                    {t("admin.stateQualityDueHours").replace("{hours}", String(action.dueInHours))}
                   </Badge>
                 </div>
               </div>
@@ -254,7 +263,7 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
       </div>
       <div className="mt-3 flex flex-col gap-2 border-y border-slate-100 py-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold uppercase text-slate-500">Risk filter</span>
+          <span className="text-xs font-semibold uppercase text-slate-500">{t("admin.stateQualityRiskFilter")}</span>
           {STATE_DATA_QUALITY_RISK_FILTERS.map((filter) => (
             <Button
               key={filter}
@@ -268,12 +277,12 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
                   : "h-8 rounded-lg border-slate-200 px-2 text-xs text-slate-600"
               }
             >
-              {stateDataQualityRiskFilterLabel(filter)}
+              {stateDataQualityRiskFilterLabel(filter, t)}
             </Button>
           ))}
         </div>
         <label className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase text-slate-500">
-          Reason code
+          {t("admin.stateQualityReasonCode")}
           <select
             value={stateQualityReasonFilter}
             onChange={(event) => setStateQualityReasonFilter(event.target.value)}
@@ -281,7 +290,7 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
           >
             {reasonOptions.map((reasonCode) => (
               <option key={reasonCode} value={reasonCode}>
-                {reasonCode === "all" ? "all reason codes" : reasonCode}
+                {reasonCode === "all" ? t("admin.stateQualityAllReasonCodes") : reasonCode}
               </option>
             ))}
           </select>
@@ -291,19 +300,19 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>state</TableHead>
-              <TableHead>risk</TableHead>
-              <TableHead>bids</TableHead>
-              <TableHead>enabled source</TableHead>
-              <TableHead>attachment real ratio</TableHead>
-              <TableHead>reason code</TableHead>
+              <TableHead>{t("admin.stateQualityColumnState")}</TableHead>
+              <TableHead>{t("admin.stateQualityColumnRisk")}</TableHead>
+              <TableHead>{t("admin.stateQualityColumnBids")}</TableHead>
+              <TableHead>{t("admin.stateQualityColumnEnabledSource")}</TableHead>
+              <TableHead>{t("admin.stateQualityColumnAttachmentRatio")}</TableHead>
+              <TableHead>{t("admin.stateQualityColumnReasonCode")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredRows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className="py-5 text-center text-sm text-slate-500">
-                  No state data quality rows match this filter.
+                  {t("admin.stateQualityNoRows")}
                 </TableCell>
               </TableRow>
             )}
@@ -315,7 +324,7 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
                   <TableCell className="font-semibold text-slate-900">{row.stateCode}</TableCell>
                   <TableCell>
                     <Badge variant="outline" className={stateDataQualityRiskTone(row.riskLevel)}>
-                      {row.riskLevel}
+                      {stateDataQualityRiskLabel(row.riskLevel, t)}
                     </Badge>
                   </TableCell>
                   <TableCell>{row.bidCount}</TableCell>
@@ -325,7 +334,7 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
                     <div className="flex max-w-xl flex-wrap gap-1">
                       {reasonCodes.length === 0 ? (
                         <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
-                          none
+                          {t("admin.stateQualityReasonNone")}
                         </Badge>
                       ) : (
                         reasonCodes.map((reasonCode, reasonIndex) => (

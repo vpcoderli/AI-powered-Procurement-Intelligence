@@ -192,11 +192,15 @@ three defect classes on every run:
    (belt-and-suspenders given the TS structural guarantee) and any leaf value that's byte-identical
    between `en` and `zh`, excluding a short, explicit allowlist of legitimate exceptions (brand
    names, acronyms, USPS codes — the same list reasoned through in this report).
-2. Walks `src/app/**/*.{ts,tsx}` (excluding `*.test.ts(x)`) with a regex heuristic for JSX text
-   content and `aria-label`/`title`/`placeholder`/`alt` attributes containing literal English text
-   not wrapped in `t(...)`.
-3. For every dictionary key whose value contains a `{token}` placeholder, greps `src/app` for
-   `t("that.key")` call sites and flags any without a nearby `.replace(`/`formatMessage(`.
+2. Walks `src/app/**/*.{ts,tsx}` and `src/components/admin/**/*.{ts,tsx}` (the admin console's copy
+   lives in its components since the console redesign; `*.test.ts(x)` excluded) with a regex
+   heuristic for JSX text content and `aria-label`/`title`/`placeholder`/`alt` attributes containing
+   literal English text not wrapped in `t(...)`. Findings are printed as paths from the frontend
+   root (`src/app/...`, `src/components/admin/...`).
+3. For every dictionary key whose value contains a `{token}` placeholder, greps the same two trees
+   for `t("that.key")` call sites and flags any without a nearby `.replace(`, `.split("{token}")`
+   (how a placeholder that stands for a JSX element is resolved) or `formatMessage(`. A key whose
+   braces are the content, such as `admin.crawlerConfigAttachmentTemplate`, is allowlisted.
 
 **Known limitation, stated in the script's own header and CLI help**: part 2 (hardcoded-string
 detection) is a regex heuristic over raw source text, not an AST/type-aware parse. It will produce

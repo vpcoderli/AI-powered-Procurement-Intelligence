@@ -22,8 +22,7 @@ type ConfigEditDraft = {
 const MARKETING_CONTENT_CONFIG_MODULE = "ux_state";
 const MARKETING_CONTENT_CONFIG_KEY = "copy_library";
 const MARKETING_CONTENT_CONFIG_ID = "ux_state.copy_library";
-const MARKETING_CONTENT_SAFE_VALIDATION_COPY =
-  "Unsafe outcome, compliance, or submission claims are rejected before publish and the site falls back to default marketing copy.";
+const CONFIG_STATUSES: AdminConfigRegistryEntry["status"][] = ["active", "draft", "inactive"];
 
 const loadConfigEntries = () => listAdminConfigEntries().then((response) => response.entries);
 
@@ -62,6 +61,8 @@ export function ConfigRegistrySection() {
   const configEntries = registry.data ?? [];
   const isLoading = registry.status === "loading";
   const onRefresh = () => void registry.reload();
+  const statusLabel = (status: AdminConfigRegistryEntry["status"]) =>
+    CONFIG_STATUSES.includes(status) ? t(`admin.configRegistryStatus_${status}`) : status;
 
   const updateConfigEditDraft = (id: string, updater: (draft: ConfigEditDraft) => ConfigEditDraft) => {
     const entry = configEntries.find((item) => item.id === id);
@@ -80,12 +81,12 @@ export function ConfigRegistrySection() {
     try {
       configValue = JSON.parse(draft.configValueJson);
     } catch {
-      setNotice("Config JSON is invalid.");
+      setNotice(t("admin.configRegistryInvalidJson"));
       return;
     }
 
     if (draft.changeReason.trim().length === 0) {
-      setNotice("Change reason is required.");
+      setNotice(t("admin.configRegistryReasonRequired"));
       return;
     }
 
@@ -103,10 +104,10 @@ export function ConfigRegistrySection() {
           delete next[entry.id];
           return next;
         });
-        setNotice("Config saved.");
+        setNotice(t("admin.configRegistrySaved"));
       })
       .catch(() => {
-        setNotice("Config update failed.");
+        setNotice(t("admin.configRegistrySaveFailed"));
       })
       .finally(() => {
         setSavingConfigEntryId(null);
@@ -123,13 +124,23 @@ export function ConfigRegistrySection() {
         actionLabel={t("admin.refresh")}
         code="error"
         message={t("admin.errorDescription")}
-        title="Config Registry"
+        title={t("admin.configRegistryTitle")}
       />
     );
   }
   if (registry.status === "loading" && registry.data === null) {
-    return <AdminSectionStateCard actionLabel={t("admin.refresh")} code="loading" message={t("admin.loading")} title="Config Registry" />;
+    return (
+      <AdminSectionStateCard
+        actionLabel={t("admin.refresh")}
+        code="loading"
+        message={t("admin.loading")}
+        title={t("admin.configRegistryTitle")}
+      />
+    );
   }
+
+  // The description names the CMS entry as an inline <code> chip, so it is split at its {key} placeholder.
+  const [cmsBefore, cmsAfter = ""] = t("admin.configRegistryCmsDescription").split("{key}");
 
   return (
     <div className="flex flex-col gap-6">
@@ -140,9 +151,9 @@ export function ConfigRegistrySection() {
           <div>
             <div className="flex items-center gap-2 font-semibold text-slate-950">
               <ServerCog size={18} />
-              Config Registry
+              {t("admin.configRegistryTitle")}
             </div>
-            <div className="mt-1 text-xs font-medium text-slate-500">Config Matrix</div>
+            <div className="mt-1 text-xs font-medium text-slate-500">{t("admin.configRegistrySubtitle")}</div>
           </div>
           <Button
             type="button"
@@ -152,7 +163,7 @@ export function ConfigRegistrySection() {
             className="h-8 rounded-lg border-slate-200 px-2 text-xs"
           >
             <RefreshCw size={14} />
-            {isLoading ? "Refreshing" : "Refresh"}
+            {isLoading ? t("admin.configRegistryRefreshing") : t("admin.refresh")}
           </Button>
         </div>
         <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
@@ -160,18 +171,17 @@ export function ConfigRegistrySection() {
             <div>
               <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <ShieldCheck size={16} className="text-emerald-600" />
-                Marketing Content CMS
+                {t("admin.configRegistryCmsTitle")}
               </div>
               <div className="mt-1 text-xs leading-5 text-slate-600">
-                Copy Library edits live in <code className="rounded bg-white px-1">{MARKETING_CONTENT_CONFIG_ID}</code>{" "}
-                and cover homepage/resources scope. Keep local JSON copy-only; no external CMS or rich text editor is
-                connected here.
+                {cmsBefore}
+                <code className="rounded bg-white px-1">{MARKETING_CONTENT_CONFIG_ID}</code>
+                {cmsAfter}
               </div>
             </div>
             <div className="max-w-xl rounded-md border border-emerald-100 bg-white px-3 py-2 text-xs leading-5 text-slate-600">
-              <span className="font-semibold text-emerald-700">safe validation</span>
-              {": "}
-              unsafe claim guard is enforced by the marketing content resolver. {MARKETING_CONTENT_SAFE_VALIDATION_COPY}
+              <span className="mr-1 font-semibold text-emerald-700">{t("admin.configRegistrySafeValidationLabel")}</span>
+              {t("admin.configRegistrySafeValidationText")}
             </div>
           </div>
         </div>
@@ -186,19 +196,19 @@ export function ConfigRegistrySection() {
             ))}
           </div>
         ) : configEntries.length === 0 ? (
-          <div className="px-4 py-5 text-sm text-slate-500">No config registry entries found.</div>
+          <div className="px-4 py-5 text-sm text-slate-500">{t("admin.configRegistryEmpty")}</div>
         ) : (
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Module</TableHead>
-                <TableHead>Key</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>Scope</TableHead>
-                <TableHead>Config JSON</TableHead>
-                <TableHead>Change reason</TableHead>
-                <TableHead>Updated</TableHead>
-                <TableHead className="text-right">Action</TableHead>
+                <TableHead>{t("admin.configRegistryModule")}</TableHead>
+                <TableHead>{t("admin.configRegistryKey")}</TableHead>
+                <TableHead>{t("admin.status")}</TableHead>
+                <TableHead>{t("admin.configRegistryScope")}</TableHead>
+                <TableHead>{t("admin.configRegistryConfigJson")}</TableHead>
+                <TableHead>{t("admin.configRegistryChangeReason")}</TableHead>
+                <TableHead>{t("admin.configRegistryUpdated")}</TableHead>
+                <TableHead className="text-right">{t("admin.configRegistryAction")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -215,15 +225,14 @@ export function ConfigRegistrySection() {
                       </code>
                       {isMarketingContentConfigEntry(entry) && (
                         <div className="mt-2 rounded-md border border-emerald-100 bg-emerald-50 px-2 py-1 text-xs leading-5 text-emerald-800">
-                          Copy Library: homepage/resources scope uses safe validation and the unsafe claim guard before
-                          marketing overrides are applied.
+                          {t("admin.configRegistryCopyLibraryNote")}
                         </div>
                       )}
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-2">
                         <Badge variant="outline" className={configStatusTone(draft.status)}>
-                          {draft.status}
+                          {statusLabel(draft.status)}
                         </Badge>
                         <select
                           value={draft.status}
@@ -235,9 +244,11 @@ export function ConfigRegistrySection() {
                           }
                           className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 outline-none"
                         >
-                          <option value="active">active</option>
-                          <option value="draft">draft</option>
-                          <option value="inactive">inactive</option>
+                          {CONFIG_STATUSES.map((status) => (
+                            <option key={status} value={status}>
+                              {statusLabel(status)}
+                            </option>
+                          ))}
                         </select>
                       </div>
                     </TableCell>
@@ -247,7 +258,7 @@ export function ConfigRegistrySection() {
                     </TableCell>
                     <TableCell>
                       <textarea
-                        aria-label={`${entry.module}.${entry.configKey} Config JSON`}
+                        aria-label={`${entry.module}.${entry.configKey} ${t("admin.configRegistryConfigJson")}`}
                         value={draft.configValueJson}
                         onChange={(event) =>
                           onDraftChange(entry.id, (current) => ({
@@ -261,7 +272,7 @@ export function ConfigRegistrySection() {
                     </TableCell>
                     <TableCell>
                       <Input
-                        aria-label={`${entry.module}.${entry.configKey} Change reason`}
+                        aria-label={`${entry.module}.${entry.configKey} ${t("admin.configRegistryChangeReason")}`}
                         value={draft.changeReason}
                         onChange={(event) =>
                           onDraftChange(entry.id, (current) => ({
@@ -269,11 +280,11 @@ export function ConfigRegistrySection() {
                             changeReason: event.target.value,
                           }))
                         }
-                        placeholder="Change reason"
+                        placeholder={t("admin.configRegistryChangeReason")}
                         className="h-9 min-w-56 rounded-lg border-slate-200 text-sm"
                       />
                       <div className="mt-2 max-w-56 truncate text-xs text-slate-500" title={entry.changeReason}>
-                        Last: {entry.changeReason || "-"}
+                        {t("admin.configRegistryLastReason").replace("{reason}", () => entry.changeReason || "-")}
                       </div>
                     </TableCell>
                     <TableCell className="text-sm text-slate-500">{formatDate(entry.updatedAt)}</TableCell>
@@ -285,7 +296,7 @@ export function ConfigRegistrySection() {
                         disabled={isSaving || draft.changeReason.trim().length === 0}
                         className="h-8 rounded-lg border-slate-200 px-2 text-xs"
                       >
-                        {isSaving ? "Saving" : "Save config"}
+                        {isSaving ? t("admin.configRegistrySaving") : t("admin.configRegistrySave")}
                       </Button>
                     </TableCell>
                   </TableRow>

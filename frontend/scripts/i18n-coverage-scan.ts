@@ -1,8 +1,8 @@
 /**
  * i18n coverage scan: static analysis over the two dictionaries
- * (`src/lib/i18n/dictionaries/en.ts` / `zh.ts`) and the App Router source
- * tree, looking for the three distinct classes of "untranslated variable"
- * defect described in the P1-5 task:
+ * (`src/lib/i18n/dictionaries/en.ts` / `zh.ts`) and the App Router and admin
+ * console source trees, looking for the three distinct classes of
+ * "untranslated variable" defect described in the P1-5 task:
  *
  *   (a) KEY STRUCTURE DRIFT — a dot-path key present in one dictionary but
  *       missing (or an untranslated byte-identical copy) in the other. Note:
@@ -17,7 +17,9 @@
  *
  *   (b) HARDCODED STRINGS — user-facing English text literals in JSX
  *       (text content, aria-label/title/placeholder/alt attributes) in
- *       `src/app/**` that bypass the dictionary/`t()` pattern entirely.
+ *       `src/app/**` and `src/components/admin/**` (the admin console's pages
+ *       under `src/app/admin` are thin wrappers, its copy lives in the
+ *       components) that bypass the dictionary/`t()` pattern entirely.
  *       This is the dominant real-world cause of "untranslated variable"
  *       reports — the string was simply never wired to i18n, so there is no
  *       missing key to find by diffing dictionaries.
@@ -31,8 +33,10 @@
  *       bare (`{t("dashboard.resultsCount")}` with no `.replace(`), the
  *       literal "{count}" leaks into the rendered UI. This scan finds every
  *       dictionary key whose value contains a placeholder token, then greps
- *       the app tree for call sites of that key and flags any call site with
- *       no `.replace(`/`formatMessage(` in the surrounding statement.
+ *       the same source trees as (b) for call sites of that key and flags any
+ *       call site with no `.replace(`/`.split("{token}")`/`formatMessage(` in
+ *       the surrounding statement. (`.split` is how a placeholder that stands
+ *       for a JSX element, such as an inline <code> chip, is resolved.)
  *
  * This script is a best-effort static scanner, not a type checker: part (c)
  * in particular relies on proximity heuristics (does `.replace(` or
@@ -40,7 +44,8 @@
  * than full expression parsing, so it can both under- and over-report on
  * unusual call shapes. Findings should be read as leads to verify, not as
  * ground truth — see docs/qa/i18n-coverage-report.md for a manually verified
- * pass over the routes this task prioritized.
+ * pass over the routes this task prioritized. Findings are reported as paths
+ * relative to the frontend root (`src/app/...`, `src/components/admin/...`).
  *
  * Usage:
  *   npx tsx scripts/i18n-coverage-scan.ts            # human-readable report
@@ -54,6 +59,13 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+
+/**
+ * The source trees the hardcoded-string scan (b) and the placeholder scan (c) walk, relative to the frontend
+ * root. The admin console left `src/app/admin/page.tsx` for `src/components/admin/**` in its redesign, so
+ * walking `src/app` alone would not see any of its copy.
+ */
+export const SCAN_SOURCE_ROOTS = ["src/app", "src/components/admin"] as const;
 
 export interface KeyDriftFinding {
   type: "missing_in_zh" | "missing_in_en" | "identical_value";
@@ -238,22 +250,34 @@ function lineUsesTranslationHelper(line: string): boolean {
   return /\bt\(\s*[`'"]/.test(line) || /\bformatMessage\(/.test(line);
 }
 
-function scanHardcodedStrings(appRoot: string): HardcodedStringFinding[] {
+/** Every scannable source file under `roots` (relative to `frontendRoot`), tests excluded; a root that is missing scans nothing. */
+function collectSourceFiles(frontendRoot: string, roots: readonly string[]): string[] {
   const files: string[] = [];
-  walk(appRoot, files);
+  for (const root of roots) walk(path.join(frontendRoot, root), files);
+  return files.filter((filePath) => !/\.(test|spec)\.[jt]sx?$/.test(filePath));
+}
+
+/** A finding's file: the path from the frontend root, with `/` separators on every platform. */
+function reportedPath(frontendRoot: string, filePath: string): string {
+  return path.relative(frontendRoot, filePath).split(path.sep).join("/");
+}
+
+export function scanHardcodedStrings(
+  frontendRoot: string,
+  roots: readonly string[] = SCAN_SOURCE_ROOTS,
+): HardcodedStringFinding[] {
+  const files = collectSourceFiles(frontendRoot, roots);
 
   const findings: HardcodedStringFinding[] = [];
 
   for (const filePath of files) {
-    if (/\.(test|spec)\.[jt]sx?$/.test(filePath)) continue;
-
     let contents: string;
     try {
       contents = readFileSync(filePath, "utf8");
     } catch {
       continue;
     }
-    const relativePath = path.relative(appRoot, filePath).split(path.sep).join("/");
+    const relativePath = reportedPath(frontendRoot, filePath);
     const lines = contents.split(/\r?\n/);
 
     lines.forEach((line, index) => {
@@ -296,6 +320,13 @@ function scanHardcodedStrings(appRoot: string): HardcodedStringFinding[] {
 
 const PLACEHOLDER_TOKEN_PATTERN = /\{([a-zA-Z][a-zA-Z0-9_]*)\}/g;
 
+/**
+ * Keys whose `{token}` is meant to be shown as typed: the label documents a template syntax the admin writes into a
+ * config field, so the braces are the content and not an i18n placeholder. Kept short and explicit, like
+ * IDENTICAL_VALUE_ALLOWLIST.
+ */
+const LITERAL_PLACEHOLDER_ALLOWLIST = new Set<string>(["admin.crawlerConfigAttachmentTemplate"]);
+
 function extractPlaceholderTokens(value: string): string[] {
   const tokens: string[] = [];
   PLACEHOLDER_TOKEN_PATTERN.lastIndex = 0;
@@ -306,33 +337,32 @@ function extractPlaceholderTokens(value: string): string[] {
   return tokens;
 }
 
-function scanUnresolvedPlaceholders(
-  appRoot: string,
+export function scanUnresolvedPlaceholders(
+  frontendRoot: string,
   enFlat: Map<string, string>,
+  roots: readonly string[] = SCAN_SOURCE_ROOTS,
 ): UnresolvedPlaceholderFinding[] {
   const placeholderKeys = new Map<string, string[]>();
   for (const [key, value] of enFlat) {
+    if (LITERAL_PLACEHOLDER_ALLOWLIST.has(key)) continue;
     const tokens = extractPlaceholderTokens(value);
     if (tokens.length > 0) placeholderKeys.set(key, tokens);
   }
 
   if (placeholderKeys.size === 0) return [];
 
-  const files: string[] = [];
-  walk(appRoot, files);
+  const files = collectSourceFiles(frontendRoot, roots);
 
   const findings: UnresolvedPlaceholderFinding[] = [];
 
   for (const filePath of files) {
-    if (/\.(test|spec)\.[jt]sx?$/.test(filePath)) continue;
-
     let contents: string;
     try {
       contents = readFileSync(filePath, "utf8");
     } catch {
       continue;
     }
-    const relativePath = path.relative(appRoot, filePath).split(path.sep).join("/");
+    const relativePath = reportedPath(frontendRoot, filePath);
     const lines = contents.split(/\r?\n/);
 
     for (const [keyPath, tokens] of placeholderKeys) {
@@ -350,7 +380,8 @@ function scanUnresolvedPlaceholders(
         const windowEnd = Math.min(lines.length, index + 4);
         const window = lines.slice(windowStart, windowEnd).join("\n");
 
-        const isResolved = /\.replace\(/.test(window) || /formatMessage\(/.test(window);
+        const isResolved =
+          /\.replace\(/.test(window) || /\.split\(\s*["'`]\{/.test(window) || /formatMessage\(/.test(window);
         if (isResolved) return;
 
         findings.push({
@@ -384,9 +415,8 @@ export async function runI18nCoverageScan(frontendRoot: string): Promise<I18nCov
   const zhFlat = flattenDictionary(zhDict);
 
   const keyDrift = compareDictionaries(enFlat, zhFlat);
-  const appRoot = path.join(frontendRoot, "src", "app");
-  const hardcodedStrings = scanHardcodedStrings(appRoot);
-  const unresolvedPlaceholders = scanUnresolvedPlaceholders(appRoot, enFlat);
+  const hardcodedStrings = scanHardcodedStrings(frontendRoot);
+  const unresolvedPlaceholders = scanUnresolvedPlaceholders(frontendRoot, enFlat);
 
   return {
     scannedAt: new Date().toISOString(),
@@ -418,7 +448,7 @@ export function formatI18nCoverageScanResult(result: I18nCoverageScanResult): st
   lines.push("");
 
   lines.push(
-    `(b) Hardcoded strings bypassing t() in src/app: ${result.hardcodedStrings.length} finding(s) ` +
+    `(b) Hardcoded strings bypassing t() in ${SCAN_SOURCE_ROOTS.join(", ")}: ${result.hardcodedStrings.length} finding(s) ` +
       `(heuristic scan — expect some false positives, see report notes)`,
   );
   for (const finding of result.hardcodedStrings) {
@@ -427,7 +457,7 @@ export function formatI18nCoverageScanResult(result: I18nCoverageScanResult): st
   lines.push("");
 
   lines.push(
-    `(c) Unresolved placeholder tokens: ${result.unresolvedPlaceholders.length} finding(s)`,
+    `(c) Unresolved placeholder tokens in ${SCAN_SOURCE_ROOTS.join(", ")}: ${result.unresolvedPlaceholders.length} finding(s)`,
   );
   for (const finding of result.unresolvedPlaceholders) {
     lines.push(
@@ -490,8 +520,8 @@ function formatHelp(): string {
     "",
     "Scans for three classes of i18n gap: (a) key-structure drift or untranslated",
     "byte-identical values between src/lib/i18n/dictionaries/en.ts and zh.ts,",
-    "(b) hardcoded English strings in src/app JSX that bypass t(...), and",
-    "(c) dictionary values with unresolved {placeholder} tokens rendered bare.",
+    `(b) hardcoded English strings in JSX under ${SCAN_SOURCE_ROOTS.join(" and ")} that bypass t(...), and`,
+    "(c) dictionary values with unresolved {placeholder} tokens rendered bare in those trees.",
   ].join("\n");
 }
 

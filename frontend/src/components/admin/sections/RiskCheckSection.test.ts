@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { en } from "@/lib/i18n/dictionaries/en";
+import { zh } from "@/lib/i18n/dictionaries/zh";
 import {
   filterStateDataQualityActionsByRecommendedAction,
   filterStateDataQualityRows,
@@ -8,6 +10,12 @@ import {
   stateDataQualityP0BlockerNotice,
   toRiskSectionData,
 } from "./RiskCheckSection";
+
+const enAdmin = en.admin as Record<string, string>;
+const zhAdmin = zh.admin as Record<string, string>;
+/** The page's `t` in one language, for the `admin.` keys the section reads. */
+const tIn = (dictionary: Record<string, string>) => (key: string) => dictionary[key.replace(/^admin\./, "")] ?? key;
+const placeholders = (text: string) => (text.match(/\{[a-zA-Z]+\}/g) ?? []).sort();
 
 describe("risk check section", () => {
   it("titles the matrix as the 50-state portal quality view and loads its own report", () => {
@@ -63,11 +71,10 @@ describe("risk check section", () => {
     expect(source).toContain("STATE_DATA_QUALITY_RISK_FILTERS");
     expect(source).toContain("filterStateDataQualityRows");
     expect(source).toContain("stateAttachmentRealRatio");
-    expect(source).toContain("State data quality action queue");
+    expect(source).toContain('t("admin.stateQualityActionQueue")');
     expect(source).toContain("report.actions");
     expect(source).toContain("recommendedAction");
-    expect(source).toContain("CA/FL/IL/NY/TX P0 blockers are state data quality blockers");
-    expect(source).toContain("not live source-health failures");
+    expect(source).toContain('t("admin.stateQualityP0Notice")');
     expect(source).not.toContain("CA/FL/IL/NY/TX source-health production risk");
     expect(source).toContain('t("admin.riskCheck")');
     expect(source).toContain('t("admin.riskCheckGlobalUrlTitle")');
@@ -170,12 +177,94 @@ describe("risk check section", () => {
         stateCode,
         riskLevel: "P0",
       })),
+      tIn(enAdmin),
     );
 
-    expect(notice).toContain("CA/FL/IL/NY/TX P0 blockers are state data quality blockers");
-    expect(notice).toContain("not live source-health failures");
+    expect(notice).toBe(
+      "CA/FL/IL/NY/TX P0 blockers are state data quality blockers; currently blocked: CA/FL/IL/NY/TX. These are not live source-health failures.",
+    );
     expect(notice).not.toContain("source-health production risk");
-    expect(stateDataQualityP0BlockerNotice([{ stateCode: "CA", riskLevel: "P1" }])).toBeNull();
+    expect(stateDataQualityP0BlockerNotice([{ stateCode: "CA", riskLevel: "P1" }], tIn(enAdmin))).toBeNull();
+  });
+
+  it("names only the watched states that are P0 blockers, in the language of the page", () => {
+    const rows = [
+      { stateCode: "TX", riskLevel: "P0" },
+      { stateCode: "CA", riskLevel: "P0" },
+      { stateCode: "FL", riskLevel: "P1" },
+      // Not a watched state, so it is not named even at P0.
+      { stateCode: "WA", riskLevel: "P0" },
+    ];
+
+    expect(stateDataQualityP0BlockerNotice(rows, tIn(enAdmin))).toBe(
+      "CA/FL/IL/NY/TX P0 blockers are state data quality blockers; currently blocked: CA/TX. These are not live source-health failures.",
+    );
+    const zhNotice = stateDataQualityP0BlockerNotice(rows, tIn(zhAdmin));
+    expect(zhNotice).toBe("CA/FL/IL/NY/TX 的 P0 阻断项属于州级数据质量阻断项；当前受阻：CA/TX。这些并非实时数据源健康故障。");
+    expect(zhNotice).not.toMatch(/[{}]/);
+  });
+
+  it("keeps no English UI copy in the matrix", () => {
+    const source = readFileSync(new URL("RiskCheckSection.tsx", import.meta.url), "utf8");
+    // The keys are blanked so that a key name is not read as English copy.
+    const sourceWithoutKeys = source.replace(/admin\.[A-Za-z_]+/g, "admin.");
+    for (const literal of [
+      "State data quality action queue",
+      "No state data quality actions are open.",
+      "No state data quality rows match this filter.",
+      "Recommended action",
+      "Risk filter",
+      "Reason code",
+      "P0 blocker review",
+      "total states:",
+      "all recommended actions",
+      "all reason codes",
+      "attachment real ratio",
+      "enabled source",
+      "CA/FL/IL/NY/TX P0 blockers",
+      "not live source-health failures",
+      "Summary:",
+    ]) {
+      expect(sourceWithoutKeys, literal).not.toContain(literal);
+    }
+    // The table headers, the badges and the filter labels are all looked up.
+    for (const key of [
+      "stateQualityColumnState",
+      "stateQualityColumnRisk",
+      "stateQualityColumnBids",
+      "stateQualityColumnEnabledSource",
+      "stateQualityColumnAttachmentRatio",
+      "stateQualityColumnReasonCode",
+      "stateQualityPass",
+      "stateQualityBlockerReview",
+      "stateQualitySummary",
+      "stateQualityTotalStates",
+      "stateQualityActionCount",
+      "stateQualityRecommendedAction",
+      "stateQualityAllRecommendedActions",
+      "stateQualityNoActions",
+      "stateQualityDueHours",
+      "stateQualityRiskFilter",
+      "stateQualityFilterAll",
+      "stateQualityReasonCode",
+      "stateQualityAllReasonCodes",
+      "stateQualityNoRows",
+      "stateQualityReasonNone",
+    ]) {
+      expect(source, key).toContain(`t("admin.${key}")`);
+    }
+  });
+
+  it("has an English and a different Chinese text, with the same placeholders, for every key it uses", () => {
+    const source = readFileSync(new URL("RiskCheckSection.tsx", import.meta.url), "utf8");
+    const keys = [...new Set([...source.matchAll(/\bt\("admin\.([A-Za-z_]+)"\)/g)].map((match) => match[1]))];
+    expect(keys.length).toBeGreaterThan(30);
+    for (const key of keys) {
+      expect(enAdmin[key], `en ${key}`).toBeTruthy();
+      expect(zhAdmin[key], `zh ${key}`).toBeTruthy();
+      expect(zhAdmin[key], `zh ${key} differs from en`).not.toBe(enAdmin[key]);
+      expect(placeholders(zhAdmin[key]), `${key} placeholders`).toEqual(placeholders(enAdmin[key]));
+    }
   });
 
   it("formats the real attachment ratio of a state row", () => {
