@@ -10,7 +10,16 @@ export interface MysqlMigrationResult {
 const duplicateIndexErrors = new Set(["ER_DUP_KEYNAME", "ER_DUP_ENTRY"]);
 const textKeyColumnType = "VARCHAR(191)";
 const longTextColumnType = "LONGTEXT";
-let defaultMysqlPool: Pool | undefined;
+const DEFAULT_CONNECTION_LIMIT = 10;
+const DEFAULT_MAX_IDLE = 4;
+const DEFAULT_IDLE_TIMEOUT_MS = 60_000;
+
+// The default pool is parked on globalThis instead of in a module variable. Next dev re-evaluates server
+// modules on every hot reload (and a route bundle can carry its own copy of this one), so a module-level
+// cache leaks one pool of up to MYSQL_CONNECTION_LIMIT connections per evaluation: on 2026-09-29 a
+// long-lived dev server held 147 of MySQL's 151 connections. Every copy of this module now shares one pool,
+// and closeResolvedMysqlPool() still releases it for workers and scripts.
+const globalPools = globalThis as typeof globalThis & { __apsiMysqlPool?: Pool };
 
 export function requireMysqlDatabaseUrl(env = process.env) {
   const value = env.DATABASE_URL?.trim() || env.MYSQL_DATABASE_URL?.trim();
@@ -30,31 +39,66 @@ export function isMysqlDatabaseUrlConfigured(env = process.env) {
   return Boolean(value && (value.startsWith("mysql://") || value.startsWith("mysql2://")));
 }
 
+export interface MysqlPoolSizing {
+  connectionLimit: number;
+  maxIdle: number;
+  idleTimeout: number;
+}
+
+/** A whole number of at least `minimum`; blank, fractional, negative, non-numeric or unsafe values read as unset. */
+function integerFromEnv(value: string | undefined, minimum: number) {
+  const text = value?.trim();
+  if (!text || !/^\d+$/.test(text)) return undefined;
+
+  const parsed = Number(text);
+  return Number.isSafeInteger(parsed) && parsed >= minimum ? parsed : undefined;
+}
+
+/**
+ * Pool sizing from MYSQL_CONNECTION_LIMIT (default 10), MYSQL_MAX_IDLE (default 4, at most the limit) and
+ * MYSQL_IDLE_TIMEOUT_MS (default 60 000). A connection idle for longer than the timeout is closed, as is any
+ * idle connection beyond maxIdle, so a quiet process hands its connections back to the server.
+ *
+ * mysql2 only starts that clean-up while maxIdle < connectionLimit, and its own default (maxIdle =
+ * connectionLimit) never does: idle connections used to stay open for good. So the default maxIdle keeps one
+ * connection of headroom below the limit (it only bites for a limit of 4 or less; a single-connection pool
+ * has nothing to release). An explicit MYSQL_MAX_IDLE is honoured as given, capped at the limit.
+ */
+export function mysqlPoolSizing(env: Readonly<Record<string, string | undefined>> = process.env): MysqlPoolSizing {
+  const connectionLimit = integerFromEnv(env.MYSQL_CONNECTION_LIMIT, 1) ?? DEFAULT_CONNECTION_LIMIT;
+  const defaultMaxIdle = Math.min(DEFAULT_MAX_IDLE, Math.max(connectionLimit - 1, 1));
+  const maxIdle = Math.min(integerFromEnv(env.MYSQL_MAX_IDLE, 0) ?? defaultMaxIdle, connectionLimit);
+  const idleTimeout = integerFromEnv(env.MYSQL_IDLE_TIMEOUT_MS, 1) ?? DEFAULT_IDLE_TIMEOUT_MS;
+
+  return { connectionLimit, maxIdle, idleTimeout };
+}
+
 export function createMysqlPool(databaseUrl = requireMysqlDatabaseUrl()): Pool {
   return mysql.createPool({
     uri: databaseUrl,
-    connectionLimit: Number(process.env.MYSQL_CONNECTION_LIMIT ?? 10),
+    ...mysqlPoolSizing(),
     multipleStatements: false,
     namedPlaceholders: false,
   });
 }
 
+/** The process-wide pool, created from `databaseUrl` on first use; later calls return it whatever they pass. */
 export function resolveMysqlPool(databaseUrl = requireMysqlDatabaseUrl()): Pool {
-  if (!defaultMysqlPool) {
-    defaultMysqlPool = createMysqlPool(databaseUrl);
-  }
+  globalPools.__apsiMysqlPool ??= createMysqlPool(databaseUrl);
 
-  return defaultMysqlPool;
+  return globalPools.__apsiMysqlPool;
 }
 
+/** Forgets the shared pool without ending it; a test that opened real connections closes them itself. */
 export function resetMysqlPoolForTests() {
-  defaultMysqlPool = undefined;
+  globalPools.__apsiMysqlPool = undefined;
 }
 
 export async function closeResolvedMysqlPool() {
-  if (!defaultMysqlPool) return;
-  const pool = defaultMysqlPool;
-  defaultMysqlPool = undefined;
+  const pool = globalPools.__apsiMysqlPool;
+  if (!pool) return;
+
+  globalPools.__apsiMysqlPool = undefined;
   await pool.end();
 }
 

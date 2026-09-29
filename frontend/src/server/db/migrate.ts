@@ -1001,6 +1001,7 @@ export function runMigrations(db: AppDatabase) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_deadline_reminders_dedupe_key ON deadline_reminders(dedupe_key);
     CREATE INDEX IF NOT EXISTS idx_alerts_user_id ON alerts(user_id);
     CREATE INDEX IF NOT EXISTS idx_crawler_logs_source_started ON crawler_logs(source, started_at);
+    CREATE INDEX IF NOT EXISTS idx_crawler_logs_started ON crawler_logs(started_at, id);
     CREATE INDEX IF NOT EXISTS idx_crawler_logs_run_id ON crawler_logs(run_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_notification_outbox_dedupe_key ON notification_outbox(dedupe_key);
     CREATE INDEX IF NOT EXISTS idx_notification_outbox_status_created ON notification_outbox(status, created_at);

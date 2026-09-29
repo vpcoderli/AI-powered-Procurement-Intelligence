@@ -1231,6 +1231,7 @@ export const crawlerLogs = sqliteTable(
   },
   (table) => ({
     sourceStartedIdx: index("idx_crawler_logs_source_started").on(table.source, table.startedAt),
+    startedIdx: index("idx_crawler_logs_started").on(table.startedAt, table.id),
     runIdx: index("idx_crawler_logs_run_id").on(table.runId),
   }),
 );

@@ -1879,3 +1879,77 @@ describe("phase-3 governance migration (spec 2026-09-24 §7)", () => {
     expect(() => runMigrations(testDb.db)).not.toThrow();
   });
 });
+
+describe("crawler_logs start-time index", () => {
+  // The unfiltered runs log pages `ORDER BY started_at DESC, id DESC LIMIT n` (with a `(before, beforeId)`
+  // cursor) and the overview counts the last day and week of runs; without this index each one scans the
+  // whole table and sorts it.
+  const unfilteredPage = "SELECT * FROM crawler_logs ORDER BY started_at DESC, id DESC LIMIT 25";
+  const cursorPage =
+    "SELECT * FROM crawler_logs WHERE (started_at < ? OR (started_at = ? AND id < ?)) ORDER BY started_at DESC, id DESC LIMIT 25";
+
+  it("creates idx_crawler_logs_started on (started_at, id)", async () => {
+    const testDb = await createTestDatabase({ seed: false });
+
+    try {
+      const client = testDb.db.$client;
+      const indexes = client
+        .prepare("PRAGMA index_list(crawler_logs)")
+        .all()
+        .map((row) => (row as { name: string }).name);
+      const keyColumns = client
+        .prepare("PRAGMA index_info(idx_crawler_logs_started)")
+        .all()
+        .sort((a, b) => (a as { seqno: number }).seqno - (b as { seqno: number }).seqno)
+        .map((row) => (row as { name: string }).name);
+
+      expect(indexes).toContain("idx_crawler_logs_started");
+      expect(keyColumns).toEqual(["started_at", "id"]);
+      expect(indexes).toEqual(expect.arrayContaining(["idx_crawler_logs_source_started", "idx_crawler_logs_run_id"]));
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("serves the runs-log page and its cursor page from the index without sorting", async () => {
+    const testDb = await createTestDatabase({ seed: false });
+
+    try {
+      const client = testDb.db.$client;
+      const planFor = (sql: string, params: string[] = []) =>
+        (client.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as { detail: string }[]).map((row) => row.detail);
+
+      const unfiltered = planFor(unfilteredPage);
+      expect(unfiltered.join("\n")).toContain("idx_crawler_logs_started");
+      expect(unfiltered.join("\n")).not.toContain("TEMP B-TREE");
+
+      const cursor = planFor(cursorPage, ["2026-09-01T00:00:00.000Z", "2026-09-01T00:00:00.000Z", "run-1"]);
+      expect(cursor.join("\n")).toContain("idx_crawler_logs_started");
+      expect(cursor.join("\n")).not.toContain("TEMP B-TREE");
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it("is created on an older database that predates it, and migrating twice is harmless", async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), "apsi-schema-"));
+
+    try {
+      const database = createDatabase(path.join(directory, "apsi.sqlite"));
+      runMigrations(database);
+      database.$client.exec("DROP INDEX idx_crawler_logs_started");
+      expect(
+        database.$client.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?").get("idx_crawler_logs_started"),
+      ).toBeUndefined();
+
+      expect(() => runMigrations(database)).not.toThrow();
+      expect(() => runMigrations(database)).not.toThrow();
+      expect(
+        database.$client.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?").get("idx_crawler_logs_started"),
+      ).toEqual({ name: "idx_crawler_logs_started" });
+      database.$client.close();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});
