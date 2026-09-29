@@ -13,7 +13,7 @@ import {
 } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import type { FeatureKey } from "@/server/auth/entitlements";
-import { formatDate } from "../admin-format";
+import { formatBidDate, formatDate } from "../admin-format";
 import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
 import { useAdminResource } from "../use-admin-resource";
 import { OVERRIDABLE_FEATURES } from "./user-access-constants";
@@ -53,7 +53,8 @@ export function formatAuditChanges(log: AdminUserAuditLog) {
 
         const parts = [value.isEnabled ? "enabled" : "disabled"];
         if (value.reason) parts.push(`reason=${value.reason}`);
-        if (value.expiresAt) parts.push(`expires=${formatDate(value.expiresAt)}`);
+        // An override expires at the end (23:59:59 UTC) of the day an admin picked: print that day, not the local moment.
+        if (value.expiresAt) parts.push(`expires=${formatBidDate(value.expiresAt)}`);
 
         return parts.join(" ");
       };

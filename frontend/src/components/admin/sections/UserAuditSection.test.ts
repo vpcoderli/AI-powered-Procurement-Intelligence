@@ -32,3 +32,11 @@ describe("user audit section", () => {
     expect(source).toContain("userAuditFilters");
   });
 });
+
+describe("user audit override expiry", () => {
+  it("prints an override's end-of-day expiry as the day an admin picked", () => {
+    const source = readFileSync(new URL("UserAuditSection.tsx", import.meta.url), "utf8");
+    expect(source).toContain("expires=${formatBidDate(value.expiresAt)}");
+    expect(source).not.toContain("expires=${formatDate(value.expiresAt)}");
+  });
+});
