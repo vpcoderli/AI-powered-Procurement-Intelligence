@@ -133,7 +133,7 @@ cd frontend && npm run source:register -- --file candidates.json
            ↓ ready / empty
      批准县/市源表单（复核人、ToS、必要时法务参考、下次复核日期）
       ↓
-批量运行面板单独跑一次，确认 success 或"空态：无开放招标"
+管理端 /admin/sources/runs 的批量运行面板单独跑一次，确认 success 或"空态：无开放招标"
 ```
 
 整批路径每一步在做什么——平台审查的字段与有效期、预检队列的预算与挑战处理、三项检查、六个分组、九个跳过原因——见 [`local-source-approval.md`](./local-source-approval.md#8-批量接入阶段-3) 第 8 节。两条路径都不绕过治理门禁：批量路径里没有一步替人放行，批准仍是 admin 的显式操作，服务端在写入前会重新检查。
@@ -249,7 +249,7 @@ python3 -c 'import json;print(json.dumps(json.load(open("/tmp/pending.json"))["e
 
 | `confidence` | 含义 | 处理 |
 | --- | --- | --- |
-| `exact` | 归一化名字完全一致，州、级别均已确认 | 核对页面标题确属本辖区 → 在源详情页把 `base_url` 改成 `suggestedBaseUrl`（"抓取配置"标签的 base URL，或预检卡片的"写入 base_url"按钮）→ 重跑前置检查 → 走批准表单 |
+| `exact` | 归一化名字完全一致，州、级别均已确认 | 核对页面标题确属本辖区 → 在源详情页把 `base_url` 改成 `suggestedBaseUrl`（在"抓取配置"标签的 base URL 字段里填入；预检卡片的"写入 base_url"按钮写的是预检自己的租户探测建议，不是 `existingMatches` 的地址，不能替代）→ 重跑前置检查 → 走批准表单 |
 | `partial` | 目录名字是库里名字的扩展（或反之），州、级别均已确认，可能有多条 | **逐条打开看**。确认是同一个采购单位才写回；拿不准就留空 |
 | `level_mismatch` | 名字对得上，但双方级别不同（县源对上了市、特别区等） | `suggestedBaseUrl` 为 `null`。**不要**写回——那是另一个辖区。需要看租户地址时，按 `agencyName` 去 `candidates[]` / `review[]` 里找 |
 | `state_unconfirmed` | 名字对得上，但有一方没有州码（机构所属组解析不出州，或源没填 `state_code`） | `suggestedBaseUrl` 为 `null`。先查清机构属于哪个州再说 |

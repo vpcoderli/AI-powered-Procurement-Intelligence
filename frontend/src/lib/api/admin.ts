@@ -1,7 +1,6 @@
 import type {
   AdminCrawlerLog,
   AdminDataSource,
-  AdminDataSourcesResponse,
   AdminLiveSourceHealth,
   UpdateAdminDataSourceInput,
 } from "@/server/admin/data-sources-repository";
@@ -106,7 +105,6 @@ export type {
   AdminBidQaReviewStatus,
   AdminCrawlerLog,
   AdminDataSource,
-  AdminDataSourcesResponse,
   AdminLiveSourceHealth,
   UpdateAdminDataSourceInput,
   AdminUserAuditLog,

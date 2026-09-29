@@ -321,6 +321,9 @@ describe("CRAWLABLE_SOURCE_WHERE_SQL", () => {
         sourceRow({ id: "disabled", isEnabled: 0 }),
         sourceRow({ id: "denied", approvedForIngestion: 0 }),
         sourceRow({ id: "legal_restricted", legalReviewStatus: "restricted" }),
+        // The second allowed legal status: the default rows carry approved_public, so without this row a dropped
+        // 'approved' from either predicate would go unnoticed.
+        sourceRow({ id: "legal_approved", legalReviewStatus: "approved" }),
         sourceRow({ id: "county_null", issuerType: "county", jurisdictionLevel: "county", approvalStatus: null }),
         sourceRow({ id: "county_approved", issuerType: "county", jurisdictionLevel: "county" }),
         sourceRow({ id: "legacy_county", issuerType: "county", jurisdictionLevel: null, approvalStatus: null }),
@@ -333,6 +336,6 @@ describe("CRAWLABLE_SOURCE_WHERE_SQL", () => {
       .map((row) => row.id)
       .sort();
     expect(viaSql).toEqual(viaDrizzle);
-    expect(viaSql).toEqual(["approved_state", "county_approved", "federal", "null_state", "state_level"]);
+    expect(viaSql).toEqual(["approved_state", "county_approved", "federal", "legal_approved", "null_state", "state_level"]);
   });
 });

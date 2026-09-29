@@ -147,13 +147,9 @@ ADMIN_UI_LOCAL_BYPASS=true npm run dev
 
 ### 运行全部州级爬虫
 
-在 `/admin/sources/runs`（抓取运行，仅 admin / operator 可见）页面点击运行州级爬虫按钮，可触发以下州级来源：
+在 `/admin/sources/runs`（抓取运行，仅 admin / operator 可见）页面点击"运行州级爬虫"按钮，不指定来源，调用 `POST /api/crawler/state/run`。按钮虽叫州级，它运行的是**当前每一个可抓取的非联邦来源**，不是固定的几个州：通过治理门禁的州级门户，加上已经批准的县/市/镇等本地来源（包括已批准的 BidNet 县/市源）。尚未批准的县/市/镇来源、被暂缓或拦截的来源、已停用的来源、法务审查不允许的来源不在其中；联邦的 SAM.gov 也不在其中，它有自己的入口 `POST /api/crawler/sam-gov/run`。
 
-- California Cal eProcure
-- Texas ESBD
-- New York State Contract Reporter
-- MyFloridaMarketPlace
-- Illinois BidBuy
+数量随批准与停用变化。概览（`/admin`）里"在抓取计划内"的数字就是这个集合再加上联邦来源：2026-09-30 的本地库里是 59，即这次会运行约 58 个来源（州级来源加已批准的 BidNet 县/市源）。来源按顺序一个接一个运行，要跑一段时间。这一次运行**不占** crawler worker 的每小时平台请求预算（`CRAWLER_PLATFORM_BUDGETS`），也不受 worker 内存里的平台暂停约束，只适用本次批量内部的平台推迟：同一 `provider_family` 的两个来源至少间隔 `CRAWLER_PLATFORM_MIN_INTERVAL_MS`（默认 5 秒），其中一个遇到挑战/限流后，本批里同平台剩下的来源记为 `deferred`（推迟），不会被访问。
 
 运行后，该页面会刷新下方的爬虫日志；数据源状态可在 `/admin/sources`（源列表）查看。
 

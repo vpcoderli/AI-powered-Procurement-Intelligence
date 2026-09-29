@@ -134,14 +134,59 @@ describe("GET /api/admin/crawler-logs", () => {
       expect(end).toEqual({ logs: [], nextCursor: null });
     });
 
-    it("ignores blank and repeated source values and clamps a page of 500 to 100", async () => {
+    it("ignores blank and repeated source values", async () => {
       insertLog("log_a1", "a", T1);
       insertLog("log_c1", "c", T3);
 
-      const body = await (await get("?source=&source=a&source=a&limit=500")).json();
+      const body = await (await get("?source=&source=a&source=a")).json();
 
       expect(body.logs.map((log: { id: string }) => log.id)).toEqual(["log_a1"]);
       expect(body.nextCursor).toBeNull();
+    });
+
+    it("clamps a page of 500 to 100 and hands back a cursor to the rest", async () => {
+      // 105 rows a minute apart: asking for 500 has to stop at 100, which only shows with more than 100 rows.
+      const first = Date.parse(T1);
+      for (let index = 0; index < 105; index += 1) {
+        insertLog(`log_${String(index).padStart(3, "0")}`, "a", new Date(first + index * 60_000).toISOString());
+      }
+
+      const page = await (await get("?source=a&limit=500")).json();
+
+      expect(page.logs).toHaveLength(100);
+      // Newest first: rows 104 down to 5, with the cursor on the last of them.
+      expect(page.logs[0].id).toBe("log_104");
+      expect(page.logs[99].id).toBe("log_005");
+      expect(page.nextCursor).toEqual({ before: page.logs[99].startedAt, beforeId: "log_005" });
+
+      const rest = await (await get(`?source=a&limit=500&before=${page.nextCursor.before}&beforeId=${page.nextCursor.beforeId}`)).json();
+      expect(rest.logs.map((log: { id: string }) => log.id)).toEqual(["log_004", "log_003", "log_002", "log_001", "log_000"]);
+      expect(rest.nextCursor).toBeNull();
+    });
+
+    it("truncates a fractional limit instead of failing on it", async () => {
+      insertLog("log_a1", "a", T1);
+      insertLog("log_b1", "b", T2);
+      insertLog("log_c1", "c", T3);
+
+      const response = await get("?limit=2.5");
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.logs.map((log: { id: string }) => log.id)).toEqual(["log_c1", "log_b1"]);
+      // 2.5 reads as 2, and a full page of 2 carries the cursor.
+      expect(body.nextCursor).toEqual({ before: T2, beforeId: "log_b1" });
+    });
+
+    it("binds the clamped, truncated page size as the MySQL LIMIT value", async () => {
+      const query = vi.fn(async () => [[]] as [unknown[]]);
+      const GET = createAdminCrawlerLogsGet({ database: testDb.db, mysql: { query } });
+
+      await GET(new Request("http://localhost/api/admin/crawler-logs?limit=500"));
+      await GET(new Request("http://localhost/api/admin/crawler-logs?limit=2.5"));
+
+      const boundLimits = (query.mock.calls as unknown as Array<[string, unknown[]]>).map(([, values]) => values.at(-1));
+      expect(boundLimits).toEqual([100, 2]);
     });
 
     it("accepts ten source values and refuses eleven", async () => {

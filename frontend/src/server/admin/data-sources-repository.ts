@@ -1420,7 +1420,8 @@ export interface AdminCrawlerLogsOptions {
 }
 
 export function normalizeCrawlerLogLimit(limit: number | undefined): number {
-  return Math.min(Math.max(limit ?? 25, 1), 100);
+  // Truncated first: `?limit=2.5` reaches here as a finite number, and SQLite refuses a fractional LIMIT.
+  return Math.min(Math.max(Math.trunc(limit ?? 25), 1), 100);
 }
 
 export async function listAdminCrawlerLogs(db: AppDatabase, options: AdminCrawlerLogsOptions = {}): Promise<AdminCrawlerLog[]> {

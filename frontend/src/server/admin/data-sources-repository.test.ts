@@ -1869,6 +1869,15 @@ describe("crawler log filters and cursor", () => {
     expect([undefined, 0, -5, 1, 25, 100, 101, 5000].map(normalizeCrawlerLogLimit)).toEqual([25, 1, 1, 1, 25, 100, 100, 100]);
   });
 
+  it("truncates a fractional page size before clamping it", () => {
+    // SQLite refuses a fractional LIMIT, so 2.5 has to leave here as 2; a fraction below 1 still clamps up to 1.
+    expect([2.5, 99.9, 100.5, 1.999, 0.5, -0.5].map(normalizeCrawlerLogLimit)).toEqual([2, 99, 100, 1, 1, 1]);
+  });
+
+  it("lists a page of the truncated size when the limit is fractional", async () => {
+    await expect(ids({ limit: 2.5 })).resolves.toEqual(["c", "b"]);
+  });
+
   it("builds the MySQL filter, cursor and limit as bound values (MySQL)", async () => {
     const query = vi.fn(async () => [[]] as [unknown[]]);
 
@@ -1884,5 +1893,16 @@ describe("crawler log filters and cursor", () => {
     expect(calls[1][1]).toEqual(["x", "y", T2, 25]);
     expect(calls[2][0]).not.toContain("WHERE");
     expect(calls[2][1]).toEqual([25]);
+  });
+
+  it("binds a truncated, clamped page size as the MySQL LIMIT value", async () => {
+    const query = vi.fn(async () => [[]] as [unknown[]]);
+
+    await listAdminCrawlerLogsFromMysql({ query }, { limit: 2.5 });
+    await listAdminCrawlerLogsFromMysql({ query }, { limit: 500 });
+
+    const calls = query.mock.calls as unknown as Array<[string, unknown[]]>;
+    expect(calls[0][1]).toEqual([2]);
+    expect(calls[1][1]).toEqual([100]);
   });
 });

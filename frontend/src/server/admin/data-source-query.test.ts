@@ -4,6 +4,7 @@ import { dataSources } from "@/server/db/schema";
 import {
   defaultSourceListQuery,
   emptySourceListFilters,
+  type SourceHealthState,
   type SourceListFilters,
   type SourceListQuery,
 } from "./data-source-list-contract";
@@ -347,5 +348,67 @@ describe("source list page", () => {
     const listCall = query.mock.calls.find(([sql]) => sql.includes("LIMIT ? OFFSET ?")) as unknown as [string, unknown[]];
     expect(listCall[1]).toEqual([2, 2]);
     expect(page.facets.level).toEqual([{ value: "county", count: 3 }]);
+  });
+});
+
+// Spec §5.1 priority: disabled > failing > healthy > never_run. Each row is chosen so that putting two arms of the CASE
+// in the wrong order changes its answer: the first row matches every arm, the second matches failing and healthy.
+const HEALTH_ROWS = [
+  row("h_disabled_failing", {
+    label: "Disabled and failing",
+    isEnabled: 0,
+    consecutiveFailures: 3,
+    lastSuccessAt: "2026-09-28T06:00:00.000Z",
+    lastFailureAt: "2026-09-29T06:00:00.000Z",
+  }),
+  row("h_failing_after_success", {
+    label: "Failing after a success",
+    consecutiveFailures: 2,
+    lastSuccessAt: "2026-09-28T06:00:00.000Z",
+    lastFailureAt: "2026-09-29T06:00:00.000Z",
+  }),
+  row("h_healthy", { label: "Healthy", lastSuccessAt: "2026-09-29T06:00:00.000Z" }),
+  row("h_never_run", { label: "Never run" }),
+];
+
+describe("health state priority", () => {
+  let testDb: TestDatabase;
+
+  beforeEach(async () => {
+    testDb = await createTestDatabase({ seed: false });
+    testDb.db.insert(dataSources).values(HEALTH_ROWS).run();
+  });
+
+  afterEach(async () => {
+    await testDb.cleanup();
+  });
+
+  it("reads disabled before failing, failing before healthy and healthy before never run", async () => {
+    const page = await listAdminDataSourcesPage(testDb.db, defaultSourceListQuery());
+
+    expect(Object.fromEntries(page.items.map((item) => [item.id, item.health]))).toEqual({
+      h_disabled_failing: "disabled",
+      h_failing_after_success: "failing",
+      h_healthy: "healthy",
+      h_never_run: "never_run",
+    });
+  });
+
+  it("filters and counts by the same priority", async () => {
+    const withHealth = async (health: SourceHealthState) =>
+      (await listAdminDataSourceIndex(testDb.db, filters({ healths: [health] }))).items.map((item) => item.id);
+
+    expect(await withHealth("disabled")).toEqual(["h_disabled_failing"]);
+    expect(await withHealth("failing")).toEqual(["h_failing_after_success"]);
+    expect(await withHealth("healthy")).toEqual(["h_healthy"]);
+    expect(await withHealth("never_run")).toEqual(["h_never_run"]);
+
+    const { facets } = await listAdminDataSourcesPage(testDb.db, defaultSourceListQuery());
+    expect(facets.health).toEqual([
+      { value: "never_run", count: 1 },
+      { value: "healthy", count: 1 },
+      { value: "failing", count: 1 },
+      { value: "disabled", count: 1 },
+    ]);
   });
 });

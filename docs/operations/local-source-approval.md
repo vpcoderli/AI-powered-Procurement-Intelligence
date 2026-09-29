@@ -6,7 +6,7 @@
 
 ## 1. 什么是"治理拦截"
 
-管理端批量运行面板显示的"治理拦截"（`batchRunStatus_blocked`）来自 `frontend/src/server/crawler/orchestrator.ts` 的 `blockedReasonFor()`。它在**任何一次抓取开始前**检查 `data_sources` 的治理列，命中即返回 `status: "blocked"`，Python 进程根本不会启动：
+管理端"抓取运行"页（`/admin/sources/runs`）的批量运行面板显示的"治理拦截"（`batchRunStatus_blocked`）来自 `frontend/src/server/crawler/orchestrator.ts` 的 `blockedReasonFor()`。它在**任何一次抓取开始前**检查 `data_sources` 的治理列，命中即返回 `status: "blocked"`，Python 进程根本不会启动：
 
 | 触发条件 | 面板提示 | 含义 |
 | --- | --- | --- |
@@ -16,7 +16,7 @@
 
 州级与联邦源沿用历史兼容规则（不需要逐个批准），县/市级批量注册源必须留痕——这是 2026-07-29 数据源注册表设计定下的规则，合规台账在 [`data-source-compliance-ledger.md`](./data-source-compliance-ledger.md)。2026-09-15 加固后手动入口与定时入口执行同一门禁，所以这些源在**任何入口**都显示治理拦截（此前手动入口曾绕过门禁）。
 
-另有 5 个 `is_enabled = 0` 的州级占位源（`cal_eprocure`、`illinois_procurement_bulletin`、`myfloridamarketplace`、`new_york_state_contract_reporter`、`texas_smartbuy`）显示"已禁用"，与治理无关：它们是与正式州源重复的早期占位行。处理方式是通过 `PATCH /api/admin/data-sources/[id]` 把 `approvalStatus` 标为 `blocked`、`approvalNotes` 写明 `duplicate placeholder`，保留行以免历史日志指向空 id；标记后它们不再出现在批量运行面板的可运行条目里。**不要删除**，也不要为了"让面板干净"去批准它们。
+另有 5 个 `is_enabled = 0` 的州级占位源（`cal_eprocure`、`illinois_procurement_bulletin`、`myfloridamarketplace`、`new_york_state_contract_reporter`、`texas_smartbuy`）显示"已禁用"，与治理无关：它们是与正式州源重复的早期占位行。处理方式是通过 `PATCH /api/admin/data-sources/[id]` 把 `approvalStatus` 标为 `blocked`、`approvalNotes` 写明 `duplicate placeholder`，保留行以免历史日志指向空 id；标记后它们不再出现在批量运行面板（`/admin/sources/runs`）的可运行条目里。**不要删除**，也不要为了"让面板干净"去批准它们。
 
 ## 2. 前置检查（Pre-check）
 
@@ -65,7 +65,7 @@
 
 三条齐全 → `status = "success"`、`bids = []`、`metadata.emptyState = {verified, marker, tenant_confirmed, method}`，Node 侧 `validateCrawlerImport` 接受这种零条成功，健康度按成功回写。**缺第 3 条**（拿到的是通用错误页、跳转页或别的租户页）仍然按 `EmptyCrawlerResultError` 失败处理——否则一个拿错页面的源会永远"成功"。
 
-批量运行面板把它显示为"空态：无开放招标"；没有空态证据的零条成功另外显示为"成功（0 条）"，两者刻意不混在一起。
+`/admin/sources/runs` 的批量运行面板把它显示为"空态：无开放招标"；没有空态证据的零条成功另外显示为"成功（0 条）"，两者刻意不混在一起。
 
 ### 4.2 404 租户路径：探测建议、人工写回
 
@@ -131,7 +131,7 @@ BidNet Direct 在 AWS WAF 后面，同平台密集请求会集中吃 403（2026-
 1. 对目标源点**前置检查**（一次只跑一个；同平台的多个源之间留几秒，探测本身也守最小间隔）。
 2. 判定 `needs_fix` 且给出了 `suggested_base_url` → 核对候选页面确属本辖区 → 点"写入 base_url"并确认 → 再跑一次前置检查。
 3. 判定 `ready` 或 `empty` → 填批准表单（复核人、ToS、必要时法务参考、下次复核日期）→ 勾选条款确认 → 批准并启用。
-4. 在批量运行面板单独跑一次该源，确认结果是"成功"、"空态：无开放招标"之一；若出现"平台限流，本批推迟"，稍后再单独重跑。
+4. 在 `/admin/sources/runs` 的批量运行面板单独跑一次该源，确认结果是"成功"、"空态：无开放招标"之一；若出现"平台限流，本批推迟"，稍后再单独重跑。
 5. 把本次批准结论补进[合规台账](./data-source-compliance-ledger.md)。
 
 以上是**单个源**的顺序。整批源（同一平台一次几百个）的接入——平台审查、预检入队、带台账批量批准——见第 8 节。
@@ -289,7 +289,9 @@ SELECT COUNT(*) AS queued, MIN(precheck_requested_at) AS oldest FROM data_source
 
 ### 8.3 带台账批量批准
 
-批准的入口是管理端"带台账的批量批准"面板（`/admin/sources/onboarding` 页，平台审查面板下面）、源列表（`/admin/sources`）勾选后的"带台账批准"（只有 admin 看得到；同样每 100 个一批调用下面这个接口），或直接调 `POST /api/admin/data-sources/batch`（`action: "approve"`，只有 admin，一次最多 100 个 id）。**本地源**（`jurisdiction_level` 有值且不是 `federal` / `state`，和治理门禁 `blockedReasonFor` 是同一条规则）只有同时通过下面三项检查、又不属于 8.7 列出的几种情形时才会被批准；联邦/州级源不受影响，仍走旧的通用批准。
+批准的入口是管理端"带台账的批量批准"面板（`/admin/sources/onboarding` 页，平台审查面板下面）、源列表（`/admin/sources`）勾选后的"带台账批准"（只有 admin 看得到；同样每 100 个一批调用下面这个接口），或直接调 `POST /api/admin/data-sources/batch`（`action: "approve"`，只有 admin，一次最多 100 个 id）。**本地源**（只看 `jurisdiction_level`：有值且不是 `federal` / `state`，即 `isGatedLocalJurisdictionLevel`；`toAdminSource` 与源详情页顶部的批准按钮同此口径）只有同时通过下面三项检查、又不属于 8.7 列出的几种情形时才会被批准；联邦/州级源不受影响，仍走旧的通用批准。
+
+这条口径与治理门禁**不完全相同**：门禁（`orchestrator.ts` 的 `blockedReasonFor`；调度器的 `listCrawlableSources` 同理）在 `jurisdiction_level` 为空时回退到 `issuer_type`，管理端概览与源列表的"本地"、"待审批"也按门禁的口径（`data-source-sql.ts` 的 `LOCAL_SOURCE_SQL`）；批量批准与接入审批管道（就绪度，概览里的管道块用的也是它）只看 `jurisdiction_level`。两者只在一种行上分歧：`jurisdiction_level` 为空、`issuer_type` 是 county / city 等非 federal / state 的值——门禁把它当本地源、批准前拦住，源列表与概览读作"待审批"，但批量批准接口不认它是本地源，给的是通用批准（没有平台审查、预检等台账检查），接入审批管道里也没有它。[管理后台改版设计](../superpowers/specs/2026-09-29-admin-console-redesign-design.md)第 1 节的实测里没有这样的行（`jurisdiction_level` 为空的是州级门户，级别按 `issuer_type` 读作 state）。
 
 已经 `approved` 的读作 `already_approved`，`blocked` 的读作 `blocked`——批量批准既不重复批准，也**不解除拦截**。被人暂缓的读作 `held`，已停用的读作 `disabled`（8.7）。其余按下面的顺序过检，几项都不满足时只报第一个：
 
@@ -325,7 +327,7 @@ SELECT COUNT(*) AS queued, MIN(precheck_requested_at) AS oldest FROM data_source
 | 已批准 `approved` | `approval_status = approved` | — |
 | 已拦截 `blocked` | `approval_status = blocked`（`blocked`），被人暂缓（`held`），已停用（`disabled`），或需登录而平台审查缺法务参考（`login_requirements_unmet`） | 批量批准都不处理：拦截与暂缓走第 3 节单源表单解除；停用的先在源编辑里启用；需登录的续一行带法务参考的平台审查，或走单源表单 |
 
-**批准全部。** "批准全部可批准项（N）"只在平台审查为"有效"、N > 0、且是 admin 时可点。它取最近一次就绪度里 `approvable` 的 id，**按 100 个一批**（`APPROVAL_BATCH_CHUNK_SIZE`）依次提交，显示"已提交 X / N"，最后给"已批准 A，跳过 B。"和按原因分列的跳过数；服务端提交时会重新过一遍全部检查，所以两次读取之间变旧的源会被跳过并说明原因。点一下就开始提交，没有二次确认。某一批失败时前面的批次已经批准了，面板显示"批量批准失败：…"、照常给出已完成部分的统计并重读计数。源列表（`/admin/sources`）勾选若干行再点"带台账批准"走的是同一个接口：本地源同样只走台账，提示是"已批准 A，跳过 B。"外加按原因分列的跳过数，操作完成后勾选清空。源详情页顶部的"批准"按钮对县/市/镇源不再显示——它写不出台账；要单个批准用第 3 节的表单。
+**批准全部。** "批准全部可批准项（N）"只在平台审查为"有效"、N > 0、且是 admin 时可点。它取最近一次就绪度里 `approvable` 的 id，**按 100 个一批**（`APPROVAL_BATCH_CHUNK_SIZE`）依次提交，显示"已提交 X / N"，最后给"已批准 A，跳过 B。"和按原因分列的跳过数；服务端提交时会重新过一遍全部检查，所以两次读取之间变旧的源会被跳过并说明原因。点一下就开始提交，没有二次确认。某一批失败时前面的批次已经批准了，面板显示"批量批准失败：…"、照常给出已完成部分的统计并重读计数。源列表（`/admin/sources`）勾选若干行再点"带台账批准"走的是同一个接口：本地源同样只走台账。提示与面板不同：有行被跳过时才是"已批准 A，跳过 B。"外加按原因分列的跳过数（面板即使 B 为 0 也给这一行），一行都没跳过时只显示通用的"来源审批状态已批量更新。"。全部批次提交完才清空勾选；某一批失败时保留勾选，提示里带着已完成部分的统计和"因错误中止：…"，并重读列表。源详情页顶部的"批准"按钮对县/市/镇源不再显示——它写不出台账；要单个批准用第 3 节的表单。
 
 接口应答（脚本化时自己按 100 切块）：
 
