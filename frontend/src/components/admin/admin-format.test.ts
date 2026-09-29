@@ -7,7 +7,59 @@ import {
   formatDate,
   formatDateInputValue,
   statusTone,
+  textPreview,
 } from "./admin-format";
+
+/** True when the text has a UTF-16 surrogate without its partner: half of an emoji or other astral character. */
+const hasHalfCharacter = (text: string) => /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(text);
+
+describe("textPreview", () => {
+  it("leaves a text of at most the limit alone", () => {
+    expect(textPreview("", 300)).toBeNull();
+    expect(textPreview("Portal answered 403", 300)).toBeNull();
+    expect(textPreview("a".repeat(300), 300)).toBeNull();
+  });
+
+  it("cuts a longer text after the limit and marks the cut", () => {
+    expect(textPreview("a".repeat(301), 300)).toBe(`${"a".repeat(300)}…`);
+    expect(textPreview("abcdef", 3)).toBe("abc…");
+  });
+
+  it("cuts a 45,000-character HTML error down to its opening", () => {
+    const page = `HTML request failed with status 404: <!DOCTYPE html>\n<html lang="en">\n\t<head>\n${"\t\t<meta content=\"text/html\" />\n".repeat(1600)}`;
+    const preview = textPreview(page, 300);
+
+    expect(page.length).toBeGreaterThan(45_000);
+    expect(preview).not.toBeNull();
+    expect(preview!.startsWith("HTML request failed with status 404: <!DOCTYPE html>")).toBe(true);
+    expect(preview!.endsWith("…")).toBe(true);
+    expect(preview!.length).toBeLessThanOrEqual(301);
+  });
+
+  it("drops the whitespace the cut leaves before the mark", () => {
+    expect(textPreview(`${"x".repeat(9)}  \n\tmore text`, 11)).toBe(`${"x".repeat(9)}…`);
+  });
+
+  it("never splits an emoji, a joined emoji sequence, an accented letter or a CJK character", () => {
+    const emoji = textPreview("😀".repeat(301), 300);
+    expect(emoji).toBe(`${"😀".repeat(300)}…`);
+    expect(hasHalfCharacter(emoji!)).toBe(false);
+
+    // A family emoji is five code points joined into one character; the cut keeps it whole or leaves it out.
+    const family = "👨‍👩‍👧";
+    expect(textPreview(`${"a".repeat(299)}${family}b`, 300)).toBe(`${"a".repeat(299)}${family}…`);
+    expect(textPreview(`${"a".repeat(300)}${family}`, 300)).toBe(`${"a".repeat(300)}…`);
+
+    // "é" written as e + a combining accent is one character.
+    expect(textPreview(`${"é".repeat(4)}`, 3)).toBe(`${"é".repeat(3)}…`);
+    expect(textPreview("错误信息".repeat(100), 300)).toBe(`${"错误信息".repeat(75)}…`);
+  });
+
+  it("counts characters, not UTF-16 units: 200 emoji are under a 300-character limit", () => {
+    expect("😀".repeat(200).length).toBe(400);
+    expect(textPreview("😀".repeat(200), 300)).toBeNull();
+  });
+});
 
 /** A calendar day as the console prints one: month, day and year of that day, whatever the viewer's zone. */
 const calendarDay = (year: number, month: number, day: number) =>

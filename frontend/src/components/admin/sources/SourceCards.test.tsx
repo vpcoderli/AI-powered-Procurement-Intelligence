@@ -3,9 +3,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AdminCrawlerLog, AdminDataSourceDetail } from "@/lib/api/admin";
 import { en } from "@/lib/i18n/dictionaries/en";
+import { zh } from "@/lib/i18n/dictionaries/zh";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
-import { formatBidDate, formatDate } from "../admin-format";
-import { CrawlerLogRow } from "./CrawlerLogList";
+import { formatBidDate, formatDate, textPreview } from "../admin-format";
+import { CRAWLER_LOG_ERROR_PREVIEW_CHARS, CrawlerLogRow } from "./CrawlerLogList";
 import { SourceBidsCard } from "./SourceBidsCard";
 import { SourceComplianceCard } from "./SourceComplianceCard";
 import { SourceLiveHealthCard } from "./SourceLiveHealthCard";
@@ -19,6 +20,9 @@ const render = (node: React.ReactElement) => renderToStaticMarkup(<LanguageProvi
 const text = (html: string) => html.replace(/<!-- -->/g, "");
 /** A dictionary value as renderToStaticMarkup escapes it. */
 const escaped = (value: string) => value.replace(/&/g, "&amp;").replace(/'/g, "&#x27;");
+/** Any text as renderToStaticMarkup escapes it. */
+const escapedMarkup = (value: string) =>
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;");
 
 function approvalEvent(id: string, action: string, actorUserId: string | null, reason: string | null = null) {
   return {
@@ -268,6 +272,41 @@ describe("CrawlerLogRow", () => {
     expect(html).toContain('<div class="grid gap-2 px-4 py-3 md:grid-cols-[1fr_auto] md:items-center"><div class="min-w-0">');
     expect(html).toContain(`<div class="mt-1 text-sm break-words text-rose-700 [overflow-wrap:anywhere]">${long}</div>`);
     expect(html).toContain('<div class="mt-1 text-sm break-words text-amber-700 [overflow-wrap:anywhere]">');
+  });
+
+  it("shows an error of at most the preview length whole, exactly as before, without an expander", () => {
+    for (const message of ["Portal answered 403", "e".repeat(CRAWLER_LOG_ERROR_PREVIEW_CHARS)]) {
+      const html = render(<CrawlerLogRow log={{ ...log, errorMessage: message }} />);
+
+      expect(html).toContain(`<div class="mt-1 text-sm break-words text-rose-700 [overflow-wrap:anywhere]">${message}</div>`);
+      expect(html).not.toContain("<details");
+      expect(html).not.toContain(admin.crawlerLogShowFullError);
+    }
+  });
+
+  // A failed portal fetch can carry the whole HTML page it got (45,380 characters for bidnet_oh_cuyahoga), which made
+  // each such row about 23,000px tall: a long error shows its opening, and the full text waits behind a native
+  // expander in a box with its own scroll.
+  it("shows a long error's opening, with the full text behind a Show full error expander in a scrolling box", () => {
+    const page = `HTML request failed with status 404: <!DOCTYPE html><html lang="en"><head>${'<meta content="text/html" />'.repeat(1600)}</head></html>`;
+    const html = render(<CrawlerLogRow log={{ ...log, errorMessage: page }} />);
+    const preview = textPreview(page, CRAWLER_LOG_ERROR_PREVIEW_CHARS);
+
+    expect(preview).not.toBeNull();
+    expect(html).toContain(
+      `<div class="mt-1 text-sm break-words text-rose-700 [overflow-wrap:anywhere]">${escapedMarkup(preview!)}<details class="mt-1">` +
+        `<summary class="cursor-pointer text-xs font-medium">${admin.crawlerLogShowFullError}</summary>` +
+        '<div class="mt-1 max-h-64 overflow-y-auto rounded border border-rose-100 bg-rose-50/40 p-2 text-xs whitespace-pre-wrap break-words [overflow-wrap:anywhere]">' +
+        `${escapedMarkup(page)}</div></details></div>`,
+    );
+    // The whole page is in the markup once, inside the expander; the row itself carries only the preview.
+    expect(html.split(escapedMarkup(page))).toHaveLength(2);
+    expect(html.indexOf(escapedMarkup(page))).toBeGreaterThan(html.indexOf("<details"));
+  });
+
+  it("labels the expander in both languages", () => {
+    expect(admin.crawlerLogShowFullError).toBe("Show full error");
+    expect((zh.admin as Record<string, string>).crawlerLogShowFullError).toBe("展开完整错误");
   });
 });
 

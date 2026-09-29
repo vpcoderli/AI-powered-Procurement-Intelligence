@@ -77,6 +77,36 @@ export function compactErrorMessage(message: string) {
   return message.length > 96 ? `${message.slice(0, 93)}...` : message;
 }
 
+/** Splits a text into what a reader sees as characters (grapheme clusters), or into code points where the runtime cannot. */
+const graphemes = typeof Intl.Segmenter === "function" ? new Intl.Segmenter(undefined, { granularity: "grapheme" }) : null;
+
+function* characters(text: string): Generator<string> {
+  if (!graphemes) {
+    yield* text;
+    return;
+  }
+  for (const { segment } of graphemes.segment(text)) yield segment;
+}
+
+/**
+ * A long text's first `limit` characters followed by "…", or null when the text is not longer than that and is to
+ * be shown whole. A character is what a reader sees, so the cut never splits an emoji, a surrogate pair or a letter
+ * from its accent; whitespace the cut leaves at the end is dropped before the "…". Only the first `limit` + 1
+ * characters are read, however long the text.
+ */
+export function textPreview(text: string, limit: number): string | null {
+  // Every character is at least one UTF-16 unit, so a text this short has no more than `limit` characters.
+  if (text.length <= limit) return null;
+  let end = 0;
+  let count = 0;
+  for (const character of characters(text)) {
+    if (count === limit) return `${text.slice(0, end).trimEnd()}…`;
+    end += character.length;
+    count += 1;
+  }
+  return null;
+}
+
 export function fallbackMessage(log: AdminCrawlerLog | null | undefined) {
   if (!log?.fallbackSource) return null;
 

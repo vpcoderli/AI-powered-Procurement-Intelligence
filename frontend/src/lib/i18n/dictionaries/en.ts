@@ -1850,6 +1850,7 @@ export const en = {
     sourceFallbackNotes: "Fallback notes",
     sourcesBlockedLeftOut: "{count} blocked sources left out: a blocked source is changed only on its own page.",
     runSourceSkipped: "{source} was not run: {status}.",
+    crawlerLogShowFullError: "Show full error",
   }
 };
 

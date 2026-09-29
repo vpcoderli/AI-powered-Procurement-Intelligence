@@ -1852,5 +1852,6 @@ export const zh: Dictionary = {
     sourceFallbackNotes: "回退备注",
     sourcesBlockedLeftOut: "已略过 {count} 个已拦截的数据源：已拦截的数据源只能在其自己的页面上更改。",
     runSourceSkipped: "{source} 未运行：{status}。",
+    crawlerLogShowFullError: "展开完整错误",
   }
 };

@@ -6,12 +6,40 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { listAdminCrawlerLogs, type AdminCrawlerLog } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
-import { fallbackMessage, formatDate, statusTone } from "../admin-format";
+import { fallbackMessage, formatDate, statusTone, textPreview } from "../admin-format";
 import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
 import { useAdminResource } from "../use-admin-resource";
 import { appendCrawlerLogPage, visibleCrawlerLogs, type CrawlerLogMore, type CrawlerLogPage } from "./crawler-log-pages";
 
 const PAGE_SIZE = 25;
+
+/** How much of a crawler error a row shows before the rest goes behind "Show full error". */
+export const CRAWLER_LOG_ERROR_PREVIEW_CHARS = 300;
+
+const ERROR_LINE_CLASS = "mt-1 text-sm break-words text-rose-700 [overflow-wrap:anywhere]";
+
+/**
+ * A run's error. A short one is shown whole. A long one (a failed portal fetch can carry the whole HTML page it got,
+ * tens of thousands of characters) shows its opening, with the full text behind a native expander whose box has its
+ * own scroll, so even opened it cannot stretch the list.
+ */
+function CrawlerLogError({ message }: { message: string }) {
+  const { t } = useLanguage();
+  const preview = textPreview(message, CRAWLER_LOG_ERROR_PREVIEW_CHARS);
+  if (preview === null) return <div className={ERROR_LINE_CLASS}>{message}</div>;
+
+  return (
+    <div className={ERROR_LINE_CLASS}>
+      {preview}
+      <details className="mt-1">
+        <summary className="cursor-pointer text-xs font-medium">{t("admin.crawlerLogShowFullError")}</summary>
+        <div className="mt-1 max-h-64 overflow-y-auto rounded border border-rose-100 bg-rose-50/40 p-2 text-xs whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+          {message}
+        </div>
+      </details>
+    </div>
+  );
+}
 
 /**
  * One crawler run. Its text column may shrink below its content (min-w-0) and its messages wrap anywhere: a crawler
@@ -30,7 +58,7 @@ export function CrawlerLogRow({ log }: { log: AdminCrawlerLog }) {
           </Badge>
           <span className="text-xs text-slate-500">{formatDate(log.finishedAt ?? log.startedAt)}</span>
         </div>
-        {log.errorMessage && <div className="mt-1 text-sm break-words text-rose-700 [overflow-wrap:anywhere]">{log.errorMessage}</div>}
+        {log.errorMessage && <CrawlerLogError message={log.errorMessage} />}
         {log.fallbackSource && (
           <div className="mt-1 text-sm break-words text-amber-700 [overflow-wrap:anywhere]">
             <span className="font-medium">{t("admin.fallbackUsed")}</span>
