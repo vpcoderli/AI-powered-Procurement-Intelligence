@@ -1738,5 +1738,6 @@ export const zh: Dictionary = {
     growthFirstMatchedBid: "首次查看匹配招标",
     growthLatestLeads: "最新演示预约线索",
     growthNoLeads: "暂无演示预约线索。",
+    stateQualityMatrixTitle: "州级门户数据质量（50 个州）",
   }
 };

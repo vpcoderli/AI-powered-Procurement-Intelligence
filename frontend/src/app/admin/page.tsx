@@ -5,8 +5,6 @@ import {
   Activity,
   AlertTriangle,
   Database,
-  Download,
-  History,
   Play,
   RefreshCw,
   ServerCog,
@@ -14,13 +12,11 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { UniversalState } from "@/components/universal-state";
 import { useAuth } from "@/context/AuthContext";
-import { bidDetailPath } from "@/lib/bid-routes";
 import {
   Table,
   TableBody,
@@ -31,39 +27,22 @@ import {
 } from "@/components/ui/table";
 import {
   batchUpdateAdminDataSources,
-  batchUpdateAdminBidQaItems,
   checkAdminDataSourceHealth,
-  getAdminRiskChecklist,
-  getAdminBidQaCorrections,
-  listAdminBidQaItems,
   listAdminCrawlerLogs,
   listAdminDataSources,
   runStateCrawlersNow,
   updateAdminDataSource,
-  updateAdminBidQaReview,
-  type AdminBidQaItem,
-  type AdminBidQaResponse,
-  type AdminBidQaCorrectionHistoryItem,
-  type AdminBidQaDisplayStatus,
-  type AdminBidQaReviewStatus,
   type AdminCrawlerLog,
   type AdminDataSource,
   type AdminDataSourcesResponse,
-  type AdminRiskChecklistResponse,
-  type StateDataQualityReasonCode,
-  type StateDataQualityReport,
-  type StateDataQualityRiskLevel,
-  type StateDataQualityRow,
   type UpdateAdminDataSourceInput,
 } from "@/lib/api/admin";
 import type { UserRole } from "@/server/auth/entitlements";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import {
   compactErrorMessage,
-  endOfDayIsoFromDateInput,
   fallbackMessage,
   formatDate,
-  formatDateInputValue,
   statusTone,
 } from "@/components/admin/admin-format";
 import { AdminAccessState, AdminSectionStateCard, SummaryCard } from "@/components/admin/AdminStateCards";
@@ -73,6 +52,7 @@ import { SourcePrecheckPanel } from "@/components/admin/SourcePrecheckPanel";
 import { isLocalJurisdictionSource } from "@/components/admin/ApproveLocalSourceDialog";
 import { LedgeredApprovalPanel, providerFamiliesOf } from "@/components/admin/LedgeredApprovalPanel";
 import { PlatformReviewsPanel } from "@/components/admin/PlatformReviewsPanel";
+import type { RecommendedActionFilter } from "@/components/admin/sections/RiskCheckSection";
 import { stateCrawlerSourceIdForAdminSource } from "@/lib/state-crawler-sources";
 
 type SectionLoadStatus = "loading" | "error" | "ready";
@@ -82,43 +62,14 @@ export type AdminSectionState<T> = {
   data: T;
 };
 
-type AdminRiskSectionData = {
-  report: AdminRiskChecklistResponse["report"];
-  history: AdminRiskChecklistResponse["history"];
-  trend: AdminRiskChecklistResponse["trend"];
-  stateDataQuality: AdminRiskChecklistResponse["stateDataQuality"];
-};
-
 export type AdminDashboardSections = {
   dataSources: AdminSectionState<AdminDataSourcesResponse | null>;
-  risk: AdminSectionState<AdminRiskSectionData | null>;
   crawlerLogs: AdminSectionState<AdminCrawlerLog[]>;
-  bidQa: AdminSectionState<AdminBidQaResponse | null>;
 };
 
 export type AdminDashboardLoaders = {
   dataSources: () => Promise<AdminDataSourcesResponse>;
-  risk: () => Promise<AdminRiskChecklistResponse>;
   crawlerLogs: () => Promise<{ logs: AdminCrawlerLog[] }>;
-  bidQa: () => Promise<AdminBidQaResponse>;
-};
-
-type BidQaCorrectionDraft = {
-  title: string;
-  deadlineDate: string;
-};
-
-type BidQaFilters = {
-  q: string;
-  stateCode: string;
-  reviewStatus: AdminBidQaReviewStatus | "all";
-  displayStatus: AdminBidQaDisplayStatus | "all";
-  sourceConfidence: string;
-  minQualityScore: string;
-  maxQualityScore: string;
-  reviewerId: string;
-  reviewedFrom: string;
-  reviewedTo: string;
 };
 
 export type SourceHealthClassificationFilter =
@@ -136,14 +87,6 @@ export type SourceHealthClassificationFilter =
 export type SourceHealthTriageStatus = "unassigned" | "overdue" | "scheduled" | "reviewed";
 export type SourceHealthTriageStatusFilter = "all" | SourceHealthTriageStatus;
 export type SourceHealthTriageAction = "assign" | "accepted_fallback" | "manual" | "vendor_account" | "clear";
-export type RecommendedActionFilter = "all" | string;
-export type StateDataQualityRiskFilter = "all" | Extract<StateDataQualityRiskLevel, "P0" | "P1" | "P2">;
-export type StateDataQualityReasonFilter = "all" | StateDataQualityReasonCode | string;
-
-type StateDataQualityFilters = {
-  riskLevel: StateDataQualityRiskFilter | string;
-  reasonCode: StateDataQualityReasonFilter;
-};
 
 type SourceHealthTriageFields = {
   liveHealthOwner?: string | null;
@@ -157,19 +100,6 @@ type SourceOpsFilters = {
   classification: SourceHealthClassificationFilter;
   triageStatus: SourceHealthTriageStatusFilter;
   recommendedAction: RecommendedActionFilter;
-};
-
-const DEFAULT_BID_QA_FILTERS: BidQaFilters = {
-  q: "",
-  stateCode: "",
-  reviewStatus: "all",
-  displayStatus: "all",
-  sourceConfidence: "all",
-  minQualityScore: "",
-  maxQualityScore: "",
-  reviewerId: "",
-  reviewedFrom: "",
-  reviewedTo: "",
 };
 
 const ADMIN_CONSOLE_USER_ROLES: UserRole[] = ["admin", "operator", "support"];
@@ -192,10 +122,6 @@ export const SOURCE_HEALTH_TRIAGE_STATUS_FILTERS: SourceHealthTriageStatusFilter
   "scheduled",
   "reviewed",
 ];
-export const STATE_DATA_QUALITY_RISK_FILTERS: StateDataQualityRiskFilter[] = ["all", "P0", "P1", "P2"];
-const STATE_DATA_QUALITY_P0_BLOCKER_STATES = ["CA", "FL", "IL", "NY", "TX"] as const;
-const STATE_DATA_QUALITY_P0_BLOCKER_COPY =
-  "CA/FL/IL/NY/TX P0 blockers are state data quality blockers";
 
 function sectionLoading<T>(data: T): AdminSectionState<T> {
   return { status: "loading", data };
@@ -212,18 +138,14 @@ function sectionError<T>(data: T): AdminSectionState<T> {
 export function createInitialAdminSectionState(): AdminDashboardSections {
   return {
     dataSources: sectionLoading(null),
-    risk: sectionLoading(null),
     crawlerLogs: sectionLoading([]),
-    bidQa: sectionLoading(null),
   };
 }
 
 function createRefreshingAdminSectionState(current: AdminDashboardSections): AdminDashboardSections {
   return {
     dataSources: sectionLoading(current.dataSources.data),
-    risk: sectionLoading(current.risk.data),
     crawlerLogs: sectionLoading(current.crawlerLogs.data),
-    bidQa: sectionLoading(current.bidQa.data),
   };
 }
 
@@ -245,26 +167,15 @@ export async function loadAdminDashboardSections(
 ): Promise<AdminDashboardSections> {
   const [
     dataSources,
-    risk,
     crawlerLogs,
-    bidQa,
   ] = await Promise.allSettled([
     loaders.dataSources(),
-    loaders.risk(),
     loaders.crawlerLogs(),
-    loaders.bidQa(),
   ]);
 
   return {
     dataSources: sectionFromSettled(dataSources, current.dataSources.data, (value) => value),
-    risk: sectionFromSettled(risk, current.risk.data, (value) => ({
-      report: value.report,
-      history: value.history,
-      trend: value.trend,
-      stateDataQuality: value.stateDataQuality ?? null,
-    })),
     crawlerLogs: sectionFromSettled(crawlerLogs, current.crawlerLogs.data, (value) => value.logs),
-    bidQa: sectionFromSettled(bidQa, current.bidQa.data, (value) => value),
   };
 }
 
@@ -276,20 +187,6 @@ export function isAdminDashboardFullyFailed(sections: AdminDashboardSections) {
   return Object.values(sections).every((section) => section.status === "error");
 }
 
-function reviewStatusLabel(t: (key: string) => string, status: AdminBidQaReviewStatus) {
-  return t(`admin.reviewStatus_${status}`);
-}
-
-function displayStatusLabel(t: (key: string) => string, status: AdminBidQaDisplayStatus) {
-  return t(`admin.displayStatus_${status}`);
-}
-
-function displayStatusTone(status: AdminBidQaDisplayStatus) {
-  if (status === "published") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (status === "suppressed") return "border-slate-300 bg-slate-100 text-slate-700";
-  return "border-amber-200 bg-amber-50 text-amber-700";
-}
-
 function stateCrawlerSourceIdFor(source: AdminDataSource) {
   // County/city/special-district registry rows have no legacy per-state crawler metadata;
   // since the data_sources migration they run through /api/crawler/state/run by their own row
@@ -297,13 +194,6 @@ function stateCrawlerSourceIdFor(source: AdminDataSource) {
   const subStateSourceId =
     source.issuerType !== "state" && source.issuerType !== "federal" ? source.id : null;
   return source.crawlerSourceId ?? stateCrawlerSourceIdForAdminSource(source) ?? subStateSourceId;
-}
-
-function bidQaCorrectionDraftFor(item: AdminBidQaItem, drafts: Record<string, BidQaCorrectionDraft>) {
-  return drafts[item.id] ?? {
-    title: item.title,
-    deadlineDate: formatDateInputValue(item.deadlineDate),
-  };
 }
 
 function latestRunAt(source: AdminDataSource) {
@@ -379,58 +269,6 @@ export function sourceHealthClassificationLabel(
   if (classification === "http_error") return t("admin.sourceHealthClassification_http_error");
   if (classification === "all") return t("admin.sourceHealthClassification_all");
   return t("admin.sourceHealthClassification_unknown");
-}
-
-export function filterStateDataQualityRows<
-  TRow extends { riskLevel: string; reasons: Array<{ code: string }> },
->(rows: TRow[], filters: StateDataQualityFilters) {
-  return rows.filter((row) => {
-    const matchesRisk = filters.riskLevel === "all" || row.riskLevel === filters.riskLevel;
-    const matchesReason =
-      filters.reasonCode === "all" || row.reasons.some((reason) => reason.code === filters.reasonCode);
-
-    return matchesRisk && matchesReason;
-  });
-}
-
-export function stateDataQualityReasonOptions<
-  TRow extends { reasons: Array<{ code: string }> },
->(rows: TRow[]) {
-  return ["all", ...[...new Set(rows.flatMap((row) => row.reasons.map((reason) => reason.code)))].sort()];
-}
-
-export function filterStateDataQualityActionsByRecommendedAction<
-  TAction extends { recommendedAction: string },
->(actions: TAction[], recommendedAction: RecommendedActionFilter) {
-  if (recommendedAction === "all") return actions;
-
-  return actions.filter((action) => action.recommendedAction === recommendedAction);
-}
-
-export function stateDataQualityActionRecommendedActionOptions<
-  TAction extends { recommendedAction: string },
->(actions: TAction[]) {
-  return ["all", ...[...new Set(actions.map((action) => action.recommendedAction))].sort()];
-}
-
-export function stateAttachmentRealRatio(row: Pick<StateDataQualityRow, "attachmentSummary">) {
-  const real = row.attachmentSummary.realFileOpenable;
-  const total = row.attachmentSummary.total;
-  const percent = total > 0 ? Math.round((real / total) * 100) : 0;
-
-  return `${real}/${total} (${percent}%)`;
-}
-
-export function stateDataQualityP0BlockerNotice(rows: Array<{ stateCode: string; riskLevel: string }>) {
-  const blockerStates = STATE_DATA_QUALITY_P0_BLOCKER_STATES.filter((stateCode) =>
-    rows.some((row) => row.stateCode === stateCode && row.riskLevel === "P0"),
-  );
-
-  if (blockerStates.length === 0) return null;
-
-  return `${STATE_DATA_QUALITY_P0_BLOCKER_COPY}; currently blocked: ${blockerStates.join(
-    "/",
-  )}. These are not live source-health failures.`;
 }
 
 export function sourceHealthTriageStatus(
@@ -537,19 +375,6 @@ function liveSourceTrendStatusLabel(t: (key: string) => string, status: string |
   if (status === "unhealthy") return t("admin.liveSourceHealth_unhealthy");
   if (status === "skipped") return t("admin.liveSourceHealth_skipped");
   return t("admin.liveSourceHealthNoCheck");
-}
-
-function qualityTone(score: number) {
-  if (score >= 85) return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (score >= 70) return "border-amber-200 bg-amber-50 text-amber-700";
-  return "border-rose-200 bg-rose-50 text-rose-700";
-}
-
-function reviewTone(status: string | null | undefined) {
-  if (status === "reviewed") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (status === "suppressed") return "border-slate-300 bg-slate-100 text-slate-700";
-  if (status === "needs_review") return "border-rose-200 bg-rose-50 text-rose-700";
-  return "border-amber-200 bg-amber-50 text-amber-700";
 }
 
 function crawlerTone(value: string | null | undefined) {
@@ -682,436 +507,6 @@ function formatCrawlerBaseUrl(value: string | null) {
   }
 }
 
-function riskCheckTone(ok: boolean) {
-  return ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700";
-}
-
-function riskReportFilename(report: AdminRiskChecklistResponse["report"]) {
-  const stamp = report.checkedAt.replace(/[^0-9A-Za-z]/g, "").slice(0, 15);
-  return `risk-check-report-${stamp || "latest"}.json`;
-}
-
-function riskDetailBidHref(detail: string) {
-  const markers = [
-    ": sourceUrl ",
-    ": attachment ",
-    " fails route encode/decode round trip",
-    " cannot be found by detail lookup",
-    " has empty required content",
-  ];
-  const match = markers
-    .map((marker) => ({ marker, index: detail.indexOf(marker) }))
-    .filter((entry) => entry.index > 0)
-    .sort((a, b) => a.index - b.index)[0];
-
-  if (!match) return null;
-
-  return bidDetailPath(detail.slice(0, match.index));
-}
-
-function RiskDetailItem({ detail }: { detail: string }) {
-  const href = riskDetailBidHref(detail);
-
-  if (!href) return <li>{detail}</li>;
-
-  return (
-    <li>
-      <a href={href} className="break-words underline decoration-rose-300 underline-offset-2 hover:text-rose-900">
-        {detail}
-      </a>
-    </li>
-  );
-}
-
-function stateDataQualityRiskTone(riskLevel: StateDataQualityRiskLevel | string) {
-  if (riskLevel === "PASS") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (riskLevel === "P0") return "border-rose-200 bg-rose-50 text-rose-700";
-  if (riskLevel === "P1") return "border-amber-200 bg-amber-50 text-amber-700";
-  return "border-sky-200 bg-sky-50 text-sky-700";
-}
-
-function stateDataQualityRiskFilterLabel(filter: StateDataQualityRiskFilter) {
-  return filter === "all" ? "All" : filter;
-}
-
-function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) {
-  const [stateQualityRiskFilter, setStateQualityRiskFilter] = useState<StateDataQualityRiskFilter>("all");
-  const [stateQualityReasonFilter, setStateQualityReasonFilter] = useState<StateDataQualityReasonFilter>("all");
-  const [stateQualityActionRecommendedFilter, setStateQualityActionRecommendedFilter] =
-    useState<RecommendedActionFilter>("all");
-  const reasonOptions = stateDataQualityReasonOptions(report.rows);
-  const actionRecommendedOptions = stateDataQualityActionRecommendedActionOptions(report.actions);
-  const filteredRows = filterStateDataQualityRows(report.rows, {
-    riskLevel: stateQualityRiskFilter,
-    reasonCode: stateQualityReasonFilter,
-  });
-  const filteredActions = filterStateDataQualityActionsByRecommendedAction(
-    report.actions,
-    stateQualityActionRecommendedFilter,
-  );
-  const p0BlockerNotice = stateDataQualityP0BlockerNotice(report.rows);
-
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-950">
-            <Database size={15} />
-            50-state data quality matrix
-            <Badge variant="outline" className={riskCheckTone(report.ok)}>
-              {report.ok ? "PASS" : "P0 blocker review"}
-            </Badge>
-          </div>
-          <div className="mt-1 text-xs leading-5 text-slate-500">
-            50-state data quality matrix summary: total states, P0/P1/P2 counts, source enablement, bids, attachment real ratio, and reason code.
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-          <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-700">
-            total states: {report.summary.totalStates}
-          </Badge>
-          <Badge variant="outline" className="border-rose-200 bg-rose-50 text-rose-700">
-            P0: {report.summary.p0BlockerStates}
-          </Badge>
-          <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
-            P1: {report.summary.p1WarningStates}
-          </Badge>
-          <Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">
-            P2: {report.summary.p2WarningStates}
-          </Badge>
-        </div>
-      </div>
-      {p0BlockerNotice && (
-        <div className="mt-3 rounded-md border border-rose-100 bg-rose-50 px-3 py-2 text-xs font-medium leading-5 text-rose-800">
-          {p0BlockerNotice}
-        </div>
-      )}
-      <div className="mt-3 rounded-md border border-slate-100 bg-slate-50 px-3 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-xs font-black uppercase text-slate-700">State data quality action queue</div>
-          <Badge variant="outline" className="border-slate-200 bg-white text-slate-600">
-            {filteredActions.length}/{report.actions.length} actions
-          </Badge>
-        </div>
-        <label className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold uppercase text-slate-500">
-          Recommended action
-          <select
-            value={stateQualityActionRecommendedFilter}
-            onChange={(event) => setStateQualityActionRecommendedFilter(event.target.value)}
-            className="h-8 max-w-full rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium normal-case text-slate-700 outline-none"
-          >
-            {actionRecommendedOptions.map((action) => (
-              <option key={action} value={action}>
-                {action === "all" ? "all recommended actions" : action}
-              </option>
-            ))}
-          </select>
-        </label>
-        {filteredActions.length === 0 ? (
-          <div className="mt-2 text-xs font-medium text-slate-500">No state data quality actions are open.</div>
-        ) : (
-          <div className="mt-2 grid gap-2">
-            {filteredActions.slice(0, 6).map((action) => (
-              <div
-                key={action.id}
-                className="grid gap-2 rounded-md border border-white bg-white px-3 py-2 text-xs md:grid-cols-[auto_1fr_auto]"
-              >
-                <Badge variant="outline" className={stateDataQualityRiskTone(action.priority)}>
-                  {action.priority}
-                </Badge>
-                <div className="min-w-0">
-                  <div className="font-bold text-slate-900">
-                    {action.stateCode} · {action.reasonCode}
-                  </div>
-                  <div className="mt-1 text-slate-600">{action.recommendedAction}</div>
-                  <div className="mt-1 truncate text-slate-400" title={action.evidence}>
-                    {action.evidence}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-1 md:justify-end">
-                  <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
-                    {action.ownerHint}
-                  </Badge>
-                  <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
-                    {action.dueInHours}h
-                  </Badge>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      <div className="mt-3 flex flex-col gap-2 border-y border-slate-100 py-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold uppercase text-slate-500">Risk filter</span>
-          {STATE_DATA_QUALITY_RISK_FILTERS.map((filter) => (
-            <Button
-              key={filter}
-              type="button"
-              variant={stateQualityRiskFilter === filter ? "default" : "outline"}
-              size="sm"
-              onClick={() => setStateQualityRiskFilter(filter)}
-              className={
-                stateQualityRiskFilter === filter
-                  ? "h-8 rounded-lg px-2 text-xs"
-                  : "h-8 rounded-lg border-slate-200 px-2 text-xs text-slate-600"
-              }
-            >
-              {stateDataQualityRiskFilterLabel(filter)}
-            </Button>
-          ))}
-        </div>
-        <label className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase text-slate-500">
-          Reason code
-          <select
-            value={stateQualityReasonFilter}
-            onChange={(event) => setStateQualityReasonFilter(event.target.value)}
-            className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium normal-case text-slate-700 outline-none"
-          >
-            {reasonOptions.map((reasonCode) => (
-              <option key={reasonCode} value={reasonCode}>
-                {reasonCode === "all" ? "all reason codes" : reasonCode}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <div className="mt-3 overflow-x-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>state</TableHead>
-              <TableHead>risk</TableHead>
-              <TableHead>bids</TableHead>
-              <TableHead>enabled source</TableHead>
-              <TableHead>attachment real ratio</TableHead>
-              <TableHead>reason code</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filteredRows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={6} className="py-5 text-center text-sm text-slate-500">
-                  No state data quality rows match this filter.
-                </TableCell>
-              </TableRow>
-            )}
-            {filteredRows.map((row) => {
-              const reasonCodes = row.reasons.map((reason) => reason.code);
-
-              return (
-                <TableRow key={row.stateCode}>
-                  <TableCell className="font-semibold text-slate-900">{row.stateCode}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline" className={stateDataQualityRiskTone(row.riskLevel)}>
-                      {row.riskLevel}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{row.bidCount}</TableCell>
-                  <TableCell>{row.enabledSourceCount}</TableCell>
-                  <TableCell>{stateAttachmentRealRatio(row)}</TableCell>
-                  <TableCell>
-                    <div className="flex max-w-xl flex-wrap gap-1">
-                      {reasonCodes.length === 0 ? (
-                        <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700">
-                          none
-                        </Badge>
-                      ) : (
-                        reasonCodes.map((reasonCode, reasonIndex) => (
-                          // A state can report the same reason code from several sources, so the
-                          // code alone is not a unique key.
-                          <Badge key={`${row.stateCode}-${reasonCode}-${reasonIndex}`} variant="outline" className="border-slate-200 bg-slate-50 text-slate-700">
-                            {reasonCode}
-                          </Badge>
-                        ))
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      </div>
-    </div>
-  );
-}
-
-function RiskCheck({
-  history,
-  isRefreshing,
-  onExport,
-  onRefresh,
-  report,
-  stateDataQuality,
-  t,
-  trend,
-}: {
-  history: AdminRiskChecklistResponse["history"];
-  isRefreshing: boolean;
-  onExport: () => void;
-  onRefresh: () => void;
-  report: AdminRiskChecklistResponse["report"];
-  stateDataQuality: AdminRiskChecklistResponse["stateDataQuality"];
-  t: (key: string) => string;
-  trend: AdminRiskChecklistResponse["trend"];
-}) {
-  const globalUrlCheck = report.checks.find((check) => check.id === "global-url-validity");
-  const globalUrlSummary = (snapshotReport: AdminRiskChecklistResponse["report"]) =>
-    snapshotReport.checks.find((check) => check.id === "global-url-validity")?.summary ?? "-";
-
-  return (
-    <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex items-center gap-2 font-semibold text-slate-950">
-          {report.ok ? <ShieldCheck size={18} /> : <AlertTriangle size={18} />}
-          {t("admin.riskCheck")}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className={riskCheckTone(report.ok)}>
-            {report.ok ? t("admin.riskCheckPassed") : t("admin.riskCheckFailed")}
-          </Badge>
-          <span className="text-xs font-medium text-slate-500">
-            {t("admin.riskCheckCheckedAt").replace("{time}", formatDate(report.checkedAt))}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onRefresh}
-            disabled={isRefreshing}
-            className="h-8 rounded-lg border-slate-200 px-2 text-xs"
-          >
-            <RefreshCw size={14} />
-            {isRefreshing ? t("admin.refreshingRiskCheck") : t("admin.refreshRiskCheck")}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onExport}
-            className="h-8 rounded-lg border-slate-200 px-2 text-xs"
-          >
-            <Download size={14} />
-            {t("admin.exportRiskCheck")}
-          </Button>
-        </div>
-      </div>
-      <div className="space-y-3 p-4">
-        <div className="rounded-lg border border-slate-200 bg-white p-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-            <Activity size={15} />
-            {t("admin.riskCheckTrend")}
-          </div>
-          <div className="mt-2 grid gap-2 md:grid-cols-3">
-            <div className="rounded-md border border-slate-200 bg-slate-50/70 p-2">
-              <div className="text-xs font-semibold text-slate-700">{t("admin.riskTrendGlobalUrlStable")}</div>
-              <div className="mt-1 text-xs leading-5 text-slate-500">{trend.latestGlobalUrlSummary ?? "-"}</div>
-              <Badge variant="outline" className={riskCheckTone(trend.globalUrlAllPassing !== false)}>
-                {trend.globalUrlAllPassing === false ? t("admin.riskCheckIssue") : t("admin.riskCheckOk")}
-              </Badge>
-            </div>
-            <div className="rounded-md border border-slate-200 bg-slate-50/70 p-2">
-              <div className="text-xs font-semibold text-slate-700">{t("admin.riskTrendStateCoverageDeclined")}</div>
-              <div className="mt-1 text-xs leading-5 text-slate-500">{trend.latestStateCoverageSummary ?? "-"}</div>
-              <Badge variant="outline" className={riskCheckTone(trend.stateCoverageDeclined !== true)}>
-                {trend.stateCoverageDeclined ? t("admin.riskCheckIssue") : t("admin.riskCheckOk")}
-              </Badge>
-            </div>
-            <div className="rounded-md border border-slate-200 bg-slate-50/70 p-2">
-              <div className="text-xs font-semibold text-slate-700">{t("admin.riskTrendAttachmentChanged")}</div>
-              <div className="mt-1 text-xs leading-5 text-slate-500">{trend.latestAttachmentSummary ?? "-"}</div>
-              <Badge variant="outline" className={riskCheckTone(trend.attachmentDownloadCountChanged !== true)}>
-                {trend.attachmentDownloadCountChanged ? t("admin.riskCheckIssue") : t("admin.riskCheckOk")}
-              </Badge>
-            </div>
-          </div>
-        </div>
-        {globalUrlCheck && (
-          <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm font-semibold text-slate-950">{t("admin.riskCheckGlobalUrlTitle")}</span>
-                  <Badge variant="outline" className={riskCheckTone(globalUrlCheck.ok)}>
-                    {globalUrlCheck.ok ? t("admin.riskCheckOk") : t("admin.riskCheckIssue")}
-                  </Badge>
-                </div>
-                <div className="mt-1 text-xs leading-5 text-slate-600">
-                  {t("admin.riskCheckGlobalUrlDescription")}
-                </div>
-                <div className="mt-1 text-xs leading-5 text-slate-500">{globalUrlCheck.summary}</div>
-              </div>
-            </div>
-            {globalUrlCheck.details && globalUrlCheck.details.length > 0 ? (
-              <ul className="mt-2 space-y-1 text-xs leading-5 text-rose-700">
-                {globalUrlCheck.details.slice(0, 5).map((detail) => (
-                  <RiskDetailItem key={detail} detail={detail} />
-                ))}
-                {globalUrlCheck.details.length > 5 && (
-                  <li>{t("admin.riskCheckMoreIssues").replace("{count}", String(globalUrlCheck.details.length - 5))}</li>
-                )}
-              </ul>
-            ) : (
-              <div className="mt-2 text-xs leading-5 text-slate-500">{t("admin.riskCheckNoIssues")}</div>
-            )}
-          </div>
-        )}
-        {stateDataQuality && <StateDataQualityMatrix report={stateDataQuality} />}
-        <div className="grid gap-3 lg:grid-cols-5">
-          {report.checks.map((check) => (
-            <div key={check.id} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="break-words text-sm font-semibold text-slate-950">{check.label}</div>
-                  <div className="mt-1 text-xs leading-5 text-slate-600">{check.summary}</div>
-                </div>
-                <Badge variant="outline" className={riskCheckTone(check.ok)}>
-                  {check.ok ? t("admin.riskCheckOk") : t("admin.riskCheckIssue")}
-                </Badge>
-              </div>
-              {check.details && check.details.length > 0 ? (
-                <ul className="mt-2 space-y-1 text-xs leading-5 text-rose-700">
-                  {check.details.slice(0, 3).map((detail) => (
-                    <RiskDetailItem key={detail} detail={detail} />
-                  ))}
-                </ul>
-              ) : (
-                <div className="mt-2 text-xs leading-5 text-slate-500">{t("admin.riskCheckNoIssues")}</div>
-              )}
-            </div>
-          ))}
-        </div>
-        <div className="rounded-lg border border-slate-200 bg-white p-3">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
-            <History size={15} />
-            {t("admin.riskCheckHistory")}
-          </div>
-          {history.length === 0 ? (
-            <div className="mt-2 text-xs leading-5 text-slate-500">{t("admin.riskCheckHistoryEmpty")}</div>
-          ) : (
-            <div className="mt-2 divide-y divide-slate-100">
-              {history.slice(0, 5).map((snapshot) => (
-                <div key={snapshot.id} className="grid gap-2 py-2 md:grid-cols-[auto_1fr] md:items-start">
-                  <Badge variant="outline" className={riskCheckTone(snapshot.ok)}>
-                    {snapshot.ok ? t("admin.riskCheckOk") : t("admin.riskCheckIssue")}
-                  </Badge>
-                  <div className="min-w-0">
-                    <div className="text-xs font-medium text-slate-600">
-                      {t("admin.riskCheckCheckedAt").replace("{time}", formatDate(snapshot.checkedAt))}
-                    </div>
-                    <div className="mt-1 break-words text-xs leading-5 text-slate-500">
-                      {globalUrlSummary(snapshot.report)}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 export default function AdminPage() {
   const { t } = useLanguage();
   const { user, isLoading: isAuthLoading } = useAuth();
@@ -1122,24 +517,15 @@ export default function AdminPage() {
   const [sourceApprovalBatchPending, setSourceApprovalBatchPending] = useState(false);
   const [sourceHealthPendingId, setSourceHealthPendingId] = useState<string | null>(null);
   const [sourceTriagePendingId, setSourceTriagePendingId] = useState<string | null>(null);
-  const [pendingBidQaId, setPendingBidQaId] = useState<string | null>(null);
-  const [pendingBidQaBatch, setPendingBidQaBatch] = useState(false);
-  const [bidQaFilters, setBidQaFilters] = useState<BidQaFilters>(DEFAULT_BID_QA_FILTERS);
-  const [selectedBidQaIds, setSelectedBidQaIds] = useState<string[]>([]);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [sourceHealthClassificationFilter, setSourceHealthClassificationFilter] =
     useState<SourceHealthClassificationFilter>("all");
   const [sourceHealthTriageFilter, setSourceHealthTriageFilter] = useState<SourceHealthTriageStatusFilter>("all");
   const [sourceHealthRecommendedActionFilter, setSourceHealthRecommendedActionFilter] =
     useState<RecommendedActionFilter>("all");
-  const [correctionHistoryBidId, setCorrectionHistoryBidId] = useState<string | null>(null);
-  const [correctionHistoryItems, setCorrectionHistoryItems] = useState<AdminBidQaCorrectionHistoryItem[]>([]);
-  const [isLoadingCorrectionHistory, setIsLoadingCorrectionHistory] = useState(false);
-  const [correctionDrafts, setCorrectionDrafts] = useState<Record<string, BidQaCorrectionDraft>>({});
   const [isRunning, setIsRunning] = useState(false);
   const [runningSourceId, setRunningSourceId] = useState<string | null>(null);
   const [runMessage, setRunMessage] = useState<string | null>(null);
-  const [isRefreshingRiskReport, setIsRefreshingRiskReport] = useState(false);
   // Bumped when a platform review is saved so the ledgered approval panel re-reads its readiness.
   const [platformReviewRevision, setPlatformReviewRevision] = useState(0);
   const isAdmin = user?.role === "admin";
@@ -1152,20 +538,6 @@ export default function AdminPage() {
     stateRef.current = state;
   }, [state]);
 
-  const bidQaRequest = useCallback(() => ({
-    limit: 10,
-    q: bidQaFilters.q.trim() || undefined,
-    stateCode: bidQaFilters.stateCode.trim().toUpperCase() || undefined,
-    reviewStatus: bidQaFilters.reviewStatus === "all" ? undefined : bidQaFilters.reviewStatus,
-    displayStatus: bidQaFilters.displayStatus === "all" ? undefined : bidQaFilters.displayStatus,
-    sourceConfidence: bidQaFilters.sourceConfidence === "all" ? undefined : bidQaFilters.sourceConfidence,
-    minQualityScore: bidQaFilters.minQualityScore ? Number(bidQaFilters.minQualityScore) : undefined,
-    maxQualityScore: bidQaFilters.maxQualityScore ? Number(bidQaFilters.maxQualityScore) : undefined,
-    reviewerId: bidQaFilters.reviewerId.trim() || undefined,
-    reviewedFrom: bidQaFilters.reviewedFrom ? `${bidQaFilters.reviewedFrom}T00:00:00.000Z` : undefined,
-    reviewedTo: bidQaFilters.reviewedTo ? `${bidQaFilters.reviewedTo}T23:59:59.999Z` : undefined,
-  }), [bidQaFilters]);
-
   const load = useCallback(() => {
     if (!canAccessAdminConsole) return;
 
@@ -1175,15 +547,13 @@ export default function AdminPage() {
     void loadAdminDashboardSections(
       {
         dataSources: listAdminDataSources,
-        risk: getAdminRiskChecklist,
         crawlerLogs: listAdminCrawlerLogs,
-        bidQa: () => listAdminBidQaItems(bidQaRequest()),
       },
       current,
     ).then((sections) => {
       setState(sections);
     });
-  }, [bidQaRequest, canAccessAdminConsole]);
+  }, [canAccessAdminConsole]);
 
   useEffect(() => {
     if (isAuthLoading) return;
@@ -1213,15 +583,7 @@ export default function AdminPage() {
         ? state.dataSources.data?.summary ?? null
         : filteredDataSourcesSummary(sources)
       : null;
-  const riskReport = state.risk.status === "ready" ? state.risk.data?.report ?? null : null;
-  const riskHistory = state.risk.status === "ready" ? state.risk.data?.history ?? [] : [];
-  const riskTrend = state.risk.status === "ready" ? state.risk.data?.trend ?? null : null;
-  const stateDataQuality = state.risk.status === "ready" ? state.risk.data?.stateDataQuality ?? null : null;
   const logs = state.crawlerLogs.status === "ready" ? state.crawlerLogs.data : [];
-  const bidQa = state.bidQa.status === "ready" ? state.bidQa.data : null;
-  const bidQaItems = bidQa?.items ?? [];
-  const visibleSelectedBidQaIds = selectedBidQaIds.filter((id) => bidQaItems.some((item) => item.id === id));
-  const allVisibleBidQaSelected = bidQaItems.length > 0 && bidQaItems.every((item) => selectedBidQaIds.includes(item.id));
   const visibleSelectedSourceIds = selectedSourceIds.filter((id) => sources.some((source) => source.id === id));
   const allVisibleSourcesSelected = sources.length > 0 && sources.every((source) => selectedSourceIds.includes(source.id));
 
@@ -1430,55 +792,6 @@ export default function AdminPage() {
       });
   };
 
-  const refreshRiskReport = () => {
-    setIsRefreshingRiskReport(true);
-    setState((current) => ({
-      ...current,
-      risk: sectionLoading(current.risk.data),
-    }));
-    getAdminRiskChecklist()
-      .then((response) => {
-        setState((current) => ({
-          ...current,
-          risk: sectionReady({
-            report: response.report,
-            history: response.history,
-            trend: response.trend,
-            stateDataQuality: response.stateDataQuality ?? null,
-          }),
-        }));
-      })
-      .catch(() => {
-        setState((current) => ({
-          ...current,
-          risk: sectionError(current.risk.data),
-        }));
-        setRunMessage(t("admin.riskCheckRefreshFailed"));
-      })
-      .finally(() => {
-        setIsRefreshingRiskReport(false);
-      });
-  };
-
-  const exportRiskReport = () => {
-    if (!riskReport) return;
-
-    const blob = new Blob([JSON.stringify(riskReport, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = riskReportFilename(riskReport);
-    document.body.append(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  };
-
-  const updateBidQaFilters = (updater: (current: BidQaFilters) => BidQaFilters) => {
-    setSelectedBidQaIds([]);
-    setBidQaFilters(updater);
-  };
-
   const runNow = () => {
     setIsRunning(true);
     setRunMessage(null);
@@ -1532,162 +845,6 @@ export default function AdminPage() {
       })
       .finally(() => {
         setRunningSourceId(null);
-      });
-  };
-
-  const refreshBidQa = () => {
-    setState((current) => ({
-      ...current,
-      bidQa: sectionLoading(current.bidQa.data),
-    }));
-
-    return listAdminBidQaItems(bidQaRequest())
-      .then((bidQa) => {
-        setState((current) => ({
-          ...current,
-          bidQa: sectionReady(bidQa),
-        }));
-        setSelectedBidQaIds((current) => current.filter((id) => bidQa.items.some((item) => item.id === id)));
-        return bidQa;
-      })
-      .catch((error) => {
-        setState((current) => ({
-          ...current,
-          bidQa: sectionError(current.bidQa.data),
-        }));
-        throw error;
-      });
-  };
-
-  const updateBidQaStatus = (item: AdminBidQaItem, reviewStatus: AdminBidQaReviewStatus) => {
-    setPendingBidQaId(item.id);
-    updateAdminBidQaReview(item.id, { reviewStatus })
-      .then(refreshBidQa)
-      .then(() => {
-        setRunMessage(t("admin.bidQaUpdated"));
-      })
-      .catch(() => {
-        setRunMessage(t("admin.bidQaUpdateFailed"));
-      })
-      .finally(() => {
-        setPendingBidQaId(null);
-      });
-  };
-
-  const updateBidQaDisplayStatus = (item: AdminBidQaItem, displayStatus: AdminBidQaDisplayStatus) => {
-    setPendingBidQaId(item.id);
-    updateAdminBidQaReview(item.id, { displayStatus })
-      .then(refreshBidQa)
-      .then(() => {
-        setRunMessage(t("admin.bidQaUpdated"));
-      })
-      .catch(() => {
-        setRunMessage(t("admin.bidQaUpdateFailed"));
-      })
-      .finally(() => {
-        setPendingBidQaId(null);
-      });
-  };
-
-  const saveBidQaCorrections = (item: AdminBidQaItem) => {
-    const draft = bidQaCorrectionDraftFor(item, correctionDrafts);
-
-    setPendingBidQaId(item.id);
-    updateAdminBidQaReview(item.id, {
-      corrections: {
-        title: draft.title.trim(),
-        deadlineDate: endOfDayIsoFromDateInput(draft.deadlineDate),
-      },
-      note: "Admin QA correction",
-    })
-      .then(refreshBidQa)
-      .then(() => {
-        setCorrectionDrafts((current) => {
-          const next = { ...current };
-          delete next[item.id];
-          return next;
-        });
-        setRunMessage(t("admin.bidQaUpdated"));
-      })
-      .catch(() => {
-        setRunMessage(t("admin.bidQaUpdateFailed"));
-      })
-      .finally(() => {
-        setPendingBidQaId(null);
-      });
-  };
-
-  const toggleSelectedBidQaId = (id: string) => {
-    setSelectedBidQaIds((current) =>
-      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
-    );
-  };
-
-  const toggleAllVisibleBidQa = () => {
-    setSelectedBidQaIds((current) => {
-      const visibleIds = bidQaItems.map((item) => item.id);
-      if (visibleIds.length > 0 && visibleIds.every((id) => current.includes(id))) {
-        return current.filter((id) => !visibleIds.includes(id));
-      }
-
-      return [...new Set([...current, ...visibleIds])];
-    });
-  };
-
-  const batchReviewBidQa = (reviewStatus: AdminBidQaReviewStatus) => {
-    if (visibleSelectedBidQaIds.length === 0) return;
-
-    setPendingBidQaBatch(true);
-    batchUpdateAdminBidQaItems({
-      bidIds: visibleSelectedBidQaIds,
-      reviewStatus,
-      note: "Admin QA batch action",
-    })
-      .then(refreshBidQa)
-      .then(() => {
-        setRunMessage(t("admin.bidQaUpdated"));
-      })
-      .catch(() => {
-        setRunMessage(t("admin.bidQaUpdateFailed"));
-      })
-      .finally(() => {
-        setPendingBidQaBatch(false);
-      });
-  };
-
-  const batchDisplayBidQa = (displayStatus: AdminBidQaDisplayStatus) => {
-    if (visibleSelectedBidQaIds.length === 0) return;
-
-    setPendingBidQaBatch(true);
-    batchUpdateAdminBidQaItems({
-      bidIds: visibleSelectedBidQaIds,
-      displayStatus,
-    })
-      .then(refreshBidQa)
-      .then(() => {
-        setRunMessage(t("admin.bidQaUpdated"));
-      })
-      .catch(() => {
-        setRunMessage(t("admin.bidQaUpdateFailed"));
-      })
-      .finally(() => {
-        setPendingBidQaBatch(false);
-      });
-  };
-
-  const loadCorrectionHistory = (item: AdminBidQaItem) => {
-    setCorrectionHistoryBidId(item.id);
-    setIsLoadingCorrectionHistory(true);
-    getAdminBidQaCorrections(item.id)
-      .then((response) => {
-        setCorrectionHistoryItems(response.corrections);
-      })
-      .catch(() => {
-        setCorrectionHistoryItems([]);
-        setRunMessage(t("admin.bidQaUpdateFailed"));
-      })
-      .finally(() => {
-        setIsLoadingCorrectionHistory(false);
       });
   };
 
@@ -1786,433 +943,6 @@ export default function AdminPage() {
           <SummaryCard label={t("admin.healthySources")} value={summary.healthySources} icon={Activity} />
           <SummaryCard label={t("admin.failingSources")} value={summary.failingSources} icon={AlertTriangle} />
         </div>
-      )}
-
-      {!isFullyFailedDashboard && state.risk.status === "error" && (
-        <AdminSectionStateCard
-          action={() => refreshRiskReport()}
-          actionLabel={t("admin.refresh")}
-          code="error"
-          message={t("admin.errorDescription")}
-          title={t("admin.riskCheck")}
-        />
-      )}
-
-      {!isFullyFailedDashboard && state.risk.status === "loading" && !state.risk.data && (
-        <AdminSectionStateCard
-          actionLabel={t("admin.refresh")}
-          code="loading"
-          message={t("admin.loading")}
-          title={t("admin.riskCheck")}
-        />
-      )}
-
-      {!isFullyFailedDashboard && riskReport && riskTrend && (
-        <RiskCheck
-          history={riskHistory}
-          isRefreshing={isRefreshingRiskReport}
-          onExport={exportRiskReport}
-          onRefresh={refreshRiskReport}
-          report={riskReport}
-          stateDataQuality={stateDataQuality}
-          t={t}
-          trend={riskTrend}
-        />
-      )}
-
-      {!isFullyFailedDashboard && state.bidQa.status === "error" && (
-        <AdminSectionStateCard
-          action={() => void refreshBidQa().catch(() => undefined)}
-          actionLabel={t("admin.refresh")}
-          code="error"
-          message={t("admin.errorDescription")}
-          title={t("admin.bidQa")}
-        />
-      )}
-
-      {!isFullyFailedDashboard && state.bidQa.status === "loading" && !state.bidQa.data && (
-        <AdminSectionStateCard
-          actionLabel={t("admin.refresh")}
-          code="loading"
-          message={t("admin.loading")}
-          title={t("admin.bidQa")}
-        />
-      )}
-
-      {!isFullyFailedDashboard && bidQa && (
-        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-2 font-semibold text-slate-950">
-              <Database size={18} />
-              {t("admin.bidQa")}
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
-                {t("admin.needsReview")}: {bidQa.summary.needsReview}
-              </Badge>
-              <Badge variant="outline" className="border-rose-200 bg-rose-50 text-rose-700">
-                {t("admin.archiveIssues")}: {bidQa.summary.archiveIssues}
-              </Badge>
-              <Badge variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
-                {t("admin.lowQuality")}: {bidQa.summary.lowQuality}
-              </Badge>
-            </div>
-          </div>
-          <div className="grid gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-3 lg:grid-cols-[minmax(180px,1fr)_90px_150px_150px_130px_100px_100px_140px_140px_auto]">
-            <div className="lg:col-span-10 text-xs font-semibold uppercase text-slate-500">{t("admin.qaFilters")}</div>
-            <Input
-              value={bidQaFilters.q}
-              onChange={(event) => updateBidQaFilters((current) => ({ ...current, q: event.target.value }))}
-              placeholder={t("admin.searchBidQa")}
-              className="h-9 rounded-lg border-slate-200 bg-white"
-            />
-            <Input
-              value={bidQaFilters.stateCode}
-              onChange={(event) => updateBidQaFilters((current) => ({ ...current, stateCode: event.target.value }))}
-              placeholder={t("admin.state")}
-              className="h-9 rounded-lg border-slate-200 bg-white"
-            />
-            <select
-              value={bidQaFilters.reviewStatus}
-              onChange={(event) =>
-                updateBidQaFilters((current) => ({ ...current, reviewStatus: event.target.value as BidQaFilters["reviewStatus"] }))
-              }
-              aria-label={t("admin.status")}
-              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
-            >
-              <option value="all">{t("admin.allReviewStatuses")}</option>
-              {(["unreviewed", "needs_review", "reviewed", "suppressed"] as AdminBidQaReviewStatus[]).map((status) => (
-                <option key={status} value={status}>{reviewStatusLabel(t, status)}</option>
-              ))}
-            </select>
-            <select
-              value={bidQaFilters.displayStatus}
-              onChange={(event) =>
-                updateBidQaFilters((current) => ({ ...current, displayStatus: event.target.value as BidQaFilters["displayStatus"] }))
-              }
-              aria-label={t("admin.displayStatus")}
-              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
-            >
-              <option value="all">{t("admin.allDisplayStatuses")}</option>
-              {(["pending_qa", "published", "suppressed"] as AdminBidQaDisplayStatus[]).map((status) => (
-                <option key={status} value={status}>{displayStatusLabel(t, status)}</option>
-              ))}
-            </select>
-            <select
-              value={bidQaFilters.sourceConfidence}
-              onChange={(event) => updateBidQaFilters((current) => ({ ...current, sourceConfidence: event.target.value }))}
-              aria-label={t("admin.sourceConfidence")}
-              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
-            >
-              <option value="all">{t("admin.allConfidence")}</option>
-              <option value="high">high</option>
-              <option value="medium">medium</option>
-              <option value="low">low</option>
-            </select>
-            <Input
-              type="number"
-              min="0"
-              max="100"
-              value={bidQaFilters.minQualityScore}
-              onChange={(event) => updateBidQaFilters((current) => ({ ...current, minQualityScore: event.target.value }))}
-              placeholder={t("admin.minScore")}
-              className="h-9 rounded-lg border-slate-200 bg-white"
-            />
-            <Input
-              type="number"
-              min="0"
-              max="100"
-              value={bidQaFilters.maxQualityScore}
-              onChange={(event) => updateBidQaFilters((current) => ({ ...current, maxQualityScore: event.target.value }))}
-              placeholder={t("admin.maxScore")}
-              className="h-9 rounded-lg border-slate-200 bg-white"
-            />
-            <Input
-              value={bidQaFilters.reviewerId}
-              onChange={(event) => updateBidQaFilters((current) => ({ ...current, reviewerId: event.target.value }))}
-              placeholder={t("admin.reviewer")}
-              className="h-9 rounded-lg border-slate-200 bg-white"
-            />
-            <Input
-              type="date"
-              value={bidQaFilters.reviewedFrom}
-              onChange={(event) => updateBidQaFilters((current) => ({ ...current, reviewedFrom: event.target.value }))}
-              aria-label={t("admin.reviewedFrom")}
-              className="h-9 rounded-lg border-slate-200 bg-white"
-            />
-            <Input
-              type="date"
-              value={bidQaFilters.reviewedTo}
-              onChange={(event) => updateBidQaFilters((current) => ({ ...current, reviewedTo: event.target.value }))}
-              aria-label={t("admin.reviewedTo")}
-              className="h-9 rounded-lg border-slate-200 bg-white"
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => updateBidQaFilters(() => DEFAULT_BID_QA_FILTERS)}
-              className="h-9 rounded-lg px-3 text-slate-600"
-            >
-              {t("admin.clearAuditFilters")}
-            </Button>
-          </div>
-          {canRunOperations && (
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
-              <div className="text-sm font-medium text-slate-600">
-                {t("admin.selectedQaItems").replace("{count}", String(visibleSelectedBidQaIds.length))}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button type="button" variant="outline" size="sm" disabled={pendingBidQaBatch || visibleSelectedBidQaIds.length === 0} onClick={() => batchReviewBidQa("reviewed")} className="h-8 rounded-lg border-slate-200 px-2">
-                  {t("admin.batchReview")}
-                </Button>
-                <Button type="button" variant="outline" size="sm" disabled={pendingBidQaBatch || visibleSelectedBidQaIds.length === 0} onClick={() => batchReviewBidQa("needs_review")} className="h-8 rounded-lg border-slate-200 px-2">
-                  {t("admin.batchNeedsReview")}
-                </Button>
-                <Button type="button" variant="outline" size="sm" disabled={pendingBidQaBatch || visibleSelectedBidQaIds.length === 0} onClick={() => batchDisplayBidQa("published")} className="h-8 rounded-lg border-slate-200 px-2">
-                  {t("admin.batchPublish")}
-                </Button>
-                <Button type="button" variant="ghost" size="sm" disabled={pendingBidQaBatch || visibleSelectedBidQaIds.length === 0} onClick={() => batchDisplayBidQa("suppressed")} className="h-8 rounded-lg px-2 text-slate-600">
-                  {t("admin.batchSuppress")}
-                </Button>
-              </div>
-            </div>
-          )}
-          <Table>
-            <TableHeader>
-              <TableRow>
-                {canRunOperations && (
-                  <TableHead>
-                    <input
-                      type="checkbox"
-                      checked={allVisibleBidQaSelected}
-                      onChange={toggleAllVisibleBidQa}
-                      aria-label={t("admin.selectAllQaItems")}
-                      className="h-4 w-4 rounded border-slate-300"
-                    />
-                  </TableHead>
-                )}
-                <TableHead>{t("admin.bid")}</TableHead>
-                <TableHead>{t("admin.source")}</TableHead>
-                <TableHead>{t("admin.qualityScore")}</TableHead>
-                <TableHead>{t("admin.archiveIssues")}</TableHead>
-                <TableHead>{t("admin.correctionCount")}</TableHead>
-                <TableHead>{t("admin.status")}</TableHead>
-                <TableHead>{t("admin.displayStatus")}</TableHead>
-                <TableHead>{t("bid.deadline")}</TableHead>
-                {canRunOperations && <TableHead className="text-right">{t("admin.review")}</TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {bidQaItems.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={canRunOperations ? 10 : 8} className="py-6 text-center text-sm text-slate-500">
-                    {t("admin.noBidQaItems")}
-                  </TableCell>
-                </TableRow>
-              )}
-              {bidQaItems.map((item) => {
-                const correctionDraft = bidQaCorrectionDraftFor(item, correctionDrafts);
-                const isPending = pendingBidQaId === item.id;
-
-                return (
-                  <TableRow key={item.id}>
-                    {canRunOperations && (
-                      <TableCell>
-                        <input
-                          type="checkbox"
-                          checked={selectedBidQaIds.includes(item.id)}
-                          onChange={() => toggleSelectedBidQaId(item.id)}
-                          aria-label={t("admin.selectQaItem").replace("{title}", item.title)}
-                          className="h-4 w-4 rounded border-slate-300"
-                        />
-                      </TableCell>
-                    )}
-                    <TableCell>
-                      <div className="max-w-80 truncate font-medium text-slate-900" title={item.title}>
-                        {item.title}
-                      </div>
-                      {canRunOperations && (
-                        <div className="mt-2 grid max-w-80 gap-2">
-                          <Input
-                            value={correctionDraft.title}
-                            onChange={(event) =>
-                              setCorrectionDrafts((current) => ({
-                                ...current,
-                                [item.id]: {
-                                  ...bidQaCorrectionDraftFor(item, current),
-                                  title: event.target.value,
-                                },
-                              }))
-                            }
-                            aria-label={`${t("admin.bid")} ${t("admin.saveCorrections")}`}
-                            className="h-8 rounded-lg border-slate-200 bg-white text-xs"
-                          />
-                          <Input
-                            type="date"
-                            value={correctionDraft.deadlineDate}
-                            onChange={(event) =>
-                              setCorrectionDrafts((current) => ({
-                                ...current,
-                                [item.id]: {
-                                  ...bidQaCorrectionDraftFor(item, current),
-                                  deadlineDate: event.target.value,
-                                },
-                              }))
-                            }
-                            aria-label={`${t("bid.deadline")} ${t("admin.saveCorrections")}`}
-                            className="h-8 rounded-lg border-slate-200 bg-white text-xs"
-                          />
-                        </div>
-                      )}
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {item.qualityFlags.slice(0, 3).map((flag) => (
-                          <Badge key={flag} variant="outline" className="border-amber-200 bg-amber-50 text-amber-700">
-                            {flag}
-                          </Badge>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="font-medium text-slate-700">{item.source}</div>
-                      <div className="text-xs text-slate-500">{item.stateCode}</div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={qualityTone(item.qualityScore)}>
-                        {item.qualityScore}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        <Badge variant="outline" className={item.archiveIssueCount > 0 ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}>
-                          {item.archiveIssueCount}
-                        </Badge>
-                        {item.detailArchiveError && (
-                          <span className="max-w-44 truncate text-xs text-rose-700" title={item.detailArchiveError}>
-                            {compactErrorMessage(item.detailArchiveError)}
-                          </span>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={item.correctionCount > 0 ? "border-sky-200 bg-sky-50 text-sky-700" : "border-slate-200 bg-slate-50 text-slate-600"}>
-                        {item.correctionCount}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={reviewTone(item.adminReviewStatus)}>
-                        {reviewStatusLabel(t, item.adminReviewStatus)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={displayStatusTone(item.displayStatus)}>
-                        {displayStatusLabel(t, item.displayStatus)}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{formatDate(item.deadlineDate)}</TableCell>
-                    {canRunOperations && (
-                      <TableCell className="text-right">
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => loadCorrectionHistory(item)}
-                            disabled={isLoadingCorrectionHistory && correctionHistoryBidId === item.id}
-                            className="h-8 rounded-lg border-slate-200 px-2"
-                          >
-                            {t("admin.correctionHistory")}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => saveBidQaCorrections(item)}
-                            disabled={isPending || correctionDraft.title.trim().length === 0}
-                            className="h-8 rounded-lg border-slate-200 px-2"
-                          >
-                            {t("admin.saveCorrections")}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => updateBidQaDisplayStatus(item, "published")}
-                            disabled={isPending || item.displayStatus === "published"}
-                            className="h-8 rounded-lg border-slate-200 px-2"
-                          >
-                            {t("admin.publishBid")}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => updateBidQaDisplayStatus(item, "suppressed")}
-                            disabled={isPending || item.displayStatus === "suppressed"}
-                            className="h-8 rounded-lg px-2 text-slate-600"
-                          >
-                            {t("admin.suppressBid")}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => updateBidQaStatus(item, "reviewed")}
-                            disabled={isPending}
-                            className="h-8 rounded-lg border-slate-200 px-2"
-                          >
-                            {t("admin.markReviewed")}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => updateBidQaStatus(item, "needs_review")}
-                            disabled={isPending}
-                            className="h-8 rounded-lg px-2 text-slate-600"
-                          >
-                            {t("admin.markNeedsReview")}
-                          </Button>
-                        </div>
-                      </TableCell>
-                    )}
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-          {correctionHistoryBidId && (
-            <div className="border-t border-slate-100 px-4 py-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-slate-950">{t("admin.correctionHistory")}</div>
-                <Button type="button" variant="ghost" size="sm" onClick={() => setCorrectionHistoryBidId(null)} className="h-8 rounded-lg px-2 text-slate-600">
-                  {t("admin.close")}
-                </Button>
-              </div>
-              {isLoadingCorrectionHistory ? (
-                <div className="mt-3 text-sm text-slate-500">{t("admin.loading")}</div>
-              ) : correctionHistoryItems.length === 0 ? (
-                <div className="mt-3 text-sm text-slate-500">{t("admin.noCorrectionHistory")}</div>
-              ) : (
-                <div className="mt-3 grid gap-2">
-                  {correctionHistoryItems.map((correction) => (
-                    <div key={correction.id} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold text-slate-900">{correction.fieldName}</span>
-                        <span className="text-xs text-slate-500">{formatDate(correction.correctedAt)}</span>
-                        <span className="text-xs text-slate-500">{correction.correctedBy}</span>
-                      </div>
-                      <div className="mt-1 grid gap-1 text-xs text-slate-600 md:grid-cols-2">
-                        <div>{t("admin.originalValue")}: {correction.originalValue ?? "-"}</div>
-                        <div>{t("admin.correctedValue")}: {correction.correctedValue ?? "-"}</div>
-                      </div>
-                      {correction.note && <div className="mt-1 text-xs text-slate-500">{correction.note}</div>}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </section>
       )}
 
       {!isFullyFailedDashboard && state.dataSources.status === "error" && (

@@ -1736,6 +1736,7 @@ export const en = {
     growthFirstMatchedBid: "First matched bid",
     growthLatestLeads: "Latest request-demo leads",
     growthNoLeads: "No request-demo leads recorded yet.",
+    stateQualityMatrixTitle: "State portal data quality (50 states)",
   }
 };
 

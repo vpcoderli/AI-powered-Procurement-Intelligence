@@ -16,25 +16,7 @@ describe("admin page", () => {
   it("renders user access controls alongside crawler operations", () => {
     const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
 
-    expect(page).toContain("getAdminRiskChecklist");
-    expect(page).toContain("listAdminBidQaItems");
-    expect(page).toContain("getAdminBidQaCorrections");
-    expect(page).toContain("batchUpdateAdminBidQaItems");
     expect(page).toContain("batchUpdateAdminDataSources");
-    expect(page).toContain("updateAdminBidQaReview");
-    expect(page).toContain("StateDataQualityMatrix");
-    expect(page).toContain("stateDataQuality");
-    expect(page).toContain("stateQualityRiskFilter");
-    expect(page).toContain("stateQualityReasonFilter");
-    expect(page).toContain("STATE_DATA_QUALITY_RISK_FILTERS");
-    expect(page).toContain("filterStateDataQualityRows");
-    expect(page).toContain("stateAttachmentRealRatio");
-    expect(page).toContain("State data quality action queue");
-    expect(page).toContain("report.actions");
-    expect(page).toContain("recommendedAction");
-    expect(page).toContain("CA/FL/IL/NY/TX P0 blockers are state data quality blockers");
-    expect(page).toContain("not live source-health failures");
-    expect(page).not.toContain("CA/FL/IL/NY/TX source-health production risk");
     expect(page).toContain("useAuth");
     expect(page).toContain("isAdmin");
     expect(page).toContain("isOperator");
@@ -45,50 +27,6 @@ describe("admin page", () => {
     expect(page).toContain('t("admin.forbiddenTitle")');
     expect(page).toContain("if (!canAccessAdminConsole) return");
     expect(page).toContain('t("admin.crawler")');
-    expect(page).toContain('t("admin.bidQa")');
-    expect(page).toContain('t("admin.riskCheck")');
-    expect(page).toContain('t("admin.riskCheckGlobalUrlTitle")');
-    expect(page).toContain('t("admin.riskCheckGlobalUrlDescription")');
-    expect(page).toContain('t("admin.riskCheckMoreIssues")');
-    expect(page).toContain('check.id === "global-url-validity"');
-    expect(page).toContain('t("admin.refreshRiskCheck")');
-    expect(page).toContain('t("admin.exportRiskCheck")');
-    expect(page).toContain("refreshRiskReport");
-    expect(page).toContain("exportRiskReport");
-    expect(page).toContain("URL.createObjectURL");
-    expect(page).toContain("risk-check-report");
-    expect(page).toContain("riskDetailBidHref");
-    expect(page).toContain("bidDetailPath");
-    expect(page).toContain("RiskDetailItem");
-    expect(page).toContain('t("admin.riskCheckHistory")');
-    expect(page).toContain('t("admin.riskCheckHistoryEmpty")');
-    expect(page).toContain('t("admin.riskCheckTrend")');
-    expect(page).toContain('t("admin.riskTrendGlobalUrlStable")');
-    expect(page).toContain('t("admin.riskTrendStateCoverageDeclined")');
-    expect(page).toContain('t("admin.riskTrendAttachmentChanged")');
-    expect(page).toContain("riskHistory");
-    expect(page).toContain("riskTrend");
-    expect(page).toContain("riskReport");
-    expect(page).toContain("RiskCheck");
-    expect(page).toContain('t("admin.qualityScore")');
-    expect(page).toContain('t("admin.archiveIssues")');
-    expect(page).toContain('t("admin.markReviewed")');
-    expect(page).toContain('t("admin.displayStatus")');
-    expect(page).toContain('t("admin.publishBid")');
-    expect(page).toContain('t("admin.suppressBid")');
-    expect(page).toContain('t("admin.saveCorrections")');
-    expect(page).toContain('t("admin.batchReview")');
-    expect(page).toContain('t("admin.qaFilters")');
-    expect(page).toContain('t("admin.reviewedTo")');
-    expect(page).toContain('t("admin.correctionHistory")');
-    expect(page).toContain("bidQaFilters");
-    expect(page).toContain("selectedBidQaIds");
-    expect(page).toContain("visibleSelectedBidQaIds");
-    expect(page).toContain("setSelectedBidQaIds([])");
-    expect(page).toContain("correctionHistoryBidId");
-    expect(page).toContain("correctionDrafts");
-    expect(page).toContain("displayStatus");
-    expect(page).toContain("correctionCount");
     expect(page).toContain('t("admin.crawlerAdapter_dedicated")');
     expect(page).toContain('t("admin.crawlerMaturity_verified")');
     expect(page).toContain("source.crawlerCapabilities");
@@ -154,45 +92,15 @@ describe("admin page", () => {
           summary: { totalSources: 1, enabledSources: 1, healthySources: 1, failingSources: 0 },
           sources: [],
         }),
-        risk: async () => ({
-          report: { ok: true, checkedAt: "2026-06-10T00:00:00.000Z", checks: [] },
-          history: [],
-          trend: {
-            globalUrlAllPassing: true,
-            stateCoverageDeclined: false,
-            attachmentDownloadCountChanged: false,
-          },
-          stateDataQuality: {
-            ok: false,
-            checkedAt: "2026-06-10T00:00:00.000Z",
-            summary: {
-              totalStates: 50,
-              p0BlockerStates: 5,
-              p1WarningStates: 0,
-              p2WarningStates: 0,
-            },
-            rows: [],
-          },
-        }),
         crawlerLogs: async () => {
           throw new Error("crawler logs failed");
         },
-        bidQa: async () => ({
-          summary: { needsReview: 1, archiveIssues: 0, lowQuality: 0 },
-          items: [],
-        }),
       },
       createInitialAdminSectionState(),
     );
 
     expect(sections.crawlerLogs.status).toBe("error");
     expect(sections.dataSources.status).toBe("ready");
-    expect(sections.risk.status).toBe("ready");
-    expect(sections.risk.data?.stateDataQuality?.summary).toMatchObject({
-      totalStates: 50,
-      p0BlockerStates: 5,
-    });
-    expect(sections.bidQa.status).toBe("ready");
     expect(isAdminDashboardFullyFailed(sections)).toBe(false);
   });
 
@@ -204,18 +112,35 @@ describe("admin page", () => {
     const sections = await loadAdminDashboardSections(
       {
         dataSources: fail,
-        risk: fail,
         crawlerLogs: fail,
-        bidQa: fail,
       },
       createInitialAdminSectionState(),
     );
 
     expect(isAdminDashboardFullyFailed(sections)).toBe(true);
     expect(sections.dataSources.status).toBe("error");
-    expect(sections.risk.status).toBe("error");
     expect(sections.crawlerLogs.status).toBe("error");
-    expect(sections.bidQa.status).toBe("error");
+  });
+
+  it("no longer loads or renders the risk check and bid QA sections", async () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    // They live on /admin/quality and /admin/quality/bids now.
+    expect(Object.keys(createInitialAdminSectionState())).toEqual(["dataSources", "crawlerLogs"]);
+    for (const moved of [
+      "getAdminRiskChecklist",
+      "listAdminBidQaItems",
+      "updateAdminBidQaReview",
+      "StateDataQualityMatrix",
+      "<RiskCheck",
+      "bidQaFilters",
+      "selectedBidQaIds",
+      "refreshRiskReport",
+    ]) {
+      expect(page).not.toContain(moved);
+    }
+    // The sources section still filters by recommended action, with the type now owned by the risk section.
+    expect(page).toContain('import type { RecommendedActionFilter } from "@/components/admin/sections/RiskCheckSection"');
   });
 
   it("defines source health classification filter options and readable labels", () => {
@@ -341,109 +266,6 @@ describe("admin page", () => {
         now,
       ).map((source) => source.id),
     ).toEqual(["fl-unassigned-none"]);
-  });
-
-  it("filters state data quality action rows by recommended action", async () => {
-    const pageModule = await import("./page") as Record<string, unknown>;
-
-    expect(typeof pageModule.filterStateDataQualityActionsByRecommendedAction).toBe("function");
-
-    const filterActions = pageModule.filterStateDataQualityActionsByRecommendedAction as (
-      actions: Array<{ id: string; recommendedAction: string }>,
-      recommendedAction: string,
-    ) => Array<{ id: string }>;
-    const actions = [
-      {
-        id: "ca:crawler",
-        recommendedAction: "Run or repair the state crawler, then verify at least one active state bid is imported.",
-      },
-      {
-        id: "tx:archive",
-        recommendedAction: "Re-archive the failed attachment and verify the stored file and checksum.",
-      },
-      {
-        id: "ny:crawler",
-        recommendedAction: "Run or repair the state crawler, then verify at least one active state bid is imported.",
-      },
-    ];
-
-    expect(filterActions(actions, "all").map((action) => action.id)).toEqual([
-      "ca:crawler",
-      "tx:archive",
-      "ny:crawler",
-    ]);
-    expect(
-      filterActions(
-        actions,
-        "Run or repair the state crawler, then verify at least one active state bid is imported.",
-      ).map((action) => action.id),
-    ).toEqual(["ca:crawler", "ny:crawler"]);
-  });
-
-  it("filters state data quality matrix rows by P0/P1/P2 and reason code", async () => {
-    const pageModule = await import("./page") as Record<string, unknown>;
-
-    expect(pageModule.STATE_DATA_QUALITY_RISK_FILTERS).toEqual(["all", "P0", "P1", "P2"]);
-    expect(typeof pageModule.filterStateDataQualityRows).toBe("function");
-
-    const filterRows = pageModule.filterStateDataQualityRows as (
-      rows: Array<{
-        stateCode: string;
-        riskLevel: string;
-        reasons: Array<{ code: string; severity: string; message: string }>;
-      }>,
-      filters: { riskLevel: string; reasonCode: string },
-    ) => Array<{ stateCode: string }>;
-    const rows = [
-      {
-        stateCode: "CA",
-        riskLevel: "P0",
-        reasons: [{ code: "missing_state_bid", severity: "P0", message: "missing" }],
-      },
-      {
-        stateCode: "FL",
-        riskLevel: "P1",
-        reasons: [{ code: "fixture_fallback", severity: "P1", message: "fallback" }],
-      },
-      {
-        stateCode: "IL",
-        riskLevel: "P2",
-        reasons: [{ code: "risk_check_stale_or_missing", severity: "P2", message: "stale" }],
-      },
-      {
-        stateCode: "TX",
-        riskLevel: "P0",
-        reasons: [{ code: "attachment_archive_invalid", severity: "P0", message: "archive" }],
-      },
-    ];
-
-    expect(filterRows(rows, { riskLevel: "P0", reasonCode: "all" }).map((row) => row.stateCode)).toEqual(["CA", "TX"]);
-    expect(filterRows(rows, { riskLevel: "all", reasonCode: "fixture_fallback" }).map((row) => row.stateCode)).toEqual([
-      "FL",
-    ]);
-    expect(filterRows(rows, { riskLevel: "P0", reasonCode: "missing_state_bid" }).map((row) => row.stateCode)).toEqual([
-      "CA",
-    ]);
-  });
-
-  it("describes CA FL IL NY TX P0 blockers as state data quality blockers, not source health production risk", async () => {
-    const pageModule = await import("./page") as Record<string, unknown>;
-
-    expect(typeof pageModule.stateDataQualityP0BlockerNotice).toBe("function");
-
-    const noticeFor = pageModule.stateDataQualityP0BlockerNotice as (
-      rows: Array<{ stateCode: string; riskLevel: string }>,
-    ) => string | null;
-    const notice = noticeFor(
-      ["CA", "FL", "IL", "NY", "TX"].map((stateCode) => ({
-        stateCode,
-        riskLevel: "P0",
-      })),
-    );
-
-    expect(notice).toContain("CA/FL/IL/NY/TX P0 blockers are state data quality blockers");
-    expect(notice).toContain("not live source-health failures");
-    expect(notice).not.toContain("source-health production risk");
   });
 
   it("derives source health triage queue status from live review fields", () => {
