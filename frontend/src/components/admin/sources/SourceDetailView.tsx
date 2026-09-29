@@ -65,7 +65,7 @@ type Notice = { message: string; tone: "info" | "error" };
 
 export function SourceDetailView({ sourceId }: { sourceId: string }) {
   const { t } = useLanguage();
-  const { user, canRunOperations, canManageUsers } = useAdminSession();
+  const { user, isAdmin, canRunOperations, canManageUsers } = useAdminSession();
   const loadDetail = useCallback(() => getAdminDataSourceDetail(sourceId), [sourceId]);
   const resource = useAdminResource(loadDetail);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -131,6 +131,12 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
     if (crawlerConfigInputsChanged(source, next)) setConfigFormRevision((revision) => revision + 1);
     replaceSource(next);
   };
+
+  // A precheck writes its result into the row's robots and live-health columns, from which the server derives the
+  // readiness box, the header badges and the live-health card, so the detail is re-read. The response is not a row
+  // (nothing to swap in) and a precheck writes none of the config form's inputs (nothing to remount): the card keeps
+  // its fresh result, and the reload keeps the detail on screen while it runs.
+  const refreshAfterPrecheck = () => void resource.reload();
 
   const runNow = () =>
     act("run", async () => {
@@ -335,7 +341,9 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
               source={source}
               reviewerEmail={user.email}
               disabled={pending !== null}
+              canApprove={isAdmin}
               onSourceUpdated={replaceSourceFromApprovalTab}
+              onPrecheckCompleted={refreshAfterPrecheck}
             />
           )}
           <SourceComplianceCard source={source} />

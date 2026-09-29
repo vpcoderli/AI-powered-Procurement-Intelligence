@@ -49,12 +49,54 @@ export function precheckListMethodKey(method: string | null): string | null {
     : null;
 }
 
+export interface PrecheckRequestHandlers {
+  onResult: (result: AdminSourcePrecheckResult) => void;
+  onError: (message: string) => void;
+  onCompleted?: () => void;
+}
+
+/**
+ * Sends one precheck request and routes what came back. `onCompleted` runs once, after `onResult`, and only when the
+ * request succeeded: that is the one case where the server has written the precheck into the row's robots and
+ * live-health columns, so a parent holding a copy of the row has something to re-read. It sits outside the try on
+ * purpose: a failing refresh is not a failed precheck, and must not be shown as one beside the result just displayed.
+ */
+export async function runPrecheckRequest(
+  send: () => Promise<AdminSourcePrecheckResult>,
+  handlers: PrecheckRequestHandlers,
+): Promise<void> {
+  let result: AdminSourcePrecheckResult;
+  try {
+    result = await send();
+  } catch (caught: unknown) {
+    // Server message verbatim: PRECHECK_FAILED carries which leg (robots, crawler spawn,
+    // tenant discovery) was unavailable, and that is the actionable part.
+    handlers.onError(caught instanceof Error ? caught.message : String(caught));
+    return;
+  }
+  handlers.onResult(result);
+  handlers.onCompleted?.();
+}
+
 export interface SourcePrecheckPanelProps {
   source: AdminDataSource;
   /** Signed-in admin's email; prefills the approval form's reviewer field. */
   reviewerEmail: string | null;
   disabled?: boolean;
+  /**
+   * Offer the ledgered "approve county/city source" form. Its PATCH writes governance fields, which the API answers
+   * 403 to an operator, so a page passes whether the viewer is an admin. Defaults to true: a mount that says nothing
+   * keeps the form.
+   */
+  canApprove?: boolean;
   onSourceUpdated: (source: AdminDataSource) => void;
+  /**
+   * Called once each time a precheck request succeeds, after the panel has shown its result. The server has then
+   * written that result into the row's robots and live-health columns, so the parent's copy of the row is stale.
+   * Not called when the request fails (nothing was written); the base URL adoption hands its row back through
+   * `onSourceUpdated` instead.
+   */
+  onPrecheckCompleted?: () => void;
   /** Injectable for tests; defaults to the browser confirm dialog. */
   confirmAdopt?: (message: string) => boolean;
 }
@@ -63,7 +105,9 @@ export function SourcePrecheckPanel({
   source,
   reviewerEmail,
   disabled = false,
+  canApprove = true,
   onSourceUpdated,
+  onPrecheckCompleted,
   confirmAdopt,
 }: SourcePrecheckPanelProps) {
   const { t } = useLanguage();
@@ -75,16 +119,11 @@ export function SourcePrecheckPanel({
   const runPrecheck = () => {
     setRunning(true);
     setError(null);
-    precheckAdminDataSource(source.id, { limit: 5 })
-      .then((response) => {
-        setResult(response);
-      })
-      .catch((caught: unknown) => {
-        // Server message verbatim: PRECHECK_FAILED carries which leg (robots, crawler spawn,
-        // tenant discovery) was unavailable, and that is the actionable part.
-        setError(caught instanceof Error ? caught.message : String(caught));
-      })
-      .finally(() => setRunning(false));
+    void runPrecheckRequest(() => precheckAdminDataSource(source.id, { limit: 5 }), {
+      onResult: setResult,
+      onError: setError,
+      onCompleted: onPrecheckCompleted,
+    }).finally(() => setRunning(false));
   };
 
   const adoptSuggestedBaseUrl = () => {
@@ -219,7 +258,7 @@ export function SourcePrecheckPanel({
         </div>
       )}
 
-      {isLocalJurisdictionSource(source) && (
+      {canApprove && isLocalJurisdictionSource(source) && (
         <ApproveLocalSourceDialog
           source={source}
           reviewerEmail={reviewerEmail}

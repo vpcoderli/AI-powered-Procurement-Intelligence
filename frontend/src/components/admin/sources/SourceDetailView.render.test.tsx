@@ -1,6 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { SourcePrecheckPanelProps } from "@/components/admin/SourcePrecheckPanel";
 import { AdminApiError, type AdminDataSource, type AdminDataSourceDetail } from "@/lib/api/admin";
 import { en } from "@/lib/i18n/dictionaries/en";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
@@ -14,7 +15,12 @@ import { adminSourceDetailFixture, adminSourceFixture } from "./test-fixtures";
 // hooks' return types, so a change to either shape fails type-checking of this file instead of going unnoticed.
 type SessionStub = ReturnType<typeof useAdminSession>;
 type ResourceStub = ReturnType<typeof useAdminResource<AdminDataSourceDetail>>;
-const stubs = vi.hoisted(() => ({ session: null as SessionStub | null, resource: null as ResourceStub | null }));
+const stubs = vi.hoisted(() => ({
+  session: null as SessionStub | null,
+  resource: null as ResourceStub | null,
+  // What the view last handed the precheck card (see the SourcePrecheckPanel mock below).
+  precheckProps: null as SourcePrecheckPanelProps | null,
+}));
 
 vi.mock("../admin-session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../admin-session")>()),
@@ -29,8 +35,24 @@ vi.mock("../use-admin-resource", () => ({
     return stubs.resource;
   },
 }));
+// The real card, rendered as before; the wrapper only keeps the props the view passed it, so a test can read the
+// flags and call the callbacks the view wired in without a DOM.
+vi.mock("@/components/admin/SourcePrecheckPanel", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/components/admin/SourcePrecheckPanel")>();
+  return {
+    ...original,
+    SourcePrecheckPanel: (props: SourcePrecheckPanelProps) => {
+      stubs.precheckProps = props;
+      return <original.SourcePrecheckPanel {...props} />;
+    },
+  };
+});
 
 import { SourceDetailView } from "./SourceDetailView";
+
+// The writes the view can make to the resource, recorded so a test can tell a re-read from a row swap.
+const reload = vi.fn(async () => undefined);
+const setData = vi.fn();
 
 const admin = en.admin as Record<string, string>;
 
@@ -44,7 +66,7 @@ function signIn(role: AdminConsoleRole) {
 
 function load(state: { status: AdminResourceStatus; data?: AdminDataSourceDetail | null; error?: unknown }) {
   const resource: ResourceStub = {
-    status: state.status, data: state.data ?? null, error: state.error ?? null, reload: async () => undefined, setData: () => undefined,
+    status: state.status, data: state.data ?? null, error: state.error ?? null, reload, setData,
   };
   stubs.resource = resource;
 }
@@ -66,6 +88,9 @@ const stateDetail = (overrides: Partial<AdminDataSource> = {}) =>
   adminSourceDetailFixture(stateSource(overrides), { states: { level: "state", platform: "state_portal", approval: "approved", health: "healthy" } });
 
 beforeEach(() => {
+  reload.mockClear();
+  setData.mockClear();
+  stubs.precheckProps = null;
   signIn("admin");
   load({ status: "ready", data: adminSourceDetailFixture() });
 });
@@ -276,5 +301,52 @@ describe("SourceDetailView kept tabs", () => {
     expect(hasButton(config.markup, admin.crawlerConfigOpen)).toBe(false);
     expect(approval.markup).toContain(profileTitle);
     expect(approval.markup).not.toContain(admin.sourcePrecheckTitle);
+  });
+
+  // The approve form's PATCH writes governance fields, which the API answers 403 to an operator.
+  it("offers the county/city approve form in the precheck card to an admin only", () => {
+    const approvalMarkup = () => panelsOf(render())[2].markup;
+
+    expect(hasButton(approvalMarkup(), admin.approveLocalSourceOpen)).toBe(true);
+
+    signIn("operator");
+    const operator = approvalMarkup();
+    // An operator still runs prechecks (and may write a suggested base URL); only the governance form is gone.
+    expect(operator).toContain(admin.sourcePrecheckTitle);
+    expect(hasButton(operator, admin.sourcePrecheckRun)).toBe(true);
+    expect(hasButton(operator, admin.approveLocalSourceOpen)).toBe(false);
+  });
+});
+
+describe("SourceDetailView precheck card wiring", () => {
+  it("tells the card whether the viewer may approve: an admin may, an operator may not", () => {
+    render();
+    expect(stubs.precheckProps?.canApprove).toBe(true);
+
+    signIn("operator");
+    render();
+    expect(stubs.precheckProps?.canApprove).toBe(false);
+  });
+
+  it("does not mount the card for support, which cannot run operations", () => {
+    signIn("support");
+    render();
+
+    expect(stubs.precheckProps).toBeNull();
+  });
+
+  // A precheck writes its result into the row's robots and live-health columns, from which the server derives the
+  // readiness box, the header badges and the live-health card; the response itself is not a row.
+  it("re-reads the detail once when a precheck completes, without swapping a row in", () => {
+    render();
+    const props = stubs.precheckProps;
+    expect(props?.onPrecheckCompleted).toBeTypeOf("function");
+    expect(reload).not.toHaveBeenCalled();
+
+    props?.onPrecheckCompleted?.();
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    // Nothing is written into the loaded detail, so the card keeps its fresh result and the panels stay as they are.
+    expect(setData).not.toHaveBeenCalled();
   });
 });

@@ -75,6 +75,22 @@ describe("source detail view", () => {
     expect(crawlerConfigInputsChanged(row, { ...row, fetchConfig: { enrichment: { enabled: false } } })).toBe(true);
   });
 
+  // The precheck card's approve form PATCHes governance fields, which the API answers 403 to an operator, so only an
+  // admin is offered it. A precheck writes its result into the row's robots and live-health columns, from which the
+  // server derives the readiness bucket, the header badges and the live-health card: the detail is re-read after it.
+  it("hides the ledgered approve form from non-admins and re-reads the detail after a precheck", () => {
+    const view = read("SourceDetailView.tsx");
+
+    expect(view).toContain("const { user, isAdmin, canRunOperations, canManageUsers } = useAdminSession();");
+    expect(view).toContain("canApprove={isAdmin}");
+    expect(view).toContain("onPrecheckCompleted={refreshAfterPrecheck}");
+    expect(view).toContain("const refreshAfterPrecheck = () => void resource.reload();");
+    // Neither the card's identity nor the kept config form changes on a precheck: a key on the card would remount it
+    // and drop its fresh result, and only an approval-tab write that changed the form's inputs may rebuild that form.
+    expect(view).not.toMatch(/<SourcePrecheckPanel[^>]*\bkey=/);
+    expect(view.match(/setConfigFormRevision\(/g)).toHaveLength(1);
+  });
+
   it("puts the source's profile and governance card on the approval tab and reports a run by its own outcome", () => {
     const view = read("SourceDetailView.tsx");
 
