@@ -5,7 +5,7 @@ import { dataSources } from "@/server/db/schema";
 import type { CrawlTaskResult } from "@/server/crawler/state-runner";
 import type { SourceComplianceReport } from "@/server/source-validity/robots-compliance-scan";
 import { AdminDataSourceNotFoundError } from "./data-sources-repository";
-import { SourcePrecheckFailedError, precheckBaseUrlFromNotes, runSourcePrecheck } from "./source-precheck";
+import { SourcePrecheckFailedError, precheckBaseUrlFromNotes, precheckSuggestedBaseUrlFromNotes, runSourcePrecheck } from "./source-precheck";
 
 type RunCrawlTask = (typeof import("@/server/crawler/state-runner"))["runCrawlTask"];
 
@@ -144,6 +144,8 @@ describe("runSourcePrecheck", () => {
     expect(JSON.parse(readSource()?.liveHealthNotes ?? "{}")).toMatchObject({
       precheck: { verdict: "ready", fetch: { items: 4 } },
     });
+    // A precheck that reached the tenant has no address to suggest.
+    expect(precheckSuggestedBaseUrlFromNotes(readSource()?.liveHealthNotes ?? null)).toBeNull();
   });
 
   it("records the fetched base_url in the precheck notes", async () => {
@@ -164,6 +166,39 @@ describe("runSourcePrecheck", () => {
     expect(precheckBaseUrlFromNotes(JSON.stringify({ precheck: { verdict: "ready" } }))).toBeNull();
     expect(precheckBaseUrlFromNotes(JSON.stringify({ precheck: { baseUrl: 42 } }))).toBeNull();
     expect(precheckBaseUrlFromNotes(JSON.stringify(null))).toBeNull();
+  });
+
+  it("precheckSuggestedBaseUrlFromNotes reads the stored tenant-probe suggestion", () => {
+    const suggestion = "https://www.bidnetdirect.com/colorado/laramiecountywyominggovernment";
+
+    expect(precheckSuggestedBaseUrlFromNotes(JSON.stringify({ precheck: { baseUrl: BASE_URL, suggestedBaseUrl: suggestion } }))).toBe(suggestion);
+    // Surrounding whitespace is dropped, like the writer side does when it records the suggestion.
+    expect(precheckSuggestedBaseUrlFromNotes(JSON.stringify({ precheck: { suggestedBaseUrl: `  ${suggestion}\n` } }))).toBe(suggestion);
+    // The two readers are independent: each key answers only for itself.
+    const onlyBase = JSON.stringify({ precheck: { baseUrl: BASE_URL } });
+    const onlySuggestion = JSON.stringify({ precheck: { suggestedBaseUrl: suggestion } });
+    expect(precheckBaseUrlFromNotes(onlyBase)).toBe(BASE_URL);
+    expect(precheckSuggestedBaseUrlFromNotes(onlyBase)).toBeNull();
+    expect(precheckBaseUrlFromNotes(onlySuggestion)).toBeNull();
+    expect(precheckSuggestedBaseUrlFromNotes(onlySuggestion)).toBe(suggestion);
+  });
+
+  it("precheckSuggestedBaseUrlFromNotes tolerates garbage and answers null for 'no suggestion'", () => {
+    // A ready/empty precheck stores an explicit null; pre-phase-3 notes have no key at all.
+    expect(precheckSuggestedBaseUrlFromNotes(JSON.stringify({ precheck: { suggestedBaseUrl: null } }))).toBeNull();
+    expect(precheckSuggestedBaseUrlFromNotes(JSON.stringify({ precheck: { verdict: "ready" } }))).toBeNull();
+    // Not a precheck record at all: free-text triage notes, other JSON shapes, wrong value types.
+    expect(precheckSuggestedBaseUrlFromNotes(null)).toBeNull();
+    expect(precheckSuggestedBaseUrlFromNotes("")).toBeNull();
+    expect(precheckSuggestedBaseUrlFromNotes("not json")).toBeNull();
+    expect(precheckSuggestedBaseUrlFromNotes(JSON.stringify(null))).toBeNull();
+    expect(precheckSuggestedBaseUrlFromNotes(JSON.stringify("text"))).toBeNull();
+    expect(precheckSuggestedBaseUrlFromNotes(JSON.stringify([1, 2]))).toBeNull();
+    expect(precheckSuggestedBaseUrlFromNotes(JSON.stringify({ precheck: null }))).toBeNull();
+    expect(precheckSuggestedBaseUrlFromNotes(JSON.stringify({ precheck: "x" }))).toBeNull();
+    expect(precheckSuggestedBaseUrlFromNotes(JSON.stringify({ precheck: { suggestedBaseUrl: 42 } }))).toBeNull();
+    expect(precheckSuggestedBaseUrlFromNotes(JSON.stringify({ precheck: { suggestedBaseUrl: ["https://x"] } }))).toBeNull();
+    expect(precheckSuggestedBaseUrlFromNotes(JSON.stringify({ precheck: { suggestedBaseUrl: "   " } }))).toBeNull();
   });
 
   it("dry-runs with the requested limit, no persistence and no governance gate", async () => {
@@ -290,6 +325,12 @@ describe("runSourcePrecheck", () => {
       fetch: { status: "failed", httpStatus: 404, errorCode: "HtmlPageError" },
     });
     expect(readSource()?.liveHealthDisposition).toBe("needs_fix");
+    // Writer/reader contract: the readiness summary lists this suggestion from the stored notes,
+    // next to the base_url the precheck actually fetched. Nothing is repointed.
+    const notes = readSource()?.liveHealthNotes ?? null;
+    expect(precheckSuggestedBaseUrlFromNotes(notes)).toBe("https://www.bidnetdirect.com/new-york/erie-county-ny/solicitations/open-bids");
+    expect(precheckBaseUrlFromNotes(notes)).toBe(BASE_URL);
+    expect(readSource()?.baseUrl).toBe(BASE_URL);
   });
 
   it("does not probe after a non-404 failure and flags a WAF challenge", async () => {

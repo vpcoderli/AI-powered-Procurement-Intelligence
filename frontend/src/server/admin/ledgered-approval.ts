@@ -18,7 +18,7 @@ import {
   type PlatformReview,
 } from "./platform-reviews-repository";
 import { isPrecheckFresh } from "./precheck-queue";
-import { precheckBaseUrlFromNotes } from "./source-precheck";
+import { precheckBaseUrlFromNotes, precheckSuggestedBaseUrlFromNotes } from "./source-precheck";
 
 export type LedgeredApprovalReason =
   | "not_local" | "already_approved" | "blocked" | "missing_platform_review" | "platform_review_expired"
@@ -94,6 +94,14 @@ export interface ApprovalReadinessEntry {
   label: string;
   providerFamily: string;
   jurisdictionLevel: string | null;
+  /** The row's current `base_url`. */
+  baseUrl: string | null;
+  /**
+   * The address the tenant probe suggested in the stored precheck notes, for the console to show next to
+   * `baseUrl` (spec §7.3). Display only: nothing ever writes it into `base_url`; a person applies it
+   * through the existing source edit.
+   */
+  suggestedBaseUrl: string | null;
   bucket: ApprovalReadinessBucket;
   reason: LedgeredApprovalReason | null;
   precheckRequestedAt: string | null;
@@ -127,6 +135,7 @@ export function summarizeApprovalReadiness(
     counts[bucket] += 1;
     entries.push({
       id: source.id, label: source.label, providerFamily: source.providerFamily, jurisdictionLevel: source.jurisdictionLevel,
+      baseUrl: source.baseUrl, suggestedBaseUrl: precheckSuggestedBaseUrlFromNotes(source.liveHealthNotes),
       bucket, reason: evaluation.reason, precheckRequestedAt: source.precheckRequestedAt,
       liveHealthDisposition: source.liveHealthDisposition, liveHealthReviewedAt: source.liveHealthReviewedAt,
     });

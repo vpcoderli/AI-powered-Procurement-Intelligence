@@ -199,7 +199,9 @@ export interface BatchUpdateAdminDataSourcesResponse {
 /**
  * `GET /api/admin/data-sources/approval-readiness`: every local source (optionally of one
  * platform) placed in one console bucket, the count per bucket and, when a platform is named, its
- * effective platform review.
+ * effective platform review. Each entry carries the row's current `baseUrl` and, for a source whose
+ * stored precheck holds one, the tenant probe's `suggestedBaseUrl` (spec §7.3). The suggestion is
+ * display only; nothing applies it automatically.
  */
 export type AdminApprovalReadinessBucket = ApprovalReadinessBucket;
 export type AdminApprovalReadinessEntry = ApprovalReadinessEntry;

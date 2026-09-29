@@ -216,6 +216,50 @@ describe("GET /api/admin/data-sources/approval-readiness", () => {
     expect(queued).toMatchObject({ bucket: "awaiting_precheck", reason: "precheck_missing", precheckRequestedAt: "2026-09-29T07:30:00.000Z" });
   });
 
+  it("lists the tenant probe's suggested address next to the current base_url for a needs_fix source, and nothing for legacy or garbage notes", async () => {
+    seedBidnetReview();
+    const oldUrl = "https://www.bidnetdirect.com/wyoming/laramie-county/solicitations/open-bids";
+    const suggestion = "https://www.bidnetdirect.com/colorado/laramiecountywyominggovernment";
+    testDb.db
+      .insert(dataSources)
+      .values([
+        localRow({
+          id: "bidnet_wy_laramie",
+          label: "Laramie County",
+          baseUrl: oldUrl,
+          liveHealthDisposition: "needs_fix",
+          liveHealthNotes: JSON.stringify({ precheck: { baseUrl: oldUrl, verdict: "needs_fix", suggestedBaseUrl: suggestion } }),
+        }),
+        localRow({
+          id: "bidnet_mi_legacy",
+          label: "Legacy notes",
+          liveHealthDisposition: "needs_fix",
+          liveHealthNotes: JSON.stringify({ precheck: { verdict: "needs_fix" } }),
+        }),
+        localRow({ id: "bidnet_mi_garbage", label: "Garbage notes", liveHealthDisposition: "needs_fix", liveHealthNotes: "triaged by hand, not json" }),
+      ])
+      .run();
+
+    const response = await createAdminApprovalReadinessGet(testDb.db)(new Request(`${ENDPOINT}?providerFamily=bidnet`));
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const byId = Object.fromEntries(body.sources.map((entry: { id: string }) => [entry.id, entry]));
+    expect(byId.bidnet_wy_laramie).toMatchObject({
+      bucket: "needs_fix",
+      reason: "precheck_needs_fix",
+      baseUrl: oldUrl,
+      suggestedBaseUrl: suggestion,
+    });
+    // The seeded approvable row (empty precheck, no suggestion key), the needs_fix row seeded without one, legacy and garbage notes.
+    for (const id of ["bidnet_mi_a", "bidnet_mi_b", "bidnet_mi_legacy", "bidnet_mi_garbage"]) {
+      expect(byId[id].suggestedBaseUrl, id).toBeNull();
+    }
+    expect(byId.bidnet_mi_a.baseUrl).toBe(URL_A);
+    // Read-only: the suggestion is only listed, the row is never repointed.
+    expect(testDb.db.select().from(dataSources).all().find((row) => row.id === "bidnet_wy_laramie")?.baseUrl).toBe(oldUrl);
+  });
+
   it("is a console read: admin, operator and support may call it", async () => {
     await createAdminApprovalReadinessGet(testDb.db)(new Request(ENDPOINT));
 
@@ -274,10 +318,17 @@ describe("GET /api/admin/data-sources/approval-readiness", () => {
       access_boundary: PLATFORM_ACCESS_BOUNDARY, reviewer: "apsi.lily@gmail.com", legal_opinion_reference: null,
       reviewed_at: "2026-09-29T08:00:00.000Z", next_review_at: "2027-09-29", notes: null, created_by: null, created_at: "2026-09-29T08:00:00.000Z",
     };
+    const fixUrl = "https://www.bidnetdirect.com/ohio/y-county/solicitations/open-bids";
+    const suggestion = "https://www.bidnetdirect.com/ohio/ycountyohio/solicitations/open-bids";
+    const mysqlFixSource = {
+      ...mysqlSource,
+      id: "bidnet_oh_y", label: "Y County", baseUrl: fixUrl, liveHealthDisposition: "needs_fix",
+      liveHealthNotes: JSON.stringify({ precheck: { baseUrl: fixUrl, verdict: "needs_fix", suggestedBaseUrl: suggestion } }),
+    };
     const queries: string[] = [];
     const query = vi.fn(async (sql: string) => {
       queries.push(sql);
-      if (sql.includes("FROM data_sources")) return [[mysqlSource]];
+      if (sql.includes("FROM data_sources")) return [[mysqlSource, mysqlFixSource]];
       if (sql.includes("FROM platform_reviews")) return [[reviewRow]];
       return [[]];
     });
@@ -290,8 +341,11 @@ describe("GET /api/admin/data-sources/approval-readiness", () => {
     const body = await response.json();
     expect(body.platformReview.status).toBe("valid");
     expect(body.platformReview.review.id).toBe("prv_mysql_1");
-    expect(body.sources.map((entry: { id: string }) => entry.id)).toEqual(["bidnet_oh_x"]);
+    expect(body.sources.map((entry: { id: string }) => entry.id)).toEqual(["bidnet_oh_x", "bidnet_oh_y"]);
     expect(body.counts.approvable).toBe(1);
+    expect(body.counts.needs_fix).toBe(1);
+    expect(body.sources[0]).toMatchObject({ baseUrl: URL_A, suggestedBaseUrl: null });
+    expect(body.sources[1]).toMatchObject({ bucket: "needs_fix", baseUrl: fixUrl, suggestedBaseUrl: suggestion });
     expect(queries.some((sql) => sql.includes("FROM platform_reviews"))).toBe(true);
     // The SQLite fixtures (bidnet_mi_*) never appear: the MySQL store answered everything.
     expect(JSON.stringify(body)).not.toContain("bidnet_mi_a");

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AdminApiError,
+  type AdminApprovalReadinessSummary,
   batchUpdateAdminDataSources,
   batchUpdateAdminBidQaItems,
   createAdminUser,
@@ -576,6 +577,37 @@ describe("admin API client", () => {
 
     await expect(getAdminApprovalReadiness("bidnet")).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources/approval-readiness?providerFamily=bidnet");
+  });
+
+  it("hands the console each source's current base_url and the tenant probe's suggestion", async () => {
+    // Typed as the client's own summary type: a field the server entry carries but the client type lacks
+    // (or the reverse) is a type error here, not a silent runtime drop.
+    const body: AdminApprovalReadinessSummary = {
+      providerFamily: "bidnet",
+      platformReview: { status: "valid", review: null },
+      counts: { approvable: 0, awaiting_precheck: 0, needs_fix: 1, missing_platform_review: 0, approved: 0, blocked: 0 },
+      sources: [
+        {
+          id: "bidnet_wy_laramie",
+          label: "Laramie County",
+          providerFamily: "bidnet",
+          jurisdictionLevel: "county",
+          baseUrl: "https://www.bidnetdirect.com/wyoming/laramie-county/solicitations/open-bids",
+          suggestedBaseUrl: "https://www.bidnetdirect.com/colorado/laramiecountywyominggovernment",
+          bucket: "needs_fix",
+          reason: "precheck_needs_fix",
+          precheckRequestedAt: null,
+          liveHealthDisposition: "needs_fix",
+          liveHealthReviewedAt: "2026-09-25T00:00:00.000Z",
+        },
+      ],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await getAdminApprovalReadiness("bidnet");
+
+    expect(result.sources[0].baseUrl).toBe("https://www.bidnetdirect.com/wyoming/laramie-county/solicitations/open-bids");
+    expect(result.sources[0].suggestedBaseUrl).toBe("https://www.bidnetdirect.com/colorado/laramiecountywyominggovernment");
   });
 
   it("reads the approval readiness of every local source when no platform is named", async () => {

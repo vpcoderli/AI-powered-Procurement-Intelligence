@@ -126,6 +126,62 @@ describe("summarizeApprovalReadiness (all platforms)", () => {
   });
 });
 
+describe("summarizeApprovalReadiness (base_url and the tenant probe's suggestion)", () => {
+  const SUGGESTION = "https://www.bidnetdirect.com/colorado/laramiecountywyominggovernment";
+  const OLD_URL = "https://www.bidnetdirect.com/wyoming/laramie-county/solicitations/open-bids";
+
+  function entriesById(sources: AdminDataSource[]) {
+    const summary = summarizeApprovalReadiness(sources, [review()], NOW, "bidnet");
+    return Object.fromEntries(summary.sources.map((entry) => [entry.id, entry]));
+  }
+
+  it("lists the row's current base_url and the suggestion the stored precheck notes carry for a needs_fix source", () => {
+    const entries = entriesById([
+      source({
+        id: "fix",
+        baseUrl: OLD_URL,
+        liveHealthDisposition: "needs_fix",
+        liveHealthNotes: JSON.stringify({ precheck: { baseUrl: OLD_URL, verdict: "needs_fix", suggestedBaseUrl: SUGGESTION } }),
+      }),
+    ]);
+
+    expect(entries.fix).toMatchObject({
+      bucket: "needs_fix",
+      reason: "precheck_needs_fix",
+      baseUrl: OLD_URL,
+      suggestedBaseUrl: SUGGESTION,
+    });
+  });
+
+  it("has no suggestion for a source whose precheck recorded none, for legacy or garbage notes, or for no notes at all", () => {
+    const entries = entriesById([
+      source({ id: "ok" }),
+      source({ id: "explicit_null", liveHealthDisposition: "needs_fix", liveHealthNotes: JSON.stringify({ precheck: { baseUrl: URL_A, verdict: "needs_fix", suggestedBaseUrl: null } }) }),
+      source({ id: "legacy", liveHealthDisposition: "needs_fix", liveHealthNotes: JSON.stringify({ precheck: { verdict: "needs_fix" } }) }),
+      source({ id: "garbage", liveHealthDisposition: "needs_fix", liveHealthNotes: "operator note, not json" }),
+      source({ id: "never", baseUrl: null, liveHealthDisposition: null, liveHealthNotes: null, liveHealthReviewedAt: null }),
+    ]);
+
+    expect(Object.values(entries).map((entry) => [entry.id, entry.baseUrl, entry.suggestedBaseUrl])).toEqual([
+      ["ok", URL_A, null],
+      ["explicit_null", URL_A, null],
+      ["legacy", URL_A, null],
+      ["garbage", URL_A, null],
+      ["never", null, null],
+    ]);
+  });
+
+  it("only reports the suggestion: the entry keeps the row's own address and the bucket is unaffected", () => {
+    const entries = entriesById([
+      source({ id: "fix", liveHealthDisposition: "needs_fix", liveHealthNotes: JSON.stringify({ precheck: { baseUrl: URL_A, verdict: "needs_fix", suggestedBaseUrl: SUGGESTION } }) }),
+    ]);
+
+    expect(entries.fix.baseUrl).toBe(URL_A);
+    expect(entries.fix.baseUrl).not.toBe(entries.fix.suggestedBaseUrl);
+    expect(entries.fix.bucket).toBe("needs_fix");
+  });
+});
+
 describe("approveSourcesWithLedger (SQLite)", () => {
   let testDb: TestDatabase;
 
@@ -159,6 +215,26 @@ describe("approveSourcesWithLedger (SQLite)", () => {
     expect(b?.approvalStatus).toBeNull();
     const events = testDb.db.$client.prepare("SELECT source_id FROM source_approval_events ORDER BY source_id").all() as { source_id: string }[];
     expect(events.map((event) => event.source_id)).toEqual(["bidnet_mi_a", "state_mi"]);
+  });
+
+  it("never repoints a needs_fix source to the tenant probe's suggestion: it stays unapproved and keeps its base_url", async () => {
+    const suggestion = "https://www.bidnetdirect.com/mitn/b-county/solicitations/open-bids";
+    testDb.db.$client
+      .prepare("UPDATE data_sources SET live_health_notes = ? WHERE id = 'bidnet_mi_b'")
+      .run(JSON.stringify({ precheck: { baseUrl: "https://x/b", verdict: "needs_fix", suggestedBaseUrl: suggestion } }));
+    createPlatformReview(testDb.db, validatePlatformReviewInput({ providerFamily: "bidnet", tosUrl: "https://www.bidnetdirect.com/tsandcs", tosReviewedAt: "2026-09-29", robotsUrl: "https://www.bidnetdirect.com/robots.txt", robotsCheckedAt: "2026-09-29T07:00:00.000Z", robotsSummary: "ok", reviewer: "apsi.lily@gmail.com", nextReviewAt: "2027-09-29" }, NOW), { now: NOW });
+    const generic = { approvedForIngestion: true, approvalStatus: "approved", legalReviewStatus: "approved_public", approvalNotes: "generic" } as const;
+
+    const rowB = () => testDb.db.select().from(dataSources).all().find((row) => row.id === "bidnet_mi_b");
+    const before = rowB();
+
+    const outcomes = await approveSourcesWithLedger({ database: testDb.db }, ["bidnet_mi_b"], { actorUserId: null, now: NOW, genericInput: generic });
+
+    expect(outcomes.map((entry) => [entry.outcome, entry.reason])).toEqual([["skipped", "precheck_needs_fix"]]);
+    // Nothing at all was written for it: base_url, fetch_config, approval columns and updated_at are as they were.
+    expect(rowB()).toEqual(before);
+    expect(rowB()).toMatchObject({ baseUrl: "https://x/b", approvalStatus: null });
+    expect(testDb.db.$client.prepare("SELECT COUNT(*) AS n FROM source_approval_events").get()).toEqual({ n: 0 });
   });
 });
 

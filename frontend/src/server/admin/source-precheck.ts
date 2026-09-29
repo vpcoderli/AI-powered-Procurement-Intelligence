@@ -221,15 +221,34 @@ function reasonsFor(
   return reasons;
 }
 
-/** The base_url a stored precheck actually fetched (spec §7.3 check 3); null for pre-phase-3 notes. */
-export function precheckBaseUrlFromNotes(notes: string | null): string | null {
+/**
+ * One string field of the `precheck` record `runSourcePrecheck` stores in `live_health_notes`. The
+ * column also holds free-text triage notes, so anything that is not that record reads as null.
+ */
+function storedPrecheckString(notes: string | null, key: "baseUrl" | "suggestedBaseUrl"): string | null {
   if (!notes) return null;
   try {
-    const parsed = JSON.parse(notes) as { precheck?: { baseUrl?: unknown } };
-    return typeof parsed?.precheck?.baseUrl === "string" ? parsed.precheck.baseUrl : null;
+    const parsed = JSON.parse(notes) as { precheck?: Record<string, unknown> } | null;
+    const value = parsed?.precheck?.[key];
+    return typeof value === "string" ? value : null;
   } catch {
     return null;
   }
+}
+
+/** The base_url a stored precheck actually fetched (spec §7.3 check 3); null for pre-phase-3 notes. */
+export function precheckBaseUrlFromNotes(notes: string | null): string | null {
+  return storedPrecheckString(notes, "baseUrl");
+}
+
+/**
+ * The address the tenant probe suggested in a stored precheck (spec §7.3: a `needs_fix` source is
+ * listed with it and never repointed automatically). Null when the precheck recorded none — only a
+ * 404 dry run the probe could confirm does — or when the notes are pre-phase-3 or not a precheck record.
+ */
+export function precheckSuggestedBaseUrlFromNotes(notes: string | null): string | null {
+  const suggestion = storedPrecheckString(notes, "suggestedBaseUrl")?.trim();
+  return suggestion ? suggestion : null;
 }
 
 /** Runs the C5 pre-check for one source and writes its robots/live-health evidence back. */
