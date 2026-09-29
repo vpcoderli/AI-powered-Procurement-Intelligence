@@ -143,7 +143,7 @@ http://localhost:3000/admin
 ADMIN_UI_LOCAL_BYPASS=true npm run dev
 ```
 
-如果配置了 `CRAWLER_RUN_TOKEN`，调用爬虫 API 时需要提供 token；未配置时，本地接口允许直接运行。
+手动运行爬虫的接口（`POST /api/crawler/state/run` 等）需要 admin / operator 会话（后台按钮走的就是这个会话；本地开发的管理绕过只对 localhost 请求有效）；配置了 `CRAWLER_RUN_TOKEN` 时，带上匹配的 `Authorization: Bearer <token>` 或 `x-crawler-token` 头也可以调用。不带会话也不带 token 的调用只在同时满足这些条件时放行：没有配置 `CRAWLER_RUN_TOKEN`、`NODE_ENV` 为 development/test、请求来自 localhost，并且设置了 `CRAWLER_ALLOW_UNAUTHENTICATED_LOCAL_RUN=true`（见 `frontend/src/server/crawler/run-authorization.ts`）。
 
 ### 运行全部州级爬虫
 
