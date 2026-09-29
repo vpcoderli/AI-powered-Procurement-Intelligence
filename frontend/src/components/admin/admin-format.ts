@@ -25,6 +25,8 @@ export function formatDate(value: string | null) {
 const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
 const US_DAY = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/;
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/;
+/** The last second of a UTC day, as endOfDayIsoFromDateInput writes it (`.000`; `.999` is a JavaScript end of day). */
+const END_OF_DAY_UTC = /^(\d{4}-\d{2}-\d{2})T23:59:59(?:\.(?:000|999))?(?:Z|[+-]00:?00)$/;
 
 /** The calendar day a `YYYY-MM-DD` or `M/D/YYYY` value names, as midnight UTC; null for anything else or an impossible day. */
 function calendarDay(text: string): Date | null {
@@ -38,33 +40,53 @@ function calendarDay(text: string): Date | null {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? date : null;
 }
 
+/** The moment an ISO timestamp names (a space may stand for the "T"); null for any other text, even one Date could read. */
+function isoTimestamp(text: string): Date | null {
+  if (!ISO_TIMESTAMP.test(text)) return null;
+  const moment = new Date(text.replace(" ", "T"));
+  return Number.isFinite(moment.getTime()) ? moment : null;
+}
+
 /**
- * A bid's published or deadline value, as the crawlers stored it: a calendar day (`YYYY-MM-DD`, or the US
- * portals' `M/D/YYYY`), a timestamp, or the portal's own text. A calendar day is printed as that day, never
- * shifted into the viewer's time zone and never given a midnight time; an ISO timestamp goes through
- * formatDate; anything else is printed as stored rather than guessed at.
+ * The calendar day of a timestamp stored as the last second of that day in UTC, which is how a corrected deadline or
+ * an override expiry is saved for a picked day (endOfDayIsoFromDateInput); null for any other text.
+ */
+function endOfDayUtcDay(text: string): Date | null {
+  const end = END_OF_DAY_UTC.exec(text);
+  return end ? calendarDay(end[1]) : null;
+}
+
+/**
+ * A bid's published or deadline value, as the crawlers or an admin's correction stored it: a calendar day
+ * (`YYYY-MM-DD`, or the US portals' `M/D/YYYY`), a timestamp, or the portal's own text. A calendar day is printed
+ * as that day, never shifted into the viewer's time zone and never given a midnight time. So is a timestamp at
+ * 23:59:59 UTC, which is how a corrected deadline is saved for the picked day. Any other ISO timestamp goes
+ * through formatDate; anything else is printed as stored rather than guessed at.
  */
 export function formatBidDate(value: string | null) {
   const text = value?.trim();
   if (!text) return "-";
 
-  const day = calendarDay(text);
+  const day = calendarDay(text) ?? endOfDayUtcDay(text);
   if (day) return new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" }).format(day);
 
-  if (ISO_TIMESTAMP.test(text)) {
-    const normalized = text.replace(" ", "T");
-    if (Number.isFinite(new Date(normalized).getTime())) return formatDate(normalized);
-  }
-  return text;
+  return isoTimestamp(text) ? formatDate(text.replace(" ", "T")) : text;
 }
 
+/**
+ * What a date `<input>` takes for a stored date (a bid's deadline, an override's expiry). A calendar day (`YYYY-MM-DD`,
+ * or the US portals' `M/D/YYYY`) is exactly that day, never moved by the viewer's time zone. An ISO timestamp is its
+ * UTC date, which for a corrected deadline or an expiry (saved as 23:59:59 UTC) is the day that was picked. Anything
+ * else, the portals' own text included, gives "" rather than a guess.
+ */
 export function formatDateInputValue(value: string | null) {
-  if (!value) return "";
+  const text = value?.trim();
+  if (!text) return "";
 
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return "";
+  const day = calendarDay(text);
+  if (day) return day.toISOString().slice(0, 10);
 
-  return date.toISOString().slice(0, 10);
+  return isoTimestamp(text)?.toISOString().slice(0, 10) ?? "";
 }
 
 /** A yyyy-mm-dd input value as the last second of that day in UTC (override expiry, QA deadline). */

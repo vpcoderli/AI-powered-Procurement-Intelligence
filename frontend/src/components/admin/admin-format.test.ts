@@ -65,6 +65,23 @@ describe("textPreview", () => {
 const calendarDay = (year: number, month: number, day: number) =>
   new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(year, month - 1, day)));
 
+/** East of UTC (Shanghai, +8), west of it (Bogota, -5, all year), UTC itself and the two extremes. */
+const ZONES = ["Asia/Shanghai", "America/Bogota", "UTC", "Pacific/Honolulu", "Pacific/Kiritimati"];
+
+/** Runs `check` under each time zone in turn, and puts the process's own zone back afterwards. */
+function inEachZone(check: (zone: string) => void, zones: readonly string[] = ZONES) {
+  const previous = process.env.TZ;
+  try {
+    for (const zone of zones) {
+      process.env.TZ = zone;
+      check(zone);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.TZ;
+    else process.env.TZ = previous;
+  }
+}
+
 describe("bid dates", () => {
   it("prints a calendar day as that day, a timestamp like formatDate, and anything else as stored", () => {
     expect(formatBidDate("2026-09-01")).toBe(calendarDay(2026, 9, 1));
@@ -97,6 +114,39 @@ describe("bid dates", () => {
     } finally {
       if (previous === undefined) delete process.env.TZ;
       else process.env.TZ = previous;
+    }
+  });
+
+  // A corrected deadline is saved as the end of the picked day in UTC (endOfDayIsoFromDateInput). As a moment it printed
+  // as "Jul 11, 07:59 AM" in UTC+8: the next day and no year.
+  it("prints a timestamp stored as the end of a day in UTC as that day, the way a corrected deadline is saved", () => {
+    inEachZone((zone) => {
+      for (const stored of [
+        "2026-07-10T23:59:59.000Z",
+        "2026-07-10T23:59:59.999Z",
+        "2026-07-10T23:59:59Z",
+        "2026-07-10T23:59:59.000+00:00",
+        "2026-07-10T23:59:59.999-00:00",
+        " 2026-07-10T23:59:59.000Z ",
+      ]) {
+        expect(formatBidDate(stored), `${zone} ${stored}`).toBe(calendarDay(2026, 7, 10));
+      }
+    });
+  });
+
+  it("still prints any other timestamp as a moment in the viewer's zone", () => {
+    for (const stored of [
+      "2026-07-10T23:59:58.000Z",
+      "2026-07-10T23:58:59.000Z",
+      "2026-07-10T22:59:59.000Z",
+      "2026-07-10T00:00:00.000Z",
+      "2026-07-10T23:59:59.500Z",
+      // Not written as UTC: an offset or no zone at all.
+      "2026-07-10T23:59:59.000+08:00",
+      "2026-07-10T23:59:59",
+      "2026-07-10 23:59:59",
+    ]) {
+      expect(formatBidDate(stored), stored).toBe(formatDate(stored.replace(" ", "T")));
     }
   });
 });
@@ -145,6 +195,47 @@ describe("formatDate", () => {
 
   it("keeps a dash for a value that is missing or blank", () => {
     for (const empty of [null, "", "   ", "\n\t "]) expect(formatDate(empty), JSON.stringify(empty)).toBe("-");
+  });
+});
+
+// The value of a date <input>: BidQaSection prefills a bid's deadline with it, and UsersSection an override's expiry.
+describe("formatDateInputValue", () => {
+  it("gives a calendar day exactly as that day, whatever the viewer's time zone", () => {
+    inEachZone((zone) => {
+      // M/D/YYYY read as local midnight and cut at its UTC date is the day before east of UTC: "2026-07-09" in Shanghai.
+      expect(formatDateInputValue("07/10/2026"), zone).toBe("2026-07-10");
+      expect(formatDateInputValue("7/1/2026"), zone).toBe("2026-07-01");
+      expect(formatDateInputValue("2026-07-10"), zone).toBe("2026-07-10");
+      expect(formatDateInputValue(" 2026-07-10 "), zone).toBe("2026-07-10");
+      expect(formatDateInputValue("12/31/2026"), zone).toBe("2026-12-31");
+    });
+  });
+
+  it("gives a timestamp its UTC date, which is the picked day for a stored end of day", () => {
+    inEachZone((zone) => {
+      expect(formatDateInputValue("2026-07-10T23:59:59.000Z"), zone).toBe("2026-07-10");
+      expect(formatDateInputValue("2026-07-10T23:59:59.999Z"), zone).toBe("2026-07-10");
+      expect(formatDateInputValue("2026-07-10T00:00:00.000Z"), zone).toBe("2026-07-10");
+      expect(formatDateInputValue("2026-09-29T10:00:00.000Z"), zone).toBe("2026-09-29");
+      expect(formatDateInputValue("2026-12-31T23:59:59.000+00:00"), zone).toBe("2026-12-31");
+    });
+  });
+
+  it("prefills the day the deadline column prints, for every way a day is stored", () => {
+    inEachZone((zone) => {
+      for (const stored of ["2026-07-10", "07/10/2026", "7/10/2026", "2026-07-10T23:59:59.000Z"]) {
+        const [year, month, day] = formatDateInputValue(stored).split("-").map(Number);
+        expect(formatBidDate(stored), `${zone} ${stored}`).toBe(calendarDay(year, month, day));
+      }
+    });
+  });
+
+  it("gives an empty value for a blank, unreadable or impossible date, and does not guess at the portals' own text", () => {
+    const unreadable = [
+      null, "", "  ", "TBD", "not a date", "13/01/2026", "2026-02-31", "02/31/2026", "1788984000000",
+      "10/12/2026 3:30:00PM EST", "Aug 31, 2026 @ 02:00 PM", "10/02/26",
+    ];
+    for (const raw of unreadable) expect(formatDateInputValue(raw), String(raw)).toBe("");
   });
 });
 

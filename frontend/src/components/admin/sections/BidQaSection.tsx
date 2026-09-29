@@ -22,10 +22,13 @@ import { useAdminSession } from "../admin-session";
 import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
 import { useAdminResource } from "../use-admin-resource";
 
-type BidQaCorrectionDraft = {
+export type BidQaCorrectionDraft = {
   title: string;
   deadlineDate: string;
 };
+
+/** The request's `corrections`: the fields the admin changed, and only those. */
+type BidQaCorrections = { title?: string; deadlineDate?: string | null };
 
 export type BidQaFilters = {
   q: string;
@@ -84,11 +87,30 @@ function displayStatusTone(status: AdminBidQaDisplayStatus) {
   return "border-amber-200 bg-amber-50 text-amber-700";
 }
 
-function bidQaCorrectionDraftFor(item: AdminBidQaItem, drafts: Record<string, BidQaCorrectionDraft>) {
+export function bidQaCorrectionDraftFor(item: Pick<AdminBidQaItem, "id" | "title" | "deadlineDate">, drafts: Record<string, BidQaCorrectionDraft>) {
   return drafts[item.id] ?? {
     title: item.title,
     deadlineDate: formatDateInputValue(item.deadlineDate),
   };
+}
+
+/**
+ * What a correction draft changes on a bid, as the PATCH body's `corrections`, or null when it changes nothing. Only
+ * the fields the admin changed are sent: the route answers 400 to an empty `corrections`, and the server logs a
+ * correction for every value that differs from the stored string, so sending an untouched deadline used to replace
+ * "07/10/2026" with "2026-07-09T23:59:59.000Z" (the day before, in UTC+8) even when only the title was fixed.
+ *
+ * The title is changed when the draft was edited and its trimmed text differs from the stored title, so an untouched
+ * draft never counts. The deadline is changed when the picked day differs from the day the input was prefilled with;
+ * it is sent as the end of that day in UTC, and an emptied input as null, which clears the deadline as it always did.
+ */
+export function bidQaCorrectionsFor(item: Pick<AdminBidQaItem, "title" | "deadlineDate">, draft: BidQaCorrectionDraft): BidQaCorrections | null {
+  const corrections: BidQaCorrections = {};
+  const title = draft.title.trim();
+  if (draft.title !== item.title && title !== item.title) corrections.title = title;
+  if (draft.deadlineDate !== formatDateInputValue(item.deadlineDate)) corrections.deadlineDate = endOfDayIsoFromDateInput(draft.deadlineDate);
+
+  return Object.keys(corrections).length > 0 ? corrections : null;
 }
 
 function qualityTone(score: number) {
@@ -159,14 +181,12 @@ export function BidQaSection() {
   };
 
   const saveBidQaCorrections = (item: AdminBidQaItem) => {
-    const draft = bidQaCorrectionDraftFor(item, correctionDrafts);
+    const corrections = bidQaCorrectionsFor(item, bidQaCorrectionDraftFor(item, correctionDrafts));
+    if (!corrections) return;
 
     setPendingBidQaId(item.id);
     updateAdminBidQaReview(item.id, {
-      corrections: {
-        title: draft.title.trim(),
-        deadlineDate: endOfDayIsoFromDateInput(draft.deadlineDate),
-      },
+      corrections,
       note: "Admin QA correction",
     })
       .then(() => qa.reload())
@@ -452,6 +472,7 @@ export function BidQaSection() {
               )}
               {bidQaItems.map((item) => {
                 const correctionDraft = bidQaCorrectionDraftFor(item, correctionDrafts);
+                const corrections = bidQaCorrectionsFor(item, correctionDraft);
                 const isPending = pendingBidQaId === item.id;
 
                 return (
@@ -567,7 +588,7 @@ export function BidQaSection() {
                             variant="outline"
                             size="sm"
                             onClick={() => saveBidQaCorrections(item)}
-                            disabled={isPending || correctionDraft.title.trim().length === 0}
+                            disabled={isPending || correctionDraft.title.trim().length === 0 || corrections === null}
                             className="h-8 rounded-lg border-slate-200 px-2"
                           >
                             {t("admin.saveCorrections")}
