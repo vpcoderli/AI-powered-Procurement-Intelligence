@@ -1855,6 +1855,7 @@ export const en = {
     overviewOpenByLevel: "Open bids by source level",
     overviewPendingQa: "Needs QA review",
     overviewOpenBidQa: "Open bid QA",
+    overviewConsecutiveFailures: "{count} consecutive failures",
   }
 };
 

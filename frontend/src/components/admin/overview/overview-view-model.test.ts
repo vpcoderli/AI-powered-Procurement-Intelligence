@@ -29,6 +29,8 @@ describe("overview view model", () => {
       stateLevelColumns([
         { level: "state", total: 55, enabled: 55, approved: 55, awaitingApproval: 0, blocked: 0, neverRun: 5 },
         { level: "county", total: 266, enabled: 266, approved: 7, awaitingApproval: 257, blocked: 2, neverRun: 258 },
+        // A level row with no sources at all must not get a column.
+        { level: "city", total: 0, enabled: 0, approved: 0, awaitingApproval: 0, blocked: 0, neverRun: 0 },
       ]),
     ).toEqual(["state", "county"]);
   });

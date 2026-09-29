@@ -27,7 +27,6 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   getAdminOverview,
-  type AdminApprovalReadinessBucket,
   type AdminOverview,
   type AdminOverviewBids,
   type AdminOverviewCoverage,
@@ -42,6 +41,8 @@ import { canViewAdminPath } from "../admin-nav";
 import { formatDate } from "../admin-format";
 import { useAdminSession } from "../admin-session";
 import { AdminNotice, AdminSectionStateCard, SummaryCard } from "../AdminStateCards";
+import { READINESS_BUCKETS } from "../LedgeredApprovalPanel";
+import { platformReviewDateLabel, platformReviewStatusTone } from "../PlatformReviewsPanel";
 import { useAdminResource } from "../use-admin-resource";
 import {
   barPercent,
@@ -55,23 +56,9 @@ import {
 
 // A stable, module-level loader: useAdminResource reloads whenever the loader's identity changes.
 const loadOverview = () => getAdminOverview();
-const BUCKETS = [
-  "approvable",
-  "awaiting_precheck",
-  "needs_fix",
-  "missing_platform_review",
-  "approved",
-  "blocked",
-] as const satisfies readonly AdminApprovalReadinessBucket[];
 
 const HEADER_LINK_CLASS = cn(buttonVariants({ variant: "outline" }), "h-9 rounded-lg border-slate-200 px-3");
 const TEXT_LINK_CLASS = "text-sm font-medium text-sky-700 underline-offset-2 hover:underline";
-
-function reviewStatusTone(status: AdminOverviewPipelineRow["platformReview"]["status"]): string {
-  if (status === "valid") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (status === "expired") return "border-rose-200 bg-rose-50 text-rose-700";
-  return "border-amber-200 bg-amber-50 text-amber-700";
-}
 
 function Bar({ value, max }: { value: number; max: number }) {
   return (
@@ -271,7 +258,7 @@ function PipelineBlock({ title, rows }: { title: string; rows: AdminOverviewPipe
               <TableRow>
                 <TableHead>{t("admin.platformReviewFamily")}</TableHead>
                 <TableHead>{t("admin.platformReviewStatus")}</TableHead>
-                {BUCKETS.map((bucket) => (
+                {READINESS_BUCKETS.map((bucket) => (
                   <TableHead key={bucket} className="text-right">
                     {t(`admin.ledgeredApprovalBucket_${bucket}`)}
                   </TableHead>
@@ -285,16 +272,17 @@ function PipelineBlock({ title, rows }: { title: string; rows: AdminOverviewPipe
                 <TableRow key={row.providerFamily}>
                   <TableCell className="font-medium text-slate-900">{row.providerFamily}</TableCell>
                   <TableCell>
-                    <Badge variant="outline" className={reviewStatusTone(row.platformReview.status)}>
+                    <Badge variant="outline" className={platformReviewStatusTone(row.platformReview.status)}>
                       {t(`admin.platformReviewStatus_${row.platformReview.status}`)}
                     </Badge>
                     {row.platformReview.review && (
                       <div className="mt-1 text-xs text-slate-500">
-                        {t("admin.overviewPipelineNextReview").replace("{date}", formatDate(row.platformReview.review.nextReviewAt))}
+                        {/* A date-level value: printed as stored, not shifted into the viewer's time zone. */}
+                        {t("admin.overviewPipelineNextReview").replace("{date}", platformReviewDateLabel(row.platformReview.review.nextReviewAt))}
                       </div>
                     )}
                   </TableCell>
-                  {BUCKETS.map((bucket) => (
+                  {READINESS_BUCKETS.map((bucket) => (
                     <CountCell key={bucket} value={row.counts[bucket]} />
                   ))}
                   <CountCell value={row.queued} />
@@ -363,7 +351,7 @@ function CrawlHealthBlock({ title, health }: { title: string; health: AdminOverv
                     {item.label}
                   </Link>
                   <Badge variant="outline" className="border-rose-200 bg-rose-50 text-rose-700">
-                    {item.consecutiveFailures}
+                    {t("admin.overviewConsecutiveFailures").replace("{count}", String(item.consecutiveFailures))}
                   </Badge>
                   <span className="text-xs text-slate-500">{formatDate(item.lastFailureAt)}</span>
                 </li>

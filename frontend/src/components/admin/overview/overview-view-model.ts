@@ -37,7 +37,7 @@ export function visibleStates(rows: readonly OverviewStateRow[], sort: StateSort
   return showAll ? sorted : sorted.slice(0, TOP_STATES);
 }
 
-/** Generic so a caller can pass the full `CoverageLevelCounts` rows without an excess-property error. */
+/** Generic so object literals with extra fields (the rows in the test) type-check; only `level` and `total` are read. */
 export function stateLevelColumns<T extends { level: CoverageLevel; total: number }>(byLevel: ReadonlyArray<T>): CoverageLevel[] {
   return COVERAGE_LEVELS.filter((level) => byLevel.some((entry) => entry.level === level && entry.total > 0));
 }

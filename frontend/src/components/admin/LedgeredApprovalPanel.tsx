@@ -38,7 +38,7 @@ export const APPROVAL_BATCH_CHUNK_SIZE = 100;
 /** The readiness list can hold every registered county; the panel renders this many `needs_fix` rows. */
 export const NEEDS_FIX_LIST_LIMIT = 50;
 
-const READINESS_BUCKETS: readonly AdminApprovalReadinessBucket[] = [
+export const READINESS_BUCKETS: readonly AdminApprovalReadinessBucket[] = [
   "approvable",
   "awaiting_precheck",
   "needs_fix",

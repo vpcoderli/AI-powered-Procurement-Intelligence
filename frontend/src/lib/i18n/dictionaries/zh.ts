@@ -1857,5 +1857,6 @@ export const zh: Dictionary = {
     overviewOpenByLevel: "开放招标按来源级别",
     overviewPendingQa: "待质检",
     overviewOpenBidQa: "进入招标质检",
+    overviewConsecutiveFailures: "连续失败 {count} 次",
   }
 };
