@@ -104,6 +104,26 @@ describe("SourceLiveHealthCard", () => {
     expect(triaging).toContain(`>${admin.recheckSource}<`);
   });
 
+  it("disables every control while another write on the page is running, without relabelling any of them", () => {
+    const html = render(<SourceLiveHealthCard source={source()} {...props} busy />);
+
+    // Five triage buttons and the recheck button: the detail page's Run, Enable/Disable, Approve or Hold is in flight.
+    expect(html.match(/ disabled=""/g)?.length).toBe(6);
+    expect(html).toContain(`>${admin.recheckSource}<`);
+    expect(html).not.toContain(admin.recheckingSource);
+    expect(html).not.toContain(admin.sourceHealthTriageSaving);
+  });
+
+  it("keeps every control enabled while nothing is running", () => {
+    expect(render(<SourceLiveHealthCard source={source()} {...props} />)).not.toContain(' disabled=""');
+    expect(render(<SourceLiveHealthCard source={source()} {...props} busy={false} />)).not.toContain(' disabled=""');
+  });
+
+  it("has no outer margin of its own, like the compliance card", () => {
+    expect(render(<SourceLiveHealthCard source={source()} {...props} />).startsWith('<div class="rounded-md border')).toBe(true);
+    expect(render(<SourceLiveHealthCard source={source()} {...props} />)).not.toMatch(/^<div class="[^"]*\bmt-2\b/);
+  });
+
   it("renders the latest live check, its trend and the review fields", () => {
     const html = text(
       render(

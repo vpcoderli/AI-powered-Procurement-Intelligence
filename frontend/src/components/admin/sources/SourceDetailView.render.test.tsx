@@ -5,23 +5,29 @@ import { AdminApiError, type AdminDataSource, type AdminDataSourceDetail } from 
 import { en } from "@/lib/i18n/dictionaries/en";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 import type { AdminConsoleRole } from "@/server/auth/entitlements";
-import { adminRoleFlags, type AdminSession } from "../admin-session";
-import type { AdminResourceStatus } from "../use-admin-resource";
+import { adminRoleFlags, type useAdminSession } from "../admin-session";
+import type { AdminResourceStatus, useAdminResource } from "../use-admin-resource";
 import { adminSourceDetailFixture, adminSourceFixture } from "./test-fixtures";
 
 // The view reads the shell's session and one resource; both hooks are replaced with plain state so the
-// markup of each role and load state can be rendered without a DOM.
-const mocks = vi.hoisted(() => ({
-  session: undefined as unknown,
-  resource: undefined as unknown,
-}));
+// markup of each role and load state can be rendered without a DOM. The stubs are typed against the real
+// hooks' return types, so a change to either shape fails type-checking of this file instead of going unnoticed.
+type SessionStub = ReturnType<typeof useAdminSession>;
+type ResourceStub = ReturnType<typeof useAdminResource<AdminDataSourceDetail>>;
+const stubs = vi.hoisted(() => ({ session: null as SessionStub | null, resource: null as ResourceStub | null }));
 
 vi.mock("../admin-session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../admin-session")>()),
-  useAdminSession: () => mocks.session,
+  useAdminSession: (): SessionStub => {
+    if (!stubs.session) throw new Error("signIn() was not called");
+    return stubs.session;
+  },
 }));
 vi.mock("../use-admin-resource", () => ({
-  useAdminResource: () => mocks.resource,
+  useAdminResource: (): ResourceStub => {
+    if (!stubs.resource) throw new Error("load() was not called");
+    return stubs.resource;
+  },
 }));
 
 import { SourceDetailView } from "./SourceDetailView";
@@ -29,14 +35,18 @@ import { SourceDetailView } from "./SourceDetailView";
 const admin = en.admin as Record<string, string>;
 
 function signIn(role: AdminConsoleRole) {
-  mocks.session = {
+  const session: SessionStub = {
     user: { id: "user-1", email: `${role}@example.com`, displayName: null, role, tier: "enterprise", features: [] },
     ...adminRoleFlags(role),
-  } satisfies AdminSession;
+  };
+  stubs.session = session;
 }
 
 function load(state: { status: AdminResourceStatus; data?: AdminDataSourceDetail | null; error?: unknown }) {
-  mocks.resource = { status: state.status, data: state.data ?? null, error: state.error ?? null, reload: async () => undefined, setData: () => undefined };
+  const resource: ResourceStub = {
+    status: state.status, data: state.data ?? null, error: state.error ?? null, reload: async () => undefined, setData: () => undefined,
+  };
+  stubs.resource = resource;
 }
 
 const render = () => renderToStaticMarkup(<LanguageProvider><SourceDetailView sourceId="bidnet_co_denver" /></LanguageProvider>);

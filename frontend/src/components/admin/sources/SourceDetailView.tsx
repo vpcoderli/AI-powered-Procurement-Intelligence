@@ -37,7 +37,15 @@ export function sourceDetailTabs(): SourceDetailTab[] {
   return ["overview", "config", "approval", "runs", "bids"];
 }
 
-type PendingAction = "run" | "toggle" | "approve" | "hold" | "recheck" | "triage" | null;
+export type PendingAction = "run" | "toggle" | "approve" | "hold" | "recheck" | "triage" | null;
+
+/**
+ * The pending slot once `finished` settles: cleared only if it still names that action, so a write that ends late
+ * never frees the slot a newer write holds (and never re-enables the controls under it).
+ */
+export function settledPending(current: PendingAction, finished: Exclude<PendingAction, null>): PendingAction {
+  return current === finished ? null : current;
+}
 
 export function SourceDetailView({ sourceId }: { sourceId: string }) {
   const { t } = useLanguage();
@@ -63,7 +71,7 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
     try {
       await work();
     } finally {
-      setPending(null);
+      setPending((current) => settledPending(current, action));
     }
   };
 
@@ -256,6 +264,7 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
             source={source}
             canRunOperations={canRunOperations}
             pending={pending === "recheck" || pending === "triage" ? pending : null}
+            busy={pending !== null}
             onRecheck={() => void recheck()}
             onTriage={(action) => void triage(action)}
           />

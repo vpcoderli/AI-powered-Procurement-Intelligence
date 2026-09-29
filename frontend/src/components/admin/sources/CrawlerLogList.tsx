@@ -4,15 +4,16 @@ import { useCallback, useState } from "react";
 import { Activity } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { listAdminCrawlerLogs, type AdminCrawlerLog, type AdminCrawlerLogsCursor } from "@/lib/api/admin";
+import { listAdminCrawlerLogs, type AdminCrawlerLog } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { fallbackMessage, formatDate, statusTone } from "../admin-format";
 import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
 import { useAdminResource } from "../use-admin-resource";
+import { appendCrawlerLogPage, visibleCrawlerLogs, type CrawlerLogMore, type CrawlerLogPage } from "./crawler-log-pages";
 
 const PAGE_SIZE = 25;
 
-/** One crawler run (moved from the old page's recent-logs section, which still renders it until that section goes). */
+/** One crawler run (moved from the old page's recent-logs section). */
 export function CrawlerLogRow({ log }: { log: AdminCrawlerLog }) {
   const { t } = useLanguage();
 
@@ -45,22 +46,24 @@ export function CrawlerLogRow({ log }: { log: AdminCrawlerLog }) {
 export function CrawlerLogList({ sources, title }: { sources?: readonly string[]; title: string }) {
   const { t } = useLanguage();
   const sourceKey = sources?.join("\u0000") ?? "";
+  // The page carries the source set it was read for: the resource keeps the previous set's page while a new one loads.
   const loadFirstPage = useCallback(
-    () => listAdminCrawlerLogs({ sources: sourceKey ? sourceKey.split("\u0000") : undefined, limit: PAGE_SIZE }),
+    async (): Promise<CrawlerLogPage> => ({
+      key: sourceKey,
+      ...(await listAdminCrawlerLogs({ sources: sourceKey ? sourceKey.split("\u0000") : undefined, limit: PAGE_SIZE })),
+    }),
     [sourceKey],
   );
   const firstPage = useAdminResource(loadFirstPage);
-  // Pages loaded with "load more" belong to one source set; a different set starts over.
-  const [loaded, setLoaded] = useState<{ key: string; logs: AdminCrawlerLog[]; cursor: AdminCrawlerLogsCursor | null } | null>(null);
+  // Pages appended with "load more"; they count only while they continue from the first page shown.
+  const [more, setMore] = useState<CrawlerLogMore | null>(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [loadMoreFailed, setLoadMoreFailed] = useState(false);
 
-  const more = loaded?.key === sourceKey ? loaded : null;
-  const logs = [...(firstPage.data?.logs ?? []), ...(more?.logs ?? [])];
-  const cursor = more ? more.cursor : (firstPage.data?.nextCursor ?? null);
+  const { first, logs, cursor } = visibleCrawlerLogs(sourceKey, firstPage.data, more);
 
   const loadMore = async () => {
-    if (!cursor) return;
+    if (!first || !cursor) return;
     setIsLoadingMore(true);
     setLoadMoreFailed(false);
     try {
@@ -70,11 +73,7 @@ export function CrawlerLogList({ sources, title }: { sources?: readonly string[]
         before: cursor.before,
         beforeId: cursor.beforeId,
       });
-      setLoaded((current) => ({
-        key: sourceKey,
-        logs: [...(current?.key === sourceKey ? current.logs : []), ...page.logs],
-        cursor: page.nextCursor,
-      }));
+      setMore((current) => appendCrawlerLogPage(first, current, page));
     } catch {
       setLoadMoreFailed(true);
     } finally {
@@ -82,7 +81,7 @@ export function CrawlerLogList({ sources, title }: { sources?: readonly string[]
     }
   };
 
-  if (firstPage.status === "error" && !firstPage.data) {
+  if (!first && firstPage.status === "error") {
     return (
       <AdminSectionStateCard
         action={() => void firstPage.reload()}
@@ -93,7 +92,7 @@ export function CrawlerLogList({ sources, title }: { sources?: readonly string[]
       />
     );
   }
-  if (!firstPage.data) {
+  if (!first) {
     return <AdminSectionStateCard actionLabel={t("admin.refresh")} code="loading" message={t("admin.loading")} title={title} />;
   }
 
@@ -115,7 +114,7 @@ export function CrawlerLogList({ sources, title }: { sources?: readonly string[]
       )}
       {cursor && (
         <div className="border-t border-slate-100 px-4 py-3">
-          <Button type="button" variant="outline" size="sm" disabled={isLoadingMore} onClick={() => void loadMore()}>
+          <Button type="button" variant="outline" size="sm" disabled={isLoadingMore || firstPage.status === "loading"} onClick={() => void loadMore()}>
             {t("admin.loadMore")}
           </Button>
         </div>

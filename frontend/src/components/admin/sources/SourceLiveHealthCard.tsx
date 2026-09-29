@@ -24,13 +24,19 @@ import {
 export interface SourceLiveHealthCardProps {
   source: AdminDataSource;
   canRunOperations: boolean;
+  /** The write this card started: its own buttons stay disabled while it runs and the running one is relabelled. */
   pending: "recheck" | "triage" | null;
+  /** Another write on the page is running (the detail page's Run, Enable/Disable, Approve, Hold...): every button is disabled, none is relabelled. */
+  busy?: boolean;
   onRecheck: () => void;
   onTriage: (action: SourceHealthTriageAction) => void;
 }
 
-/** Live source health and its triage queue fields (moved from the old sources table's status cell). */
-export function SourceLiveHealthCard({ source, canRunOperations, pending, onRecheck, onTriage }: SourceLiveHealthCardProps) {
+/**
+ * Live source health and its triage queue fields (moved from the old sources table's status cell). The card has
+ * no outer margin of its own; the container spaces it.
+ */
+export function SourceLiveHealthCard({ source, canRunOperations, pending, busy = false, onRecheck, onTriage }: SourceLiveHealthCardProps) {
   const { t } = useLanguage();
   const liveHealth = source.latestLiveHealth;
   const healthTrend = source.sourceHealthTrend;
@@ -40,7 +46,7 @@ export function SourceLiveHealthCard({ source, canRunOperations, pending, onRech
   const liveHealthErrorMessage = liveHealth?.error ?? liveHealth?.errorMessage ?? null;
 
   return (
-    <div className="mt-2 rounded-md border border-slate-200 bg-white p-2 text-xs leading-5 text-slate-600">
+    <div className="rounded-md border border-slate-200 bg-white p-2 text-xs leading-5 text-slate-600">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium text-slate-700">{t("admin.liveSourceHealth")}</span>
         <Badge variant="outline" className={liveSourceHealthTone(liveHealth?.status)}>
@@ -167,7 +173,7 @@ export function SourceLiveHealthCard({ source, canRunOperations, pending, onRech
                 variant="outline"
                 size="sm"
                 onClick={() => onTriage(action)}
-                disabled={pending === "triage"}
+                disabled={busy || pending === "triage"}
                 className="h-7 rounded-lg border-slate-200 px-2 text-xs"
               >
                 {pending === "triage" ? t("admin.sourceHealthTriageSaving") : t(`admin.${labelKey}`)}
@@ -182,7 +188,7 @@ export function SourceLiveHealthCard({ source, canRunOperations, pending, onRech
           variant="outline"
           size="sm"
           onClick={() => onRecheck()}
-          disabled={pending === "recheck"}
+          disabled={busy || pending === "recheck"}
           className="mt-2 h-7 rounded-lg border-slate-200 px-2 text-xs"
         >
           {pending === "recheck" ? t("admin.recheckingSource") : t("admin.recheckSource")}
