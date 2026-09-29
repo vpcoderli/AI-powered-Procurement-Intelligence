@@ -40,10 +40,25 @@ describe("runSourcePrecheckCommand (SQLite)", () => {
     const dry = await runSourcePrecheckCommand(parseSourcePrecheckArgs(["--provider", "bidnet", "--pending", "--dry-run"]), { database: testDb.db, now: NOW, log: (line) => lines.push(line) });
     expect(dry).toEqual({ requestedCount: 1, sourceIds: ["bidnet_mi_a"] });
     expect(lines.join("\n")).toContain("Dry run");
-    expect(testDb.db.select({ at: dataSources.precheckRequestedAt }).from(dataSources).all().every((row) => row.at === null)).toBe(true);
+    const dryRunRows = testDb.db.select({ at: dataSources.precheckRequestedAt }).from(dataSources).all();
+    expect(dryRunRows).toHaveLength(2);
+    expect(dryRunRows.every((row) => row.at === null)).toBe(true);
 
     const real = await runSourcePrecheckCommand(parseSourcePrecheckArgs(["--provider", "bidnet", "--pending"]), { database: testDb.db, now: NOW, log: (line) => lines.push(line) });
     expect(real.sourceIds).toEqual(["bidnet_mi_a"]);
     expect(lines.at(-1)).toContain("Queued 1");
+
+    // Verify the database write actually happened
+    const afterRealRun = testDb.db.select({ id: dataSources.id, at: dataSources.precheckRequestedAt }).from(dataSources).all();
+    expect(afterRealRun).toHaveLength(2);
+    const aRow = afterRealRun.find((row) => row.id === "bidnet_mi_a");
+    const bRow = afterRealRun.find((row) => row.id === "bidnet_mi_b");
+    expect(aRow?.at).toBe(NOW.toISOString());
+    expect(bRow?.at).toBeNull();
+
+    // Verify idempotency: running again should find 0 targets
+    const rerun = await runSourcePrecheckCommand(parseSourcePrecheckArgs(["--provider", "bidnet", "--pending"]), { database: testDb.db, now: NOW, log: () => {} });
+    expect(rerun.requestedCount).toBe(0);
+    expect(rerun.sourceIds).toHaveLength(0);
   });
 });
