@@ -279,6 +279,7 @@ function mysqlDataSourceRow(row: Record<string, unknown>): RiskDataSourceRow {
     liveHealthReviewedAt: row.liveHealthReviewedAt === null || row.liveHealthReviewedAt === undefined
       ? null
       : String(row.liveHealthReviewedAt),
+    precheckRequestedAt: row.precheckRequestedAt === null || row.precheckRequestedAt === undefined ? null : String(row.precheckRequestedAt),
     lastSuccessAt: row.lastSuccessAt === null || row.lastSuccessAt === undefined ? null : String(row.lastSuccessAt),
     lastFailureAt: row.lastFailureAt === null || row.lastFailureAt === undefined ? null : String(row.lastFailureAt),
     consecutiveFailures: Number(row.consecutiveFailures ?? 0),
@@ -341,6 +342,7 @@ async function sourceGovernanceFailuresFromMysql(mysql: Pool, options: { require
         live_health_next_review_at AS liveHealthNextReviewAt,
         live_health_notes AS liveHealthNotes,
         live_health_reviewed_at AS liveHealthReviewedAt,
+        precheck_requested_at AS precheckRequestedAt,
         last_success_at AS lastSuccessAt,
         last_failure_at AS lastFailureAt,
         consecutive_failures AS consecutiveFailures,
