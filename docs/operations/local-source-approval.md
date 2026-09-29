@@ -1,6 +1,6 @@
 # 县/市级数据源的治理拦截、前置检查与批准
 
-背景、实测数据与设计取舍见[县/市级数据源"治理拦截"的修复可行性](../superpowers/specs/2026-09-16-local-source-governance-recovery-design.md)；采集与详情补全的上游链路见[爬虫与 Scrapling 逻辑梳理](../architecture/crawler-enrichment-flow.md)；附件归档见[附件归档与修复](./attachment-repair.md)。本文只讲：治理拦截是什么规则、批准前怎么检查、批准表单每一栏代表谁的责任、批准之后那些"看起来像失败"的结果各自是什么意思。
+背景、实测数据与设计取舍见[县/市级数据源"治理拦截"的修复可行性](../superpowers/specs/2026-09-16-local-source-governance-recovery-design.md)；采集与详情补全的上游链路见[爬虫与 Scrapling 逻辑梳理](../architecture/crawler-enrichment-flow.md)；附件归档见[附件归档与修复](./attachment-repair.md)。本文只讲：治理拦截是什么规则、批准前怎么检查、批准表单每一栏代表谁的责任、批准之后那些"看起来像失败"的结果各自是什么意思，以及整批源怎么接入（平台审查、预检入队、带台账批量批准，第 8 节）。
 
 一句话原则：**治理门禁是策略，不是 bug。** 本文里的任何工具都只是把人做判断需要的证据摆到面前，没有一处会替人放行。
 
@@ -134,6 +134,8 @@ BidNet Direct 在 AWS WAF 后面，同平台密集请求会集中吃 403（2026-
 4. 在批量运行面板单独跑一次该源，确认结果是"成功"、"空态：无开放招标"之一；若出现"平台限流，本批推迟"，稍后再单独重跑。
 5. 把本次批准结论补进[合规台账](./data-source-compliance-ledger.md)。
 
+以上是**单个源**的顺序。整批源（同一平台一次几百个）的接入——平台审查、预检入队、带台账批量批准——见第 8 节。
+
 ## 8. 批量接入（阶段 3）
 
 第 2、3 节讲的是**一个源**：点一次前置检查、填一张批准表单。2026-09-28 注册之后，库里有约 950 个 `approval_status IS NULL` 的 BidNet 县/市/镇源（当时待预检的是 952 个），逐个走表单既不现实，也留不下一致的台账。阶段 3（设计见[设计稿](../superpowers/specs/2026-09-24-county-data-completeness-design.md)第 7 节及其"实施补充（阶段 3）"）把这条路换成三步：
@@ -173,7 +175,7 @@ BidNet Direct 在 AWS WAF 后面，同平台密集请求会集中吃 403（2026-
 | `expired` 到期 | 最新一行的 `next_review_at` 已过 | 批量批准该平台的源一律跳过（`platform_review_expired`）；**已批准的源照常运行**，不会被回退 |
 | `missing` 缺失 | 该平台一行都没有 | 同样跳过（`missing_platform_review`） |
 
-因此**不要把 `reviewedAt` 写成未来日期**——它会一直是"最新一行"，压住之后所有的续期。到期后面板上该平台的状态徽标变成"已到期"，批量批准面板提示"平台审查已到期或缺失，先在上方续期再批准"。
+因此**不要把 `reviewedAt` 写成未来日期**——它会一直是"最新一行"，压住之后所有的续期；续期的 `nextReviewAt` 也不要选得比仍未到期的旧行更早——最新一行一到期，平台就读作到期，旧行不会顶上。到期后面板上该平台的状态徽标变成"已到期"，批量批准面板提示"平台审查已到期或缺失，先在上方续期再批准"。
 
 **谁能做什么。** `POST` 只有 admin，并走 CSRF 校验；`GET`（审查列表，外加每个平台的有效审查与状态）admin / operator / support 都能读。每次写入是一条审计事件 `platform_review.created`（`event_log`，`target_type = 'platform_review'`，`before_after_json` 里是整行），同时 `created_by` 记建立者的用户 id。**续期 = 再建一行**：旧行留作历史，没有 PATCH，也没有删除。面板的"续期"只把 ToS 与 robots.txt 两个地址带过去，摘要、法务参考、备注都要重写——它们记的是"那一天查到了什么"。
 
@@ -235,7 +237,7 @@ npm run source:precheck -- --source <id> --source <id>             # 按 id 入�
 
 - 按 `precheck_requested_at` 从旧到新。每 tick 最多读 500 行、最多**开始** 50 个预检；因预算、平台暂停或退避而跳过的行不占这 50 个名额。
 - 每个预检**预扣 2 个请求**（robots.txt 一次 + 列表页一次）；预检以 404 收场、触发了租户探测（最多 6 个请求），按 **2 + 6** 结算。额度不够就留到下个 tick，不算失败。
-- robots.txt **每个主机每 tick 只取一次**（按 URL 缓存；BidNet 所有租户共用 `https://www.bidnetdirect.com/robots.txt`，队列里只有 BidNet 时日志里的 `robotsFetches` 每 tick 应为 1，队列空时为 0）。
+- robots.txt **每个主机每 tick 只取一次**（按 URL 缓存；BidNet 所有租户共用 `https://www.bidnetdirect.com/robots.txt`）。日志里的 `robotsFetches` 是本 tick 实际取了几个不同的 robots 地址：只要这个 tick 至少开始了一个预检，BidNet 独占队列时它就是 1；一个预检都没开始时为 0——日常列表把额度花光了、平台正被暂停，或队列是空的。
 - 同一平台两个预检之间至少隔 `CRAWLER_PLATFORM_MIN_INTERVAL_MS`（默认 5000 ms）。日常列表与预检两步各自计时，两步衔接处不额外等待。
 - 预检本身就是第 2 节那一套：不入库任何招标，写回 `robots_txt_*` 与 `live_health_*`，并把当时用的 `base_url` 记进结论备注（`live_health_notes` 里的 `precheck.baseUrl`），批准时核对（8.3 的第 3 项）。
 - 停止信号若在日常列表阶段到来，这个 tick 不再开始预检；标记留在库里，下次启动接着跑。队列这一步整体抛错只记 `crawler_precheck_queue_failed` 日志并上报，不影响日常爬取。
@@ -250,7 +252,12 @@ npm run source:precheck -- --source <id> --source <id>             # 按 id 入�
 
 只有失败的试抓才会被读成挑战或错误：一次解析出了行的试抓，不会因为某个详情页在日志里出现过 403 就被当成挑战。
 
-**重试与放弃。** 被挑战或出错的源保留原来的队列时间戳（继续排在队首），但 worker 在内存里给它记一笔退避——`当前时刻 + CRAWLER_PLATFORM_PAUSE_MS` 之前不再尝试（日志里计入 `skippedRetry`），让同一平台的其余源有机会。**连续 3 次**（`PRECHECK_MAX_ATTEMPTS`）挑战或出错后放弃：清除标记，结果记为 `abandoned`，并打一条 `crawler_precheck_abandoned` 警告日志。预检写过结论的源，行里仍是最后一次写下的 `needs_fix` 与原因，14 天内不会再被 `--pending` 选中；要重试就按 id 入队：`npm run source:precheck -- --source <id>`。这份退避记忆只在 worker 进程内存里，重启即清零——平台暂停也是。
+**重试与放弃。** 被挑战或出错的源保留原来的队列时间戳（继续排在队首），worker 在内存里给它记一笔退避：`当前时刻 + CRAWLER_PLATFORM_PAUSE_MS` 之前不再尝试。两类情形在日志里的表现不同：
+
+- **挑战**：整个平台被暂停，暂停期内该平台的所有队列行（包括这个源）都计入 `skippedPaused`；它自己的退避与暂停同时结束，所以挑战一般只体现为 `skippedPaused`。（没有 `provider_family` 的源没有平台可暂停，只有它自己的退避，计入 `skippedRetry`。）
+- **环境 / 瞬时失败**：平台不暂停。本 tick 内该平台剩下的行计入 `skippedPaused`（平台在本 tick 停掉了）；之后的 tick 里只有这个源因退避被跳过、计入 `skippedRetry`，同平台的其余源照常处理。
+
+**连续 3 次**（`PRECHECK_MAX_ATTEMPTS`）挑战或出错后放弃：清除标记，结果记为 `abandoned`，并打一条 `crawler_precheck_abandoned` 警告日志。预检写过结论的源，行里仍是最后一次写下的 `needs_fix` 与原因，14 天内不会再被 `--pending` 选中；要重试就按 id 入队：`npm run source:precheck -- --source <id>`。这份退避记忆只在 worker 进程内存里，重启即清零——平台暂停也是。
 
 **因此"需修正"里可能混有被挑战的源。** 预检在返回之前已经把 `needs_fix` 与原因写进行里，所以一个被挑战、标记仍保留的源在就绪度里读作 `precheck_needs_fix`，直到它某次预检完成。区分办法：`precheck_requested_at` 不为空，或 `live_health_notes` 里 `precheck.fetch.wafChallenge` 为 `true`。
 
@@ -263,11 +270,11 @@ npm run source:precheck -- --source <id> --source <id>             # 按 id 入�
 
 这是**下限**：worker 每轮是"跑完再睡 15 分钟"，实际周期是 15 分钟加上本轮耗时；已批准的源越多，日常列表占的额度越多。`bidnet=120` 会把对 BidNet 的持续请求率翻倍，而 BidNet 对**持续 60 次/小时**的容忍度本身还没实测过（设计稿第 14 节的风险 1，阶段 3 首轮全量时核实），120 更没有——先用默认值跑，看 `challenge` 计数与平台暂停，再决定要不要调；该变量是 worker 进程的环境变量，改后要重启 worker。
 
-**日志。** worker 的日志是 stdout 上的 JSON 行，按事件名 grep：
+**日志。** worker 的日志是 JSON 行：`crawler_precheck_abandoned` 与 `crawler_precheck_queue_failed` 写到 stderr，另外两个写到 stdout，按事件名 grep 时两个流都要看：
 
 | 事件 | 内容 |
 | --- | --- |
-| `crawler_precheck_queue_processed` | 每 tick 一行汇总计数：`queued`（本 tick 读到的队列行数）、`done`、`challenge`、`error`、`abandoned`、`skippedBudget`、`skippedPaused`、`skippedRetry`、`stoppedFamilies`、`robotsFetches` |
+| `crawler_precheck_queue_processed` | 每 tick 一行汇总计数：`queued`（本 tick 读到的队列行数）、`done`、`challenge`、`error`、`abandoned`、`skippedBudget`（额度不够）、`skippedPaused`（平台被暂停，或本 tick 内已因挑战 / 错误停掉）、`skippedRetry`（源自己还在退避期）、`stoppedFamilies`、`robotsFetches`（本 tick 取了几个不同的 robots 地址） |
 | `crawler_precheck_queue_completed` | worker 的结构化日志，`prechecks` 字段是完整结果：`processed[]` 逐个源的 `outcome`（`done` / `challenge` / `error` / `abandoned`）、`verdict`、`error` |
 | `crawler_precheck_abandoned` | 警告：`source`、`family`、`attempts`、`lastOutcome`、`reason` |
 | `crawler_precheck_queue_failed` | 错误：队列这一步整体失败 |
@@ -303,7 +310,7 @@ SELECT COUNT(*) AS queued, MIN(precheck_requested_at) AS oldest FROM data_source
 
 同时自动盖上 `last_approval_reviewed_at`，并写一行 `source_approval_events`（`action = 'approved'`，`reason` 就是上面的 `approval_notes`，`actor_user_id` 是批准的 admin，本地 bypass 下为空）。**不写** `compliance_notes`（保持原值）；逐源的 `robots_txt_*` 由各源自己的预检写入，批量批准不改。
 
-**就绪度与六个分组。** `GET /api/admin/data-sources/approval-readiness?providerFamily=bidnet`（admin / operator / support）由服务端算好每个本地源落在哪一组，面板与脚本共用这一个定义；不带 `providerFamily` 则列出所有平台的本地源，`platformReview` 为 `null`。返回 `providerFamily`、`platformReview`（`status` + `review`）、`counts`（六组计数）和 `sources[]`（每个源的 `bucket`、`reason`、当前 `baseUrl`、`suggestedBaseUrl`、`precheckRequestedAt`、`liveHealthDisposition`、`liveHealthReviewedAt`）：
+**就绪度与六个分组。** `GET /api/admin/data-sources/approval-readiness?providerFamily=bidnet`（admin / operator / support）由服务端算好每个本地源落在哪一组，面板与运维用的 curl 共用这一个定义；不带 `providerFamily` 则列出所有平台的本地源，`platformReview` 为 `null`。返回 `providerFamily`、`platformReview`（`status` + `review`）、`counts`（六组计数）和 `sources[]`（每个源的 `bucket`、`reason`、当前 `baseUrl`、`suggestedBaseUrl`、`precheckRequestedAt`、`liveHealthDisposition`、`liveHealthReviewedAt`）：
 
 | 分组（面板 / `bucket`） | 含义 | 怎么处理 |
 | --- | --- | --- |
@@ -360,7 +367,7 @@ curl -sS -X POST http://localhost:3000/api/admin/data-sources/batch \
 1. **迁移**：MySQL 先 `cd frontend && npm run db:mysql:migrate`（新表 `platform_reviews` 与新列 `data_sources.precheck_requested_at`）。
 2. **平台审查**（8.1）：先取 robots，再建 `bidnet` 那一行；GET 确认 `effective.bidnet.status` 是 `valid`。
 3. **看会入队什么**：`npm run source:precheck -- --provider bidnet --pending --dry-run`，数字合理再去掉 `--dry-run`。
-4. **起 worker**，观察前几个 tick 的 `crawler_precheck_queue_processed`：`done` 在涨、`robotsFetches` 是 1、`challenge` 是 0。出现挑战时确认平台被暂停（`skippedPaused` 上升）、暂停期过后恢复。
+4. **起 worker**，观察前几个 tick 的 `crawler_precheck_queue_processed`：`done` 在涨、`challenge` 是 0，有预检开始的 tick 里 `robotsFetches` 是 1（一个预检都没开始的 tick 是 0，见 8.2）。出现挑战时确认平台被暂停（`skippedPaused` 上升）、暂停期过后恢复。
 5. **看就绪度**（面板计数或 `approval-readiness`）。批准前先抽查逐源 robots 分布（见 8.6）。
 6. **分轮批准**：每积累一批"可批准"就点一次"批准全部可批准项"，记下"已批准 / 跳过"和各原因。**不要等全部预检完再一次批**：刚批准的源没有 `last_success_at`，下个 tick 起全部到期，而日常列表先于预检花额度（每个源先按最多 4 页预扣，跑完按实际请求数退还），一次批准很多源会让队列里剩下的预检等首跑排完才有额度。
 7. **处理"需修正"**：逐个核对建议地址，写回 `base_url`，再按 id 入队重跑预检。
