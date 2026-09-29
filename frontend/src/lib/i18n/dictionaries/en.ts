@@ -1856,6 +1856,12 @@ export const en = {
     overviewPendingQa: "Needs QA review",
     overviewOpenBidQa: "Open bid QA",
     overviewConsecutiveFailures: "Consecutive failures: {count}",
+    sourcesPrecheckLeftOut: "{count} left out: only enabled local sources awaiting approval are prechecked.",
+    sourcesQueueAllConfirm: "Queue prechecks for {count} sources? The crawler worker runs them within each platform's request budget.",
+    sourcesQueueAllTruncated: "More than {max} sources match; narrow the filters before queueing them all.",
+    sourcesHoldConfirm: "Hold {count} selected sources? A batch approval skips a held source, and lifting the hold is done by hand, one source at a time.",
+    sourcesHeldResult: "Held {count} sources.",
+    sourcesBulkFailed: "Stopped on an error: {message}",
   }
 };
 

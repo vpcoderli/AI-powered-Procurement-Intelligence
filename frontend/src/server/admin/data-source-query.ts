@@ -11,6 +11,8 @@ import {
   SOURCE_LIST_MAX_PAGE_SIZE,
   SOURCE_LIST_MAX_QUERY_LENGTH,
   SOURCE_LIST_SORT_KEYS,
+  SOURCE_PLATFORM_PATTERN,
+  SOURCE_STATE_PATTERN,
   coverageLevelOf,
   type AdminDataSourceIndexItem,
   type AdminDataSourceIndexResponse,
@@ -40,9 +42,6 @@ export interface SqlFragment {
   sql: string;
   values: SqlValue[];
 }
-
-const STATE_PATTERN = /^[A-Z]{2}$/;
-const PLATFORM_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
 function distinctValues(params: URLSearchParams, key: string, normalize: (value: string) => string = (value) => value): string[] {
   const values = Array.from(new Set(params.getAll(key).map((value) => normalize(value.trim())).filter(Boolean)));
@@ -75,8 +74,8 @@ export function parseSourceListFilters(params: URLSearchParams): SourceListFilte
 
   return {
     levels: allowedValues(distinctValues(params, "level"), COVERAGE_LEVELS, "level"),
-    states: matchingValues(distinctValues(params, "state", (value) => value.toUpperCase()), STATE_PATTERN, "state"),
-    platforms: matchingValues(distinctValues(params, "platform", (value) => value.toLowerCase()), PLATFORM_PATTERN, "platform"),
+    states: matchingValues(distinctValues(params, "state", (value) => value.toUpperCase()), SOURCE_STATE_PATTERN, "state"),
+    platforms: matchingValues(distinctValues(params, "platform", (value) => value.toLowerCase()), SOURCE_PLATFORM_PATTERN, "platform"),
     approvals: allowedValues(distinctValues(params, "approval"), SOURCE_APPROVAL_STATES, "approval"),
     healths: allowedValues(distinctValues(params, "health"), SOURCE_HEALTH_STATES, "health"),
     q: q || null,

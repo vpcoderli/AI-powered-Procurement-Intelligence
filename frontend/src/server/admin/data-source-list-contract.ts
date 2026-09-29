@@ -17,6 +17,13 @@ export const SOURCE_LIST_MAX_QUERY_LENGTH = 100;
 export const SOURCE_FILTER_MAX_VALUES = 60;
 export const SOURCE_INDEX_MAX_ROWS = 5000;
 
+/**
+ * What a `state` and a `platform` filter value must look like. The list API validates with these and the page's
+ * URL reader drops what they refuse, so the page never sends a value the API would answer 400 for.
+ */
+export const SOURCE_STATE_PATTERN = /^[A-Z]{2}$/;
+export const SOURCE_PLATFORM_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
+
 export interface SourceListFilters {
   levels: CoverageLevel[];
   states: string[];

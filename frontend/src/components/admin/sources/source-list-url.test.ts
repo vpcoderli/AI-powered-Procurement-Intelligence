@@ -1,6 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { defaultSourceListQuery, type SourceListQuery } from "@/server/admin/data-source-list-contract";
-import { facetOptions, hasActiveFilters, lastRunOf, pageRange, readSourceListQuery, selectedFacetValues, toggleFacetValue, writeSourceListQuery } from "./source-list-url";
+import { AdminApiError } from "@/lib/api/admin";
+import {
+  SOURCE_PLATFORM_PATTERN,
+  SOURCE_STATE_PATTERN,
+  defaultSourceListQuery,
+  type SourceListQuery,
+} from "@/server/admin/data-source-list-contract";
+import {
+  ListRequestError,
+  facetOptions,
+  hasActiveFilters,
+  lastRunOf,
+  pageRange,
+  readSourceListQuery,
+  recoverRejectedQuery,
+  recoveryForListError,
+  selectedFacetValues,
+  toggleFacetValue,
+  writeSourceListQuery,
+} from "./source-list-url";
 
 describe("source list URL state", () => {
   it("reads a valid URL", () => {
@@ -142,5 +160,154 @@ describe("source list URL state, edge cases", () => {
     expect(hasActiveFilters({ ...defaultSourceListQuery(), states: ["CO"] })).toBe(true);
     expect(hasActiveFilters({ ...defaultSourceListQuery(), healths: ["failing"] })).toBe(true);
     expect(hasActiveFilters({ ...defaultSourceListQuery(), q: "den" })).toBe(true);
+  });
+});
+
+describe("recovering from a refused query", () => {
+  it("retries the same filters from page 1 when a later page was refused", () => {
+    const refused: SourceListQuery = { ...defaultSourceListQuery(), levels: ["county"], states: ["CO"], q: "den", sort: "failures", descending: true, page: 7, pageSize: 100 };
+
+    expect(recoverRejectedQuery(refused)).toEqual({ query: { ...refused, page: 1 }, fellBack: false });
+  });
+
+  it("falls back to the defaults, and says so, when page 1 is refused as well", () => {
+    const refused: SourceListQuery = { ...defaultSourceListQuery(), levels: ["county"], q: "den", page: 1 };
+
+    expect(recoverRejectedQuery(refused)).toEqual({ query: defaultSourceListQuery(), fellBack: true });
+  });
+
+  it("has nothing else to try for the defaults themselves", () => {
+    expect(recoverRejectedQuery(defaultSourceListQuery())).toEqual({ query: defaultSourceListQuery(), fellBack: true });
+  });
+
+  it("reaches the defaults in at most two refusals from any starting point, so the page cannot loop", () => {
+    for (const page of [1, 2, 40]) {
+      let query: SourceListQuery = { ...defaultSourceListQuery(), states: ["OH"], healths: ["failing"], page };
+      let refusals = 0;
+      for (;;) {
+        refusals += 1;
+        const recovery = recoverRejectedQuery(query);
+        if (recovery.fellBack) {
+          expect(recovery.query).toEqual(defaultSourceListQuery());
+          break;
+        }
+        query = recovery.query;
+        expect(refusals).toBeLessThan(3);
+      }
+      expect(refusals, `page ${page}`).toBeLessThanOrEqual(2);
+    }
+  });
+});
+
+describe("recoveryForListError", () => {
+  const refused = (canonical: string, status = 400) => new ListRequestError(canonical, new AdminApiError(status, status === 400 ? "INVALID_REQUEST" : "INTERNAL_ERROR", "refused"));
+  const onPage = (page: number): SourceListQuery => ({ ...defaultSourceListQuery(), levels: ["county"], page });
+
+  it("retries the same filters from page 1 when the API refused the query the URL holds", () => {
+    const query = onPage(7);
+
+    expect(recoveryForListError(refused(writeSourceListQuery(query)), writeSourceListQuery(query), query)).toEqual({ query: onPage(1), fellBack: false });
+  });
+
+  it("falls back to the defaults when the refused query was already page 1", () => {
+    const query = onPage(1);
+
+    expect(recoveryForListError(refused(writeSourceListQuery(query)), writeSourceListQuery(query), query)).toEqual({
+      query: defaultSourceListQuery(),
+      fellBack: true,
+    });
+  });
+
+  it("does not blame the query the URL holds now for an answer to an older one", () => {
+    const older = onPage(7);
+    const current = onPage(1);
+
+    expect(recoveryForListError(refused(writeSourceListQuery(older)), writeSourceListQuery(current), current)).toBeNull();
+  });
+
+  it("has no recovery for a failure that is not the API refusing the query", () => {
+    const query = onPage(7);
+    const canonical = writeSourceListQuery(query);
+
+    expect(recoveryForListError(refused(canonical, 500), canonical, query)).toBeNull();
+    expect(recoveryForListError(new ListRequestError(canonical, new TypeError("Failed to fetch")), canonical, query)).toBeNull();
+    expect(recoveryForListError(new AdminApiError(400, "INVALID_REQUEST", "untagged"), canonical, query)).toBeNull();
+    expect(recoveryForListError(new Error("boom"), canonical, query)).toBeNull();
+    expect(recoveryForListError(null, canonical, query)).toBeNull();
+    expect(recoveryForListError(undefined, canonical, query)).toBeNull();
+  });
+
+  it("carries the query string and the original failure of the request it tags", () => {
+    const failure = new AdminApiError(400, "INVALID_REQUEST", "page 7 is out of range");
+    const error = new ListRequestError("?page=7", failure);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.canonical).toBe("?page=7");
+    expect(error.failure).toBe(failure);
+    expect(error.message).toBe("page 7 is out of range");
+    expect(new ListRequestError("", "plain").message).not.toBe("");
+  });
+});
+
+describe("rewriting an invalid link", () => {
+  const read = (search: string) => readSourceListQuery(new URLSearchParams(search));
+
+  it("keeps the valid part of a link with unknown values and writes it as the canonical URL", () => {
+    const { query, invalid } = read("level=galaxy&level=city&state=Colorado&sort=bogus&page=-1&pageSize=7");
+
+    expect(invalid).toBe(true);
+    expect(writeSourceListQuery(query)).toBe("?level=city");
+  });
+
+  it.each([
+    "level=galaxy",
+    "state=Colorado&state=OH",
+    "platform=Bid%20Net&platform=bidnet",
+    "approval=maybe",
+    "health=sick&health=failing",
+    "sort=bogus",
+    "sort=-",
+    "page=0",
+    "page=abc",
+    "page=1.5",
+    "pageSize=30",
+    "pageSize=1000",
+    "level=galaxy&level=city&state=Colorado&sort=bogus&page=-1&pageSize=7",
+  ])("rewrites %s once, to a URL the page then reads as valid and unchanged", (search) => {
+    const first = read(search);
+    const rewritten = writeSourceListQuery(first.query);
+    const second = readSourceListQuery(new URLSearchParams(rewritten.slice(1)));
+
+    expect(first.invalid).toBe(true);
+    expect(second.invalid).toBe(false);
+    expect(second.query).toEqual(first.query);
+    expect(writeSourceListQuery(second.query)).toBe(rewritten);
+  });
+
+  it("leaves a canonical link alone: reading and writing it gives the same text and reports nothing", () => {
+    for (const search of ["", "level=county&level=city", "state=CO&state=OH&q=den", "sort=-failures&page=3&pageSize=100", "platform=bidnet&approval=awaiting&health=never_run"]) {
+      const { query, invalid } = read(search);
+
+      expect(invalid, search).toBe(false);
+      expect(writeSourceListQuery(query), search).toBe(search ? `?${search}` : "");
+    }
+  });
+});
+
+describe("state and platform patterns shared with the API", () => {
+  it("accepts a two-letter upper-case state and a lower-case platform slug, and nothing looser", () => {
+    for (const state of ["CO", "OH", "US"]) expect(SOURCE_STATE_PATTERN.test(state), state).toBe(true);
+    for (const state of ["co", "C", "COL", "1A", "", " CO", "C O"]) expect(SOURCE_STATE_PATTERN.test(state), state).toBe(false);
+    for (const platform of ["bidnet", "state_portal", "federal_portal", "a-b", "0abc"]) expect(SOURCE_PLATFORM_PATTERN.test(platform), platform).toBe(true);
+    for (const platform of ["", "BidNet", "-x", "_x", "a b", "a.b", "a/b"]) expect(SOURCE_PLATFORM_PATTERN.test(platform), platform).toBe(false);
+  });
+
+  it("makes the page keep exactly the states and platforms those patterns accept", () => {
+    const { query } = readSourceListQuery(new URLSearchParams("state=co&state=Colorado&state=C0&state=OH&platform=BidNet&platform=a%20b&platform=-x&platform=state_portal"));
+
+    expect(query.states).toEqual(["CO", "OH"]);
+    expect(query.platforms).toEqual(["bidnet", "state_portal"]);
+    for (const state of query.states) expect(SOURCE_STATE_PATTERN.test(state)).toBe(true);
+    for (const platform of query.platforms) expect(SOURCE_PLATFORM_PATTERN.test(platform)).toBe(true);
   });
 });

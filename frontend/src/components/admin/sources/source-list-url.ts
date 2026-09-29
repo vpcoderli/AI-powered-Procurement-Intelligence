@@ -1,3 +1,4 @@
+import { AdminApiError } from "@/lib/api/admin";
 import {
   COVERAGE_LEVELS,
   SOURCE_APPROVAL_STATES,
@@ -6,15 +7,14 @@ import {
   SOURCE_LIST_MAX_QUERY_LENGTH,
   SOURCE_LIST_PAGE_SIZES,
   SOURCE_LIST_SORT_KEYS,
+  SOURCE_PLATFORM_PATTERN,
+  SOURCE_STATE_PATTERN,
   defaultSourceListQuery,
   type SourceFacetCount,
   type SourceFacetKey,
   type SourceListQuery,
   type SourceListSortKey,
 } from "@/server/admin/data-source-list-contract";
-
-const STATE_PATTERN = /^[A-Z]{2}$/;
-const PLATFORM_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 
 const FACET_FIELD = {
   level: "levels",
@@ -56,8 +56,8 @@ export function readSourceListQuery(params: URLSearchParams): { query: SourceLis
 
   const query: SourceListQuery = {
     levels: keep(params.getAll("level"), oneOf(COVERAGE_LEVELS)) as SourceListQuery["levels"],
-    states: keep(params.getAll("state").map((value) => value.toUpperCase()), (value) => STATE_PATTERN.test(value)),
-    platforms: keep(params.getAll("platform").map((value) => value.toLowerCase()), (value) => PLATFORM_PATTERN.test(value)),
+    states: keep(params.getAll("state").map((value) => value.toUpperCase()), (value) => SOURCE_STATE_PATTERN.test(value)),
+    platforms: keep(params.getAll("platform").map((value) => value.toLowerCase()), (value) => SOURCE_PLATFORM_PATTERN.test(value)),
     approvals: keep(params.getAll("approval"), oneOf(SOURCE_APPROVAL_STATES)) as SourceListQuery["approvals"],
     healths: keep(params.getAll("health"), oneOf(SOURCE_HEALTH_STATES)) as SourceListQuery["healths"],
     q: q || null,
@@ -111,6 +111,46 @@ export function lastRunOf(item: { lastSuccessAt: string | null; lastFailureAt: s
   if (!item.lastSuccessAt) return item.lastFailureAt;
   if (!item.lastFailureAt) return item.lastSuccessAt;
   return item.lastSuccessAt >= item.lastFailureAt ? item.lastSuccessAt : item.lastFailureAt;
+}
+
+/**
+ * What to load when the API refuses `query` with a 400. A page past the end is the usual cause (rows changed under
+ * the user, for example after approving the whole last page), so the same filters are tried again from page 1
+ * first. Only a refusal of page 1 means the filters themselves are the problem: then the defaults are shown and
+ * `fellBack` tells the page to say so. The defaults have nothing left to fall back to, so this never loops.
+ */
+export function recoverRejectedQuery(query: SourceListQuery): { query: SourceListQuery; fellBack: boolean } {
+  if (query.page > 1) return { query: { ...query, page: 1 }, fellBack: false };
+  return { query: defaultSourceListQuery(), fellBack: true };
+}
+
+/**
+ * A failed list request, tagged with the query string it was made for: an answer for an older query must never be
+ * blamed on the query the URL holds by the time the answer arrives.
+ */
+export class ListRequestError extends Error {
+  readonly canonical: string;
+  readonly failure: unknown;
+
+  constructor(canonical: string, failure: unknown) {
+    super(failure instanceof Error ? failure.message : "The source list request failed.");
+    this.canonical = canonical;
+    this.failure = failure;
+  }
+}
+
+/**
+ * The recovery to make for a failed list request, or null when there is none: the failure is not the API refusing
+ * the query (a 400), or it answers an older query than the one the URL holds now (the newer request answers for itself).
+ */
+export function recoveryForListError(
+  error: unknown,
+  canonical: string,
+  query: SourceListQuery,
+): { query: SourceListQuery; fellBack: boolean } | null {
+  if (!(error instanceof ListRequestError) || !(error.failure instanceof AdminApiError) || error.failure.status !== 400) return null;
+  if (error.canonical !== canonical) return null;
+  return recoverRejectedQuery(query);
 }
 
 export function hasActiveFilters(query: SourceListQuery): boolean {

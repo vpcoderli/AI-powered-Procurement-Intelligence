@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { approvalReasonKey, chunkSourceIds, APPROVAL_BATCH_CHUNK_SIZE } from "@/components/admin/LedgeredApprovalPanel";
 import {
-  AdminApiError,
   batchUpdateAdminDataSources,
   listAdminDataSourceIndex,
   listAdminDataSourcesPage,
@@ -18,6 +17,7 @@ import {
 } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import {
+  SOURCE_INDEX_MAX_ROWS,
   SOURCE_LIST_PAGE_SIZES,
   SOURCE_LIST_SORT_KEYS,
   defaultSourceListQuery,
@@ -28,13 +28,32 @@ import { formatDate } from "../admin-format";
 import { useAdminSession } from "../admin-session";
 import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
 import { useAdminResource } from "../use-admin-resource";
-import { PRECHECK_REQUEST_CHUNK, RUN_NOW_LIMIT, runTargets, summarizeRunResults } from "./source-bulk-actions";
 import {
+  PRECHECK_REQUEST_CHUNK,
+  RUN_NOW_LIMIT,
+  addApprovalResponse,
+  approvalReport,
+  emptyApprovalTally,
+  failedReport,
+  holdConfirmText,
+  holdReport,
+  precheckConfirmText,
+  precheckReport,
+  runTargets,
+  sendInChunks,
+  splitPrecheckTargets,
+  summarizeRunResults,
+  type BulkReport,
+  type PrecheckSplit,
+} from "./source-bulk-actions";
+import {
+  ListRequestError,
   facetOptions,
   hasActiveFilters,
   lastRunOf,
   pageRange,
   readSourceListQuery,
+  recoveryForListError,
   selectedFacetValues,
   toggleFacetValue,
   writeSourceListQuery,
@@ -63,7 +82,7 @@ export function SourcesListView() {
   const { query, invalid } = useMemo(() => readSourceListQuery(new URLSearchParams(searchString)), [searchString]);
   const canonical = writeSourceListQuery(query);
 
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ message: string; tone: "info" | "error" } | null>(null);
   // Set from effects, rendered with t() — `t` is a new function every render, so effects must not depend on it.
   const [urlNotice, setUrlNotice] = useState<"invalid" | "rejected" | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -94,18 +113,26 @@ export function SourcesListView() {
     queueMicrotask(() => setSearchDraft(query.q ?? ""));
   }, [query.q]);
 
-  const loadPage = useCallback(() => listAdminDataSourcesPage(readSourceListQuery(new URLSearchParams(canonical)).query), [canonical]);
+  const loadPage = useCallback(async () => {
+    try {
+      return await listAdminDataSourcesPage(readSourceListQuery(new URLSearchParams(canonical)).query);
+    } catch (failure) {
+      throw new ListRequestError(canonical, failure);
+    }
+  }, [canonical]);
   const page = useAdminResource(loadPage);
 
-  // The API refused the parameters (for example a page past the end after rows changed): back to defaults.
+  // The API refused the query (a page past the end after rows changed, or a value it does not know): retry the same
+  // filters from page 1 first, and only when page 1 is refused too go back to the defaults and say so.
   useEffect(() => {
-    if (!(page.error instanceof AdminApiError) || page.error.status !== 400) return;
+    const recovery = recoveryForListError(page.error, canonical, query);
+    if (!recovery) return;
     queueMicrotask(() => {
       // navigate() clears the link notice, so the reason is set after it.
-      navigate(defaultSourceListQuery());
-      setUrlNotice("rejected");
+      navigate(recovery.query);
+      if (recovery.fellBack) setUrlNotice("rejected");
     });
-  }, [page.error, navigate]);
+  }, [page.error, canonical, query, navigate]);
 
   const items = page.data?.items ?? [];
   const total = page.data?.total ?? 0;
@@ -118,76 +145,88 @@ export function SourcesListView() {
   const toggleAllVisible = () => setSelectedIds(allVisibleSelected ? [] : items.map((item) => item.id));
   const toggleRow = (id: string) => setSelectedIds((current) => (current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]));
 
-  const runBulk = async (work: () => Promise<string>) => {
+  // The bar acts on the rows shown and on the URL's filters, so it waits while a page (possibly for other filters) loads.
+  const barLocked = busy || page.status === "loading";
+
+  const reasonLabel = (reason: string) => {
+    const key = approvalReasonKey(reason);
+    return key ? t(key) : reason;
+  };
+
+  // `null`: the user declined a confirmation, nothing was sent. Otherwise the report is the notice; only a finished
+  // action clears the selection, and the list is re-read after a failure too, because earlier chunks may already be written.
+  const runBulk = async (work: () => Promise<BulkReport | null>) => {
     setBusy(true);
     setNotice(null);
     try {
-      setNotice(await work());
-      setSelectedIds([]);
+      const report = await work();
+      if (!report) return;
+      setNotice({ message: report.message, tone: report.outcome === "failed" ? "error" : "info" });
+      if (report.outcome === "refused") return;
+      if (report.outcome === "done") setSelectedIds([]);
       await page.reload();
-    } catch {
-      setNotice(t("admin.updateFailed"));
-      // Earlier chunks or runs may already have changed rows, so the list is re-read even though the action failed.
+    } catch (caught) {
+      // A request that is not chunked failed (the index read, a run): nothing was tallied, the server's reason is the notice.
+      setNotice({ message: failedReport(t, caught).message, tone: "error" });
       await page.reload();
     } finally {
       setBusy(false);
     }
   };
 
-  const queuePrechecks = (ids: string[]) =>
-    runBulk(async () => {
-      let queued = 0;
-      for (const chunk of chunkSourceIds(ids, PRECHECK_REQUEST_CHUNK)) {
-        queued += (await requestAdminSourcePrechecks({ sourceIds: chunk })).requestedCount;
-      }
-      return t("admin.sourcesQueuedResult").replace("{count}", String(queued));
-    });
+  // The one place prechecks are sent: only the eligible rows, 500 ids per request, the count reported with what was left out.
+  const queueEligible = async (split: PrecheckSplit): Promise<BulkReport> => {
+    const outcome = await sendInChunks(
+      chunkSourceIds(split.eligibleIds, PRECHECK_REQUEST_CHUNK),
+      (chunk) => requestAdminSourcePrechecks({ sourceIds: chunk }),
+      (queued, response) => queued + response.requestedCount,
+      0,
+    );
+    return precheckReport(t, outcome, split.leftOut);
+  };
+
+  const queuePrechecks = () => runBulk(() => queueEligible(splitPrecheckTargets(selectedItems)));
 
   const queueAllMatching = () =>
     runBulk(async () => {
       const index = await listAdminDataSourceIndex(query);
-      let queued = 0;
-      for (const chunk of chunkSourceIds(index.items.map((item) => item.id), PRECHECK_REQUEST_CHUNK)) {
-        queued += (await requestAdminSourcePrechecks({ sourceIds: chunk })).requestedCount;
+      if (index.truncated) {
+        return { message: t("admin.sourcesQueueAllTruncated").replace("{max}", String(SOURCE_INDEX_MAX_ROWS)), outcome: "refused" };
       }
-      return t("admin.sourcesQueuedResult").replace("{count}", String(queued));
+      const split = splitPrecheckTargets(index.items);
+      if (split.eligibleIds.length > 0 && !window.confirm(precheckConfirmText(t, split))) return null;
+      return queueEligible(split);
     });
 
   // Spec §5.2: chunks of 100, the result summarised as approved plus skips grouped by reason.
   const approveSelected = () =>
     runBulk(async () => {
-      let approved = 0;
-      const skippedByReason = new Map<string, number>();
-      for (const chunk of chunkSourceIds(visibleSelected, APPROVAL_BATCH_CHUNK_SIZE)) {
-        const response = await batchUpdateAdminDataSources({ sourceIds: chunk, action: "approve" });
-        approved += response.updatedCount;
-        for (const outcome of response.outcomes ?? []) {
-          if (outcome.outcome !== "skipped") continue;
-          const reason = outcome.reason ?? "unknown";
-          skippedByReason.set(reason, (skippedByReason.get(reason) ?? 0) + 1);
-        }
-      }
-      const skipped = [...skippedByReason.values()].reduce((sum, count) => sum + count, 0);
-      if (skipped === 0) return t("admin.sourceBatchApprovalUpdated");
-      const reasons = [...skippedByReason.entries()].map(([reason, count]) => {
-        const key = approvalReasonKey(reason);
-        return `${key ? t(key) : reason} × ${count}`;
-      });
-      return `${t("admin.ledgeredApprovalResult").replace("{approved}", String(approved)).replace("{skipped}", String(skipped))} ${reasons.join("; ")}`;
+      const outcome = await sendInChunks(
+        chunkSourceIds(visibleSelected, APPROVAL_BATCH_CHUNK_SIZE),
+        (chunk) => batchUpdateAdminDataSources({ sourceIds: chunk, action: "approve" }),
+        addApprovalResponse,
+        emptyApprovalTally(),
+      );
+      return approvalReport({ t, reasonLabel }, outcome);
     });
 
-  const holdSelected = () =>
-    runBulk(async () => {
-      for (const chunk of chunkSourceIds(visibleSelected, APPROVAL_BATCH_CHUNK_SIZE)) {
-        await batchUpdateAdminDataSources({ sourceIds: chunk, action: "hold" });
-      }
-      return t("admin.sourceBatchApprovalUpdated");
+  const holdSelected = async () => {
+    if (!window.confirm(holdConfirmText(t, visibleSelected.length))) return;
+    await runBulk(async () => {
+      const outcome = await sendInChunks(
+        chunkSourceIds(visibleSelected, APPROVAL_BATCH_CHUNK_SIZE),
+        (chunk) => batchUpdateAdminDataSources({ sourceIds: chunk, action: "hold" }),
+        (held, response) => held + response.updatedCount,
+        0,
+      );
+      return holdReport(t, outcome);
     });
+  };
 
   const runSelected = async () => {
     // Refused before the busy/reload cycle: nothing ran, so the selection and the list stay as they are.
     if (selectedItems.length > RUN_NOW_LIMIT) {
-      setNotice(t("admin.sourcesRunLimit").replace("{max}", String(RUN_NOW_LIMIT)));
+      setNotice({ message: t("admin.sourcesRunLimit").replace("{max}", String(RUN_NOW_LIMIT)), tone: "info" });
       return;
     }
     await runBulk(async () => {
@@ -204,7 +243,7 @@ export function SourcesListView() {
         );
       }
       if (skippedIds.length > 0) parts.push(t("admin.sourcesNotRunnable").replace("{count}", String(skippedIds.length)));
-      return parts.join(" ");
+      return { message: parts.join(" "), outcome: "done" };
     });
   };
 
@@ -218,7 +257,7 @@ export function SourcesListView() {
   return (
     <div className="flex flex-col gap-4">
       {urlNotice && <AdminNotice message={t(urlNotice === "invalid" ? "admin.sourcesInvalidQuery" : "admin.sourcesQueryRejected")} />}
-      <AdminNotice message={notice} />
+      <AdminNotice message={notice?.message ?? null} tone={notice?.tone} />
       {page.status === "error" && page.data && <AdminNotice tone="error" message={t("admin.sectionRefreshFailed")} />}
 
       <section className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -327,23 +366,23 @@ export function SourcesListView() {
           <span className="text-sm font-medium text-slate-700">{t("admin.sourcesSelectedCount").replace("{count}", String(visibleSelected.length))}</span>
           {canRunOperations && (
             <>
-              <Button type="button" size="sm" variant="outline" disabled={busy || visibleSelected.length === 0} onClick={() => void queuePrechecks(visibleSelected)}>
+              <Button type="button" size="sm" variant="outline" disabled={barLocked || visibleSelected.length === 0} onClick={() => void queuePrechecks()}>
                 {t("admin.sourcesQueuePrechecks")}
               </Button>
-              <Button type="button" size="sm" variant="outline" disabled={busy || total === 0} onClick={() => void queueAllMatching()}>
+              <Button type="button" size="sm" variant="outline" disabled={barLocked || total === 0} onClick={() => void queueAllMatching()}>
                 {t("admin.sourcesQueueAllMatching").replace("{count}", String(total))}
               </Button>
-              <Button type="button" size="sm" variant="outline" disabled={busy || visibleSelected.length === 0} onClick={() => void runSelected()}>
+              <Button type="button" size="sm" variant="outline" disabled={barLocked || visibleSelected.length === 0} onClick={() => void runSelected()}>
                 {t("admin.sourceDetailRunNow")}
               </Button>
             </>
           )}
           {canManageUsers && (
             <>
-              <Button type="button" size="sm" variant="outline" disabled={busy || visibleSelected.length === 0} onClick={() => void approveSelected()}>
+              <Button type="button" size="sm" variant="outline" disabled={barLocked || visibleSelected.length === 0} onClick={() => void approveSelected()}>
                 {t("admin.sourcesApproveWithLedger")}
               </Button>
-              <Button type="button" size="sm" variant="outline" disabled={busy || visibleSelected.length === 0} onClick={() => void holdSelected()}>
+              <Button type="button" size="sm" variant="outline" disabled={barLocked || visibleSelected.length === 0} onClick={() => void holdSelected()}>
                 {t("admin.holdSource")}
               </Button>
             </>

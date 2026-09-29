@@ -1858,5 +1858,11 @@ export const zh: Dictionary = {
     overviewPendingQa: "待质检",
     overviewOpenBidQa: "进入招标质检",
     overviewConsecutiveFailures: "连续失败 {count} 次",
+    sourcesPrecheckLeftOut: "{count} 个未入队：只有已启用、待审批的本地数据源需要预检。",
+    sourcesQueueAllConfirm: "为 {count} 个数据源预检入队？抓取 worker 会在各平台的请求预算内依次运行。",
+    sourcesQueueAllTruncated: "匹配的数据源超过 {max} 个，请先缩小筛选范围，再全部入队。",
+    sourcesHoldConfirm: "暂缓所选的 {count} 个数据源？批量批准会跳过已暂缓的数据源，解除暂缓需要逐个手动操作。",
+    sourcesHeldResult: "已暂缓 {count} 个数据源。",
+    sourcesBulkFailed: "因错误中止：{message}",
   }
 };

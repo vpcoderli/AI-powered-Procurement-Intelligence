@@ -1,5 +1,6 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminApiError } from "@/lib/api/admin";
 import { en } from "@/lib/i18n/dictionaries/en";
@@ -15,13 +16,21 @@ import type { AdminResourceStatus, useAdminResource } from "../use-admin-resourc
 // hooks' return types, so a change to either shape fails type-checking of this file instead of going unnoticed.
 type SessionStub = ReturnType<typeof useAdminSession>;
 type ResourceStub = ReturnType<typeof useAdminResource<AdminDataSourceListResponse>>;
+type RouterStub = ReturnType<typeof useRouter>;
+type PathnameStub = ReturnType<typeof usePathname>;
+type SearchParamsStub = ReturnType<typeof useSearchParams>;
 const stubs = vi.hoisted(() => ({ session: null as SessionStub | null, resource: null as ResourceStub | null, search: "" }));
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ replace: () => undefined }),
-  usePathname: () => "/admin/sources",
-  useSearchParams: () => new URLSearchParams(stubs.search),
-}));
+vi.mock("next/navigation", async (importOriginal) => {
+  const { ReadonlyURLSearchParams } = await importOriginal<typeof import("next/navigation")>();
+  return {
+    useRouter: (): RouterStub => ({
+      back: () => undefined, forward: () => undefined, refresh: () => undefined, push: () => undefined, replace: () => undefined, prefetch: () => undefined,
+    }),
+    usePathname: (): PathnameStub => "/admin/sources",
+    useSearchParams: (): SearchParamsStub => new ReadonlyURLSearchParams(stubs.search),
+  };
+});
 vi.mock("../admin-session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../admin-session")>()),
   useAdminSession: (): SessionStub => {
@@ -307,6 +316,20 @@ describe("SourcesListView bulk actions by role", () => {
     expect(html).toContain('href="/admin/sources/bidnet_co_denver"');
     expect(hasButton(html, admin.sourcesSearch)).toBe(true);
     expect(hasButton(html, admin.paginationNext)).toBe(true);
+  });
+
+  it("keeps the whole bar off while a page is loading, so no action reads a total that is about to change", () => {
+    signIn("admin");
+    load({ status: "loading", data: listResponse() });
+    const html = render();
+
+    for (const label of Object.values(bulkLabels)) {
+      expect(hasButton(html, label), label).toBe(true);
+      expect(isDisabled(buttonTag(html, label)), label).toBe(true);
+    }
+    // The same page once it has loaded: Queue all matching is available again.
+    load({ status: "ready", data: listResponse() });
+    expect(isDisabled(buttonTag(render(), bulkLabels.queueAll))).toBe(false);
   });
 
   it("keeps Queue all matching off when the filters match nothing", () => {
