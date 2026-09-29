@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { db } from "../src/server/db/client";
-import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "../src/server/db/mysql";
+import { closeResolvedMysqlPool, isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "../src/server/db/mysql";
 import {
   cleanupDuplicateCanonicalStateSources,
   createStateDataQualityReport,
@@ -61,7 +61,14 @@ export function parseStateDataQualityCheckArgs(argv: string[]): StateDataQuality
 
 export async function createStateDataQualityCheckReport(now = new Date(), env = process.env) {
   if (isMysqlDatabaseUrlConfigured(env)) {
-    return createStateDataQualityReportFromMysql(resolveMysqlPool(), now);
+    try {
+      return await createStateDataQualityReportFromMysql(resolveMysqlPool(), now);
+    } finally {
+      // The report is the only thing this script uses the shared pool for, and an open mysql2 pool keeps the
+      // process alive (its connections, and its idle-connection timer). Release it on every path, a failed
+      // query included, before main() returns or calls process.exit().
+      await closeResolvedMysqlPool();
+    }
   }
 
   return createStateDataQualityReport(db, now);
