@@ -19,6 +19,7 @@
     "db:seed": "tsx scripts/seed-db.ts",
     "db:migrate-source-registry": "tsx scripts/migrate-source-registry.ts",
     "source:register": "tsx scripts/register-sources.ts",
+    "source:precheck": "tsx scripts/source-precheck.ts",
     "demo:prepare": "tsx scripts/demo-readiness.ts",
     "demo:check": "tsx scripts/demo-readiness.ts --check-only",
     "demo:smoke": "tsx scripts/demo-smoke.ts",
