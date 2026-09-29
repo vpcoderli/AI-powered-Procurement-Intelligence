@@ -40,6 +40,16 @@ describe("LedgeredApprovalPanel helpers", () => {
       { providerFamily: null, jurisdictionLevel: "state" }, { providerFamily: "bidnet", jurisdictionLevel: "township" },
     ])).toEqual(["bidnet", "bonfire"]);
   });
+
+  it("never offers a display fallback family: it cannot be platform-reviewed", () => {
+    expect(providerFamiliesOf([
+      { providerFamily: "public_portal", jurisdictionLevel: "county" },
+      { providerFamily: "state_portal", jurisdictionLevel: "city" },
+      { providerFamily: "federal_portal", jurisdictionLevel: "township" },
+      { providerFamily: "bidnet", jurisdictionLevel: "county" },
+    ])).toEqual(["bidnet"]);
+    expect(providerFamiliesOf([{ providerFamily: "public_portal", jurisdictionLevel: "county" }])).toEqual([]);
+  });
 });
 
 describe("LedgeredApprovalPanel needs_fix and reason helpers", () => {
@@ -71,6 +81,7 @@ describe("LedgeredApprovalPanel needs_fix and reason helpers", () => {
     const known = [
       "missing_platform_review", "platform_review_expired", "precheck_missing", "precheck_stale",
       "precheck_needs_fix", "base_url_changed", "already_approved", "blocked",
+      "held", "disabled", "login_requirements_unmet", "precheck_queued", "precheck_superseded",
     ];
     for (const reason of known) {
       const key = approvalReasonKey(reason);

@@ -4,6 +4,7 @@ import type { AppDatabase } from "@/server/db/client";
 import { mysqlExecute, mysqlSelectMany } from "@/server/db/mysql-runtime";
 import { platformReviews } from "@/server/db/schema";
 import { writeAuditEvent, writeAuditEventFromMysql } from "@/server/events/event-log";
+import { isSyntheticProviderFamily } from "./synthetic-provider-families";
 
 /** Spec 2026-09-24 §7.1: the boundary every platform review states, verbatim. */
 export const PLATFORM_ACCESS_BOUNDARY = "只读公开列表与详情页；不登录、不取会员内容、不绕 WAF";
@@ -81,7 +82,12 @@ export function validatePlatformReviewInput(raw: unknown, now: Date): CreatePlat
   const issues: string[] = [];
 
   const providerFamily = typeof body.providerFamily === "string" ? body.providerFamily.trim().toLowerCase() : "";
-  if (!FAMILY_PATTERN.test(providerFamily)) issues.push("providerFamily must be a lowercase slug (a-z, 0-9, _ or -)");
+  if (!FAMILY_PATTERN.test(providerFamily)) {
+    issues.push("providerFamily must be a lowercase slug (a-z, 0-9, _ or -)");
+  } else if (isSyntheticProviderFamily(providerFamily)) {
+    // A NULL provider_family reads as one of these in the console; a review of it would batch-approve own-site sources.
+    issues.push("providerFamily must be a real platform, not a display fallback (public_portal/state_portal/federal_portal)");
+  }
   if (!isHttpUrl(body.tosUrl)) issues.push("tosUrl must be an http(s) URL");
   if (!isHttpUrl(body.robotsUrl)) issues.push("robotsUrl must be an http(s) URL");
   if (!isIsoDate(body.tosReviewedAt)) issues.push("tosReviewedAt must be an ISO date");

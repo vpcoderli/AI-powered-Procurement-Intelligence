@@ -3,6 +3,7 @@ import {
   isGatedLocalJurisdictionLevel,
   listAdminDataSources,
   listAdminDataSourcesFromMysql,
+  missingApprovalRequirements,
   updateAdminDataSource,
   updateAdminDataSourceFromMysql,
   type AdminDataSource,
@@ -17,12 +18,13 @@ import {
   type MysqlPlatformReviewsStore,
   type PlatformReview,
 } from "./platform-reviews-repository";
-import { isPrecheckFresh } from "./precheck-queue";
-import { precheckBaseUrlFromNotes, precheckSuggestedBaseUrlFromNotes } from "./source-precheck";
+import { isHeldByPerson, precheckEvidence, type PrecheckEvidence } from "./precheck-queue";
+import { precheckSuggestedBaseUrlFromNotes } from "./source-precheck";
 
 export type LedgeredApprovalReason =
-  | "not_local" | "already_approved" | "blocked" | "missing_platform_review" | "platform_review_expired"
-  | "precheck_missing" | "precheck_stale" | "precheck_needs_fix" | "base_url_changed";
+  | "not_local" | "already_approved" | "blocked" | "held" | "disabled" | "missing_platform_review" | "platform_review_expired"
+  | "login_requirements_unmet" | "precheck_queued" | "precheck_missing" | "base_url_changed" | "precheck_superseded"
+  | "precheck_stale" | "precheck_needs_fix";
 
 export interface LedgeredApprovalEvaluation {
   eligible: boolean;
@@ -35,7 +37,33 @@ export function isLocalSource(source: Pick<AdminDataSource, "jurisdictionLevel">
   return isGatedLocalJurisdictionLevel(source.jurisdictionLevel);
 }
 
-/** Spec 2026-09-24 §7.3: the three checks, in order, for one local source. */
+/** The skip reason for each precheck evidence state that cannot back an approval (`precheckEvidence`). */
+const EVIDENCE_REASON: Record<Exclude<PrecheckEvidence, "usable">, LedgeredApprovalReason> = {
+  missing: "precheck_missing",
+  base_url_changed: "base_url_changed",
+  superseded: "precheck_superseded",
+  stale: "precheck_stale",
+  needs_fix: "precheck_needs_fix",
+};
+
+/** The stored ledger columns `missingApprovalRequirements` reads, from the console's view of the row. */
+function loginRequirementsRow(source: AdminDataSource): Parameters<typeof missingApprovalRequirements>[0] {
+  return {
+    requiresLogin: source.requiresLogin ? 1 : 0,
+    complianceReviewer: source.complianceReviewer,
+    legalOpinionReference: source.legalOpinionReference,
+    tosReviewed: source.tosReviewed ? 1 : 0,
+  };
+}
+
+/**
+ * Spec 2026-09-24 §7.3 plus the final-review fixes, in order, first match wins, for one local source:
+ * not local, already approved, blocked, held by a person (`isHeldByPerson`: approved only through the single-source
+ * form — a later precheck does not lift a person's hold), disabled (approval would re-enable it), no valid platform
+ * review (check 1), a login-gated source the review's ledger cannot satisfy (the write would throw
+ * `SourceApprovalRequirementsError`), a precheck queued (the stored one no longer counts until it runs), and then the
+ * stored precheck's evidence (checks 2 and 3, `precheckEvidence`).
+ */
 export function evaluateLedgeredApproval(
   source: AdminDataSource,
   effective: EffectivePlatformReview | undefined,
@@ -44,14 +72,17 @@ export function evaluateLedgeredApproval(
   if (!isLocalSource(source)) return { eligible: false, reason: "not_local", review: null };
   if (source.approvalStatus === "approved") return { eligible: false, reason: "already_approved", review: null };
   if (source.approvalStatus === "blocked") return { eligible: false, reason: "blocked", review: null };
+  if (isHeldByPerson(source)) return { eligible: false, reason: "held", review: null };
+  if (source.isEnabled === false) return { eligible: false, reason: "disabled", review: null };
   if (!effective || effective.status === "missing" || !effective.review) return { eligible: false, reason: "missing_platform_review", review: null };
   if (effective.status === "expired") return { eligible: false, reason: "platform_review_expired", review: effective.review };
   const review = effective.review;
-  if (!source.liveHealthDisposition || !source.liveHealthReviewedAt) return { eligible: false, reason: "precheck_missing", review };
-  if (source.liveHealthDisposition !== "ready" && source.liveHealthDisposition !== "empty") return { eligible: false, reason: "precheck_needs_fix", review };
-  if (!isPrecheckFresh(source.liveHealthReviewedAt, now)) return { eligible: false, reason: "precheck_stale", review };
-  const precheckedUrl = precheckBaseUrlFromNotes(source.liveHealthNotes);
-  if (!precheckedUrl || precheckedUrl !== source.baseUrl) return { eligible: false, reason: "base_url_changed", review };
+  if (missingApprovalRequirements(loginRequirementsRow(source), ledgeredApprovalInput(source, review)).length > 0) {
+    return { eligible: false, reason: "login_requirements_unmet", review };
+  }
+  if (source.precheckRequestedAt !== null) return { eligible: false, reason: "precheck_queued", review };
+  const evidence = precheckEvidence(source, now);
+  if (evidence !== "usable") return { eligible: false, reason: EVIDENCE_REASON[evidence], review };
   return { eligible: true, reason: null, review };
 }
 
@@ -79,13 +110,34 @@ export type ApprovalReadinessBucket = "approvable" | "awaiting_precheck" | "need
 
 export function readinessBucket(evaluation: LedgeredApprovalEvaluation): ApprovalReadinessBucket {
   if (evaluation.eligible) return "approvable";
-  switch (evaluation.reason) {
-    case "already_approved": return "approved";
-    case "blocked": return "blocked";
+  const reason = evaluation.reason;
+  switch (reason) {
+    case "already_approved":
+      return "approved";
+    case "blocked":
+    case "held":
+    case "disabled":
+    case "login_requirements_unmet":
+      return "blocked";
     case "missing_platform_review":
-    case "platform_review_expired": return "missing_platform_review";
-    case "precheck_needs_fix": return "needs_fix";
-    default: return "awaiting_precheck"; // precheck_missing | precheck_stale | base_url_changed
+    case "platform_review_expired":
+      return "missing_platform_review";
+    case "precheck_needs_fix":
+      return "needs_fix";
+    case "precheck_queued":
+    case "precheck_superseded":
+    case "precheck_missing":
+    case "precheck_stale":
+    case "base_url_changed":
+      return "awaiting_precheck";
+    case "not_local":
+    case null:
+      // Never bucketed in practice: the summary skips non-local sources and an ineligible evaluation has a reason.
+      return "awaiting_precheck";
+    default: {
+      const unhandled: never = reason;
+      return unhandled;
+    }
   }
 }
 

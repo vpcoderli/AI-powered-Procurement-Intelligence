@@ -3,6 +3,7 @@ import type { AppDatabase } from "@/server/db/client";
 import { expandMysqlInClause, mysqlExecute, mysqlSelectMany } from "@/server/db/mysql-runtime";
 import { dataSources } from "@/server/db/schema";
 import type { MysqlDataSourcesStore } from "./data-sources-repository";
+import { precheckBaseUrlFromNotes } from "./source-precheck";
 
 /** Spec 2026-09-24 §7.3 check 2: a precheck older than this cannot back a batch approval. */
 export const PRECHECK_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
@@ -45,24 +46,108 @@ export function isPrecheckFresh(liveHealthReviewedAt: string | null, now: Date):
   return Number.isFinite(at) && now.getTime() - at <= PRECHECK_MAX_AGE_MS;
 }
 
+export type PrecheckEvidence = "missing" | "base_url_changed" | "superseded" | "stale" | "needs_fix" | "usable";
+
+export interface PrecheckEvidenceInput {
+  baseUrl: string | null;
+  liveHealthDisposition: string | null;
+  liveHealthReviewedAt: string | null;
+  liveHealthNotes: string | null;
+  lastFailureAt: string | null;
+  lastApprovalReviewedAt: string | null;
+}
+
+/**
+ * True when `candidate` is set and strictly later than `reference` (compared with `Date.parse`). An unparsable
+ * timestamp on either side counts as later: fail-closed, so a precheck is never taken to outrank a failure or a
+ * governance change it cannot be ordered against.
+ */
+function isStrictlyLater(candidate: string | null, reference: string | null): boolean {
+  if (candidate === null) return false;
+  const candidateAt = Date.parse(candidate);
+  const referenceAt = Date.parse(reference ?? "");
+  if (Number.isNaN(candidateAt) || Number.isNaN(referenceAt)) return true;
+  return candidateAt > referenceAt;
+}
+
+/**
+ * Whether the stored precheck still describes this row as it is now. Checked in this order. One rule for the
+ * ledgered batch approval (`evaluateLedgeredApproval`) and for the pending queue (`isPendingPrecheck`).
+ *
+ *   missing           no verdict or no time was recorded;
+ *   base_url_changed  the precheck recorded another address, or none (pre-phase-3 / garbage notes): a precheck of
+ *                     another address says nothing about this one, whatever its verdict;
+ *   superseded        a failure (`last_failure_at`) or a governance change (`last_approval_reviewed_at`) came after it;
+ *   stale             older than 14 days;
+ *   needs_fix         a current, fresh verdict that is neither `ready` nor `empty`;
+ *   usable            a fresh `ready`/`empty` precheck of the current address that nothing has overtaken.
+ */
+export function precheckEvidence(row: PrecheckEvidenceInput, now: Date): PrecheckEvidence {
+  if (!row.liveHealthDisposition || !row.liveHealthReviewedAt) return "missing";
+  const precheckedUrl = precheckBaseUrlFromNotes(row.liveHealthNotes);
+  if (!precheckedUrl || precheckedUrl !== row.baseUrl) return "base_url_changed";
+  if (
+    isStrictlyLater(row.lastFailureAt, row.liveHealthReviewedAt) ||
+    isStrictlyLater(row.lastApprovalReviewedAt, row.liveHealthReviewedAt)
+  ) {
+    return "superseded";
+  }
+  if (!isPrecheckFresh(row.liveHealthReviewedAt, now)) return "stale";
+  if (row.liveHealthDisposition !== "ready" && row.liveHealthDisposition !== "empty") return "needs_fix";
+  return "usable";
+}
+
+/**
+ * A person's hold: `needs_review` written by a governance change (per-row Hold, batch hold) that no later
+ * failure explains. A health demotion leaves `last_failure_at` later than `last_approval_reviewed_at`.
+ *
+ * The console reads a registered local row whose governance columns are NULL as `needs_review` with a null
+ * `last_approval_reviewed_at`: such a row was never reviewed, so it is not held.
+ */
+export function isHeldByPerson(row: { approvalStatus: string | null; lastApprovalReviewedAt: string | null; lastFailureAt: string | null }): boolean {
+  return (
+    row.approvalStatus === "needs_review" &&
+    row.lastApprovalReviewedAt !== null &&
+    !isStrictlyLater(row.lastFailureAt, row.lastApprovalReviewedAt)
+  );
+}
+
 export interface PendingCandidateRow {
   id: string;
   providerFamily: string | null;
   jurisdictionLevel: string | null;
   approvalStatus: string | null;
   isEnabled: boolean;
+  baseUrl: string | null;
+  liveHealthDisposition: string | null;
   liveHealthReviewedAt: string | null;
+  liveHealthNotes: string | null;
+  lastFailureAt: string | null;
+  lastApprovalReviewedAt: string | null;
   precheckRequestedAt: string | null;
 }
 
-/** "Awaiting precheck" (plan Global Constraints): local, enabled, not approved/blocked, not queued, no fresh precheck. */
+/** The evidence states a new precheck can resolve; `needs_fix` of the current address waits for a person's fix. */
+const PENDING_EVIDENCE: ReadonlySet<PrecheckEvidence> = new Set<PrecheckEvidence>(["missing", "base_url_changed", "superseded", "stale"]);
+
+/**
+ * "Awaiting precheck and not already queued" — the rows the approval readiness puts in `awaiting_precheck`
+ * (`ledgered-approval.ts`) that nobody has queued yet: local, enabled, not approved or blocked, not held by a
+ * person, not queued, and whose stored precheck is missing, of another address, overtaken by a later failure or
+ * governance change, or older than 14 days (`precheckEvidence`). A fresh `needs_fix` of the current address is
+ * not pending: the source needs a person's fix, and prechecking it again would say the same.
+ *
+ * A NULL `approval_status` is read the way the console reads it for a local row (`needs_review`), so a governance
+ * change recorded on such a row counts as the same hold the readiness shows.
+ */
 export function isPendingPrecheck(row: PendingCandidateRow, now: Date): boolean {
   return (
     LOCAL_JURISDICTION_LEVELS.includes(row.jurisdictionLevel ?? "") &&
     row.isEnabled &&
     (row.approvalStatus === null || row.approvalStatus === "needs_review") &&
+    !isHeldByPerson({ ...row, approvalStatus: row.approvalStatus ?? "needs_review" }) &&
     row.precheckRequestedAt === null &&
-    !isPrecheckFresh(row.liveHealthReviewedAt, now)
+    PENDING_EVIDENCE.has(precheckEvidence(row, now))
   );
 }
 
@@ -73,7 +158,12 @@ function candidateFromDrizzle(row: typeof dataSources.$inferSelect): PendingCand
     jurisdictionLevel: row.jurisdictionLevel ?? null,
     approvalStatus: row.approvalStatus ?? null,
     isEnabled: row.isEnabled === 1,
+    baseUrl: row.baseUrl ?? null,
+    liveHealthDisposition: row.liveHealthDisposition ?? null,
     liveHealthReviewedAt: row.liveHealthReviewedAt ?? null,
+    liveHealthNotes: row.liveHealthNotes ?? null,
+    lastFailureAt: row.lastFailureAt ?? null,
+    lastApprovalReviewedAt: row.lastApprovalReviewedAt ?? null,
     precheckRequestedAt: row.precheckRequestedAt ?? null,
   };
 }
@@ -127,11 +217,36 @@ interface MysqlCandidateRow {
   jurisdiction_level: string | null;
   approval_status: string | null;
   is_enabled: number;
+  base_url: string | null;
+  live_health_disposition: string | null;
   live_health_reviewed_at: string | null;
+  live_health_notes: string | null;
+  last_failure_at: string | null;
+  last_approval_reviewed_at: string | null;
   precheck_requested_at: string | null;
 }
 
-const MYSQL_CANDIDATE_COLUMNS = "id, provider_family, jurisdiction_level, approval_status, is_enabled, live_health_reviewed_at, precheck_requested_at";
+const MYSQL_CANDIDATE_COLUMNS = [
+  "id", "provider_family", "jurisdiction_level", "approval_status", "is_enabled", "base_url", "live_health_disposition",
+  "live_health_reviewed_at", "live_health_notes", "last_failure_at", "last_approval_reviewed_at", "precheck_requested_at",
+].join(", ");
+
+function candidateFromMysql(row: MysqlCandidateRow): PendingCandidateRow {
+  return {
+    id: row.id,
+    providerFamily: row.provider_family ?? null,
+    jurisdictionLevel: row.jurisdiction_level ?? null,
+    approvalStatus: row.approval_status ?? null,
+    isEnabled: row.is_enabled === 1,
+    baseUrl: row.base_url ?? null,
+    liveHealthDisposition: row.live_health_disposition ?? null,
+    liveHealthReviewedAt: row.live_health_reviewed_at ?? null,
+    liveHealthNotes: row.live_health_notes ?? null,
+    lastFailureAt: row.last_failure_at ?? null,
+    lastApprovalReviewedAt: row.last_approval_reviewed_at ?? null,
+    precheckRequestedAt: row.precheck_requested_at ?? null,
+  };
+}
 
 export async function selectPrecheckTargetsFromMysql(
   mysql: MysqlDataSourcesStore,
@@ -160,15 +275,7 @@ export async function selectPrecheckTargetsFromMysql(
     [input.providerFamily ?? "", ...levels.values],
   );
   return rows
-    .map((row) => ({
-      id: row.id,
-      providerFamily: row.provider_family,
-      jurisdictionLevel: row.jurisdiction_level,
-      approvalStatus: row.approval_status,
-      isEnabled: row.is_enabled === 1,
-      liveHealthReviewedAt: row.live_health_reviewed_at,
-      precheckRequestedAt: row.precheck_requested_at,
-    }))
+    .map(candidateFromMysql)
     .filter((row) => isPendingPrecheck(row, now))
     .map((row) => row.id);
 }

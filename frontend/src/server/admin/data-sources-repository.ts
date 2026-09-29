@@ -529,6 +529,7 @@ function toAdminLogFromMysql(row: MysqlAdminCrawlerLogRow): AdminCrawlerLog {
   };
 }
 
+/** Display family for a NULL `provider_family`; keep in step with `SYNTHETIC_PROVIDER_FAMILIES` (never reviewable). */
 function defaultProviderFamily(row: typeof dataSources.$inferSelect) {
   if (row.issuerType === "state") return "state_portal";
   if (row.issuerType === "federal") return "federal_portal";

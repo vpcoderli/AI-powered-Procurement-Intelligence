@@ -64,6 +64,22 @@ describe("validatePlatformReviewInput", () => {
     }
   });
 
+  it.each(["public_portal", "state_portal", "federal_portal", " Public_Portal "])(
+    "rejects the display fallback family %j: a review of it would batch-approve own-site sources",
+    (providerFamily) => {
+      let caught: unknown;
+      try {
+        validatePlatformReviewInput(input({ providerFamily }), NOW);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(PlatformReviewValidationError);
+      expect((caught as PlatformReviewValidationError).issues).toEqual([
+        "providerFamily must be a real platform, not a display fallback (public_portal/state_portal/federal_portal)",
+      ]);
+    },
+  );
+
   it("rejects a non-object", () => {
     expect(() => validatePlatformReviewInput(null, NOW)).toThrow(PlatformReviewValidationError);
   });

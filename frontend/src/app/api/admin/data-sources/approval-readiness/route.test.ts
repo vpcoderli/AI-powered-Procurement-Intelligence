@@ -213,7 +213,34 @@ describe("GET /api/admin/data-sources/approval-readiness", () => {
     const body = await (await createAdminApprovalReadinessGet(testDb.db)(new Request(`${ENDPOINT}?providerFamily=bidnet`))).json();
 
     const queued = body.sources.find((entry: { id: string }) => entry.id === "bidnet_mi_queued");
-    expect(queued).toMatchObject({ bucket: "awaiting_precheck", reason: "precheck_missing", precheckRequestedAt: "2026-09-29T07:30:00.000Z" });
+    // A queued row reads precheck_queued ahead of its evidence: the stored precheck no longer counts until the new one runs.
+    expect(queued).toMatchObject({ bucket: "awaiting_precheck", reason: "precheck_queued", precheckRequestedAt: "2026-09-29T07:30:00.000Z" });
+  });
+
+  it("counts a held or disabled row as blocked and a demoted or queued one as awaiting precheck, whatever their old precheck says", async () => {
+    seedBidnetReview();
+    testDb.db
+      .insert(dataSources)
+      .values([
+        // Each keeps the fresh empty precheck of its own address that made bidnet_mi_a approvable.
+        localRow({ id: "bidnet_mi_held", label: "Held County", approvalStatus: "needs_review", lastApprovalReviewedAt: "2026-09-26T00:00:00.000Z" }),
+        localRow({ id: "bidnet_mi_demoted", label: "Demoted County", approvalStatus: "needs_review", lastApprovalReviewedAt: "2026-09-26T00:00:00.000Z", lastFailureAt: "2026-09-27T00:00:00.000Z" }),
+        localRow({ id: "bidnet_mi_off", label: "Off County", isEnabled: 0 }),
+        localRow({ id: "bidnet_mi_requeued", label: "Requeued County", precheckRequestedAt: "2026-09-29T07:30:00.000Z" }),
+      ])
+      .run();
+
+    const body = await (await createAdminApprovalReadinessGet(testDb.db)(new Request(`${ENDPOINT}?providerFamily=bidnet`))).json();
+
+    const byId = Object.fromEntries(body.sources.map((entry: { id: string; bucket: string; reason: string }) => [entry.id, [entry.bucket, entry.reason]]));
+    expect(byId).toMatchObject({
+      bidnet_mi_a: ["approvable", null],
+      bidnet_mi_held: ["blocked", "held"],
+      bidnet_mi_demoted: ["awaiting_precheck", "precheck_superseded"],
+      bidnet_mi_off: ["blocked", "disabled"],
+      bidnet_mi_requeued: ["awaiting_precheck", "precheck_queued"],
+    });
+    expect(body.counts).toEqual({ approvable: 1, awaiting_precheck: 2, needs_fix: 1, missing_platform_review: 0, approved: 0, blocked: 2 });
   });
 
   it("lists the tenant probe's suggested address next to the current base_url for a needs_fix source, and nothing for legacy or garbage notes", async () => {

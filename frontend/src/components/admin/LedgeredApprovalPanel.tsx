@@ -13,6 +13,7 @@ import {
   type AdminApprovalReadinessSummary,
 } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import { isSyntheticProviderFamily } from "@/server/admin/synthetic-provider-families";
 import { platformReviewDateLabel, platformReviewStatusTone } from "./PlatformReviewsPanel";
 
 /**
@@ -21,10 +22,12 @@ import { platformReviewDateLabel, platformReviewStatusTone } from "./PlatformRev
  *
  * A local (county/city/township/special-district) source is approved in bulk only when all three checks
  * hold: its platform has a valid review, its precheck is `ready`/`empty` and at most 14 days old, and its
- * `base_url` is still the one that was prechecked. The server evaluates those checks, both for the counts
- * shown here (`GET /api/admin/data-sources/approval-readiness`) and again when a batch is submitted, so the
- * panel never decides eligibility itself: "Approve all approvable" only sends the ids the readiness read put
- * in the `approvable` bucket, 100 per request, and reports what the server did with each.
+ * `base_url` is still the one that was prechecked. A source a person held, a disabled one, a login-gated one
+ * the review's ledger cannot cover, a queued one, and one that failed or changed after its precheck are skipped
+ * too. The server evaluates all of it, both for the counts shown here
+ * (`GET /api/admin/data-sources/approval-readiness`) and again when a batch is submitted, so the panel never
+ * decides eligibility itself: "Approve all approvable" only sends the ids the readiness read put in the
+ * `approvable` bucket, 100 per request, and reports what the server did with each.
  *
  * `needs_fix` sources stay unapproved. The panel lists the address the tenant probe suggested next to the
  * current one as plain text: it never writes a suggestion into `base_url`; a person edits the source.
@@ -63,6 +66,11 @@ const KNOWN_REASONS = [
   "base_url_changed",
   "already_approved",
   "blocked",
+  "held",
+  "disabled",
+  "login_requirements_unmet",
+  "precheck_queued",
+  "precheck_superseded",
 ] as const;
 
 export function chunkSourceIds(ids: readonly string[], size = APPROVAL_BATCH_CHUNK_SIZE): string[][] {
@@ -98,12 +106,22 @@ export function tallyOutcomes(
 
 const LOCAL_LEVELS = new Set(["county", "city", "township", "special_district"]);
 
+/**
+ * The platforms to offer, bidnet first. A display fallback family (`public_portal`, ... — a NULL
+ * `provider_family`) is left out: it cannot be platform-reviewed, so its chip could only ever say "missing
+ * platform review"; those sources are approved one by one through the single-source form.
+ */
 export function providerFamiliesOf(
   sources: readonly { providerFamily: string | null; jurisdictionLevel: string | null }[],
 ): string[] {
   const families = new Set(
     sources
-      .filter((source) => source.providerFamily && LOCAL_LEVELS.has(source.jurisdictionLevel ?? ""))
+      .filter(
+        (source) =>
+          source.providerFamily &&
+          !isSyntheticProviderFamily(source.providerFamily) &&
+          LOCAL_LEVELS.has(source.jurisdictionLevel ?? ""),
+      )
       .map((source) => source.providerFamily as string),
   );
   return [...families].sort((a, b) => (a === "bidnet" ? -1 : b === "bidnet" ? 1 : a.localeCompare(b)));
