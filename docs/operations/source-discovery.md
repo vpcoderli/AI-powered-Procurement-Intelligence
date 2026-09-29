@@ -1,6 +1,6 @@
 # 县/市数据源主动发现（BidNet）
 
-设计与实测依据见[郡/县数据源主动发现：设计](../superpowers/specs/2026-09-21-source-discovery-design.md)；发现之后的治理门禁、前置检查与批准表单见[县/市级数据源的治理拦截、前置检查与批准](./local-source-approval.md)；采集链路见[爬虫与 Scrapling 逻辑梳理](../architecture/crawler-enrichment-flow.md)。本文只讲：为什么要读目录而不是猜路径、`discover-sources` 怎么跑、产出的候选怎么审、分类与 FIPS 匹配各自的规则、Census 表怎么刷新、以及怎么用 `existingMatches` 收掉 2026-09-16 遗留的四个 404 源。
+设计与实测依据见[郡/县数据源主动发现：设计](../superpowers/specs/2026-09-21-source-discovery-design.md)；发现之后的治理门禁、前置检查与批准表单，以及整批源的接入（平台审查、预检入队、带台账批量批准）见[县/市级数据源的治理拦截、前置检查与批准](./local-source-approval.md)；采集链路见[爬虫与 Scrapling 逻辑梳理](../architecture/crawler-enrichment-flow.md)。本文只讲：为什么要读目录而不是猜路径、`discover-sources` 怎么跑、产出的候选怎么审、分类与 FIPS 匹配各自的规则、Census 表怎么刷新、以及怎么用 `existingMatches` 收掉 2026-09-16 遗留的四个 404 源。
 
 一句话原则：**发现只读、只建议，不写库。** 这条命令不碰 `data_sources` 的任何一列，也不改任何治理状态；它产出一份 JSON，后面每一步仍然由人推进。
 
@@ -117,12 +117,26 @@ discover-sources（只读，不写库）
       ↓
 cd frontend && npm run source:register -- --file candidates.json
       ↓ 落成 approval_status IS NULL 的未批准行（治理拦截中）
-管理端 /admin → 审批前置检查（robots + limit=5 试抓 + 404 时租户探测）
-      ↓ ready / empty
-批准县/市源表单（复核人、ToS、必要时法务参考、下次复核日期）
+      ↓
+  ┌─ 整批平台源（阶段 3 批量路径；如 BidNet 一次约 950 个）
+  │  管理端 /admin → 平台合规审查（admin 建；有效期内才能批量批准）
+  │        ↓
+  │  cd frontend && npm run source:precheck -- --provider bidnet --pending --dry-run   # 先看会入队哪些
+  │  cd frontend && npm run source:precheck -- --provider bidnet --pending             # 只打 precheck_requested_at 标记
+  │        ↓
+  │  npm run worker:crawler：每个 tick 在日常列表之后用剩余预算跑队列里的预检，完成后清标记
+  │        ↓ ready / empty
+  │  管理端 → 带台账的批量批准（"批准全部可批准项"，每批 100 个；或 POST /api/admin/data-sources/batch）
+  │
+  └─ 个别源、不属于任何平台的源（单源路径）
+     管理端 /admin → 审批前置检查（robots + limit=5 试抓 + 404 时租户探测）
+           ↓ ready / empty
+     批准县/市源表单（复核人、ToS、必要时法务参考、下次复核日期）
       ↓
 批量运行面板单独跑一次，确认 success 或"空态：无开放招标"
 ```
+
+整批路径每一步在做什么——平台审查的字段与有效期、预检队列的预算与挑战处理、三项检查、六个分组、九个跳过原因——见 [`local-source-approval.md`](./local-source-approval.md#8-批量接入阶段-3) 第 8 节。两条路径都不绕过治理门禁：批量路径里没有一步替人放行，批准仍是 admin 的显式操作，服务端在写入前会重新检查。
 
 注册前**务必**先 `--dry-run` 过一遍：
 
@@ -423,10 +437,10 @@ python3 -m apsi_crawler.cli discover-sources < request.json > candidates.json
 
 ## 阶段 3 首步：候选审阅与注册（2026-09-28）
 
-设计稿 §7.4 的流程是"人工审阅 → `source:register` 落未批准行 → 预检入队 → 带台账的批量批准"。前两步已完成，后两步（§7.1 平台级审查、§7.2 预检入队、§7.3 带台账批量批准）是待建代码。
+设计稿 §7.4 的流程是"人工审阅 → `source:register` 落未批准行 → 预检入队 → 带台账的批量批准"。前两步已完成；后两步（§7.1 平台级审查、§7.2 预检入队、§7.3 带台账批量批准）当时（2026-09-28）还是待建代码，现已在阶段 3 建成，操作见 [`local-source-approval.md`](./local-source-approval.md#8-批量接入阶段-3) 第 8 节。
 
 **审阅**（`ops-evidence/phase3-review.py`，报告 `ops-evidence/phase3-candidate-review-2026-09-28.md`）：955 个候选无重复 id / URL、GEOID 无空、`--dry-run` 953 条有效；脚本扣下 2 条（FCCS、Laramie，见第 7 节的处置）；103 条郡下属部门租户（54 个郡，Maricopa County 一家 40 个，39 个郡只有部门没有本部）经确认全部注册；`Chemung County/City of Elmira` 落郡级可接受；cadence 全部保持 `daily`（活跃度分层会把连续 3 次空跑的源降为每周）。
 
-**注册**（本地 MySQL，`DATABASE_URL` 需显式导出，脚本不读 `.env.local`）：953 条 + FCCS 1 条，`data_sources` 由 66 行增至 1,020 行，0 错误。新行 `approval_status IS NULL`、`is_enabled = 1`、`cadence = daily`，全部在治理拦截中，调度器不会碰到；按层级：郡 258（含 FCCS）、市 552、township 144。**这 952 条不要逐条手工批准**——等 §7.1–7.3 建好后走带台账的批量批准。
+**注册**（本地 MySQL，`DATABASE_URL` 需显式导出，脚本不读 `.env.local`）：953 条 + FCCS 1 条，`data_sources` 由 66 行增至 1,020 行，0 错误。新行 `approval_status IS NULL`、`is_enabled = 1`、`cadence = daily`，全部在治理拦截中，调度器不会碰到；按层级：郡 258（含 FCCS）、市 552、township 144。**这 952 条不要逐条手工批准**——走带台账的批量批准（§7.1–7.3 已建成，见 [`local-source-approval.md`](./local-source-approval.md#8-批量接入阶段-3) 第 8 节）。
 
 **未捞回、留待人工**：9 条同州同名 township（`ambiguous_match`）；`no_fips_match` 里约 20 条像政府本部的机构（3 个 MI charter township、West Springfield、"City of Troy - MI/NY" 这类不带逗号的州名后缀、Mt./MT. 缩写、2024 表里还没有的 Keystone CO、已撤销的 South Nyack、两个合并/联合采购主体）。

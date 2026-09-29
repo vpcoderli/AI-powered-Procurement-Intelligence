@@ -256,6 +256,30 @@ discover-sources（阶段 2 规则）→ 人工审阅 → npm run source:registe
   → 按活跃度分层调度（阶段 1）
 ```
 
+### 实施补充（阶段 3）
+
+阶段 3 的实施计划（`docs/superpowers/plans/2026-09-29-county-data-completeness-phase3.md`）在 §7 之外补了五个决定；实施过程中又有几处经确认的调整。下面对 §7 做补充和更正，操作见 `docs/operations/local-source-approval.md` 第 8 节。
+
+**计划补充的五个决定**
+
+1. **预检的预算成本**：一个入队的预检预扣 2 个请求（robots.txt 一次 + 一页列表）；预检以 404 收场、触发租户探测（最多 6 个请求）时按 2 + 6 结算。设计稿没有给数。
+2. **队列出错时保留标记**：预检没能给出结论（抛错、无法调用 crawler）记为 `error`、计数，并留在队列里；WAF 挑战同样留在队列里（§7.2"下个 tick 续跑"）。只有拿到结论才清除标记。实施中把"拿到结论"收得更精确，见下文"预检的重试上界与结果分类"。
+3. **就绪度由服务端给出**：`GET /api/admin/data-sources/approval-readiness?providerFamily=bidnet` 返回分组计数（可批准 / 待预检 / 需修正 / 缺平台审查 / 已批准 / 已拦截）与逐源条目，管理端与运维文档共用这一套定义，不在浏览器里各算各的。
+4. **续期 = 新增一行**：平台审查没有 PATCH；续期插入新行，旧行留作历史。
+5. **提交约定**：本阶段的提交不带 `Co-Authored-By` 署名行（仓库约定，与阶段 1、2 的计划模板不同）。这是过程约定，不是设计决策。
+
+**实施中确认的调整**
+
+- **管理端 DTO 的"待批"默认值**：`toAdminSource`（`frontend/src/server/admin/data-sources-repository.ts`）原来对治理列为空的非州级行一律默认"已批准"，而爬虫门禁（`blockedReasonFor`）把空值读作"尚未批准"。`source:register` 落下的县/市/镇行治理列全是空，于是带台账批量批准会把约 950 个源全读成 `already_approved`，首次批准还会在 `source_approval_events` 里记成 `approved → approved`。现在 `jurisdiction_level` 有值且不是 `federal` / `state`、又没有被明确批准的行，DTO 按门禁的读法给出 `needs_review` / 不允许入库 / `not_reviewed`（`isGatedLocalJurisdictionLevel`）；明确批准过的行、联邦/州级行和没有级别的旧行不变。管理端因此把这批行显示为"待审核"。
+- **就绪度条目带 `baseUrl` 与 `suggestedBaseUrl`**：§7.3 要求 `needs_fix` 的源"列出租户探测给的建议地址"。就绪度条目因此带上该行当前的 `base_url`，以及预检备注（`live_health_notes.precheck.suggestedBaseUrl`）里探测给出的建议；管理端把两者并排显示成纯文本，绝不写入 `base_url`，由人核对后走既有的源编辑。批量批准的应答形状是 `{ updatedCount, skippedCount, outcomes: [{ sourceId, outcome, reason }], sources }`（`sources` 只含已批准的行），`SourceApprovalRequirementsError` 映射为 400 `APPROVAL_REQUIREMENTS_UNMET`。
+- **预检的重试上界与结果分类**（§7.2、§11）：只有预检给出了关于源自身的结论才清除标记（`ready` / `empty`，以及 404、解析失败、没解析到行的 `needs_fix`）。WAF 挑战（试抓失败且 `wafChallenge`，或 HTTP 429）保留标记并暂停平台（`CRAWLER_PLATFORM_PAUSE_MS`）；环境或瞬时失败（没有结果文档、网络类错误、HTTP 5xx、`HTML request failed:`）保留标记、本 tick 停掉该平台，但不暂停它。worker 进程内的 `PrecheckRetryRegistry` 给失败的源记退避（`notBefore` = 当前时刻 + 暂停时长），连续 `PRECHECK_MAX_ATTEMPTS = 3` 次挑战或出错后清除标记、结果记为 `abandoned`（行里保留预检写下的 `needs_fix`，按 id 重新入队）——否则一个永远被挑战的源会一直排在队首，一次次重新暂停整个平台。每 tick 从队列读最旧的 500 行（`PRECHECK_LISTING_WINDOW`）、最多开始 50 个预检（`DEFAULT_PRECHECKS_PER_TICK`），因预算、暂停或退避跳过的行不占名额，免得一个平台的积压挡住其他平台。每 tick 的事件是 `crawler_precheck_queue_processed`、`crawler_precheck_queue_completed`，放弃时另有 `crawler_precheck_abandoned`。
+- **crawler 失败的处理（阶段 3 追加）**：真实 BidNet 挑战下，日常爬取的限流探测与平台暂停本来不会触发——`runCrawlTask` 把进程退出码（`fetch-task` 对每个异常都以 1 退出）排在 crawler 自己打印的错误类名前面，`isPlatformThrottleSignature` 看不到 `BidNetChallengeError`，§12.2 阶段 3 的"暂停期后恢复"因此无从谈起。改为结果文档里的结构化错误类（如 `BidNetChallengeError`、`HtmlPageError`）优先于退出码，租约丢失与任务超时仍优先。随之：`classifyCrawlerFailure` 把 `HtmlPageError` 的传输失败（`HTML request failed: …`）和 HTTP 5xx / 429 / 403 / 202 归为 `network`（重试，连续 5 次失败才降为 `needs_review`），404、非 HTML、空页、缺表头仍是 `parse`（立即 `needs_review`）；worker 的 `retrying-runner.ts` 对限流特征（`*ChallengeError`，或 `HtmlPageError` 的 403 / 429 / 202）一律不重试，由平台暂停应答；`PlatformDeferralTracker` 的默认间隔等待改为会保持事件循环的定时器，否则 SQLite 拓扑下 `npm run crawler:once` 会在等待间隙静默退出。
+- **不带台账的逐源"批准"按钮对本地源隐藏**：数据源表每行的"批准"只写通用批准、不写台账，与 §7.3"本地源不能再无台账批准"冲突，所以县/市/镇源不再显示它，改走带台账的批量批准面板或"批准县/市源"表单；勾选多行后的旧"批量批准"走同一个接口，被跳过的行保持勾选，提示改为"已批准 A，跳过 B"。
+- **管理端面板**：平台审查面板与带台账批准面板在 `/admin` 数据源区块的最上方；admin 建审查、批准，admin / operator 可为待预检源入队，support 只读。
+- **§7.1"有效审查"的读法**：§7.1 写"取 `reviewed_at` 最新、且 `next_review_at` 未到期的一条"。实现为：取 `reviewed_at` 最新的一行，它未到期即 `valid`、已到期即 `expired`，不回退到更早的未到期行；没有行为 `missing`。与"续期总比旧行新"的常规用法一致，区别只在有人把新行的 `reviewed_at` 写得比旧行早或晚得离谱时。
+- **预算算术**：默认 `bidnet=60`、tick 15 分钟，每 tick 15 次请求，日常列表先花，预检每次预扣 2，余下的每 tick 约 7 个预检、每小时约 28 个，952 个待预检源至少约 34 小时（每个 404 多花 6，已批准源的日常列表还要占额度）；`CRAWLER_PLATFORM_BUDGETS=bidnet=120` 约缩短到一半，代价是持续请求率翻倍。BidNet 对持续请求率的容忍度仍是 §14 待实测的风险。
+- **已知限制，本阶段未修**：（1）批准时复制进源行的 `compliance_review_due_at` 是当时平台审查的 `next_review_at`，续期平台审查不回写已批准的源，批量批准对它们只答 `already_approved`，目前没有批量续期入口；（2）逐源的 robots.txt 标记（`robots_txt_status`）不在三项检查里，由平台审查的 `robots_summary` 覆盖同一主机，批准前需要自查分布；（3）`provider_family` 为空的本地源在管理端读作占位家族 `public_portal`，未批准时恒缺平台审查、走单源表单，不要为 `public_portal` 建平台审查；（4）预算、平台暂停和预检退避都在 worker 进程内存里，队列没有逐源租约，只能起一个 crawler worker；（5）批量批准逐个写入、没有事务，中途失败时前面的已经生效。
+
 ## 8. 阶段 4：历史回补
 
 ### 8.1 范围与窗口

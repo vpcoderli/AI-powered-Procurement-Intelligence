@@ -31,6 +31,62 @@ These sit alongside the pre-existing governance columns on the same table (`appr
 
 Every write to a compliance ledger field through the Admin API goes through the same code path as the existing governance fields (`updateAdminDataSource` / `updateAdminDataSourceFromMysql` in `frontend/src/server/admin/data-sources-repository.ts`), gated behind `admin`-role access, and stamps `last_approval_reviewed_at`. There is currently no separate structured audit-event row per compliance-field change (unlike `source_approval_events` for approval status changes) — `compliance_notes` and `tos_reviewed_at` are the change record. If per-field audit history becomes necessary, extend `source_approval_events` or add a sibling `source_compliance_events` table following the same pattern, rather than inventing a new mechanism.
 
+### 平台审查（`platform_reviews`）
+
+上面的逐源台账记录"这个源的证据"。整批接入同一个平台的几百个源时，服务条款与 robots.txt 其实是**平台一级**的事实——同一份条款、同一个主机——所以阶段 3（设计稿 `docs/superpowers/specs/2026-09-24-county-data-completeness-design.md` §7.1）在 `data_sources` 之上加了第二层：`platform_reviews` 表（Drizzle 导出 `platformReviews`，`frontend/src/server/db/schema.ts`；表定义在 `migrate.ts` 的第一个 `sqlite.exec` 块里，MySQL 的 DDL 由它派生），一行 = "某平台在某天被审查过一次"。带台账的批量批准把这一行**复制**进每个被批准源自己的台账列，所以 `data_sources` 仍是台账唯一的读取面：管理端徽标与 `source:compliance:report` 都不用改。操作步骤见[县/市级数据源的治理拦截、前置检查与批准](./local-source-approval.md#8-批量接入阶段-3)第 8 节。
+
+**列。**
+
+| 列 | 类型 | 含义 |
+| --- | --- | --- |
+| `id` | text，主键 | `prv_<uuid>` |
+| `provider_family` | text | 平台，对应 `data_sources.provider_family`（小写 slug，如 `bidnet`） |
+| `tos_url`、`tos_reviewed_at` | text | 被审查的服务条款地址；通读日期 |
+| `robots_url`、`robots_checked_at`、`robots_summary` | text | robots.txt 地址、取得时间、一行摘要（经 crawler 的 `fetch-robots` 取得） |
+| `access_boundary` | text | 访问边界；省略即写入固定句：`只读公开列表与详情页；不登录、不取会员内容、不绕 WAF` |
+| `reviewer` | text | 复核人 |
+| `legal_opinion_reference` | text，可空 | 法务意见/工单号 |
+| `reviewed_at`、`next_review_at` | text | 审查日期；下次复核日期（创建时必须晚于 `reviewed_at`） |
+| `notes` | text，可空 | 备注 |
+| `created_by`、`created_at` | text | 建立者的用户 id（本地 bypass 下为空）；写入时刻 |
+
+除 `legal_opinion_reference`、`notes`、`created_by` 外都非空。索引 `idx_platform_reviews_family_reviewed`（`provider_family, reviewed_at`）。
+
+**有效审查规则。** 一个平台的有效审查是它 `reviewed_at` 最新的那一行：`next_review_at` 在当前时刻之后为 `valid`，否则为 `expired`（最新一行到期了，更早的未到期行不会顶上）；没有任何一行为 `missing`。**续期 = 再建一行**，旧行留作历史，没有 PATCH 与删除。只有 `admin` 角色能建（`POST /api/admin/platform-reviews`）；`admin` / `operator` / `support` 都能读（同一路径的 `GET`，返回审查列表和每个平台的有效审查）。`expired` 或 `missing` 时，该平台的本地源不能再被批量批准；已批准的源照常运行（爬虫门禁读的是每个源自己的治理列，不读平台审查）。
+
+**批量批准怎么复制台账。** `POST /api/admin/data-sources/batch`（`action: "approve"`）对每个通过三项检查的本地源，把平台审查的字段写进该源的台账。它与手工批准表单走同一条 `updateAdminDataSource` 路径，值**覆盖**行里原有的值：
+
+| 被批准源的列（`data_sources`） | 取自 |
+| --- | --- |
+| `compliance_reviewer` | 平台审查的 `reviewer` |
+| `tos_url` | `tos_url` |
+| `tos_reviewed`、`tos_reviewed_at` | 固定为 `1`；`tos_reviewed_at`（平台条款的通读日期，不是批准时刻） |
+| `legal_opinion_reference` | `legal_opinion_reference`（可为空） |
+| `compliance_review_due_at` | `next_review_at` |
+| `approval_status`、`legal_review_status`、`approved_for_ingestion`、`is_enabled` | 固定：`approved`、`approved_public`、`1`、`1` |
+| `approval_notes` | `依据平台审查 #<平台审查 id>；预检 <ready 或 empty> @<预检时间>` |
+| `last_approval_reviewed_at`；`source_approval_events` 一行 | 写入时自动生成（`action = 'approved'`，`reason` 即 `approval_notes`） |
+| `compliance_notes`、`robots_txt_*` | 不复制：前者保持原值，后者由各源自己的预检写入 |
+
+三项检查（该平台有 `valid` 的平台审查；`live_health_disposition` 为 `ready` / `empty` 且 `live_health_reviewed_at` 不超过 14 天；预检记录的 `precheck.baseUrl` 等于当前 `base_url`）任一不满足，该源被跳过并给出原因，什么都不写。
+
+**与上面 "What 'approved' requires" 四条的关系。**
+
+1. 第 1 条（`tos_reviewed = true` 且有具名复核人）：由上表复制满足，复核人与 ToS 日期来自平台审查。
+2. 第 2 条（robots.txt 结果不是 `disallow_*`）：批量批准的三项检查**不读逐源的 `robots_txt_status`**；平台审查的 `robots_summary` 是同一主机的平台级陈述，每个源的预检仍把自己的 robots 结果写进 `robots_txt_*`。
+3. 第 3 条（复核到期日是真实的未来日期）：`compliance_review_due_at` = `next_review_at`；创建时要求它晚于 `reviewed_at`，批准时要求该审查仍是 `valid`。
+4. 第 4 条（robots 被标记或无法访问过的源必须有法务参考）：`legal_opinion_reference` 原样复制，审查没有就为空。硬性要求只对 `requires_login = 1` 的源生效（缺复核人、法务参考或 ToS 复核 → 400 `APPROVAL_REQUIREMENTS_UNMET`）；"逐源 robots 被标记过"这种情形批量路径不拦——批准前用下面的查询看一眼分布，有异常的源改走单源批准表单。
+
+```sql
+SELECT robots_txt_status, COUNT(*) FROM data_sources
+ WHERE provider_family = 'bidnet' AND jurisdiction_level IN ('county','city','township') AND approval_status IS NULL
+ GROUP BY 1;
+```
+
+**审计。** 每次创建平台审查写一条审计事件 `platform_review.created`（`event_log`，`source = 'audit'`，`retention_class = 'audit'`，`target_type = 'platform_review'`，`target_id` 是审查 id，`before_after_json` 里的 `after` 是整行）。批量批准写的是每个源自己的 `source_approval_events`，`approval_notes` 与它的 `reason` 里都带着平台审查 id，所以一个批量批准的源可以追溯到产生它的那一行审查。这让批量批准的台账有了出处，但不是逐字段历史：下面 "Known gaps" 第 4 条对手工 PATCH 的编辑仍然成立。
+
+**续期与到期。** 到期前建新的一行即可；到期后批量批准停止，已批准的源照常运行。但它们各自的 `compliance_review_due_at` 是批准时复制的旧日期，续期平台审查**不回写**它们，而批量批准对已批准的源只会答 `already_approved`——目前没有批量续期入口，需要逐个 `PATCH /api/admin/data-sources/<id>` 更新 `complianceReviewDueAt`。
+
 ## What "approved" requires
 
 A source is considered **ledger-approved** for production crawling only when **all** of the following are true:

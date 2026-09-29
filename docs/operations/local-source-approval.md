@@ -134,6 +134,261 @@ BidNet Direct 在 AWS WAF 后面，同平台密集请求会集中吃 403（2026-
 4. 在批量运行面板单独跑一次该源，确认结果是"成功"、"空态：无开放招标"之一；若出现"平台限流，本批推迟"，稍后再单独重跑。
 5. 把本次批准结论补进[合规台账](./data-source-compliance-ledger.md)。
 
+## 8. 批量接入（阶段 3）
+
+第 2、3 节讲的是**一个源**：点一次前置检查、填一张批准表单。2026-09-28 注册之后，库里有约 950 个 `approval_status IS NULL` 的 BidNet 县/市/镇源（当时待预检的是 952 个），逐个走表单既不现实，也留不下一致的台账。阶段 3（设计见[设计稿](../superpowers/specs/2026-09-24-county-data-completeness-design.md)第 7 节及其"实施补充（阶段 3）"）把这条路换成三步：
+
+1. **平台审查**：人对整个平台做一次合规审查（ToS、robots.txt、访问边界），记成一行（8.1）；
+2. **预检入队**：给源打上"待预检"标记，由爬虫 worker 在平台预算内替你跑第 2 节的前置检查（下文简称**预检**）（8.2）；
+3. **带台账批量批准**：服务端逐个核对三项检查，全部通过的源一次写好台账并批准（8.3）。
+
+原则同前：**没有一步替人放行。** 平台审查由 admin 亲手建立，预检只产出证据，批准是 admin 的一次点击；而且服务端在写入前会把三项检查**再做一遍**——面板上的数字只是提示，不是授权。批量路径只管**同一平台的一整批源**，个别源、不属于任何平台的源和例外情况仍走第 3 节的表单（8.4）。
+
+### 8.1 平台审查
+
+`platform_reviews` 表的一行 = "某平台在某天被审查过一次"。它把原本每个源各填一遍的 ToS、robots.txt、访问边界提到平台一级记一次；批量批准时再复制进每个源自己的台账（复制关系见[合规台账](./data-source-compliance-ledger.md#平台审查platform_reviews)）。
+
+**在哪里建。** `/admin` → **数据源**区块**最上方**的"平台合规审查"面板（"新建审查"按钮；只有 admin 看得到表单，operator / support 只读），或 `POST /api/admin/platform-reviews`。面板里"复核人"取当前登录管理员的邮箱，且不可改；建审查需要以 admin 登录管理端。
+
+| 字段（请求体键名，面板同名） | 必填 | 说明 |
+| --- | --- | --- |
+| `providerFamily` | 是 | 小写 slug（`a-z`、`0-9`、`_`、`-`），对应 `data_sources.provider_family`，如 `bidnet` |
+| `tosUrl`、`tosReviewedAt` | 是 | 服务条款地址（http/https）与通读日期。BidNet 是 `https://www.bidnetdirect.com/tsandcs`，其内容与 APSi 的关系见下方"首轮实测" |
+| `robotsUrl`、`robotsCheckedAt` | 是 | robots.txt 地址与取得时间；必须经 crawler 取（见下） |
+| `robotsSummary` | 是 | 一行摘要：禁止的路径范围，以及为什么它不覆盖被抓取的列表/详情路径 |
+| `reviewer` | 是 | 复核人。面板取登录邮箱；curl 要自己写 |
+| `nextReviewAt` | 是 | 下次复核日期，必须晚于 `reviewedAt` |
+| `reviewedAt` | 否 | 审查日期，省略取提交时刻。"有效审查"就按它排序 |
+| `legalOpinionReference` | 否 | 法务意见/工单号。批准 `requires_login = 1` 的源时必须有（8.3） |
+| `accessBoundary` | 否 | 省略即写入固定句：`只读公开列表与详情页；不登录、不取会员内容、不绕 WAF` |
+| `notes` | 否 | 备注 |
+
+校验失败返回 400 `INVALID_REQUEST`，`message` 把所有问题用 `; ` 连起来一次给全。
+
+**有效 / 到期 / 缺失。** 一个平台的有效审查是它 `reviewed_at` **最新**的那一行（不是"最新的未到期一行"：最新一行到期了，更早的未到期行也不会顶上）：
+
+| 状态 | 条件 | 后果 |
+| --- | --- | --- |
+| `valid` 有效 | 最新一行的 `next_review_at` 在当前时刻之后 | 可以批量批准该平台的源 |
+| `expired` 到期 | 最新一行的 `next_review_at` 已过 | 批量批准该平台的源一律跳过（`platform_review_expired`）；**已批准的源照常运行**，不会被回退 |
+| `missing` 缺失 | 该平台一行都没有 | 同样跳过（`missing_platform_review`） |
+
+因此**不要把 `reviewedAt` 写成未来日期**——它会一直是"最新一行"，压住之后所有的续期。到期后面板上该平台的状态徽标变成"已到期"，批量批准面板提示"平台审查已到期或缺失，先在上方续期再批准"。
+
+**谁能做什么。** `POST` 只有 admin，并走 CSRF 校验；`GET`（审查列表，外加每个平台的有效审查与状态）admin / operator / support 都能读。每次写入是一条审计事件 `platform_review.created`（`event_log`，`target_type = 'platform_review'`，`before_after_json` 里是整行），同时 `created_by` 记建立者的用户 id。**续期 = 再建一行**：旧行留作历史，没有 PATCH，也没有删除。面板的"续期"只把 ToS 与 robots.txt 两个地址带过去，摘要、法务参考、备注都要重写——它们记的是"那一天查到了什么"。
+
+**先经 crawler 取 robots.txt**（第 2 节讲过：BidNet 的 WAF 拒绝 Node `fetch`），再把 `Disallow` 的范围写成一行摘要。BidNet 2026-09-21 的禁止范围见 [`source-discovery.md`](./source-discovery.md) 第 2 节，以当天取到的为准：
+
+```bash
+cd crawler
+echo '{"base_url":"https://www.bidnetdirect.com/participating-buyers"}' \
+  | python3 -m apsi_crawler.cli fetch-robots \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["status"], d["robots_url"]); print("\n".join(l for l in d["body"].splitlines() if l.lower().startswith(("user-agent","disallow","allow"))))'
+```
+
+本地开发用 `ADMIN_UI_LOCAL_BYPASS=true`（只在 `NODE_ENV !== "production"` 时生效；`.env.local` 里设，重启 dev server）时接口不要求会话，可以直接 curl。此时 `created_by` 为空、审计事件的操作者记为 `system`，所以 `reviewer` 必须自己写：
+
+```bash
+curl -sS -X POST http://localhost:3000/api/admin/platform-reviews \
+  -H 'Content-Type: application/json' \
+  -H 'Origin: http://localhost:3000' \
+  -d '{
+    "providerFamily": "bidnet",
+    "tosUrl": "https://www.bidnetdirect.com/tsandcs",
+    "tosReviewedAt": "2026-09-30",
+    "robotsUrl": "https://www.bidnetdirect.com/robots.txt",
+    "robotsCheckedAt": "2026-09-30T08:00:00Z",
+    "robotsSummary": "<当天 fetch-robots 取到的 Disallow 范围，一行>",
+    "reviewer": "<复核人邮箱>",
+    "legalOpinionReference": null,
+    "nextReviewAt": "2027-09-30",
+    "notes": "<可选>"
+  }'
+# 201 {"review":{"id":"prv_…","providerFamily":"bidnet",…}}
+
+curl -s http://localhost:3000/api/admin/platform-reviews \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin); print({k: v["status"] for k, v in d["effective"].items()})'
+# {'bidnet': 'valid'}
+```
+
+`Origin` 头可以省（CSRF 校验对既无 `Origin` 也无 `Referer` 的请求放行）；写了就必须是本站来源，跨站来源答 403 `CSRF_VALIDATION_FAILED`。
+
+### 8.2 预检入队
+
+**入队只打标记，不发任何请求。** `data_sources.precheck_requested_at` 是队列标记：只由入队操作**设置**、只由 worker 在预检**完成**后清除。三种入队方式效果相同：
+
+```bash
+cd frontend
+export DATABASE_URL='mysql://…'    # 脚本不读 .env.local；不导出就落到 SQLite（data/apsi.sqlite）——看输出括号里是 MySQL 还是 SQLite
+npm run source:precheck -- --provider bidnet --pending --dry-run   # 先看会入队哪些，什么都不写
+npm run source:precheck -- --provider bidnet --pending             # 真入队
+npm run source:precheck -- --source <id> --source <id>             # 按 id 入队（可重复）
+```
+
+- 脚本必须是 `--provider <平台> --pending`，或至少一个 `--source <id>`；参数组合不对（单独的 `--provider` 或 `--pending`、什么参数都没有、参数不认识）都会打印用法并以退出码 1 结束。输出形如 `Dry run (MySQL): N sources would be queued`（后面逐行列出 id）与 `Queued N sources for precheck (MySQL): …`（真入队，只列前 20 个 id）。
+- 管理端"带台账的批量批准"面板里的"**为待预检源入队**"按钮（admin / operator）做的是 `--pending` 那一种，接口是 `POST /api/admin/data-sources/precheck-requests`，请求体 `{"providerFamily":"bidnet","pending":true}` 或 `{"sourceIds":["…"]}`（最多 500 个 id），返回 `{ requestedCount, sourceIds }`。
+- 队列标记本身不触碰任何治理列，入队之后源仍在治理拦截中。
+
+**`pending`（待预检）的定义**，脚本、接口和按钮共用一份：本地级别（`county` / `city` / `township` / `special_district`）、`is_enabled = 1`、`approval_status` 为空或 `needs_review`、`precheck_requested_at` 为空（没有排在队里）、并且 14 天内没有预检（`live_health_reviewed_at` 为空或更早）。按 id 入队则不看这些条件，只跳过已经在队里的。
+
+**worker 怎么消化队列。** `npm run worker:crawler`（起之前可以先 `npm run worker:crawler:check`；和脚本一样，不读 `.env.local`，连 MySQL 要在启动它的 shell 里导出 `DATABASE_URL`）每个 tick（`CRAWLER_WORKER_INTERVAL_MS`，默认 15 分钟）先跑日常列表，**然后**用**同一个 tick 的 `PlatformTickBudget`**——也就是日常列表花剩下的额度（设计稿 §5.5 的优先级 2）——跑预检队列（`frontend/src/server/crawler/precheck-queue-runner.ts`）：
+
+- 按 `precheck_requested_at` 从旧到新。每 tick 最多读 500 行、最多**开始** 50 个预检；因预算、平台暂停或退避而跳过的行不占这 50 个名额。
+- 每个预检**预扣 2 个请求**（robots.txt 一次 + 列表页一次）；预检以 404 收场、触发了租户探测（最多 6 个请求），按 **2 + 6** 结算。额度不够就留到下个 tick，不算失败。
+- robots.txt **每个主机每 tick 只取一次**（按 URL 缓存；BidNet 所有租户共用 `https://www.bidnetdirect.com/robots.txt`，队列里只有 BidNet 时日志里的 `robotsFetches` 每 tick 应为 1，队列空时为 0）。
+- 同一平台两个预检之间至少隔 `CRAWLER_PLATFORM_MIN_INTERVAL_MS`（默认 5000 ms）。日常列表与预检两步各自计时，两步衔接处不额外等待。
+- 预检本身就是第 2 节那一套：不入库任何招标，写回 `robots_txt_*` 与 `live_health_*`，并把当时用的 `base_url` 记进结论备注（`live_health_notes` 里的 `precheck.baseUrl`），批准时核对（8.3 的第 3 项）。
+- 停止信号若在日常列表阶段到来，这个 tick 不再开始预检；标记留在库里，下次启动接着跑。队列这一步整体抛错只记 `crawler_precheck_queue_failed` 日志并上报，不影响日常爬取。
+
+**什么算"完成"。** 只有预检给出了关于**该源自己**的结论，才清除标记：
+
+| 预检结果 | 怎么判 | 队列标记 | 对平台的影响 |
+| --- | --- | --- | --- |
+| **完成** | `ready`、`empty`，以及 404、解析失败、没解析到行这类 `needs_fix`——它们都是关于源本身的证据 | 清除 | 无 |
+| **挑战** | 试抓**失败**，且是 WAF 挑战（HTTP 403 / 202，或 `…ChallengeError`）或 HTTP 429 | **保留** | 暂停整个平台 `CRAWLER_PLATFORM_PAUSE_MS`（默认 30 分钟，日常列表也被挡住），本 tick 该平台剩余的预检停止 |
+| **环境 / 瞬时失败** | 没拿到结果文档（解释器缺失、超时、崩溃、输出解析不了），或网络类错误、HTTP 5xx、`HTML request failed:`（连接层失败） | **保留** | 本 tick 该平台剩余的预检停止；**不**暂停平台 |
+
+只有失败的试抓才会被读成挑战或错误：一次解析出了行的试抓，不会因为某个详情页在日志里出现过 403 就被当成挑战。
+
+**重试与放弃。** 被挑战或出错的源保留原来的队列时间戳（继续排在队首），但 worker 在内存里给它记一笔退避——`当前时刻 + CRAWLER_PLATFORM_PAUSE_MS` 之前不再尝试（日志里计入 `skippedRetry`），让同一平台的其余源有机会。**连续 3 次**（`PRECHECK_MAX_ATTEMPTS`）挑战或出错后放弃：清除标记，结果记为 `abandoned`，并打一条 `crawler_precheck_abandoned` 警告日志。预检写过结论的源，行里仍是最后一次写下的 `needs_fix` 与原因，14 天内不会再被 `--pending` 选中；要重试就按 id 入队：`npm run source:precheck -- --source <id>`。这份退避记忆只在 worker 进程内存里，重启即清零——平台暂停也是。
+
+**因此"需修正"里可能混有被挑战的源。** 预检在返回之前已经把 `needs_fix` 与原因写进行里，所以一个被挑战、标记仍保留的源在就绪度里读作 `precheck_needs_fix`，直到它某次预检完成。区分办法：`precheck_requested_at` 不为空，或 `live_health_notes` 里 `precheck.fetch.wafChallenge` 为 `true`。
+
+**预算算术。** 每 tick 的额度是 `⌊每小时额度 × tick 时长 ÷ 1 小时⌋`（见[生命周期与预算](./bid-lifecycle-and-crawl-budget.md)第 4 节）。默认 `bidnet=60`、tick 15 分钟，每 tick 15 次请求。日常列表先花，预检只拿剩下的；下表假设当天没有别的 BidNet 请求到期、没有预检以 404 收场（每个 404 要花 8 而不是 2）：
+
+| `CRAWLER_PLATFORM_BUDGETS` | 每 tick 额度 | 每 tick 预检数 | 每小时 | 952 个源约需 |
+| --- | --- | --- | --- | --- |
+| `bidnet=60`（默认） | 15 | 7（14 个请求，余 1） | 28 | 34 小时 |
+| `bidnet=120` | 30 | 15 | 60 | 约 16 小时 |
+
+这是**下限**：worker 每轮是"跑完再睡 15 分钟"，实际周期是 15 分钟加上本轮耗时；已批准的源越多，日常列表占的额度越多。`bidnet=120` 会把对 BidNet 的持续请求率翻倍，而 BidNet 对**持续 60 次/小时**的容忍度本身还没实测过（设计稿第 14 节的风险 1，阶段 3 首轮全量时核实），120 更没有——先用默认值跑，看 `challenge` 计数与平台暂停，再决定要不要调；该变量是 worker 进程的环境变量，改后要重启 worker。
+
+**日志。** worker 的日志是 stdout 上的 JSON 行，按事件名 grep：
+
+| 事件 | 内容 |
+| --- | --- |
+| `crawler_precheck_queue_processed` | 每 tick 一行汇总计数：`queued`（本 tick 读到的队列行数）、`done`、`challenge`、`error`、`abandoned`、`skippedBudget`、`skippedPaused`、`skippedRetry`、`stoppedFamilies`、`robotsFetches` |
+| `crawler_precheck_queue_completed` | worker 的结构化日志，`prechecks` 字段是完整结果：`processed[]` 逐个源的 `outcome`（`done` / `challenge` / `error` / `abandoned`）、`verdict`、`error` |
+| `crawler_precheck_abandoned` | 警告：`source`、`family`、`attempts`、`lastOutcome`、`reason` |
+| `crawler_precheck_queue_failed` | 错误：队列这一步整体失败 |
+
+看队列进度：
+
+```sql
+SELECT COUNT(*) AS queued, MIN(precheck_requested_at) AS oldest FROM data_sources WHERE precheck_requested_at IS NOT NULL;
+```
+
+**一个 worker，且别同时手动打同一平台。** 预算与暂停都在 worker 进程内存里，队列也没有逐源租约：起两个 crawler worker 会重复预检、成倍花额度。管理端的单源预检和手动运行**不占** worker 的预算，也不受它的内存暂停约束——worker 在消化队列时，别再手动对同一平台跑预检或爬取。
+
+### 8.3 带台账批量批准
+
+批准的入口是管理端"带台账的批量批准"面板（数据源区块，平台审查面板下面）或 `POST /api/admin/data-sources/batch`（`action: "approve"`，只有 admin，一次最多 100 个 id）。**本地源**（`jurisdiction_level` 有值且不是 `federal` / `state`，和治理门禁 `blockedReasonFor` 是同一条规则）只有同时通过下面三项检查才会被批准；联邦/州级源不受影响，仍走旧的通用批准。
+
+已经 `approved` 的读作 `already_approved`，`blocked` 的读作 `blocked`——批量批准既不重复批准，也**不解除拦截**。其余按顺序过检，几项都不满足时只报第一个：
+
+1. **平台审查有效**：该 `provider_family` 的有效审查存在且未到期。缺 → `missing_platform_review`；到期 → `platform_review_expired`。
+2. **预检结论可用**：`live_health_disposition` 是 `ready` 或 `empty`，且 `live_health_reviewed_at` 距今**不超过 14 天**。没有预检 → `precheck_missing`；结论是 `needs_fix` → `precheck_needs_fix`；太旧 → `precheck_stale`。
+3. **地址没变**：预检备注里记的 `precheck.baseUrl` 与该行**当前** `base_url` 完全相同。预检之后改过 `base_url`，或备注是阶段 3 之前的旧格式（没有记 `baseUrl`）→ `base_url_changed`。
+
+**写入什么。** 通过的源一次写好。它与第 3 节表单走同一条更新路径（`updateAdminDataSource`），写的台账列几乎相同，只是值取自平台审查，并且**覆盖**行里原有的值（含清空）：
+
+| `data_sources` 列 | 值 |
+| --- | --- |
+| `approval_status` / `legal_review_status` / `approved_for_ingestion` / `is_enabled` | `approved` / `approved_public` / `1` / `1` |
+| `compliance_reviewer` | 平台审查的 `reviewer` |
+| `tos_url`、`tos_reviewed`、`tos_reviewed_at` | 平台审查的 `tos_url`；`1`；平台审查的 `tos_reviewed_at`（条款被通读的日期，不是批准时刻） |
+| `legal_opinion_reference` | 平台审查的 `legal_opinion_reference`（可为空） |
+| `compliance_review_due_at` | 平台审查的 `next_review_at` |
+| `approval_notes` | `依据平台审查 #<平台审查 id>；预检 <ready 或 empty> @<live_health_reviewed_at>`，例如 `依据平台审查 #prv_…；预检 ready @2026-10-01T03:12:44.100Z` |
+
+同时自动盖上 `last_approval_reviewed_at`，并写一行 `source_approval_events`（`action = 'approved'`，`reason` 就是上面的 `approval_notes`，`actor_user_id` 是批准的 admin，本地 bypass 下为空）。**不写** `compliance_notes`（保持原值）；逐源的 `robots_txt_*` 由各源自己的预检写入，批量批准不改。
+
+**就绪度与六个分组。** `GET /api/admin/data-sources/approval-readiness?providerFamily=bidnet`（admin / operator / support）由服务端算好每个本地源落在哪一组，面板与脚本共用这一个定义；不带 `providerFamily` 则列出所有平台的本地源，`platformReview` 为 `null`。返回 `providerFamily`、`platformReview`（`status` + `review`）、`counts`（六组计数）和 `sources[]`（每个源的 `bucket`、`reason`、当前 `baseUrl`、`suggestedBaseUrl`、`precheckRequestedAt`、`liveHealthDisposition`、`liveHealthReviewedAt`）：
+
+| 分组（面板 / `bucket`） | 含义 | 怎么处理 |
+| --- | --- | --- |
+| 可批准 `approvable` | 三项检查全部通过 | "批准全部可批准项"，或 `POST batch` |
+| 待预检 `awaiting_precheck` | `precheck_missing`、`precheck_stale` 或 `base_url_changed`（包含已在队列里等 worker 的） | "为待预检源入队"；预检不满 14 天却改过 `base_url` 的行 `--pending` 选不到，用 `--source <id>` |
+| 需修正 `needs_fix` | 预检结论是 `needs_fix`（404、WAF 挑战、解析不出行……） | 保持未批准。面板列出当前地址和租户探测的**建议地址**（纯文本，绝不自动写入；最多列 50 个，其余读 `approval-readiness`）；核对后按 4.2 节写回 `base_url`，再重跑预检 |
+| 缺平台审查 `missing_platform_review` | 该平台没有有效审查（缺失或到期） | 先建或续期（8.1）。审查检查排在预检检查之前，所以审查缺失时所有尚未批准、未拦截的本地源都落在这一组，"需修正"等数字要等审查有效之后才有意义 |
+| 已批准 `approved` | `approval_status = approved` | — |
+| 已拦截 `blocked` | `approval_status = blocked` | 批量批准不解除拦截；确需放行走单源 PATCH |
+
+**批准全部。** "批准全部可批准项（N）"只在平台审查为"有效"、N > 0、且是 admin 时可点。它取最近一次就绪度里 `approvable` 的 id，**按 100 个一批**（`APPROVAL_BATCH_CHUNK_SIZE`）依次提交，显示"已提交 X / N"，最后给"已批准 A，跳过 B。"和按原因分列的跳过数；服务端提交时会重新过一遍三项检查，所以两次读取之间变旧的源会被跳过并说明原因。点一下就开始提交，没有二次确认。某一批失败时前面的批次已经批准了，面板显示"批量批准失败：…"、照常给出已完成部分的统计并重读计数。数据源表勾选若干行再点"批量批准"走的是同一个接口：本地源同样只走台账，被跳过的行保持勾选，提示变成"已批准 A，跳过 B。"。表格每行的"批准"按钮对县/市/镇源不再显示——它写不出台账；要单个批准用第 3 节的表单。
+
+接口应答（脚本化时自己按 100 切块）：
+
+```bash
+curl -sS -X POST http://localhost:3000/api/admin/data-sources/batch \
+  -H 'Content-Type: application/json' -H 'Origin: http://localhost:3000' \
+  -d '{"action":"approve","sourceIds":["<id>","<id>"]}'
+# {"updatedCount":1,"skippedCount":1,
+#  "outcomes":[{"sourceId":"<id>","outcome":"approved","reason":null},
+#              {"sourceId":"<id>","outcome":"skipped","reason":"precheck_stale"}],
+#  "sources":[…只含已批准的行…]}
+```
+
+`outcome` 是 `approved`（`reason` 为 `null`，联邦/州级源也是）或 `skipped`。错误：`sourceIds` 缺失、超过 100 个或 `action` 不是 `approve` / `hold` → 400 `INVALID_REQUEST`；任何一个 id 不存在 → 404 `DATA_SOURCE_NOT_FOUND`（整个请求答 404，但其余 id 已按规则处理过）；非 admin → 403 `FORBIDDEN`；`requires_login = 1` 的源在台账缺复核人、法务参考或 ToS 复核时 → 400 `APPROVAL_REQUIREMENTS_UNMET`——平台审查没填 `legalOpinionReference` 时，批量批准不了这类源，而且批是逐个写的、没有事务，同一请求里排在它前面的源已经批准。`action: "hold"` 不变，仍是通用的"暂缓"，应答只有 `updatedCount` 与 `sources`。
+
+**跳过原因**（`outcomes[].reason` 与就绪度的 `reason`，九个）：
+
+| `reason` | 管理端文案 | 含义 | 处理 |
+| --- | --- | --- | --- |
+| `missing_platform_review` | 无有效平台审查 | 该平台从未建过审查 | 8.1 新建 |
+| `platform_review_expired` | 平台审查已到期 | 最新一行的 `next_review_at` 已过 | 续期 |
+| `precheck_missing` | 尚未预检 | `live_health_disposition` 或 `live_health_reviewed_at` 为空 | 入队 |
+| `precheck_stale` | 预检超过 14 天 | 有 `ready` / `empty` 结论，但太旧 | 重新入队（`--pending` 会带上它） |
+| `precheck_needs_fix` | 预检需修正 | 结论是 `needs_fix` | 见"需修正" |
+| `base_url_changed` | 预检后地址已变 | 预检记的 `baseUrl` 与当前 `base_url` 不同，或旧备注没有记 | 重新预检（`--source <id>`） |
+| `already_approved` | 已批准 | `approval_status` 已是 `approved` | 无需处理 |
+| `blocked` | 已拦截 | `approval_status` 是 `blocked` | 批量批准不解除；单源 PATCH |
+| `not_local` | （无文案） | 只出现在纯函数 `evaluateLedgeredApproval` 里，表示联邦/州级源。批量接口对这类源直接走通用批准，就绪度接口不列它们，所以 HTTP 应答里见不到 | — |
+
+**控制台怎么显示。** 已注册但未批准的县/市/镇源，数据源表里现在读作"待审核"并带"需要批准"标记，与治理门禁一致——此前它们被误显示为"已批准"（管理端 DTO 对空的治理列默认"已批准"，与爬虫门禁相反）。
+
+### 8.4 与单源表单的关系
+
+批量路径不取代第 3 节的表单，两者走同一条更新路径，先后不冲突：表单批准过的源在就绪度里读作"已批准"。联邦/州级源不在本节范围内，仍是旧的通用批准。下面这些**本地源**仍走第 2、3 节：
+
+- **不属于任何平台的源**（`provider_family` 为空，如自有站点的县）：在就绪度里读作占位家族 `public_portal`，未批准的都落在"缺平台审查"。**不要为 `public_portal` 建平台审查**——代码不阻止，但那等于给所有自有站点一并放行，而它们各自的 ToS 与 robots.txt 本来就要逐个看。
+- **预检 `needs_fix` 后要人来判断的**：改 `base_url`、重跑预检，再回到批量路径，或者直接在表单里批准。
+- **robots.txt 被标记、或 `requires_login = 1` 的源**：表单强制填法务参考（第 3 节）；批量路径不看逐源的 robots 标记（见 8.6）。
+- **需要给单个源写专门的 `compliance_notes`** 的例外。
+
+### 8.5 批量接入的操作顺序
+
+1. **迁移**：MySQL 先 `cd frontend && npm run db:mysql:migrate`（新表 `platform_reviews` 与新列 `data_sources.precheck_requested_at`）。
+2. **平台审查**（8.1）：先取 robots，再建 `bidnet` 那一行；GET 确认 `effective.bidnet.status` 是 `valid`。
+3. **看会入队什么**：`npm run source:precheck -- --provider bidnet --pending --dry-run`，数字合理再去掉 `--dry-run`。
+4. **起 worker**，观察前几个 tick 的 `crawler_precheck_queue_processed`：`done` 在涨、`robotsFetches` 是 1、`challenge` 是 0。出现挑战时确认平台被暂停（`skippedPaused` 上升）、暂停期过后恢复。
+5. **看就绪度**（面板计数或 `approval-readiness`）。批准前先抽查逐源 robots 分布（见 8.6）。
+6. **分轮批准**：每积累一批"可批准"就点一次"批准全部可批准项"，记下"已批准 / 跳过"和各原因。**不要等全部预检完再一次批**：刚批准的源没有 `last_success_at`，下个 tick 起全部到期，而日常列表先于预检花额度（每个源先按最多 4 页预扣，跑完按实际请求数退还），一次批准很多源会让队列里剩下的预检等首跑排完才有额度。
+7. **处理"需修正"**：逐个核对建议地址，写回 `base_url`，再按 id 入队重跑预检。
+8. **抽查**：随机抽几个已批准的源，核对台账各列与 `approval_notes`，以及 `source_approval_events`：
+
+```sql
+SELECT id, approval_status, approved_for_ingestion, is_enabled, legal_review_status, compliance_reviewer, tos_url,
+       tos_reviewed_at, legal_opinion_reference, compliance_review_due_at, approval_notes, last_approval_reviewed_at
+  FROM data_sources WHERE id = '<源 id>';
+SELECT action, previous_approval_status, next_approval_status, reason, actor_user_id, created_at
+  FROM source_approval_events WHERE source_id = '<源 id>' ORDER BY created_at DESC;
+```
+
+### 8.6 已知限制
+
+- **已批准源的台账续期没有批量入口。** 批准时复制进源行的 `compliance_review_due_at` 是当时平台审查的 `next_review_at`；之后续期平台审查只影响以后的批量批准，**不回写**已批准的源，批量批准对已批准的源又只会答 `already_approved`。到期前要逐个 `PATCH /api/admin/data-sources/<id>` 更新 `complianceReviewDueAt`（以及需要的话 `complianceReviewer` 等）。
+- **逐源 robots.txt 标记不在三项检查里。** 平台审查的 `robots_summary` 覆盖同一主机的 robots.txt；某个源的预检把 `robots_txt_status` 记成 `disallow_*` / `unreachable` 时，批量批准照样放行（[合规台账](./data-source-compliance-ledger.md)"What 'approved' requires"第 4 条要求这种情况有法务参考）。批准前看一眼分布，有异常的源走第 3 节表单：
+
+```sql
+SELECT robots_txt_status, COUNT(*) FROM data_sources
+ WHERE provider_family = 'bidnet' AND jurisdiction_level IN ('county','city','township') AND approval_status IS NULL
+ GROUP BY 1;
+```
+
+- **"待预检"计数会比按钮能入队的数多。** 计数包含已在队列里等 worker 的源（正常，随预检完成下降）、预检不满 14 天却改过 `base_url` 的源（`--pending` 认为它"刚预检过"）和 `is_enabled = 0` 的源（`--pending` 只要启用的）。计数不为 0 而按钮报"已入队 0 个源"时，多半是这几类：改过地址的用 `--source <id>` 入队。
+- **平台暂停与预检退避只在 worker 内存里**，重启即清零；重启后第一个 tick 就会再试刚被挑战的平台。
+- **批准不是事务。** 一次请求里的多个 id 逐个写入，中途失败时前面的已经生效（重读就绪度即可看到真实状态）。
+
 ## 首轮实测（2026-09-16，本地 MySQL `winbids`）
 
 前提：dev server 在 3000（`ADMIN_UI_LOCAL_BYPASS=true`，回环）；解析 sidecar 8091、浏览器 sidecar 8092 均为宿主机 `run-local.sh`；10 个 BidNet 县市源均为 `approval_status IS NULL`（治理拦截）。
