@@ -86,6 +86,9 @@ import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { JurisdictionBatchRunPanel } from "@/components/admin/JurisdictionBatchRunPanel";
 import { CrawlerConfigPanel } from "@/components/admin/CrawlerConfigPanel";
 import { SourcePrecheckPanel } from "@/components/admin/SourcePrecheckPanel";
+import { isLocalJurisdictionSource } from "@/components/admin/ApproveLocalSourceDialog";
+import { LedgeredApprovalPanel, providerFamiliesOf } from "@/components/admin/LedgeredApprovalPanel";
+import { PlatformReviewsPanel } from "@/components/admin/PlatformReviewsPanel";
 import { stateCrawlerSourceIdForAdminSource } from "@/lib/state-crawler-sources";
 
 type SectionLoadStatus = "loading" | "error" | "ready";
@@ -1633,6 +1636,8 @@ export default function AdminPage() {
   const [featureOverrideExpiresAt, setFeatureOverrideExpiresAt] = useState("");
   const [isLoadingFeatureOverrides, setIsLoadingFeatureOverrides] = useState(false);
   const [isUpdatingFeatureOverride, setIsUpdatingFeatureOverride] = useState(false);
+  // Bumped when a platform review is saved so the ledgered approval panel re-reads its readiness.
+  const [platformReviewRevision, setPlatformReviewRevision] = useState(0);
   const isAdmin = user?.role === "admin";
   const isOperator = user?.role === "operator";
   const canAccessAdminConsole = Boolean(user && ADMIN_CONSOLE_USER_ROLES.includes(user.role));
@@ -1965,10 +1970,24 @@ export default function AdminPage() {
       sourceIds: visibleSelectedSourceIds,
       action,
     })
-      .then(({ sources: updatedSources }) => {
+      .then(({ sources: updatedSources, updatedCount, skippedCount, outcomes }) => {
         replaceSources(updatedSources);
-        setSelectedSourceIds((current) => current.filter((id) => !visibleSelectedSourceIds.includes(id)));
-        setRunMessage(t("admin.sourceBatchApprovalUpdated"));
+        // A county/city/township source is approved only through the platform-review ledger, so an
+        // `approve` can skip some of the selected ids. Those stay selected and the message counts them
+        // instead of reporting a plain success.
+        const skippedIds = new Set(
+          (outcomes ?? []).filter((entry) => entry.outcome !== "approved").map((entry) => entry.sourceId),
+        );
+        setSelectedSourceIds((current) =>
+          current.filter((id) => !visibleSelectedSourceIds.includes(id) || skippedIds.has(id)),
+        );
+        setRunMessage(
+          (skippedCount ?? 0) > 0
+            ? t("admin.ledgeredApprovalResult")
+                .replace("{approved}", String(updatedCount))
+                .replace("{skipped}", String(skippedCount))
+            : t("admin.sourceBatchApprovalUpdated"),
+        );
       })
       .catch(() => {
         setRunMessage(t("admin.sourceBatchApprovalFailed"));
@@ -3729,6 +3748,23 @@ export default function AdminPage() {
               {t("admin.sources")}
             </div>
           </div>
+          {/* Platform review + ledgered batch approval (spec 2026-09-24 §7.1/§7.3). Like the batch
+              run panel below, neither reloads the dashboard sections on completion (that would
+              unmount them and wipe the result the admin is reading); the sources table refreshes
+              via the header Refresh button. */}
+          <PlatformReviewsPanel
+            canManage={isAdmin}
+            reviewerEmail={user?.email ?? null}
+            disabled={isRunning}
+            onSaved={() => setPlatformReviewRevision((revision) => revision + 1)}
+          />
+          <LedgeredApprovalPanel
+            providerFamilies={providerFamiliesOf(allSources)}
+            canApprove={isAdmin}
+            canRequestPrechecks={canRunOperations}
+            disabled={isRunning || runningSourceId !== null}
+            refreshKey={platformReviewRevision}
+          />
           {/* No onCompleted → load(): a full section refresh flips dataSources to "loading",
               unmounting this panel and wiping the per-source batch report the admin is reading.
               The sources table refreshes via the header Refresh button instead. */}
@@ -4051,16 +4087,21 @@ export default function AdminPage() {
                     )}
                     {canManageUsers && (
                       <div className="mt-2 flex max-w-64 flex-wrap gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => updateSourceApproval(source, "approved")}
-                          disabled={sourceApprovalPendingId === source.id || source.approvalStatus === "approved"}
-                          className="h-8 rounded-lg border-emerald-200 px-2 text-xs text-emerald-700"
-                        >
-                          {t("admin.approveSource")}
-                        </Button>
+                        {/* This approve writes no compliance ledger, so it is offered for federal/state rows
+                            only. A county/city/township row is approved through the ledgered batch panel above
+                            or the "approve county/city source" form in its pre-check card (spec §7.3). */}
+                        {!isLocalJurisdictionSource(source) && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => updateSourceApproval(source, "approved")}
+                            disabled={sourceApprovalPendingId === source.id || source.approvalStatus === "approved"}
+                            className="h-8 rounded-lg border-emerald-200 px-2 text-xs text-emerald-700"
+                          >
+                            {t("admin.approveSource")}
+                          </Button>
+                        )}
                         <Button
                           type="button"
                           variant="outline"

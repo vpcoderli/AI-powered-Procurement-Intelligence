@@ -566,6 +566,36 @@ describe("admin API client", () => {
     expect(result.outcomes?.[1]).toEqual({ sourceId: "bidnet_mi_b", outcome: "skipped", reason: "precheck_needs_fix" });
   });
 
+  it("surfaces the CSRF and approval-requirement rejections verbatim instead of a generic failure", async () => {
+    // Codes the client did not list used to collapse to INTERNAL_ERROR / "Request failed", hiding the
+    // sentence the admin needs (retry from the app, or which ledger field a login-gated source lacks).
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse(
+        { error: { code: "CSRF_VALIDATION_FAILED", message: "Request origin could not be verified. Please retry from the application." } },
+        { status: 403 },
+      ),
+    );
+    await expect(batchUpdateAdminDataSources({ sourceIds: ["bidnet_mi_a"], action: "approve" })).rejects.toMatchObject({
+      name: "AdminApiError",
+      status: 403,
+      code: "CSRF_VALIDATION_FAILED",
+      message: "Request origin could not be verified. Please retry from the application.",
+    });
+
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse(
+        { error: { code: "APPROVAL_REQUIREMENTS_UNMET", message: "Approving a login-gated source requires complianceReviewer to be recorded in the compliance ledger." } },
+        { status: 400 },
+      ),
+    );
+    await expect(batchUpdateAdminDataSources({ sourceIds: ["nj_login_gated"], action: "approve" })).rejects.toMatchObject({
+      name: "AdminApiError",
+      status: 400,
+      code: "APPROVAL_REQUIREMENTS_UNMET",
+      message: "Approving a login-gated source requires complianceReviewer to be recorded in the compliance ledger.",
+    });
+  });
+
   it("reads the approval readiness of one platform", async () => {
     const body = {
       providerFamily: "bidnet",
