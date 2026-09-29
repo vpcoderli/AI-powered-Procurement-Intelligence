@@ -160,3 +160,24 @@ export function hasActiveFilters(query: SourceListQuery): boolean {
     query.q !== defaults.q
   );
 }
+
+/** The rows selected on the list, and the query (`writeSourceListQuery`'s text) they were selected under. */
+export interface SourceSelection {
+  canonical: string;
+  ids: readonly string[];
+}
+
+export function emptySourceSelection(canonical: string): SourceSelection {
+  return { canonical, ids: [] };
+}
+
+/**
+ * `selection` as it stands on the list `canonical` names. A selection belongs to the query it was made under: on any
+ * other query nothing is selected, whether the user changed the query or the browser's Back or Forward went to another
+ * one, so the bulk bar never acts on rows chosen for a different list. Answers `selection` itself while it is current
+ * and a new empty selection otherwise, so the caller can tell the two apart (`!==`) and store the empty one. A
+ * selection kept for a query the list has left would be back when Back or Forward returned to that query.
+ */
+export function selectionOnQuery(selection: SourceSelection, canonical: string): SourceSelection {
+  return selection.canonical === canonical ? selection : emptySourceSelection(canonical);
+}

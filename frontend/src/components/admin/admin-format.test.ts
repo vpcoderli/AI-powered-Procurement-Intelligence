@@ -6,6 +6,7 @@ import {
   formatBidDate,
   formatDate,
   formatDateInputValue,
+  isUnreadableDateInput,
   statusTone,
   textPreview,
 } from "./admin-format";
@@ -236,6 +237,28 @@ describe("formatDateInputValue", () => {
       "10/12/2026 3:30:00PM EST", "Aug 31, 2026 @ 02:00 PM", "10/02/26",
     ];
     for (const raw of unreadable) expect(formatDateInputValue(raw), String(raw)).toBe("");
+  });
+});
+
+// endOfDayIsoFromDateInput answers null both for an emptied input and for text Date cannot read, and a caller that sends null
+// to clear a date needs to tell them apart. A date <input> in desktop Chrome takes a year of up to six digits.
+describe("isUnreadableDateInput", () => {
+  it("is false for an emptied input and for every day endOfDayIsoFromDateInput can write", () => {
+    for (const value of ["", "2026-07-10", "0001-01-01", "9999-12-31"]) {
+      expect(isUnreadableDateInput(value), value).toBe(false);
+    }
+  });
+
+  it("is true for a five- or six-digit year and for any other text that is no date", () => {
+    for (const value of ["20261-07-10", "275760-09-13", "10000-01-01", "2026-13-45", "abc"]) {
+      expect(isUnreadableDateInput(value), value).toBe(true);
+    }
+  });
+
+  it("is exactly where endOfDayIsoFromDateInput gives null for a value that says something", () => {
+    for (const value of ["", "2026-07-10", "9999-12-31", "20261-07-10", "275760-09-13", "2026-13-45", "abc"]) {
+      expect(isUnreadableDateInput(value), value).toBe(value !== "" && endOfDayIsoFromDateInput(value) === null);
+    }
   });
 });
 

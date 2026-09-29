@@ -53,6 +53,7 @@ import {
 } from "./source-bulk-actions";
 import {
   ListRequestError,
+  emptySourceSelection,
   facetOptions,
   hasActiveFilters,
   lastRunOf,
@@ -60,6 +61,7 @@ import {
   readSourceListQuery,
   recoveryForListError,
   selectedFacetValues,
+  selectionOnQuery,
   toggleFacetValue,
   writeSourceListQuery,
 } from "./source-list-url";
@@ -90,22 +92,30 @@ export function SourcesListView() {
   const [notice, setNotice] = useState<{ message: string; tone: "info" | "error" } | null>(null);
   // Set from effects, rendered with t() — `t` is a new function every render, so effects must not depend on it.
   const [urlNotice, setUrlNotice] = useState<"invalid" | "rejected" | null>(null);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [searchDraft, setSearchDraft] = useState(query.q ?? "");
+  // The selection belongs to the query it was made under (`canonical`), so any change of the URL drops it: the ones the
+  // user makes through navigate() and the browser's Back and Forward, which do not go through it. It is adjusted while
+  // rendering, not in an effect: React redoes the render at once with the new state, so no frame shows rows selected for
+  // another query, and the stored selection is replaced rather than hidden, so returning to that query does not bring it back.
+  const [selectionState, setSelectionState] = useState(() => emptySourceSelection(canonical));
+  const selection = selectionOnQuery(selectionState, canonical);
+  if (selection !== selectionState) setSelectionState(selection);
+  const selectedIds = selection.ids;
 
   // A change the user makes is a new history entry, so the browser's Back returns to the list as it was (spec §5.2);
   // a correction of the URL the page is already on (the 400 recovery) replaces the entry it corrects.
   const navigate = useCallback(
     (next: SourceListQuery, mode: "push" | "replace" = "push") => {
-      setSelectedIds([]);
+      // A change the user makes clears the selection at once, before the new URL has landed.
+      setSelectionState(emptySourceSelection(canonical));
       // A notice about the link that was opened is said once; the next thing the user does replaces it.
       setUrlNotice(null);
       const href = `${pathname}${writeSourceListQuery(next)}`;
       if (mode === "replace") router.replace(href, { scroll: false });
       else router.push(href, { scroll: false });
     },
-    [pathname, router],
+    [canonical, pathname, router],
   );
 
   // An unknown value in the URL: say so once and rewrite the URL to what is applied.
@@ -151,8 +161,12 @@ export function SourcesListView() {
   const range = pageRange(total, query.page, query.pageSize);
   const allVisibleSelected = items.length > 0 && visibleSelected.length === items.length;
 
-  const toggleAllVisible = () => setSelectedIds(allVisibleSelected ? [] : items.map((item) => item.id));
-  const toggleRow = (id: string) => setSelectedIds((current) => (current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]));
+  const toggleAllVisible = () => setSelectionState({ canonical, ids: allVisibleSelected ? [] : items.map((item) => item.id) });
+  const toggleRow = (id: string) =>
+    setSelectionState((current) => {
+      const ids = selectionOnQuery(current, canonical).ids;
+      return { canonical, ids: ids.includes(id) ? ids.filter((entry) => entry !== id) : [...ids, id] };
+    });
 
   // The bar acts on the rows shown and on the URL's filters, so it waits while a page (possibly for other filters) loads.
   const barLocked = busy || page.status === "loading";
@@ -172,7 +186,7 @@ export function SourcesListView() {
       if (!report) return;
       setNotice({ message: report.message, tone: report.outcome === "failed" ? "error" : "info" });
       if (report.outcome === "refused") return;
-      if (report.outcome === "done") setSelectedIds([]);
+      if (report.outcome === "done") setSelectionState(emptySourceSelection(canonical));
       await page.reload();
     } catch (caught) {
       // A request that is not chunked failed (the index read, a run): nothing was tallied, the server's reason is the notice.

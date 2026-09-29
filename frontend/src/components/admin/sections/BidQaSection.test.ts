@@ -74,6 +74,16 @@ describe("bid QA section", () => {
     expect(source).toContain("disabled={isPending || correctionDraft.title.trim().length === 0 || corrections === null}");
   });
 
+  // A date the input holds but the correction cannot carry keeps Save corrections on that same disabled path (the helper
+  // answers null for it), and the field says why with the input's own invalid styling: no new string to translate.
+  it("marks an unreadable date invalid on the input and leaves Save corrections on the disabled path it already has", () => {
+    const source = readFileSync(new URL("BidQaSection.tsx", import.meta.url), "utf8");
+    expect(source).toMatch(/import \{[^}]*\bisUnreadableDateInput\b[^}]*\} from "\.\.\/admin-format";/);
+    expect(source).toContain("if (isUnreadableDateInput(draft.deadlineDate)) return null;");
+    expect(source).toContain("aria-invalid={isUnreadableDateInput(correctionDraft.deadlineDate) || undefined}");
+    expect(source).toContain("disabled={isPending || correctionDraft.title.trim().length === 0 || corrections === null}");
+  });
+
   // Moved from src/app/admin/page.test.ts ("renders user access controls alongside crawler operations").
   it("keeps the bid QA review controls it took over from the dashboard page", () => {
     const source = readFileSync(new URL("BidQaSection.tsx", import.meta.url), "utf8");
@@ -204,6 +214,37 @@ describe("bid QA corrections", () => {
     // The input of a deadline that is not a date is empty from the start: leaving it empty is not clearing anything.
     expect(bidQaCorrectionsFor(bid("TBD"), edited(bid("TBD"), { deadlineDate: "" }))).toBeNull();
     expect(bidQaCorrectionsFor(bid(null), edited(bid(null), { deadlineDate: "" }))).toBeNull();
+  });
+
+  // A date <input> in desktop Chrome takes a year of up to six digits and reports "20261-07-10" as its value. Date reads
+  // neither that nor "275760-09-13", so endOfDayIsoFromDateInput answered null for it just as for an emptied input, and the
+  // save sent { deadlineDate: null }: one slip in the year cleared the bid's deadline.
+  it("sends nothing for a date the input holds but the request cannot carry, so a mistyped year never clears the deadline", () => {
+    for (const deadlineDate of ["2026-07-10", "07/10/2026", "TBD", null]) {
+      const item = bid(deadlineDate);
+
+      for (const typed of ["20261-07-10", "275760-09-13", "10000-01-01", "2026-13-45"]) {
+        expect(bidQaCorrectionsFor(item, edited(item, { deadlineDate: typed })), `${deadlineDate} -> ${typed}`).toBeNull();
+      }
+    }
+  });
+
+  it("holds back the whole draft while its date is unreadable, the title change included, rather than saving half of what was typed", () => {
+    const item = bid("2026-07-10");
+    const title = "Roof replacement, phase 2";
+
+    expect(bidQaCorrectionsFor(item, edited(item, { title, deadlineDate: "20261-07-10" }))).toBeNull();
+    // Once the date is a day again the title goes through with it, or alone when it is the day the input showed.
+    expect(bidQaCorrectionsFor(item, edited(item, { title, deadlineDate: "2026-07-11" }))).toStrictEqual({ title, deadlineDate: "2026-07-11T23:59:59.000Z" });
+    expect(bidQaCorrectionsFor(item, edited(item, { title, deadlineDate: "2026-07-10" }))).toStrictEqual({ title });
+  });
+
+  it("keeps the two things an input can be told apart: an emptied one clears the deadline, a readable day is sent, four-digit extremes included", () => {
+    const item = bid("2026-07-10");
+
+    expect(bidQaCorrectionsFor(item, edited(item, { deadlineDate: "" }))).toStrictEqual({ deadlineDate: null });
+    expect(bidQaCorrectionsFor(item, edited(item, { deadlineDate: "9999-12-31" }))).toStrictEqual({ deadlineDate: "9999-12-31T23:59:59.000Z" });
+    expect(bidQaCorrectionsFor(item, edited(item, { deadlineDate: "2026-07-11" }))).toStrictEqual({ deadlineDate: "2026-07-11T23:59:59.000Z" });
   });
 
   it("counts the trimmed title: spaces alone are no change, and an untouched padded title is not trimmed behind the admin's back", () => {

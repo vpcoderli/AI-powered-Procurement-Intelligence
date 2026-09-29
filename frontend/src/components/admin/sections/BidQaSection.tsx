@@ -17,7 +17,7 @@ import {
   type AdminBidQaReviewStatus,
 } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
-import { compactErrorMessage, endOfDayIsoFromDateInput, formatBidDate, formatDate, formatDateInputValue } from "../admin-format";
+import { compactErrorMessage, endOfDayIsoFromDateInput, formatBidDate, formatDate, formatDateInputValue, isUnreadableDateInput } from "../admin-format";
 import { useAdminSession } from "../admin-session";
 import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
 import { useAdminResource } from "../use-admin-resource";
@@ -103,8 +103,15 @@ export function bidQaCorrectionDraftFor(item: Pick<AdminBidQaItem, "id" | "title
  * The title is changed when the draft was edited and its trimmed text differs from the stored title, so an untouched
  * draft never counts. The deadline is changed when the picked day differs from the day the input was prefilled with;
  * it is sent as the end of that day in UTC, and an emptied input as null, which clears the deadline as it always did.
+ *
+ * A date the input holds but that is no day the request can carry (desktop Chrome lets the year run to six digits,
+ * which Date does not read) is not a correction: it would come out as null too and clear the deadline. It holds back
+ * the whole draft, the title change included, so nothing is saved that the admin did not mean and no typed date is
+ * quietly dropped; the date field is marked invalid and Save corrections stays off until it is a day again.
  */
 export function bidQaCorrectionsFor(item: Pick<AdminBidQaItem, "title" | "deadlineDate">, draft: BidQaCorrectionDraft): BidQaCorrections | null {
+  if (isUnreadableDateInput(draft.deadlineDate)) return null;
+
   const corrections: BidQaCorrections = {};
   const title = draft.title.trim();
   if (draft.title !== item.title && title !== item.title) corrections.title = title;
@@ -520,6 +527,7 @@ export function BidQaSection() {
                                 },
                               }))
                             }
+                            aria-invalid={isUnreadableDateInput(correctionDraft.deadlineDate) || undefined}
                             aria-label={`${t("bid.deadline")} ${t("admin.saveCorrections")}`}
                             className="h-8 rounded-lg border-slate-200 bg-white text-xs"
                           />

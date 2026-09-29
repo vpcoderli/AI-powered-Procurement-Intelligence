@@ -89,7 +89,10 @@ export function formatDateInputValue(value: string | null) {
   return isoTimestamp(text)?.toISOString().slice(0, 10) ?? "";
 }
 
-/** A yyyy-mm-dd input value as the last second of that day in UTC (override expiry, QA deadline). */
+/**
+ * A yyyy-mm-dd input value as the last second of that day in UTC (override expiry, QA deadline). It answers null for an
+ * emptied input, which callers send to clear the date, and also for text Date cannot read (see isUnreadableDateInput).
+ */
 export function endOfDayIsoFromDateInput(value: string) {
   if (!value) return null;
 
@@ -97,6 +100,16 @@ export function endOfDayIsoFromDateInput(value: string) {
   if (!Number.isFinite(date.getTime())) return null;
 
   return date.toISOString();
+}
+
+/**
+ * True for a date `<input>` value that holds something endOfDayIsoFromDateInput cannot turn into a date. That answer is
+ * null, the same as for an emptied input, so a caller that sends null to clear the date would clear it for this too.
+ * The year of a date input in desktop Chrome can run to six digits ("20261-07-10", "275760-09-13"), and Date reads
+ * neither. Such a value is a typing mistake, not a request to clear anything.
+ */
+export function isUnreadableDateInput(value: string): boolean {
+  return value !== "" && endOfDayIsoFromDateInput(value) === null;
 }
 
 export function statusTone(status: string | null | undefined) {

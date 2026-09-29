@@ -8,6 +8,7 @@ import {
 } from "@/server/admin/data-source-list-contract";
 import {
   ListRequestError,
+  emptySourceSelection,
   facetOptions,
   hasActiveFilters,
   lastRunOf,
@@ -16,8 +17,10 @@ import {
   recoverRejectedQuery,
   recoveryForListError,
   selectedFacetValues,
+  selectionOnQuery,
   toggleFacetValue,
   writeSourceListQuery,
+  type SourceSelection,
 } from "./source-list-url";
 
 describe("source list URL state", () => {
@@ -291,6 +294,81 @@ describe("rewriting an invalid link", () => {
       expect(invalid, search).toBe(false);
       expect(writeSourceListQuery(query), search).toBe(search ? `?${search}` : "");
     }
+  });
+});
+
+// The list is its URL, and the rows selected on it belong to the URL they were selected under. The page used to drop the
+// selection only in navigate(), for the changes a user makes on the page, so the browser's Back and Forward left rows
+// selected for another query, and the bulk bar acted on them.
+describe("the selected rows belong to their query", () => {
+  const on = (changes: Partial<SourceListQuery>) => writeSourceListQuery({ ...defaultSourceListQuery(), ...changes });
+  const pageOne = on({});
+  const pageTwo = on({ page: 2 });
+  const counties = on({ levels: ["county"] });
+  const selectedOn = (canonical: string, ...ids: string[]): SourceSelection => ({ canonical, ids });
+
+  it("starts with nothing selected, on the query it was made for", () => {
+    expect(emptySourceSelection(pageOne)).toEqual({ canonical: pageOne, ids: [] });
+  });
+
+  it("is the very same selection while the list is on the query it was made under", () => {
+    const selection = selectedOn(pageOne, "a", "b");
+
+    expect(selectionOnQuery(selection, pageOne)).toBe(selection);
+    expect(selectionOnQuery(emptySourceSelection(pageOne), pageOne).ids).toEqual([]);
+  });
+
+  it("is empty on any other query: a change the user made, and Back or Forward to another page, filter, sort or search", () => {
+    const selection = selectedOn(pageOne, "a", "b");
+    const elsewhere = [pageTwo, counties, on({ q: "den" }), on({ sort: "failures", descending: true }), on({ pageSize: 100 }), on({ states: ["CO"] })];
+
+    for (const canonical of elsewhere) {
+      const current = selectionOnQuery(selection, canonical);
+
+      expect(current, canonical).toEqual({ canonical, ids: [] });
+      expect(current, canonical).not.toBe(selection);
+    }
+    // The selection that was passed in is not touched.
+    expect(selection).toEqual({ canonical: pageOne, ids: ["a", "b"] });
+  });
+
+  // SourcesListView stores whatever selectionOnQuery answers when it is not the stored selection, on every render.
+  it("does not come back when the list returns to the query it was made under, because the empty one was stored", () => {
+    let stored = selectedOn(pageOne, "a", "b");
+    const renderOn = (canonical: string) => {
+      const current = selectionOnQuery(stored, canonical);
+      if (current !== stored) stored = current;
+      return current.ids;
+    };
+
+    expect(renderOn(pageOne)).toEqual(["a", "b"]);
+    // Back to an older page, then Forward again: the rows selected before are gone, not parked for the way back.
+    expect(renderOn(pageTwo)).toEqual([]);
+    expect(renderOn(pageOne)).toEqual([]);
+    // A row selected after that belongs to the query the list is on now.
+    stored = { canonical: pageOne, ids: [...stored.ids, "c"] };
+    expect(renderOn(pageOne)).toEqual(["c"]);
+    expect(renderOn(counties)).toEqual([]);
+    expect(renderOn(pageOne)).toEqual([]);
+  });
+
+  it("is settled after one replacement, so storing it cannot loop", () => {
+    const first = selectionOnQuery(selectedOn(pageOne, "a"), pageTwo);
+
+    expect(selectionOnQuery(first, pageTwo)).toBe(first);
+  });
+
+  // The page keys on the canonical text, not on the raw search string: rewriting an invalid link to the query it stands for
+  // leaves the canonical text as it was, so it does not count as a change of query.
+  it("does not treat the rewrite of an invalid link as a change of query", () => {
+    const { query, invalid } = readSourceListQuery(new URLSearchParams("level=galaxy&level=city&page=-1"));
+    const before = writeSourceListQuery(query);
+    const after = writeSourceListQuery(readSourceListQuery(new URLSearchParams(before.slice(1))).query);
+    const selection = selectedOn(before, "a");
+
+    expect(invalid).toBe(true);
+    expect(after).toBe(before);
+    expect(selectionOnQuery(selection, after)).toBe(selection);
   });
 });
 

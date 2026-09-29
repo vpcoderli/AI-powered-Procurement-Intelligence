@@ -108,3 +108,49 @@ describe("sources list view, safer bulk actions", () => {
     expect(read()).toContain('page.status === "loading"');
   });
 });
+
+// The selection belongs to the query it was made under. Only navigate() used to clear it, and the browser's Back and
+// Forward change the URL without it, so rows selected before Back stayed selected, and the bulk bar acted on them.
+describe("sources list view, the selection follows the query", () => {
+  const read = () => readFileSync(new URL("SourcesListView.tsx", import.meta.url), "utf8");
+
+  it("keys the selection on the canonical query and drops it while rendering, whoever changed the URL", () => {
+    const view = read();
+    expect(view).toContain("const [selectionState, setSelectionState] = useState(() => emptySourceSelection(canonical));");
+    expect(view).toContain("const selection = selectionOnQuery(selectionState, canonical);");
+    // The stored selection is replaced, not just hidden: a hidden one would come back when Forward returned to its query.
+    expect(view).toContain("if (selection !== selectionState) setSelectionState(selection);");
+    expect(view).toContain("const selectedIds = selection.ids;");
+    expect(view).not.toContain("setSelectedIds");
+  });
+
+  it("does not reset the selection in an effect, which would show rows selected for another query for a frame", () => {
+    const view = read();
+    const effects = view.match(/useEffect\(\(\) => \{[\s\S]*?\n  \}, \[[^\]]*\]\);/g) ?? [];
+
+    // Every effect of the file was captured, so the check below is not vacuous.
+    expect(effects).toHaveLength(view.split("useEffect(").length - 1);
+    for (const effect of effects) {
+      expect(effect).not.toContain("setSelectionState");
+      expect(effect).not.toContain("selectionOnQuery");
+    }
+  });
+
+  it("still clears the selection at once for a change the user makes, and selects on the query shown", () => {
+    const view = read();
+    // navigate() and a finished bulk action: two writers of an empty selection, both under the query the list is on.
+    expect(view.split("setSelectionState(emptySourceSelection(canonical))")).toHaveLength(3);
+    expect(view).toContain("    [canonical, pathname, router],\n  );");
+    expect(view).toContain('if (report.outcome === "done") setSelectionState(emptySourceSelection(canonical));');
+    // The select-all box and a row keep the selection under that same query.
+    expect(view).toContain("setSelectionState({ canonical, ids: allVisibleSelected ? [] : items.map((item) => item.id) })");
+    expect(view).toContain("const ids = selectionOnQuery(current, canonical).ids;");
+    expect(view).toContain("return { canonical, ids: ids.includes(id) ? ids.filter((entry) => entry !== id) : [...ids, id] };");
+  });
+
+  it("acts only on selected rows that are on the page shown", () => {
+    const view = read();
+    expect(view).toContain("const visibleSelected = selectedIds.filter((id) => items.some((item) => item.id === id));");
+    expect(view).toContain("const selectedItems = items.filter((item) => visibleSelected.includes(item.id));");
+  });
+});
