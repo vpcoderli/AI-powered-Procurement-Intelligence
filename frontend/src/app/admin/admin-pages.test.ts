@@ -9,6 +9,7 @@ const PAGES: Array<[file: string, section: string]> = [
   ["config/page.tsx", "<ConfigRegistrySection />"],
   ["quality/page.tsx", "<RiskCheckSection />"],
   ["quality/bids/page.tsx", "<BidQaSection />"],
+  ["sources/[id]/page.tsx", "<SourceDetailView"],
 ];
 
 describe("admin pages", () => {
@@ -16,5 +17,11 @@ describe("admin pages", () => {
     const page = readFileSync(new URL(file, import.meta.url), "utf8");
     expect(page.startsWith('"use client"')).toBe(true);
     expect(page).toContain(section);
+  });
+
+  it("reads the source id of the detail page from the route with useParams", () => {
+    const page = readFileSync(new URL("sources/[id]/page.tsx", import.meta.url), "utf8");
+    expect(page).toContain("useParams");
+    expect(page).toContain("decodeURIComponent");
   });
 });

@@ -342,13 +342,14 @@ describe("JurisdictionBatchRunPanel component wiring", () => {
 
   it("is mounted in the admin sources section with the page's crawler source id resolver", () => {
     const page = readFileSync(new URL("../../app/admin/page.tsx", import.meta.url), "utf8");
+    const resolver = readFileSync(new URL("./sources/crawler-run-id.ts", import.meta.url), "utf8");
     expect(page).toContain("JurisdictionBatchRunPanel");
-    expect(page).toContain("crawlerSourceIdFor={stateCrawlerSourceIdFor}");
+    expect(page).toContain("crawlerSourceIdFor={crawlerRunIdFor}");
     // A full load() refresh would unmount the sources section (it only renders when status is
     // "ready") and wipe the batch report, so the panel must NOT be wired to it.
     expect(page).not.toContain("onCompleted={load}");
     // County/city registry rows carry no legacy per-state crawler metadata; the resolver must
     // fall back to the data_sources row id so sub-state sources are runnable in the batch panel.
-    expect(page).toContain("subStateSourceId");
+    expect(resolver).toContain("subStateSourceId");
   });
 });

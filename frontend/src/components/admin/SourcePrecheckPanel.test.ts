@@ -101,12 +101,12 @@ describe("SourcePrecheckPanel wiring", () => {
     expect(component).toContain("ApproveLocalSourceDialog");
   });
 
-  it("is mounted per data-source row with the signed-in admin's email as reviewer", () => {
-    const page = readFileSync(new URL("../../app/admin/page.tsx", import.meta.url), "utf8");
+  it("is mounted on the source detail page with the signed-in admin's email as reviewer", () => {
+    const view = readFileSync(new URL("./sources/SourceDetailView.tsx", import.meta.url), "utf8");
 
-    expect(page).toContain("SourcePrecheckPanel");
-    expect(page).toContain("reviewerEmail={user?.email ?? null}");
-    expect(page).toContain("onSourceUpdated={replaceSource}");
+    expect(view).toContain("SourcePrecheckPanel");
+    expect(view).toContain("reviewerEmail={user.email}");
+    expect(view).toContain("onSourceUpdated={replaceSource}");
   });
 
   it("has both dictionaries carrying the pre-check keys, translated", () => {

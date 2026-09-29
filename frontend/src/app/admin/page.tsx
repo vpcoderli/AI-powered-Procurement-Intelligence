@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
@@ -35,7 +36,6 @@ import {
   type AdminCrawlerLog,
   type AdminDataSource,
   type AdminDataSourcesResponse,
-  type UpdateAdminDataSourceInput,
 } from "@/lib/api/admin";
 import type { UserRole } from "@/server/auth/entitlements";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
@@ -53,7 +53,35 @@ import { isLocalJurisdictionSource } from "@/components/admin/ApproveLocalSource
 import { LedgeredApprovalPanel, providerFamiliesOf } from "@/components/admin/LedgeredApprovalPanel";
 import { PlatformReviewsPanel } from "@/components/admin/PlatformReviewsPanel";
 import type { RecommendedActionFilter } from "@/components/admin/sections/RiskCheckSection";
-import { stateCrawlerSourceIdForAdminSource } from "@/lib/state-crawler-sources";
+import { CrawlerLogRow } from "@/components/admin/sources/CrawlerLogList";
+import { crawlerRunIdFor } from "@/components/admin/sources/crawler-run-id";
+import { SourceComplianceCard } from "@/components/admin/sources/SourceComplianceCard";
+import { SourceLiveHealthCard } from "@/components/admin/sources/SourceLiveHealthCard";
+import {
+  crawlerAdapterLabel,
+  crawlerCapabilityLabel,
+  crawlerMaturityLabel,
+  crawlerTone,
+  formatCrawlerBaseUrl,
+  latestRunAt,
+  liveSourceRecommendedActionLabel,
+  sourceApprovalLabel,
+  sourceApprovalTone,
+  sourceAuthorityLabel,
+  sourceEvidenceLabel,
+  sourceHealthClassificationFor,
+  sourceHealthClassificationLabel,
+  sourceHealthTriageLabel,
+  sourceHealthTriagePatchForAction,
+  sourceHealthTriageStatus,
+  sourceRequirementLabels,
+  sourceTrustLabel,
+  sourceTrustTone,
+  type SourceHealthClassificationFilter,
+  type SourceHealthTriageAction,
+  type SourceHealthTriageFields,
+  type SourceHealthTriageStatus,
+} from "@/components/admin/sources/source-labels";
 
 type SectionLoadStatus = "loading" | "error" | "ready";
 
@@ -72,29 +100,7 @@ export type AdminDashboardLoaders = {
   crawlerLogs: () => Promise<{ logs: AdminCrawlerLog[] }>;
 };
 
-export type SourceHealthClassificationFilter =
-  | "all"
-  | "ok"
-  | "forbidden"
-  | "timeout"
-  | "bot_check"
-  | "login_required"
-  | "empty_or_placeholder"
-  | "tls_or_network_error"
-  | "http_error"
-  | "unknown";
-
-export type SourceHealthTriageStatus = "unassigned" | "overdue" | "scheduled" | "reviewed";
 export type SourceHealthTriageStatusFilter = "all" | SourceHealthTriageStatus;
-export type SourceHealthTriageAction = "assign" | "accepted_fallback" | "manual" | "vendor_account" | "clear";
-
-type SourceHealthTriageFields = {
-  liveHealthOwner?: string | null;
-  liveHealthDisposition?: string | null;
-  liveHealthNextReviewAt?: string | null;
-  liveHealthNotes?: string | null;
-  liveHealthReviewedAt?: string | null;
-};
 
 type SourceOpsFilters = {
   classification: SourceHealthClassificationFilter;
@@ -187,39 +193,6 @@ export function isAdminDashboardFullyFailed(sections: AdminDashboardSections) {
   return Object.values(sections).every((section) => section.status === "error");
 }
 
-function stateCrawlerSourceIdFor(source: AdminDataSource) {
-  // County/city/special-district registry rows have no legacy per-state crawler metadata;
-  // since the data_sources migration they run through /api/crawler/state/run by their own row
-  // id (the route resolves every non-federal data_sources id — see listAllSources).
-  const subStateSourceId =
-    source.issuerType !== "state" && source.issuerType !== "federal" ? source.id : null;
-  return source.crawlerSourceId ?? stateCrawlerSourceIdForAdminSource(source) ?? subStateSourceId;
-}
-
-function latestRunAt(source: AdminDataSource) {
-  return source.latestLog?.finishedAt ?? source.latestLog?.startedAt ?? source.lastSuccessAt ?? source.lastFailureAt;
-}
-
-function liveSourceHealthTone(status: string | null | undefined) {
-  if (status === "healthy") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (status === "skipped") return "border-slate-200 bg-slate-50 text-slate-600";
-  if (status === "unhealthy") return "border-rose-200 bg-rose-50 text-rose-700";
-  return "border-slate-200 bg-white text-slate-500";
-}
-
-function liveSourceHealthLabel(t: (key: string) => string, status: string | null | undefined) {
-  if (status === "healthy") return t("admin.liveSourceHealth_healthy");
-  if (status === "unhealthy") return t("admin.liveSourceHealth_unhealthy");
-  if (status === "skipped") return t("admin.liveSourceHealth_skipped");
-  return t("admin.liveSourceHealthNoCheck");
-}
-
-function sourceHealthClassificationFor(source: {
-  latestLiveHealth?: { classification?: string | null } | null;
-}) {
-  return source.latestLiveHealth?.classification ?? "unknown";
-}
-
 export function filterAdminDataSourcesByHealthClassification<
   TSource extends { latestLiveHealth?: { classification?: string | null } | null },
 >(sources: TSource[], filter: SourceHealthClassificationFilter) {
@@ -255,133 +228,10 @@ export function sourceRecommendedActionOptions<
   return ["all", ...[...new Set(sources.map((source) => recommendedActionFor(source)))].sort()];
 }
 
-export function sourceHealthClassificationLabel(
-  t: (key: string) => string,
-  classification: SourceHealthClassificationFilter | string | null | undefined,
-) {
-  if (classification === "ok") return t("admin.sourceHealthClassification_ok");
-  if (classification === "forbidden") return t("admin.sourceHealthClassification_forbidden");
-  if (classification === "timeout") return t("admin.sourceHealthClassification_timeout");
-  if (classification === "bot_check") return t("admin.sourceHealthClassification_bot_check");
-  if (classification === "login_required") return t("admin.sourceHealthClassification_login_required");
-  if (classification === "empty_or_placeholder") return t("admin.sourceHealthClassification_empty_or_placeholder");
-  if (classification === "tls_or_network_error") return t("admin.sourceHealthClassification_tls_or_network_error");
-  if (classification === "http_error") return t("admin.sourceHealthClassification_http_error");
-  if (classification === "all") return t("admin.sourceHealthClassification_all");
-  return t("admin.sourceHealthClassification_unknown");
-}
-
-export function sourceHealthTriageStatus(
-  source: SourceHealthTriageFields,
-  now: Date = new Date(),
-): SourceHealthTriageStatus {
-  if (source.liveHealthReviewedAt || source.liveHealthDisposition) return "reviewed";
-  if (!source.liveHealthOwner) return "unassigned";
-  if (!source.liveHealthNextReviewAt) return "unassigned";
-
-  const nextReviewAt = new Date(source.liveHealthNextReviewAt);
-  if (!Number.isFinite(nextReviewAt.getTime())) return "unassigned";
-
-  return nextReviewAt.getTime() < now.getTime() ? "overdue" : "scheduled";
-}
-
-function sourceHealthTriageTone(status: SourceHealthTriageStatus) {
-  if (status === "overdue") return "border-rose-200 bg-rose-50 text-rose-700";
-  if (status === "scheduled") return "border-sky-200 bg-sky-50 text-sky-700";
-  if (status === "reviewed") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  return "border-amber-200 bg-amber-50 text-amber-700";
-}
-
-function sourceHealthTriageLabel(t: (key: string) => string, status: SourceHealthTriageStatus) {
-  if (status === "overdue") return t("admin.sourceHealthTriage_overdue");
-  if (status === "scheduled") return t("admin.sourceHealthTriage_scheduled");
-  if (status === "reviewed") return t("admin.sourceHealthTriage_reviewed");
-  return t("admin.sourceHealthTriage_unassigned");
-}
-
 function sourceHealthTriageFilterLabel(t: (key: string) => string, status: SourceHealthTriageStatusFilter) {
   if (status === "all") return "All triage";
 
   return sourceHealthTriageLabel(t, status);
-}
-
-function sourceHealthDispositionLabel(t: (key: string) => string, disposition: string | null | undefined) {
-  if (disposition === "accepted_fallback") return t("admin.sourceHealthDisposition_accepted_fallback");
-  if (disposition === "manual") return t("admin.sourceHealthDisposition_manual");
-  if (disposition === "vendor_account") return t("admin.sourceHealthDisposition_vendor_account");
-  if (disposition) return disposition;
-  return t("admin.sourceHealthDisposition_pending");
-}
-
-function isoDaysFrom(now: Date, days: number) {
-  const next = new Date(now);
-  next.setUTCDate(next.getUTCDate() + days);
-  return next.toISOString();
-}
-
-export function sourceHealthTriagePatchForAction(
-  action: SourceHealthTriageAction,
-  owner: string,
-  now: Date = new Date(),
-): UpdateAdminDataSourceInput {
-  if (action === "clear") {
-    return {
-      liveHealthOwner: null,
-      liveHealthDisposition: null,
-      liveHealthNextReviewAt: null,
-      liveHealthNotes: null,
-      liveHealthReviewedAt: null,
-    };
-  }
-
-  if (action === "assign") {
-    return {
-      liveHealthOwner: owner,
-      liveHealthDisposition: null,
-      liveHealthNextReviewAt: isoDaysFrom(now, 1),
-      liveHealthNotes: "Scheduled for operator review from Admin source health triage.",
-      liveHealthReviewedAt: null,
-    };
-  }
-
-  return {
-    liveHealthOwner: owner,
-    liveHealthDisposition: action,
-    liveHealthNextReviewAt: null,
-    liveHealthNotes: `Admin source health triage disposition: ${action}.`,
-    liveHealthReviewedAt: now.toISOString(),
-  };
-}
-
-function liveSourceOperationalSeverityTone(value: string | null | undefined) {
-  if (value === "critical") return "border-rose-200 bg-rose-50 text-rose-700";
-  if (value === "warning") return "border-amber-200 bg-amber-50 text-amber-700";
-  if (value === "info") return "border-sky-200 bg-sky-50 text-sky-700";
-  return "border-slate-200 bg-slate-50 text-slate-600";
-}
-
-function liveSourceRecommendedActionLabel(t: (key: string) => string, action: string | null | undefined) {
-  if (action === "update_registry_url") return t("admin.sourceHealthAction_update_registry_url");
-  if (action === "browser_or_access_review") return t("admin.sourceHealthAction_browser_or_access_review");
-  if (action === "retry_or_increase_timeout") return t("admin.sourceHealthAction_retry_or_increase_timeout");
-  if (action === "network_or_tls_review") return t("admin.sourceHealthAction_network_or_tls_review");
-  if (action === "add_base_url") return t("admin.sourceHealthAction_add_base_url");
-  if (action && action !== "none") return action;
-  return t("admin.sourceHealthAction_none");
-}
-
-function liveSourceTrendStatusLabel(t: (key: string) => string, status: string | null | undefined) {
-  if (status === "healthy") return t("admin.liveSourceHealth_healthy");
-  if (status === "unhealthy") return t("admin.liveSourceHealth_unhealthy");
-  if (status === "skipped") return t("admin.liveSourceHealth_skipped");
-  return t("admin.liveSourceHealthNoCheck");
-}
-
-function crawlerTone(value: string | null | undefined) {
-  if (value === "dedicated" || value === "verified") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (value === "generic") return "border-slate-200 bg-slate-50 text-slate-600";
-  if (value === "beta") return "border-amber-200 bg-amber-50 text-amber-700";
-  return "border-slate-200 bg-white text-slate-500";
 }
 
 function filteredDataSourcesSummary(sources: AdminDataSource[]) {
@@ -399,112 +249,6 @@ function filteredDataSourcesSummary(sources: AdminDataSource[]) {
       return source.consecutiveFailures > 0 || Boolean(source.lastFailureAt);
     }).length,
   };
-}
-
-function sourceApprovalTone(value: AdminDataSource["approvalStatus"]) {
-  if (value === "approved") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (value === "blocked") return "border-rose-200 bg-rose-50 text-rose-700";
-  return "border-amber-200 bg-amber-50 text-amber-700";
-}
-
-function robotsTxtTone(value: AdminDataSource["robotsTxtStatus"]) {
-  if (value === "clear" || value === "not_found") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (value === "disallow_all" || value === "disallow_crawled_paths") return "border-rose-200 bg-rose-50 text-rose-700";
-  if (value === "unreachable") return "border-amber-200 bg-amber-50 text-amber-700";
-  return "border-slate-200 bg-slate-50 text-slate-600";
-}
-
-function robotsTxtStatusLabel(t: (key: string) => string, value: AdminDataSource["robotsTxtStatus"]) {
-  if (value === "clear") return t("admin.robotsTxt_clear");
-  if (value === "disallow_all") return t("admin.robotsTxt_disallow_all");
-  if (value === "disallow_crawled_paths") return t("admin.robotsTxt_disallow_crawled_paths");
-  if (value === "not_found") return t("admin.robotsTxt_not_found");
-  if (value === "unreachable") return t("admin.robotsTxt_unreachable");
-  return t("admin.robotsTxt_unknown");
-}
-
-function tosReviewedTone(value: AdminDataSource["tosReviewed"]) {
-  if (value === true) return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  return "border-amber-200 bg-amber-50 text-amber-700";
-}
-
-function sourceTrustTone(value: AdminDataSource["trustStatus"]) {
-  if (value === "verified") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (value === "fallback" || value === "beta") return "border-amber-200 bg-amber-50 text-amber-700";
-  if (value === "blocked") return "border-rose-200 bg-rose-50 text-rose-700";
-  return "border-slate-200 bg-slate-50 text-slate-600";
-}
-
-function crawlerAdapterLabel(t: (key: string) => string, adapterKind: AdminDataSource["crawlerAdapterKind"]) {
-  if (adapterKind === "dedicated") return t("admin.crawlerAdapter_dedicated");
-  if (adapterKind === "generic") return t("admin.crawlerAdapter_generic");
-  return t("admin.crawlerAdapter_none");
-}
-
-function crawlerMaturityLabel(t: (key: string) => string, maturity: AdminDataSource["crawlerMaturity"]) {
-  if (maturity === "verified") return t("admin.crawlerMaturity_verified");
-  if (maturity === "beta") return t("admin.crawlerMaturity_beta");
-  if (maturity === "generic") return t("admin.crawlerMaturity_generic");
-  return t("admin.crawlerMaturity_none");
-}
-
-function crawlerCapabilityLabel(t: (key: string) => string, capability: AdminDataSource["crawlerCapabilities"][number]) {
-  if (capability === "attachments") return t("admin.crawlerCapability_attachments");
-  if (capability === "detail_pages") return t("admin.crawlerCapability_detail_pages");
-  if (capability === "pagination") return t("admin.crawlerCapability_pagination");
-  return t("admin.crawlerCapability_query");
-}
-
-function sourceApprovalLabel(t: (key: string) => string, source: AdminDataSource) {
-  if (source.approvalStatus === "approved") return t("admin.sourceApproval_approved");
-  if (source.approvalStatus === "blocked") return t("admin.sourceApproval_blocked");
-  return t("admin.sourceApproval_needs_review");
-}
-
-function sourceApprovalActionLabel(t: (key: string) => string, action: string) {
-  if (action === "approved") return t("admin.sourceApprovalAction_approved");
-  if (action === "blocked") return t("admin.sourceApprovalAction_blocked");
-  if (action === "held") return t("admin.sourceApprovalAction_held");
-  return t("admin.sourceApprovalAction_updated");
-}
-
-function sourceAuthorityLabel(t: (key: string) => string, value: AdminDataSource["sourceAuthority"]) {
-  if (value === "official_aggregator") return t("admin.sourceAuthority_official_aggregator");
-  if (value === "public_aggregator") return t("admin.sourceAuthority_public_aggregator");
-  return t("admin.sourceAuthority_official");
-}
-
-function sourceTrustLabel(t: (key: string) => string, value: AdminDataSource["trustStatus"]) {
-  if (value === "verified") return t("admin.sourceTrust_verified");
-  if (value === "fallback") return t("admin.sourceTrust_fallback");
-  if (value === "blocked") return t("admin.sourceTrust_blocked");
-  if (value === "needs_review") return t("admin.sourceTrust_needs_review");
-  return t("admin.sourceTrust_beta");
-}
-
-function sourceEvidenceLabel(t: (key: string) => string, value: AdminDataSource["evidenceMode"]) {
-  if (value === "api") return t("admin.sourceEvidence_api");
-  if (value === "aggregator_page") return t("admin.sourceEvidence_aggregator_page");
-  if (value === "fixture_fallback") return t("admin.sourceEvidence_fixture_fallback");
-  return t("admin.sourceEvidence_direct_portal");
-}
-
-function sourceRequirementLabels(t: (key: string) => string, source: AdminDataSource) {
-  return [
-    source.requiresBrowser ? t("admin.sourceRequiresBrowser") : null,
-    source.requiresLogin ? t("admin.sourceRequiresLogin") : null,
-    source.requiresManual ? t("admin.sourceRequiresManual") : null,
-  ].filter((value): value is string => Boolean(value));
-}
-
-function formatCrawlerBaseUrl(value: string | null) {
-  if (!value) return null;
-
-  try {
-    return new URL(value).hostname.replace(/^www\./, "");
-  } catch {
-    return value;
-  }
 }
 
 export default function AdminPage() {
@@ -830,7 +574,7 @@ export default function AdminPage() {
   };
 
   const runSourceNow = (source: AdminDataSource) => {
-    const stateCrawlerSourceId = stateCrawlerSourceIdFor(source);
+    const stateCrawlerSourceId = crawlerRunIdFor(source);
     if (!stateCrawlerSourceId) return;
 
     setRunningSourceId(source.id);
@@ -995,7 +739,7 @@ export default function AdminPage() {
           {canRunOperations && (
             <JurisdictionBatchRunPanel
               sources={allSources}
-              crawlerSourceIdFor={stateCrawlerSourceIdFor}
+              crawlerSourceIdFor={crawlerRunIdFor}
               disabled={isRunning || runningSourceId !== null}
             />
           )}
@@ -1145,15 +889,7 @@ export default function AdminPage() {
                   </TableCell>
                 </TableRow>
               )}
-              {sources.map((source) => {
-                const liveHealth = source.latestLiveHealth;
-                const healthTrend = source.sourceHealthTrend;
-                const liveHealthTriage = source as SourceHealthTriageFields;
-                const triageStatus = sourceHealthTriageStatus(liveHealthTriage);
-                const liveHealthCode = liveHealth?.statusCode ?? liveHealth?.httpStatus ?? null;
-                const liveHealthErrorMessage = liveHealth?.error ?? liveHealth?.errorMessage ?? null;
-
-                return (
+              {sources.map((source) => (
                 <TableRow key={source.id}>
                   {canManageUsers && (
                     <TableCell>
@@ -1167,7 +903,11 @@ export default function AdminPage() {
                     </TableCell>
                   )}
                   <TableCell>
-                    <div className="font-medium text-slate-900">{source.label}</div>
+                    <div className="font-medium text-slate-900">
+                      <Link href={`/admin/sources/${encodeURIComponent(source.id)}`} className="hover:underline">
+                        {source.label}
+                      </Link>
+                    </div>
                     <div className="text-xs text-slate-500">{source.stateCode}</div>
                   </TableCell>
                   <TableCell className="capitalize">{source.issuerType}</TableCell>
@@ -1252,55 +992,9 @@ export default function AdminPage() {
                         {source.approvalNotes}
                       </div>
                     )}
-                    <div className="mt-2 max-w-64 rounded-md border border-slate-200 bg-white p-2 text-xs leading-5 text-slate-600">
-                      <div className="font-semibold text-slate-700">{t("admin.complianceLedger")}</div>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        <Badge variant="outline" className={robotsTxtTone(source.robotsTxtStatus)}>
-                          {robotsTxtStatusLabel(t, source.robotsTxtStatus)}
-                        </Badge>
-                        <Badge variant="outline" className={tosReviewedTone(source.tosReviewed)}>
-                          {source.tosReviewed ? t("admin.tosReviewed_yes") : t("admin.tosReviewed_no")}
-                        </Badge>
-                      </div>
-                      {source.robotsTxtFlagReason && (
-                        <div className="mt-1 truncate text-amber-700" title={source.robotsTxtFlagReason}>
-                          {source.robotsTxtFlagReason}
-                        </div>
-                      )}
-                      {source.complianceReviewer && (
-                        <div className="mt-1 truncate" title={source.complianceReviewer}>
-                          {t("admin.complianceReviewer")}: {source.complianceReviewer}
-                        </div>
-                      )}
-                      {source.legalOpinionReference && (
-                        <div className="mt-1 truncate" title={source.legalOpinionReference}>
-                          {t("admin.legalOpinionReference")}: {source.legalOpinionReference}
-                        </div>
-                      )}
-                      {source.complianceReviewDueAt && (
-                        <div className="mt-1">
-                          {t("admin.complianceReviewDue")}: {formatDate(source.complianceReviewDueAt)}
-                        </div>
-                      )}
+                    <div className="mt-2 max-w-64">
+                      <SourceComplianceCard source={source} />
                     </div>
-                    {source.approvalHistory.length > 0 && (
-                      <div className="mt-2 max-w-64 rounded-md border border-slate-200 bg-slate-50/70 p-2 text-xs leading-5 text-slate-600">
-                        <div className="font-semibold text-slate-700">{t("admin.sourceApprovalHistory")}</div>
-                        {source.approvalHistory.slice(0, 2).map((event) => (
-                          <div key={event.id} className="mt-1">
-                            <span className="font-medium">{sourceApprovalActionLabel(t, event.action)}</span>
-                            {" · "}
-                            <span>{formatDate(event.createdAt)}</span>
-                            {event.actorUserId ? (
-                              <>
-                                {" · "}
-                                <span>{t("admin.sourceApprovalActor").replace("{actor}", event.actorUserId)}</span>
-                              </>
-                            ) : null}
-                          </div>
-                        ))}
-                      </div>
-                    )}
                     {canRunOperations && (
                       <SourcePrecheckPanel
                         source={source}
@@ -1358,155 +1052,13 @@ export default function AdminPage() {
                           {fallbackMessage(source.latestLog) ? `: ${fallbackMessage(source.latestLog)}` : null}
                         </div>
                       )}
-                      <div className="mt-2 rounded-md border border-slate-200 bg-white p-2 text-xs leading-5 text-slate-600">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium text-slate-700">{t("admin.liveSourceHealth")}</span>
-                          <Badge variant="outline" className={liveSourceHealthTone(liveHealth?.status)}>
-                            {liveSourceHealthLabel(t, liveHealth?.status)}
-                          </Badge>
-                          <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
-                            {sourceHealthClassificationLabel(t, sourceHealthClassificationFor(source))}
-                          </Badge>
-                        </div>
-                        {liveHealth ? (
-                          <>
-                            <div className="mt-1 text-slate-500">
-                              {t("admin.liveSourceCheckedAt").replace("{time}", formatDate(liveHealth.checkedAt))}
-                              {liveHealthCode ? ` · HTTP ${liveHealthCode}` : ""}
-                              {liveHealth?.latencyMs !== null && liveHealth?.latencyMs !== undefined
-                                ? ` · ${liveHealth.latencyMs} ms`
-                                : ""}
-                            </div>
-                            {liveHealthErrorMessage && (
-                              <div className="mt-1 text-rose-700">
-                                {compactErrorMessage(liveHealthErrorMessage)}
-                              </div>
-                            )}
-                            {liveHealth.reason && (
-                              <div className="mt-1 text-slate-600">
-                                {compactErrorMessage(liveHealth.reason)}
-                              </div>
-                            )}
-                            {liveHealth.evidenceSnippets.length > 0 && (
-                              <div className="mt-1 text-slate-500">
-                                {liveHealth.evidenceSnippets.slice(0, 2).map((snippet) => (
-                                  <div key={snippet}>{compactErrorMessage(snippet)}</div>
-                                ))}
-                              </div>
-                            )}
-                            {liveHealth?.recommendedAction && liveHealth.recommendedAction !== "none" && (
-                              <div className="mt-1 flex flex-wrap items-center gap-1 text-slate-600">
-                                <span className="font-medium">{t("admin.liveSourceRecommendedAction")}:</span>
-                                <span>{liveSourceRecommendedActionLabel(t, liveHealth?.recommendedAction)}</span>
-                                <Badge
-                                  variant="outline"
-                                  className={liveSourceOperationalSeverityTone(liveHealth?.operationalSeverity)}
-                                >
-                                  {liveHealth?.operationalSeverity}
-                                </Badge>
-                              </div>
-                            )}
-                            {healthTrend && (
-                              <div className="mt-2 rounded border border-slate-100 bg-slate-50 px-2 py-1">
-                                <div className="font-medium text-slate-700">{t("admin.liveSourceHealthTrend")}</div>
-                                <div className="mt-1 text-slate-500">
-                                  {t("admin.liveSourceHealthTrendSummary")
-                                    .replace("{sampleSize}", String(healthTrend.sampleSize))
-                                    .replace("{healthyPercent}", String(healthTrend.healthyPercent))}
-                                </div>
-                                <div className="mt-1 text-slate-500">
-                                  {t("admin.liveSourceHealthCurrentStreak")
-                                    .replace("{status}", liveSourceTrendStatusLabel(t, healthTrend.currentStatus))
-                                    .replace("{count}", String(healthTrend.currentStreak))}
-                                </div>
-                                {healthTrend.lastUnhealthyAt && (
-                                  <div className="mt-1 text-rose-700">
-                                    {t("admin.liveSourceHealthLastUnhealthy").replace(
-                                      "{time}",
-                                      formatDate(healthTrend.lastUnhealthyAt),
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <div className="mt-1 text-slate-500">{t("admin.liveSourceHealthNoCheck")}</div>
-                        )}
-                        <div className="mt-2 rounded border border-slate-100 bg-slate-50 px-2 py-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-medium text-slate-700">{t("admin.sourceHealthTriage")}</span>
-                            <Badge variant="outline" className={sourceHealthTriageTone(triageStatus)}>
-                              {sourceHealthTriageLabel(t, triageStatus)}
-                            </Badge>
-                          </div>
-                          <div className="mt-1 grid gap-1 text-slate-500">
-                            <div>
-                              <span className="font-medium text-slate-600">{t("admin.sourceHealthOwner")}:</span>{" "}
-                              {liveHealthTriage.liveHealthOwner ?? t("admin.sourceHealthTriage_unassigned")}
-                            </div>
-                            <div>
-                              <span className="font-medium text-slate-600">{t("admin.sourceHealthDisposition")}:</span>{" "}
-                              {sourceHealthDispositionLabel(t, liveHealthTriage.liveHealthDisposition)}
-                            </div>
-                            <div>
-                              <span className="font-medium text-slate-600">{t("admin.sourceHealthNextReview")}:</span>{" "}
-                              {formatDate(liveHealthTriage.liveHealthNextReviewAt ?? null)}
-                            </div>
-                            {liveHealthTriage.liveHealthReviewedAt && (
-                              <div>
-                                <span className="font-medium text-slate-600">
-                                  {t("admin.sourceHealthReviewedAt")}:
-                                </span>{" "}
-                                {formatDate(liveHealthTriage.liveHealthReviewedAt)}
-                              </div>
-                            )}
-                            {liveHealthTriage.liveHealthNotes && (
-                              <div className="text-slate-600">
-                                <span className="font-medium">{t("admin.sourceHealthNotes")}:</span>{" "}
-                                {compactErrorMessage(liveHealthTriage.liveHealthNotes)}
-                              </div>
-                            )}
-                          </div>
-                          {canRunOperations && (
-                            <div className="mt-2 flex flex-wrap gap-1">
-                              {(
-                                [
-                                  ["assign", "sourceHealthTriageAssign"],
-                                  ["accepted_fallback", "sourceHealthTriageAcceptFallback"],
-                                  ["manual", "sourceHealthTriageManual"],
-                                  ["vendor_account", "sourceHealthTriageVendorAccount"],
-                                  ["clear", "sourceHealthTriageClear"],
-                                ] satisfies [SourceHealthTriageAction, string][]
-                              ).map(([action, labelKey]) => (
-                                <Button
-                                  key={action}
-                                  type="button"
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => updateSourceHealthTriage(source, action)}
-                                  disabled={sourceTriagePendingId === source.id}
-                                  className="h-7 rounded-lg border-slate-200 px-2 text-xs"
-                                >
-                                  {sourceTriagePendingId === source.id ? t("common.saving") : t(`admin.${labelKey}`)}
-                                </Button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        {canRunOperations && (
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => recheckSourceHealth(source)}
-                            disabled={sourceHealthPendingId === source.id}
-                            className="mt-2 h-7 rounded-lg border-slate-200 px-2 text-xs"
-                          >
-                            {sourceHealthPendingId === source.id ? t("admin.recheckingSource") : t("admin.recheckSource")}
-                          </Button>
-                        )}
-                      </div>
+                      <SourceLiveHealthCard
+                        source={source}
+                        canRunOperations={canRunOperations}
+                        pending={sourceHealthPendingId === source.id ? "recheck" : sourceTriagePendingId === source.id ? "triage" : null}
+                        onRecheck={() => recheckSourceHealth(source)}
+                        onTriage={(action) => updateSourceHealthTriage(source, action)}
+                      />
                     </div>
                   </TableCell>
                   <TableCell>
@@ -1516,7 +1068,7 @@ export default function AdminPage() {
                   </TableCell>
                   {canRunOperations && (
                     <TableCell className="text-right">
-                      {stateCrawlerSourceIdFor(source) ? (
+                      {crawlerRunIdFor(source) ? (
                         <Button
                           type="button"
                           variant="outline"
@@ -1562,8 +1114,7 @@ export default function AdminPage() {
                     )}
                   </TableCell>
                 </TableRow>
-                );
-              })}
+              ))}
             </TableBody>
           </Table>
         </section>
@@ -1597,27 +1148,7 @@ export default function AdminPage() {
           <div className="divide-y divide-slate-100">
             {logs.length === 0 && <div className="px-4 py-5 text-sm text-slate-500">{t("admin.noLogs")}</div>}
             {logs.map((log) => (
-              <div key={log.id} className="grid gap-2 px-4 py-3 md:grid-cols-[1fr_auto] md:items-center">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-slate-900">{log.source}</span>
-                    <Badge variant="outline" className={statusTone(log.status)}>
-                      {log.status}
-                    </Badge>
-                    <span className="text-xs text-slate-500">{formatDate(log.finishedAt ?? log.startedAt)}</span>
-                  </div>
-                  {log.errorMessage && <div className="mt-1 text-sm text-rose-700">{log.errorMessage}</div>}
-                  {log.fallbackSource && (
-                    <div className="mt-1 text-sm text-amber-700">
-                      <span className="font-medium">{t("admin.fallbackUsed")}</span>
-                      {fallbackMessage(log) ? `: ${fallbackMessage(log)}` : null}
-                    </div>
-                  )}
-                </div>
-                <div className="text-sm text-slate-500">
-                  {log.fetchedCount}/{log.insertedCount}/{log.updatedCount}/{log.failedCount}
-                </div>
-              </div>
+              <CrawlerLogRow key={log.id} log={log} />
             ))}
           </div>
         </section>

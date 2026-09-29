@@ -17,24 +17,10 @@ describe("admin sources page section", () => {
     const en = readFileSync(new URL("../../lib/i18n/dictionaries/en.ts", import.meta.url), "utf8");
     const zh = readFileSync(new URL("../../lib/i18n/dictionaries/zh.ts", import.meta.url), "utf8");
 
-    expect(page).toContain("liveHealthOwner");
-    expect(page).toContain("liveHealthDisposition");
-    expect(page).toContain("liveHealthNextReviewAt");
-    expect(page).toContain("liveHealthNotes");
-    expect(page).toContain("liveHealthReviewedAt");
     expect(page).toContain("sourceHealthTriageStatus");
     expect(page).toContain("updateSourceHealthTriage");
     expect(page).toContain("sourceHealthTriagePatchForAction");
     expect(page).toContain('t("admin.sourceHealthTriage")');
-    expect(page).toContain('t("admin.sourceHealthTriage_unassigned")');
-    expect(page).toContain('t("admin.sourceHealthTriage_overdue")');
-    expect(page).toContain('t("admin.sourceHealthTriage_scheduled")');
-    expect(page).toContain('t("admin.sourceHealthDisposition_accepted_fallback")');
-    expect(page).toContain('t("admin.sourceHealthDisposition_manual")');
-    expect(page).toContain('t("admin.sourceHealthDisposition_vendor_account")');
-    expect(page).toContain("sourceHealthTriageAssign");
-    expect(page).toContain("sourceHealthTriageAcceptFallback");
-    expect(page).toContain("sourceHealthTriageClear");
 
     for (const dictionary of [en, zh]) {
       expect(dictionary).toContain("sourceHealthTriage");

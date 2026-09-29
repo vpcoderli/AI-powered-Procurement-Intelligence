@@ -346,7 +346,7 @@ describe("list extraction group", () => {
 
 describe("CrawlerConfigPanel wiring", () => {
   const component = readFileSync(new URL("CrawlerConfigPanel.tsx", import.meta.url), "utf8");
-  const page = readFileSync(new URL("../../app/admin/page.tsx", import.meta.url), "utf8");
+  const detailView = readFileSync(new URL("./sources/SourceDetailView.tsx", import.meta.url), "utf8");
 
   it("saves through updateAdminDataSource and reports via i18n", () => {
     expect(component).toContain("updateAdminDataSource(source.id, buildCrawlerConfigPatch(source, form))");
@@ -418,8 +418,8 @@ describe("CrawlerConfigPanel wiring", () => {
     expect(zh).toContain("列表解析");
   });
 
-  it("is mounted per data source row in the admin page", () => {
-    expect(page).toContain("CrawlerConfigPanel");
-    expect(page).toContain("onSaved={replaceSource}");
+  it("is mounted on the source detail page", () => {
+    expect(detailView).toContain("CrawlerConfigPanel");
+    expect(detailView).toContain("onSaved={replaceSource}");
   });
 });

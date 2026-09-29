@@ -5,9 +5,6 @@ import {
   createInitialAdminSectionState,
   filterAdminDataSourcesByHealthClassification,
   SOURCE_HEALTH_CLASSIFICATION_FILTERS,
-  sourceHealthTriagePatchForAction,
-  sourceHealthTriageStatus,
-  sourceHealthClassificationLabel,
   isAdminDashboardFullyFailed,
   loadAdminDashboardSections,
 } from "./page";
@@ -27,48 +24,24 @@ describe("admin page", () => {
     expect(page).toContain('t("admin.forbiddenTitle")');
     expect(page).toContain("if (!canAccessAdminConsole) return");
     expect(page).toContain('t("admin.crawler")');
-    expect(page).toContain('t("admin.crawlerAdapter_dedicated")');
-    expect(page).toContain('t("admin.crawlerMaturity_verified")');
     expect(page).toContain("source.crawlerCapabilities");
     expect(page).toContain("source.crawlerBaseUrl");
     expect(page).toContain("source.sourceAuthority");
     expect(page).toContain("source.trustStatus");
     expect(page).toContain("source.evidenceMode");
     expect(page).toContain("source.validityNotes");
-    expect(page).toContain('t("admin.sourceAuthority_official")');
-    expect(page).toContain('t("admin.sourceTrust_fallback")');
-    expect(page).toContain('t("admin.sourceEvidence_aggregator_page")');
-    expect(page).toContain('t("admin.liveSourceHealth")');
-    expect(page).toContain('t("admin.liveSourceHealth_healthy")');
     expect(page).toContain("source.latestLiveHealth");
-    expect(page).toContain("const liveHealth = source.latestLiveHealth");
     expect(page).toContain("SOURCE_HEALTH_CLASSIFICATION_FILTERS");
     expect(page).toContain("sourceHealthClassificationFilter");
     expect(page).toContain("filterAdminDataSourcesByHealthClassification");
     expect(page).toContain("sourceHealthClassificationLabel");
     expect(page).toContain('t("admin.sourceHealthClassificationFilter")');
     expect(page).toContain('t("admin.sourceHealthClassificationEmpty")');
-    expect(page).toContain("liveHealth.reason");
-    expect(page).toContain("liveHealth.evidenceSnippets");
-    expect(page).toContain('t("admin.liveSourceHealthNoCheck")');
-    expect(page).toContain("liveHealth?.statusCode");
-    expect(page).toContain("liveHealth?.latencyMs");
-    expect(page).toContain("liveHealth?.error");
-    expect(page).toContain("liveHealth?.recommendedAction");
-    expect(page).toContain("liveHealth?.operationalSeverity");
-    expect(page).toContain("source.sourceHealthTrend");
-    expect(page).toContain("const healthTrend = source.sourceHealthTrend");
     expect(page).toContain('t("admin.liveSourceRecommendedAction")');
-    expect(page).toContain('t("admin.liveSourceHealthTrend")');
-    expect(page).toContain('t("admin.liveSourceHealthTrendSummary")');
-    expect(page).toContain('t("admin.liveSourceHealthCurrentStreak")');
-    expect(page).toContain('t("admin.liveSourceHealthLastUnhealthy")');
-    expect(page).toContain('t("admin.sourceHealthAction_update_registry_url")');
     expect(page).toContain("checkAdminDataSourceHealth");
     expect(page).toContain("updateSourceApproval");
     expect(page).toContain('t("admin.approveSource")');
     expect(page).toContain('t("admin.holdSource")');
-    expect(page).toContain('t("admin.recheckSource")');
     expect(page).toContain("sourceApprovalPendingId");
     expect(page).toContain("sourceApprovalBatchPending");
     expect(page).toContain("selectedSourceIds");
@@ -80,9 +53,36 @@ describe("admin page", () => {
     expect(page).toContain('t("admin.selectAllSources")');
     expect(page).toContain('t("admin.selectSource")');
     expect(page).toContain("sourceHealthPendingId");
-    expect(page).toContain("source.approvalHistory");
-    expect(page).toContain('t("admin.sourceApprovalHistory")');
-    expect(page).toContain('t("admin.sourceApprovalActor")');
+  });
+
+  it("renders the shared source cards and links each row to its detail page", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    // The live-health box, the compliance boxes and a crawler-log row moved to components/admin/sources and are
+    // imported here until the old table is retired; the row-cell helpers and the run-id resolver moved with them.
+    expect(page).toContain("<SourceLiveHealthCard");
+    expect(page).toContain('pending={sourceHealthPendingId === source.id ? "recheck" : sourceTriagePendingId === source.id ? "triage" : null}');
+    expect(page).toContain("onRecheck={() => recheckSourceHealth(source)}");
+    expect(page).toContain("onTriage={(action) => updateSourceHealthTriage(source, action)}");
+    expect(page).toContain("<SourceComplianceCard source={source} />");
+    expect(page).toContain("<CrawlerLogRow key={log.id} log={log} />");
+    expect(page).toContain("crawlerRunIdFor(source)");
+    expect(page).toContain("crawlerSourceIdFor={crawlerRunIdFor}");
+    expect(page).toContain("`/admin/sources/${encodeURIComponent(source.id)}`");
+    expect(page).toContain('from "@/components/admin/sources/source-labels"');
+    expect(page).toContain('from "@/components/admin/sources/crawler-run-id"');
+    for (const moved of [
+      "function stateCrawlerSourceIdFor(",
+      "function liveSourceHealthTone(",
+      "function sourceHealthTriageStatus(",
+      "function sourceHealthTriagePatchForAction(",
+      "function crawlerTone(",
+      "function formatCrawlerBaseUrl(",
+      "const liveHealth = source.latestLiveHealth",
+      'className="mt-2 max-w-64 rounded-md border border-slate-200 bg-white p-2 text-xs leading-5 text-slate-600"',
+    ]) {
+      expect(page).not.toContain(moved);
+    }
   });
 
   it("keeps successful admin sections ready when one admin API rejects", async () => {
@@ -143,7 +143,7 @@ describe("admin page", () => {
     expect(page).toContain('import type { RecommendedActionFilter } from "@/components/admin/sections/RiskCheckSection"');
   });
 
-  it("defines source health classification filter options and readable labels", () => {
+  it("defines source health classification filter options", () => {
     expect(SOURCE_HEALTH_CLASSIFICATION_FILTERS).toEqual([
       "all",
       "ok",
@@ -156,24 +156,6 @@ describe("admin page", () => {
       "http_error",
       "unknown",
     ]);
-
-    const labels: Record<string, string> = {
-      "admin.sourceHealthClassification_all": "All",
-      "admin.sourceHealthClassification_ok": "OK",
-      "admin.sourceHealthClassification_forbidden": "Forbidden",
-      "admin.sourceHealthClassification_timeout": "Timeout",
-      "admin.sourceHealthClassification_bot_check": "Bot check",
-      "admin.sourceHealthClassification_login_required": "Login required",
-      "admin.sourceHealthClassification_empty_or_placeholder": "Empty/placeholder",
-      "admin.sourceHealthClassification_tls_or_network_error": "Network/TLS",
-      "admin.sourceHealthClassification_http_error": "HTTP error",
-      "admin.sourceHealthClassification_unknown": "Unknown",
-    };
-
-    expect(sourceHealthClassificationLabel((key) => labels[key] ?? key, "empty_or_placeholder")).toBe(
-      "Empty/placeholder",
-    );
-    expect(sourceHealthClassificationLabel((key) => labels[key] ?? key, "tls_or_network_error")).toBe("Network/TLS");
   });
 
   it("filters admin data sources by source health classification", () => {
@@ -266,55 +248,5 @@ describe("admin page", () => {
         now,
       ).map((source) => source.id),
     ).toEqual(["fl-unassigned-none"]);
-  });
-
-  it("derives source health triage queue status from live review fields", () => {
-    const now = new Date("2026-06-12T00:00:00.000Z");
-
-    expect(sourceHealthTriageStatus({ liveHealthOwner: null, liveHealthNextReviewAt: null })).toBe("unassigned");
-    expect(
-      sourceHealthTriageStatus({
-        liveHealthOwner: "ops@example.com",
-        liveHealthNextReviewAt: "2026-06-11T00:00:00.000Z",
-      }, now),
-    ).toBe("overdue");
-    expect(
-      sourceHealthTriageStatus({
-        liveHealthOwner: "ops@example.com",
-        liveHealthNextReviewAt: "2026-06-13T00:00:00.000Z",
-      }, now),
-    ).toBe("scheduled");
-    expect(
-      sourceHealthTriageStatus({
-        liveHealthOwner: "ops@example.com",
-        liveHealthDisposition: "accepted_fallback",
-        liveHealthNextReviewAt: null,
-        liveHealthReviewedAt: "2026-06-10T00:00:00.000Z",
-      }),
-    ).toBe("reviewed");
-  });
-
-  it("creates source health triage patch payloads for quick actions", () => {
-    const now = new Date("2026-06-12T00:00:00.000Z");
-
-    expect(sourceHealthTriagePatchForAction("assign", "ops@example.com", now)).toMatchObject({
-      liveHealthOwner: "ops@example.com",
-      liveHealthDisposition: null,
-      liveHealthNextReviewAt: "2026-06-13T00:00:00.000Z",
-      liveHealthReviewedAt: null,
-    });
-    expect(sourceHealthTriagePatchForAction("vendor_account", "ops@example.com", now)).toMatchObject({
-      liveHealthOwner: "ops@example.com",
-      liveHealthDisposition: "vendor_account",
-      liveHealthNextReviewAt: null,
-      liveHealthReviewedAt: "2026-06-12T00:00:00.000Z",
-    });
-    expect(sourceHealthTriagePatchForAction("clear", "ops@example.com", now)).toEqual({
-      liveHealthOwner: null,
-      liveHealthDisposition: null,
-      liveHealthNextReviewAt: null,
-      liveHealthNotes: null,
-      liveHealthReviewedAt: null,
-    });
   });
 });
