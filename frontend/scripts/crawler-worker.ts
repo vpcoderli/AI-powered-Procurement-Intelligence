@@ -3,7 +3,7 @@ import { closeResolvedMysqlPool, isMysqlDatabaseUrlConfigured, resolveMysqlPool 
 import { runMigrations } from "../src/server/db/migrate";
 import { parseStateCrawlerLimit, runConfiguredCrawlerSourcesOnce } from "../src/server/crawler/configured-runner";
 import { PlatformPauseRegistry, PlatformTickBudget, platformBudgetsFromEnv } from "../src/server/crawler/platform-budget";
-import { runQueuedPrechecksOnce } from "../src/server/crawler/precheck-queue-runner";
+import { PrecheckRetryRegistry, runQueuedPrechecksOnce } from "../src/server/crawler/precheck-queue-runner";
 import { createLogger } from "../src/lib/observability/logger";
 import { captureException } from "../src/lib/observability/sentry";
 
@@ -67,8 +67,10 @@ function owner() {
   return process.env.CRAWLER_OWNER ?? `crawler-worker:${process.pid}`;
 }
 
+// A ref'd timer on purpose: it also paces the platform-spacing waits below, and a worker on SQLite has
+// no other handle to keep the event loop alive while it waits (an unref'd timer would let it exit 0).
 function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
 function crawlerRetryMaxAttempts() {
@@ -249,6 +251,12 @@ async function main() {
   // One registry for the worker's whole lifetime: a platform pause (spec 2026-09-24 §5.5) must
   // outlive the tick that observed the throttle signature.
   const platformPauses = new PlatformPauseRegistry();
+  // Same lifetime for the retry state of challenged/errored prechecks: without it one broken source
+  // would head the queue, and re-pause its platform, on every tick.
+  const precheckRetries = new PrecheckRetryRegistry();
+  // The spacing waits between two requests of one platform (both steps) use the ref'd `sleep` above;
+  // the tracker's default timer is unref'd, which a SQLite-topology worker cannot survive.
+  const platformDeferral = { sleep };
 
   try {
     while (!stopping) {
@@ -263,6 +271,7 @@ async function main() {
         notifier,
         platformPauses,
         platformBudget: budget,
+        platformDeferral,
         tickMs: intervalMs(),
       });
       workerLogger.info("crawler_run_completed", { results });
@@ -271,7 +280,7 @@ async function main() {
       // queued flags survive and the next worker start picks them up.
       if (!stopping) {
         try {
-          const prechecks = await runQueuedPrechecksOnce({ database: db, mysql, budget, pauses: platformPauses });
+          const prechecks = await runQueuedPrechecksOnce({ database: db, mysql, budget, pauses: platformPauses, retries: precheckRetries, platformDeferral });
           workerLogger.info("crawler_precheck_queue_completed", { prechecks });
         } catch (error) {
           workerLogger.error("crawler_precheck_queue_failed", { error });
