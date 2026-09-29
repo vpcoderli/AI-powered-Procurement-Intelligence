@@ -13,6 +13,7 @@ const PAGES: Array<[file: string, section: string]> = [
   ["sources/onboarding/page.tsx", "<OnboardingSection />"],
   ["sources/runs/page.tsx", "<CrawlRunsSection />"],
   ["sources/page.tsx", "<SourcesListView />"],
+  ["page.tsx", "<AdminOverviewView />"],
 ];
 
 describe("admin pages", () => {

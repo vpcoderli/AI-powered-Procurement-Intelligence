@@ -216,7 +216,7 @@ Check a subset with either state codes or source ids:
 npm run source:health:check -- --source CA --source tx_esbd --timeout-ms 5000 --report-only
 ```
 
-Persist the latest probe for the Admin Data Sources table:
+Persist the latest probe for the Admin source detail page (Overview tab, `/admin/sources/[id]`):
 
 ```bash
 npm run source:health:check -- --source CA --timeout-ms 5000 --report-only --persist

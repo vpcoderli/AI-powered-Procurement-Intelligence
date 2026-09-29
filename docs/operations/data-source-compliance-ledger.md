@@ -148,7 +148,7 @@ npm run source:compliance:report -- --format=csv --output reports/source-complia
 
 ## Admin UI
 
-The Admin Data Sources view (`frontend/src/app/admin/page.tsx`, `/admin` route, Data Sources section) shows a "Compliance ledger" panel per source alongside the existing governance/approval badges: robots.txt status badge, ToS-reviewed badge, flag reason (if any), reviewer, legal opinion reference, and next review due date. This reuses the existing table-row governance UI pattern rather than a new page. Updates to these fields go through `PATCH /api/admin/data-sources/[id]`, gated to `admin`-role users (the same gate as the existing approval-status fields, since compliance sign-off is at least as sensitive).
+The source detail page (`/admin/sources/[id]`, "Precheck & approval" tab, opened from the source list at `/admin/sources`) shows a "Compliance ledger" card per source (`frontend/src/components/admin/sources/SourceComplianceCard.tsx`) next to the approval readiness and the approval pre-check: robots.txt status badge, ToS-reviewed badge, flag reason (if any), reviewer, legal opinion reference, next review due date, and the latest approval events. The source list itself shows only the coarse approval state (approved / awaiting / blocked). Updates to these fields go through `PATCH /api/admin/data-sources/[id]`, gated to `admin`-role users (the same gate as the existing approval-status fields, since compliance sign-off is at least as sensitive).
 
 ## Cadence
 

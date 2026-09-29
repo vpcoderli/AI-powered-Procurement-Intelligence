@@ -147,7 +147,7 @@ ADMIN_UI_LOCAL_BYPASS=true npm run dev
 
 ### 运行全部州级爬虫
 
-在 `/admin` 页面点击运行州级爬虫按钮，可触发以下州级来源：
+在 `/admin/sources/runs`（抓取运行，仅 admin / operator 可见）页面点击运行州级爬虫按钮，可触发以下州级来源：
 
 - California Cal eProcure
 - Texas ESBD
@@ -155,7 +155,7 @@ ADMIN_UI_LOCAL_BYPASS=true npm run dev
 - MyFloridaMarketPlace
 - Illinois BidBuy
 
-运行后，管理后台会刷新数据源状态和爬虫日志。
+运行后，该页面会刷新下方的爬虫日志；数据源状态可在 `/admin/sources`（源列表）查看。
 
 也可以使用脚本运行一次完整爬虫流程：
 
@@ -165,7 +165,7 @@ npm run crawler:once
 
 ### 按州单独运行
 
-在 `/admin` 的数据源表格中，支持对单个州级来源点击运行按钮。适用于某个州失败、数据过旧或需要单独补跑的情况。
+在 `/admin/sources`（源列表）里点进某个来源的详情页（`/admin/sources/[id]`），点击"立即运行"即可单独运行该来源；也可以在源列表勾选多个来源（一次最多 20 个）后点击"立即运行"（两处都仅 admin / operator 可见）。适用于某个州失败、数据过旧或需要单独补跑的情况。
 
 ### 定时爬虫 worker
 
@@ -297,7 +297,7 @@ ADMIN_UI_LOCAL_BYPASS=true npm run dev
 - 远程门户请求失败，系统使用 fixture fallback。
 - SAM.gov 或州级门户需要额外网络/API 条件。
 
-可在 `/admin` 查看数据源状态和最近爬虫日志。
+可在 `/admin/sources`（源列表）查看数据源状态，在 `/admin/sources/runs`（抓取运行）或某个来源详情页的"运行记录"标签查看最近爬虫日志；`/admin`（概览）汇总近 24 小时与近 7 天的抓取成败。
 
 ### 端口 3000 打不开
 

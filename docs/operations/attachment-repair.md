@@ -10,7 +10,7 @@
 - `frontend/src/server/attachments/`：`policy.ts`（每源策略解析/校验）、`anomaly.ts`（异常分类与退避，纯函数）、`repository.ts` / `mysql-repository.ts`（候选选取与写回）、`repair-service.ts`（`runAttachmentRepairOnce`）。
 - `crawler` 的 `python -m apsi_crawler.cli archive-attachments`：stdin JSON → stdout JSON，所有对外请求都走 crawler 既有的礼貌策略（浏览器 UA、`Referer`、每源节流、超时、流式下载与大小上限），并做魔数校验后落**相对路径**。
 - `services/browser-downloader`：可选的无头浏览器 sidecar（Python 3.12 + Playwright/Chromium），只为 `mode=browser` 的门户在**公开详情页**上点击下载控件。
-- 管理端 → 数据源 → 爬虫配置（`CrawlerConfigPanel`）的"附件归档"分组：按源开关、下载方式、每轮上限、间隔、超时、大小上限、浏览器链接选择器；落到 `data_sources.fetch_config.attachments`，经 `PATCH /api/admin/data-sources/[id]` 写入。
+- 管理端 → 数据源 → 源列表（`/admin/sources`）→ 源详情页（`/admin/sources/[id]`）"抓取配置"标签页里的爬虫配置面板（`CrawlerConfigPanel`）的"附件归档"分组：按源开关、下载方式、每轮上限、间隔、超时、大小上限、浏览器链接选择器；落到 `data_sources.fetch_config.attachments`，经 `PATCH /api/admin/data-sources/[id]` 写入。
   - 注意与详情补全同一个坑：`ADMIN_UI_LOCAL_BYPASS=true` 只放行服务端 `/api/admin/*` 守卫，`/admin` 页面本身仍要求前端有已登录的 admin 会话。没有会话时直接调 API：`PATCH` **必须带完整的 `fetchConfig`**（服务端整体替换，不做合并），并带 `Origin: http://localhost:3000` 以通过 CSRF。
 
 ## 异常分类

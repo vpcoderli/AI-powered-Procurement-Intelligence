@@ -20,7 +20,7 @@
 
 ## 2. 前置检查（Pre-check）
 
-`/admin` → 数据源表 → 每行的"审批前置检查"卡片 → **前置检查** 按钮，对应 `POST /api/admin/data-sources/[id]/precheck`（admin 或 operator 角色，走 CSRF 校验）。它按顺序做三件事，**全程不入库任何招标**：
+`/admin/sources`（源列表）→ 点进某个源的详情页（`/admin/sources/[id]`）→ "预检与审批"标签页 → "审批前置检查"卡片 → **前置检查** 按钮，对应 `POST /api/admin/data-sources/[id]/precheck`（admin 或 operator 角色，走 CSRF 校验）。它按顺序做三件事，**全程不入库任何招标**：
 
 1. **robots.txt 扫描**：读取该源 `base_url` 所在主机的 robots.txt，判断被抓取的列表路径是否被 `Disallow`，结果写回 `robots_txt_status` / `robots_txt_flag_reason`。这是分诊信号，**不是法律结论**。 robots.txt **通过 Python crawler 的 HTTP 客户端抓取**（`fetch-robots` 子命令）：BidNet 这类 WAF 门户会直接拒绝 Node 的 `fetch`（无论 UA，2026-09-16 实测 403），而 crawler 的 `requests` 会话能拿到 200；爬虫看到的 robots 才是约束爬虫的那一份。`npm run source:compliance:scan` 默认同样走 crawler，`--node-fetch` 可退回 Node。
 2. **试抓（dry run）**：以 `limit=5` 跑一次真实的 `fetch-task`，**跳过治理门禁**（门禁本来就是这次检查要辅助的决定），但不写库、不发通知。返回解析到的条数、前几条标题、实际用的列表解析器、HTTP 状态、是否 WAF 挑战。
@@ -51,7 +51,7 @@
 
 服务端的拒绝信息**原样显示**在表单里（例如 `requires_login` 行缺少复核人或法务参考时的硬校验），不做二次包装——被拒的是哪一栏，只有服务端的原话说得清。
 
-批准不是永久豁免：到了 `compliance_review_due_at` 要重新走一遍前置检查并更新台账；门户改版、条款变更或 robots 变化时随时可以用数据源表的"暂缓"退回 `needs_review`。
+批准不是永久豁免：到了 `compliance_review_due_at` 要重新走一遍前置检查并更新台账；门户改版、条款变更或 robots 变化时随时可以用源详情页顶部的"暂缓"按钮（或在源列表勾选后用批量"暂缓"）退回 `needs_review`。
 
 ## 4. 批准之后：三种"看起来像失败"的结果
 
@@ -150,7 +150,7 @@ BidNet Direct 在 AWS WAF 后面，同平台密集请求会集中吃 403（2026-
 
 `platform_reviews` 表的一行 = "某平台在某天被审查过一次"。它把原本每个源各填一遍的 ToS、robots.txt、访问边界提到平台一级记一次；批量批准时再复制进每个源自己的台账（复制关系见[合规台账](./data-source-compliance-ledger.md#平台审查platform_reviews)）。
 
-**在哪里建。** `/admin` → **数据源**区块**最上方**的"平台合规审查"面板（"新建审查"按钮；只有 admin 看得到表单，operator / support 只读），或 `POST /api/admin/platform-reviews`。面板里"复核人"取当前登录管理员的邮箱，且不可改；建审查需要以 admin 登录管理端。
+**在哪里建。** `/admin/sources/onboarding`（接入审批）页面**最上方**的"平台合规审查"面板（"新建审查"按钮；只有 admin 看得到表单，operator / support 只读），或 `POST /api/admin/platform-reviews`。面板里"复核人"取当前登录管理员的邮箱，且不可改；建审查需要以 admin 登录管理端。
 
 | 字段（请求体键名，面板同名） | 必填 | 说明 |
 | --- | --- | --- |
@@ -289,7 +289,7 @@ SELECT COUNT(*) AS queued, MIN(precheck_requested_at) AS oldest FROM data_source
 
 ### 8.3 带台账批量批准
 
-批准的入口是管理端"带台账的批量批准"面板（数据源区块，平台审查面板下面）或 `POST /api/admin/data-sources/batch`（`action: "approve"`，只有 admin，一次最多 100 个 id）。**本地源**（`jurisdiction_level` 有值且不是 `federal` / `state`，和治理门禁 `blockedReasonFor` 是同一条规则）只有同时通过下面三项检查、又不属于 8.7 列出的几种情形时才会被批准；联邦/州级源不受影响，仍走旧的通用批准。
+批准的入口是管理端"带台账的批量批准"面板（`/admin/sources/onboarding` 页，平台审查面板下面）、源列表（`/admin/sources`）勾选后的"带台账批准"（只有 admin 看得到；同样每 100 个一批调用下面这个接口），或直接调 `POST /api/admin/data-sources/batch`（`action: "approve"`，只有 admin，一次最多 100 个 id）。**本地源**（`jurisdiction_level` 有值且不是 `federal` / `state`，和治理门禁 `blockedReasonFor` 是同一条规则）只有同时通过下面三项检查、又不属于 8.7 列出的几种情形时才会被批准；联邦/州级源不受影响，仍走旧的通用批准。
 
 已经 `approved` 的读作 `already_approved`，`blocked` 的读作 `blocked`——批量批准既不重复批准，也**不解除拦截**。被人暂缓的读作 `held`，已停用的读作 `disabled`（8.7）。其余按下面的顺序过检，几项都不满足时只报第一个：
 
@@ -325,7 +325,7 @@ SELECT COUNT(*) AS queued, MIN(precheck_requested_at) AS oldest FROM data_source
 | 已批准 `approved` | `approval_status = approved` | — |
 | 已拦截 `blocked` | `approval_status = blocked`（`blocked`），被人暂缓（`held`），已停用（`disabled`），或需登录而平台审查缺法务参考（`login_requirements_unmet`） | 批量批准都不处理：拦截与暂缓走第 3 节单源表单解除；停用的先在源编辑里启用；需登录的续一行带法务参考的平台审查，或走单源表单 |
 
-**批准全部。** "批准全部可批准项（N）"只在平台审查为"有效"、N > 0、且是 admin 时可点。它取最近一次就绪度里 `approvable` 的 id，**按 100 个一批**（`APPROVAL_BATCH_CHUNK_SIZE`）依次提交，显示"已提交 X / N"，最后给"已批准 A，跳过 B。"和按原因分列的跳过数；服务端提交时会重新过一遍全部检查，所以两次读取之间变旧的源会被跳过并说明原因。点一下就开始提交，没有二次确认。某一批失败时前面的批次已经批准了，面板显示"批量批准失败：…"、照常给出已完成部分的统计并重读计数。数据源表勾选若干行再点"批量批准"走的是同一个接口：本地源同样只走台账，被跳过的行保持勾选，提示变成"已批准 A，跳过 B。"。表格每行的"批准"按钮对县/市/镇源不再显示——它写不出台账；要单个批准用第 3 节的表单。
+**批准全部。** "批准全部可批准项（N）"只在平台审查为"有效"、N > 0、且是 admin 时可点。它取最近一次就绪度里 `approvable` 的 id，**按 100 个一批**（`APPROVAL_BATCH_CHUNK_SIZE`）依次提交，显示"已提交 X / N"，最后给"已批准 A，跳过 B。"和按原因分列的跳过数；服务端提交时会重新过一遍全部检查，所以两次读取之间变旧的源会被跳过并说明原因。点一下就开始提交，没有二次确认。某一批失败时前面的批次已经批准了，面板显示"批量批准失败：…"、照常给出已完成部分的统计并重读计数。源列表（`/admin/sources`）勾选若干行再点"带台账批准"走的是同一个接口：本地源同样只走台账，提示是"已批准 A，跳过 B。"外加按原因分列的跳过数，操作完成后勾选清空。源详情页顶部的"批准"按钮对县/市/镇源不再显示——它写不出台账；要单个批准用第 3 节的表单。
 
 接口应答（脚本化时自己按 100 切块）：
 
@@ -360,7 +360,7 @@ curl -sS -X POST http://localhost:3000/api/admin/data-sources/batch \
 | `precheck_superseded` | 预检之后发生过失败或治理变更——需重新预检 | `last_failure_at` 或 `last_approval_reviewed_at` 晚于 `live_health_reviewed_at` | 重新入队（`--pending` 会带上它） |
 | `not_local` | （无文案） | 只出现在纯函数 `evaluateLedgeredApproval` 里，表示联邦/州级源。批量接口对这类源直接走通用批准，就绪度接口不列它们，所以 HTTP 应答里见不到 | — |
 
-**控制台怎么显示。** 已注册但未批准的县/市/镇源，数据源表里现在读作"待审核"并带"需要批准"标记，与治理门禁一致——此前它们被误显示为"已批准"（管理端 DTO 对空的治理列默认"已批准"，与爬虫门禁相反）。
+**控制台怎么显示。** 已注册但未批准的县/市/镇源，源列表（`/admin/sources`）的"审批"列里现在读作"待审批"，与治理门禁一致——此前它们被误显示为"已批准"（管理端 DTO 对空的治理列默认"已批准"，与爬虫门禁相反）。
 
 ### 8.4 与单源表单的关系
 

@@ -119,17 +119,17 @@ cd frontend && npm run source:register -- --file candidates.json
       ↓ 落成 approval_status IS NULL 的未批准行（治理拦截中）
       ↓
   ┌─ 整批平台源（阶段 3 批量路径；如 BidNet 一次约 950 个）
-  │  管理端 /admin → 平台合规审查（admin 建；有效期内才能批量批准）
+  │  管理端 /admin/sources/onboarding → 平台合规审查（admin 建；有效期内才能批量批准）
   │        ↓
   │  cd frontend && npm run source:precheck -- --provider bidnet --pending --dry-run   # 先看会入队哪些
   │  cd frontend && npm run source:precheck -- --provider bidnet --pending             # 只打 precheck_requested_at 标记
   │        ↓
   │  npm run worker:crawler：每个 tick 在日常列表之后用剩余预算跑队列里的预检，完成后清标记
   │        ↓ ready / empty
-  │  管理端 → 带台账的批量批准（"批准全部可批准项"，每批 100 个；或 POST /api/admin/data-sources/batch）
+  │  管理端 /admin/sources/onboarding → 带台账的批量批准（"批准全部可批准项"，每批 100 个；或 POST /api/admin/data-sources/batch）
   │
   └─ 个别源、不属于任何平台的源（单源路径）
-     管理端 /admin → 审批前置检查（robots + limit=5 试抓 + 404 时租户探测）
+     管理端 /admin/sources/[id]（"预检与审批"标签）→ 审批前置检查（robots + limit=5 试抓 + 404 时租户探测）
            ↓ ready / empty
      批准县/市源表单（复核人、ToS、必要时法务参考、下次复核日期）
       ↓
@@ -249,7 +249,7 @@ python3 -c 'import json;print(json.dumps(json.load(open("/tmp/pending.json"))["e
 
 | `confidence` | 含义 | 处理 |
 | --- | --- | --- |
-| `exact` | 归一化名字完全一致，州、级别均已确认 | 核对页面标题确属本辖区 → 在数据源表把 `base_url` 改成 `suggestedBaseUrl` → 重跑前置检查 → 走批准表单 |
+| `exact` | 归一化名字完全一致，州、级别均已确认 | 核对页面标题确属本辖区 → 在源详情页把 `base_url` 改成 `suggestedBaseUrl`（"抓取配置"标签的 base URL，或预检卡片的"写入 base_url"按钮）→ 重跑前置检查 → 走批准表单 |
 | `partial` | 目录名字是库里名字的扩展（或反之），州、级别均已确认，可能有多条 | **逐条打开看**。确认是同一个采购单位才写回；拿不准就留空 |
 | `level_mismatch` | 名字对得上，但双方级别不同（县源对上了市、特别区等） | `suggestedBaseUrl` 为 `null`。**不要**写回——那是另一个辖区。需要看租户地址时，按 `agencyName` 去 `candidates[]` / `review[]` 里找 |
 | `state_unconfirmed` | 名字对得上，但有一方没有州码（机构所属组解析不出州，或源没填 `state_code`） | `suggestedBaseUrl` 为 `null`。先查清机构属于哪个州再说 |

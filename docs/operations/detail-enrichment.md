@@ -6,7 +6,7 @@
 
 - `services/scrapling-extractor`：解析 sidecar（Python 3.12，scrapling 0.4.15 基础包，无抓取/反检测组件）。只接收 HTML 字符串并返回解析结果，自身不发起任何外部请求。
 - `crawler/apsi_crawler/enrichment.py`：`fetch-task` 内的可选补全阶段，默认关闭、失败开放（任何异常只计入 `failed`，不会让整次抓取失败）。
-- 管理端 → 数据源 → 爬虫配置（`CrawlerConfigPanel`）：按源开关、字段、上限、间隔、超时、选择器、附件 URL 模板；落到 `data_sources.fetch_config.enrichment`，经 `PATCH /api/admin/data-sources/[id]` 写入。
+- 管理端 → 数据源 → 源列表（`/admin/sources`）→ 源详情页（`/admin/sources/[id]`）"抓取配置"标签页里的爬虫配置面板（`CrawlerConfigPanel`）：按源开关、字段、上限、间隔、超时、选择器、附件 URL 模板；落到 `data_sources.fetch_config.enrichment`，经 `PATCH /api/admin/data-sources/[id]` 写入。
   - 注意：`ADMIN_UI_LOCAL_BYPASS=true` 只放行服务端的 `/api/admin/*` 守卫，`/admin` 页面本身仍然要求前端有已登录的 admin 会话（`useAuth()` 无 user 时直接渲染"需要登录"）。没有会话时改走 API：`PATCH` **必须带完整的 `fetchConfig`**（服务端整体替换，不做合并），并带 `Origin: http://localhost:3000` 以通过 CSRF。
 
 ## 启动

@@ -99,7 +99,7 @@ APSi GovBid 是一个致力于帮助供应商（特别是中小企业）高效�
    services/scrapling-extractor/run-local.sh
    ```
 2. 在 `frontend/.env.local` 设置 `SCRAPLING_EXTRACTOR_URL=http://localhost:8091`（宿主机方式）。
-3. 进入 `/admin` → 数据源表 → 目标源的 **Crawler config** 面板，勾选"启用详情补全"并保存；每次运行的补全统计写入 `crawler_logs.metadata.enrichment`。
+3. 进入 `/admin/sources` → 点进目标源的详情页 → **Crawler config** 标签页（抓取配置），勾选"启用详情补全"并保存；每次运行的补全统计写入 `crawler_logs.metadata.enrichment`。
 
 只有服务端渲染的门户才能补全；纯 JS 渲染或需要登录的门户会得到 `not_found` / `failed`，系统不会为此做任何绕过。
 
