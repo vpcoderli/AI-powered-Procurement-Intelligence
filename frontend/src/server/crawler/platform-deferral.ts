@@ -72,11 +72,13 @@ interface PlatformSource {
   providerFamily: string | null;
 }
 
+// Deliberately a ref'd timer. The batch awaits this wait, and an unref'd timer with no other handle alive
+// never resumes it: Node just exits 0 in the middle of the run. `npm run crawler:once` passes no sleep and,
+// on SQLite, has no socket or child process open between two sources of one platform, so it would end
+// silently during the spacing wait. The wait is bounded by the spacing window (default 5 s), so keeping the
+// process alive for it is harmless inside a long-lived server too.
 function defaultSleep(ms: number) {
-  return new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
-  });
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
 /**

@@ -219,9 +219,9 @@ describe("runCrawlTask", () => {
     };
     const stdout = JSON.stringify(runPayload);
     mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
-      // fetch_task exits 1 on exception; execFile surfaces that as a non-null error
-      // even though stdout still carries the JSON result payload.
-      callback(new Error("Command failed with exit code 1"), stdout, "");
+      // fetch_task exits 1 on exception; execFile surfaces that as a non-null error whose `code`
+      // is the exit status (a number), even though stdout still carries the JSON result payload.
+      callback(Object.assign(new Error("Command failed: python3 -m apsi_crawler.cli fetch-task"), { code: 1 }), stdout, "");
       return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
     }) as typeof execFile);
 
@@ -307,5 +307,111 @@ describe("runCrawlTask", () => {
     const result = await runCrawlTask(source(), { taskId: "tsk_no_status" });
 
     expect(result.payload).toBeNull();
+  });
+
+  describe("errorCode precedence", () => {
+    // `fetch-task` prints a failure document and then exits 1 on EVERY exception, and Node's execFile
+    // reports that as an Error whose `code` is the numeric exit status (verified against a real child:
+    // `code: 1`, `killed: false`, `signal: null`, stdout intact). A spawn failure carries a string code.
+    const failedWith = (code: number | string, message = "Command failed: python3 -m apsi_crawler.cli fetch-task") =>
+      Object.assign(new Error(message), { code });
+
+    function finishChild(error: ExecFileException | null, stdout: string, stderr = "") {
+      mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+        callback(error, stdout, stderr);
+        return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
+      }) as typeof execFile);
+    }
+
+    const bidnet = () => source({ id: "bidnet_co_denver", label: "Denver, CO (BidNet)", stateCode: "CO", providerFamily: "bidnet" });
+    const failureDocument = (overrides: Record<string, unknown> = {}) => ({
+      source: "bidnet_co_denver",
+      runId: "run_challenge",
+      status: "failure",
+      startedAt: "2026-09-29T00:00:00.000Z",
+      finishedAt: "2026-09-29T00:00:03.000Z",
+      durationMs: 3000,
+      metadata: {},
+      bids: [],
+      errorCode: "BidNetChallengeError",
+      errorMessage: "BidNet is serving an AWS WAF bot challenge (HTTP 202): the platform is temporarily rate-limiting automated access. Re-run this source later at a lower frequency — challenges are never bypassed.",
+      errorStack: "Traceback (most recent call last): ...",
+      taskId: "tsk_precedence",
+      ...overrides,
+    });
+
+    it("keeps the failure document's own errorCode ahead of the exit status Node reports", async () => {
+      const runPayload = failureDocument();
+      const stdout = JSON.stringify(runPayload);
+      finishChild(failedWith(1), stdout);
+
+      const result = await runCrawlTask(bidnet(), { taskId: "tsk_precedence" });
+
+      expect(result).toEqual({
+        ok: false,
+        source: "bidnet_co_denver",
+        status: "failure",
+        stdout,
+        stderr: "",
+        fetchedCount: 0,
+        errorCode: "BidNetChallengeError",
+        payload: runPayload,
+      });
+    });
+
+    it("reports the exit status when the child exited without printing a result document", async () => {
+      finishChild(failedWith(1), "not json", "Traceback (most recent call last): ImportError: No module named requests");
+
+      const result = await runCrawlTask(source(), { taskId: "tsk_crash" });
+
+      expect(result).toMatchObject({ ok: false, status: "failure", errorCode: "1", payload: null });
+      expect(result.stderr).toContain("Traceback");
+    });
+
+    it("reports Node's own spawn error code when the interpreter cannot be started", async () => {
+      finishChild(failedWith("ENOENT", "spawn python3 ENOENT"), "");
+
+      const result = await runCrawlTask(source(), { taskId: "tsk_spawn" });
+
+      expect(result).toMatchObject({ ok: false, status: "failure", errorCode: "ENOENT", payload: null, fetchedCount: 0 });
+      expect(result.stderr).toContain("spawn python3 ENOENT");
+    });
+
+    it.each([[""], ["   "], [42], [null]])("falls back to the exit status when the document's errorCode is %j", async (errorCode) => {
+      finishChild(failedWith(1), JSON.stringify(failureDocument({ errorCode })));
+
+      const result = await runCrawlTask(bidnet(), { taskId: "tsk_unusable_code" });
+
+      expect(result).toMatchObject({ ok: false, status: "failure", errorCode: "1" });
+    });
+
+    it("reports CrawlerOutputError when the child exited cleanly without a result document", async () => {
+      finishChild(null, "");
+
+      const result = await runCrawlTask(source(), { taskId: "tsk_silent" });
+
+      expect(result).toMatchObject({ ok: false, status: "failure", errorCode: "CrawlerOutputError", payload: null });
+    });
+
+    it("lets a lost lease win over a structured errorCode in stdout", async () => {
+      const controller = new AbortController();
+      mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+        controller.abort(new Error("lease lost"));
+        callback(failedWith(1), JSON.stringify(failureDocument()), "");
+        return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
+      }) as typeof execFile);
+
+      const result = await runCrawlTask(bidnet(), { taskId: "tsk_lost" }, { signal: controller.signal, assertLease: async () => {} });
+
+      expect(result).toMatchObject({ ok: false, errorCode: "CrawlerLeaseLostError", payload: null });
+    });
+
+    it("lets the task timeout win over a structured errorCode in stdout", async () => {
+      finishChild(Object.assign(new Error("Command timed out"), { killed: true, signal: "SIGKILL" as const }), JSON.stringify(failureDocument()));
+
+      const result = await runCrawlTask(bidnet(), { taskId: "tsk_timeout" });
+
+      expect(result).toMatchObject({ ok: false, errorCode: "CrawlerTaskTimeoutError", payload: null });
+    });
   });
 });

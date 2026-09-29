@@ -127,6 +127,10 @@ export async function runCrawlTask(
         const cancelled = context?.signal.aborted === true;
         const timedOut = !cancelled && error?.killed === true && error.signal === "SIGKILL";
         const processErrorCode = cancelled ? "CrawlerLeaseLostError" : timedOut ? "CrawlerTaskTimeoutError" : error?.code ? String(error.code) : null;
+        // `fetch-task` prints a failure document (errorCode = the Python exception name) and then exits 1 on
+        // EVERY exception, so for a failing child Node's `error.code` is just that exit status. The document's
+        // own code says what actually went wrong; the exit status only stands in when there is none.
+        const structuredErrorCode = typeof parsed.errorCode === "string" && parsed.errorCode.trim() !== "" ? parsed.errorCode : null;
         const ok = !error && !cancelled && parsed.status === "success";
         // Same `parsed` value as above — not re-parsed — just validated for the shape the
         // importer needs (an object with a status field) before being exposed as `resultPayload`.
@@ -156,7 +160,13 @@ export async function runCrawlTask(
           stdout: String(stdout ?? ""),
           stderr: [String(stderr ?? ""), cancelled ? "Crawler source lease was lost" : timedOut ? `Crawler task timed out after ${runtime.timeout}ms` : !resultPayload ? error?.message : null].filter(Boolean).join("\n"),
           fetchedCount: Array.isArray(parsed.bids) ? parsed.bids.length : 0,
-          errorCode: processErrorCode ?? parsed.errorCode ?? (ok ? null : "CrawlerOutputError"),
+          // Lease loss and the task timeout describe how this run ended, whatever the child managed to print, so
+          // they still win; then the document's own code, then Node's (spawn errors, maxBuffer, the exit status).
+          errorCode: cancelled
+            ? "CrawlerLeaseLostError"
+            : timedOut
+              ? "CrawlerTaskTimeoutError"
+              : structuredErrorCode ?? processErrorCode ?? (ok ? null : "CrawlerOutputError"),
           payload: resultPayload,
         });
       },
