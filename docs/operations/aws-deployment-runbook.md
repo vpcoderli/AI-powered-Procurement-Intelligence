@@ -472,7 +472,7 @@ The runner starts `node server.js`; configure `PORT=8080` when required. The wor
 After building:
 
 1. Push both images to ECR. These are two distinct images, not one image with two commands: the runner carries only the pruned Next standalone output and has no `tsx`, so it cannot run any worker script.
-2. Create one task definition for the web image, and one for the worker image. Run the three workers as separate tasks off that single worker image using command overrides. Run the crawler worker as exactly one task/replica: an ECS service with `desiredCount = 1` and no autoscaling above it. The per-platform request budget (`CRAWLER_PLATFORM_BUDGETS`), the platform pauses and the precheck retry registry live in that one process's memory, and the precheck queue is drained without a per-source lease, so a second replica doubles BidNet traffic and prechecks every queued source twice. A scheduled `crawler:once` (below) running beside the service is a second crawler process too, with its own budget: use one or the other.
+2. Create one task definition for the web image, and one for the worker image. Run the three workers as separate tasks off that single worker image using command overrides. Run the crawler worker as exactly one task/replica: an ECS service with `desiredCount = 1` and no autoscaling above it. The per-platform request budget (`CRAWLER_PLATFORM_BUDGETS`), the platform pauses and the precheck retry registry live in that one process's memory, and the precheck queue is drained without a per-source lease, so a second replica doubles BidNet traffic and prechecks every queued source twice. A scheduled `crawler:once` (below) running beside the service is a second crawler process too, with its own budget, so never run both. Once local sources are onboarded through the precheck queue (`docs/operations/local-source-approval.md` §8) the service is required: only `scripts/crawler-worker.ts` drains the queue — `crawler:once` runs the daily lists and never runs a queued precheck.
 3. Attach the same Secrets Manager / SSM values used by App Runner.
 4. Send logs to CloudWatch.
 5. Run worker preflight in ECS:
@@ -494,7 +494,7 @@ Create separate EventBridge schedules:
 
 | Schedule | ECS command override | Suggested cadence |
 |---|---|---|
-| Crawler one-shot | `npm run crawler:once` | Every 15 minutes or per source policy |
+| Crawler one-shot (only when no crawler worker service runs and nothing is queued for precheck) | `npm run crawler:once` | Every 15 minutes or per source policy |
 | Event outbox one-shot | `EVENT_WORKER_RUN_ONCE=1 npm run worker:events` | Every 5-15 minutes |
 | Notification/dunning one-shot | `NOTIFICATION_WORKER_RUN_ONCE=1 npm run worker:notifications` | Every 15 minutes |
 

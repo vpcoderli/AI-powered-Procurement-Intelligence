@@ -411,7 +411,7 @@ SELECT robots_txt_status, COUNT(*) FROM data_sources
 
 `needs_review` 有三种来历：从没审过（注册后治理列为空）、被人暂缓（单源"暂缓"或批量 `hold`）、被源健康回写降级（`recordSourceFailure*`）。原来批量批准只分得清 `approved` 和 `blocked`，后两种源会凭暂缓或失败**之前**的那次预检重新读作"可批准"，"批准全部可批准项"一点就把它们批回去。现在批量批准（和就绪度）另外跳过五种源，都不写任何东西：
 
-- **`held` 被人暂缓**：`approval_status = needs_review` 是治理变更写下的（它同时盖上 `last_approval_reviewed_at`），且之后没有更晚的失败来解释它（`last_failure_at` 不晚于 `last_approval_reviewed_at`）。注册后治理列为空的源 `last_approval_reviewed_at` 为空，不算暂缓。**人的暂缓只能通过第 3 节的单源表单解除**：之后再预检多少次，批量批准都不会接手它。
+- **`held` 被人暂缓**：`approval_status = needs_review` 是治理变更写下的（它同时盖上 `last_approval_reviewed_at`），且之后没有更晚的失败来解释它（`last_failure_at` 不晚于 `last_approval_reviewed_at`）。注册后治理列为空的源 `last_approval_reviewed_at` 为空，不算暂缓。**人的暂缓只能通过第 3 节的单源表单解除**：之后再预检多少次，批量批准都不会接手它。（唯一的窄缝：点“暂缓”时恰好正在跑的那一次抓取，如果在暂缓之后失败，它会写下更晚的 `last_failure_at`，这个源就读作被降级而不是被暂缓，新的预检之后可能被批量批准收回；暂缓后请确认该源没有正在进行的运行。）
 - **`disabled` 已停用**：`is_enabled = 0`。批准会写 `is_enabled = 1`，原来会悄悄重新打开有人关掉的源。
 - **`login_requirements_unmet`**：`requires_login = 1`，而有效平台审查没有 `legalOpinionReference`。原来这会在批次中途答 400，挡住同一请求里排在它后面的所有 id。
 - **`precheck_queued`**：已有人为它排了新的预检，旧结论在新预检跑完之前不作数。
@@ -419,7 +419,7 @@ SELECT robots_txt_status, COUNT(*) FROM data_sources
 
 `blocked` 仍然是拦截，批量批准不解除。"为待预检源入队"与 `--pending` 和就绪度的"待预检"用同一条规则（8.2）。
 
-**发布说明：解析类失败又是"第一次就降级"。** 自 Task 6b（提交 `e1d1fc8` / `e80ef84`）起，`runCrawlTask` 报告 crawler 自己的结构化错误类，不再报进程退出码。于是解析类失败——`HtmlPageError` 的 404、非 HTML、空页、缺表头，`*NormalizationError`，`JSONDecodeError`，`KeyError`——**第一次出现**就把源降为 `needs_review`。这条规则一直在，但从 `aa3e6ef`（2026-09-16）起每个失败都被读成退出码 "1"（`unknown`，连续 5 次才降级），它一直没生效；现在它对所有源重新生效，州级源也一样。一次有问题的 crawler 部署（比如到处抛 `KeyError`）可以在一个 tick 里把所有已批准的源降级。被降级的源读作 `precheck_superseded`，要一次晚于那次失败的新预检才能再批量批准；整批重新预检按 8.2 的预算算术，默认 `bidnet=60` 下 952 个源约需 34 小时。部署新的 crawler 前后，盯住 `approval_status` 从 `approved` 变成 `needs_review` 的数量。
+**发布说明：解析类失败又是"第一次就降级"。** 自 Task 6b（提交 `f46a140`，分类收窄见 `e1d1fc8` / `e80ef84`）起，`runCrawlTask` 报告 crawler 自己的结构化错误类，不再报进程退出码。于是解析类失败——`HtmlPageError` 的 404、非 HTML、空页、缺表头，`*NormalizationError`，`JSONDecodeError`，`KeyError`——**第一次出现**就把源降为 `needs_review`。这条规则一直在，但从 `aa3e6ef`（2026-09-16）起每个失败都被读成退出码 "1"（`unknown`，连续 5 次才降级），它一直没生效；现在它对所有源重新生效，州级源也一样。一次有问题的 crawler 部署（比如到处抛 `KeyError`）可以在一个 tick 里把所有已批准的源降级。被降级的源读作 `precheck_superseded`，要一次晚于那次失败的新预检才能再批量批准；整批重新预检按 8.2 的预算算术，默认 `bidnet=60` 下 952 个源约需 34 小时。部署新的 crawler 前后，盯住 `approval_status` 从 `approved` 变成 `needs_review` 的数量。
 
 ## 首轮实测（2026-09-16，本地 MySQL `winbids`）
 
