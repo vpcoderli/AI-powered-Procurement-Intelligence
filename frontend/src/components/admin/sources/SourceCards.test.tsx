@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { AdminCrawlerLog, AdminDataSourceDetail } from "@/lib/api/admin";
 import { en } from "@/lib/i18n/dictionaries/en";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
-import { formatDate } from "../admin-format";
+import { formatBidDate, formatDate } from "../admin-format";
 import { CrawlerLogRow } from "./CrawlerLogList";
 import { SourceBidsCard } from "./SourceBidsCard";
 import { SourceComplianceCard } from "./SourceComplianceCard";
@@ -194,8 +194,29 @@ describe("SourceBidsCard", () => {
     }
     expect(html).toContain('href="/bids/bidnet_co_denver%3A9001"');
     expect(html).toContain("Roof replacement");
-    expect(html).toContain(`${admin.fieldPublished}: 2026-09-01 · ${admin.fieldDeadline}: - · ${admin.bidLifecycle_open}`);
-    expect(html).toContain(`${admin.fieldPublished}: - · ${admin.fieldDeadline}: 2026-11-01`);
+    // Formatted like the rest of the console; a calendar day stays that day in any time zone.
+    expect(html).toContain(`${admin.fieldPublished}: ${formatBidDate("2026-09-01")} · ${admin.fieldDeadline}: - · ${admin.bidLifecycle_open}`);
+    expect(html).toContain(`${admin.fieldPublished}: - · ${admin.fieldDeadline}: ${formatBidDate("2026-11-01")}`);
+    expect(html).not.toContain(": 2026-09-01 ");
+  });
+
+  it("formats a US calendar day and a timestamp, and prints a portal's own text as stored", () => {
+    const html = text(
+      render(
+        <SourceBidsCard
+          bids={{
+            counts: { open: 2, closed: 0, awarded: 0, total: 2 },
+            latest: [
+              { id: "a:1", title: "Salt", publishedDate: "09/22/2026", deadlineDate: "2026-10-13T19:00:00.000Z", lifecycleStatus: "open" },
+              { id: "a:2", title: "Sand", publishedDate: "Aug 31, 2026 @ 02:00 PM", deadlineDate: "1788984000000", lifecycleStatus: "open" },
+            ],
+          }}
+        />,
+      ),
+    );
+
+    expect(html).toContain(`${admin.fieldPublished}: ${formatBidDate("2026-09-22")} · ${admin.fieldDeadline}: ${formatDate("2026-10-13T19:00:00.000Z")}`);
+    expect(html).toContain(`${admin.fieldPublished}: Aug 31, 2026 @ 02:00 PM · ${admin.fieldDeadline}: 1788984000000`);
   });
 
   it("shows an unknown lifecycle status as itself instead of a raw dictionary key", () => {
@@ -234,8 +255,19 @@ describe("CrawlerLogRow", () => {
     const html = text(render(<CrawlerLogRow log={{ ...log, status: "success", failedCount: 0, errorMessage: null, fallbackSource: null, fallbackReason: null }} />));
 
     expect(html).toContain(">success<");
-    expect(html).not.toContain("text-rose-700\">Portal");
+    expect(html).not.toContain("Portal answered 403");
     expect(html).not.toContain(admin.fallbackUsed);
+  });
+
+  // A crawler error carries the portal URL (HtmlPageError … for url: https://www.bidnetdirect.com/…), one unbreakable
+  // word that widened a phone-sized page by ~190px: the text column may shrink and the messages wrap anywhere.
+  it("lets a long error or fallback message wrap instead of widening the page", () => {
+    const long = `HtmlPageError: HTML request failed: 404 Client Error for url: https://www.bidnetdirect.com/${"colorado/".repeat(12)}solicitations/open-bids`;
+    const html = text(render(<CrawlerLogRow log={{ ...log, errorMessage: long }} />));
+
+    expect(html).toContain('<div class="grid gap-2 px-4 py-3 md:grid-cols-[1fr_auto] md:items-center"><div class="min-w-0">');
+    expect(html).toContain(`<div class="mt-1 text-sm break-words text-rose-700 [overflow-wrap:anywhere]">${long}</div>`);
+    expect(html).toContain('<div class="mt-1 text-sm break-words text-amber-700 [overflow-wrap:anywhere]">');
   });
 });
 

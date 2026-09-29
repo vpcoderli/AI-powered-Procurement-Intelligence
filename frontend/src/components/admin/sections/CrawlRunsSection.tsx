@@ -7,35 +7,33 @@ import { JurisdictionBatchRunPanel } from "@/components/admin/JurisdictionBatchR
 import { listAdminDataSourceIndex, runStateCrawlersNow } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { useAdminSession } from "../admin-session";
-import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
+import { ADMIN_PANEL_CARD, AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
 import { useAdminResource } from "../use-admin-resource";
 import { CrawlerLogList } from "../sources/CrawlerLogList";
 import { crawlerRunIdFor } from "../sources/crawler-run-id";
 
 const loadIndex = () => listAdminDataSourceIndex().then((response) => response.items);
 
-// The batch run panel was written to sit in a card (its root ends in a hairline); this is the card the old sources
-// section gave it, minus the hairline on its last edge.
-const PANEL_CARD = "rounded-lg border border-slate-200 bg-white shadow-sm [&>div]:border-b-0";
-
 export function CrawlRunsSection() {
   const { t } = useLanguage();
   const { canRunOperations } = useAdminSession();
   const index = useAdminResource(loadIndex);
   const [isRunning, setIsRunning] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ message: string; tone: "info" | "error" } | null>(null);
   const [logsRevision, setLogsRevision] = useState(0);
+  // The log list is keyed by this: a new key reads its first page again (the batch panel keeps its own report).
+  const refreshLogs = () => setLogsRevision((revision) => revision + 1);
 
-  // The old page header's "Run state crawlers": every crawlable non-federal source.
+  // "Run state crawlers": every crawlable non-federal source.
   const runAll = async () => {
     setIsRunning(true);
     setNotice(null);
     try {
       await runStateCrawlersNow();
-      setNotice(t("admin.runQueued"));
-      setLogsRevision((revision) => revision + 1);
+      setNotice({ message: t("admin.runQueued"), tone: "info" });
+      refreshLogs();
     } catch {
-      setNotice(t("admin.runFailed"));
+      setNotice({ message: t("admin.runFailed"), tone: "error" });
     } finally {
       setIsRunning(false);
     }
@@ -51,10 +49,10 @@ export function CrawlRunsSection() {
           </Button>
         </div>
       )}
-      <AdminNotice message={notice} />
+      <AdminNotice message={notice?.message ?? null} tone={notice?.tone} />
       {index.data ? (
-        <section className={PANEL_CARD}>
-          <JurisdictionBatchRunPanel sources={index.data} crawlerSourceIdFor={crawlerRunIdFor} disabled={isRunning} />
+        <section className={ADMIN_PANEL_CARD}>
+          <JurisdictionBatchRunPanel sources={index.data} crawlerSourceIdFor={crawlerRunIdFor} disabled={isRunning} onCompleted={refreshLogs} />
         </section>
       ) : (
         <AdminSectionStateCard

@@ -69,7 +69,7 @@ export function readSourceListQuery(params: URLSearchParams): { query: SourceLis
   return { query, invalid };
 }
 
-/** Canonical search string ("" for the defaults); the page writes it with router.replace. */
+/** Canonical search string ("" for the defaults); the page pushes it for a change the user makes and replaces the URL with it to correct one. */
 export function writeSourceListQuery(query: SourceListQuery): string {
   const params = new URLSearchParams();
   for (const level of query.levels) params.append("level", level);

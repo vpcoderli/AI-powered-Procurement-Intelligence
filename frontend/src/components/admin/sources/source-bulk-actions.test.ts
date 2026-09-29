@@ -2,12 +2,16 @@ import { describe, expect, it } from "vitest";
 import { AdminApiError } from "@/lib/api/admin";
 import { en } from "@/lib/i18n/dictionaries/en";
 import { zh } from "@/lib/i18n/dictionaries/zh";
+import type { StateCrawlerRunResponse } from "@/lib/api/admin";
 import {
   PRECHECK_REQUEST_CHUNK,
   RUN_NOW_LIMIT,
   addApprovalResponse,
+  addRunResponse,
   approvalReport,
+  blockedLeftOutText,
   emptyApprovalTally,
+  emptyRunTally,
   errorText,
   failedReport,
   holdConfirmText,
@@ -15,8 +19,11 @@ import {
   isPrecheckEligible,
   precheckConfirmText,
   precheckReport,
+  runReport,
   runTargets,
   sendInChunks,
+  singleRunReport,
+  splitApprovalTargets,
   splitPrecheckTargets,
   summarizeRunResults,
   type PrecheckCandidate,
@@ -307,13 +314,35 @@ describe("bulk reports", () => {
     );
   });
 
-  it("reports a hold as done, or shows how many were held before it stopped", () => {
-    expect(holdReport(t, { tally: 12, failed: false })).toEqual({ message: "Source approvals updated.", outcome: "done" });
+  it("says how many sources a hold held, or how many it held before it stopped", () => {
+    expect(holdReport(t, { tally: 12, failed: false })).toEqual({ message: "Held 12 sources.", outcome: "done" });
     expect(holdReport(t, { tally: 100, failed: true, failure: requestFailed })).toEqual({
       message: "Held 100 sources. Stopped on an error: Request failed",
       outcome: "failed",
     });
     expect(holdReport(t, { tally: 0, failed: true, failure: requestFailed }).message).toBe("Stopped on an error: Request failed");
+  });
+
+  it("adds the blocked rows an approve or a hold left out, before the error that stopped it", () => {
+    expect(holdReport(t, { tally: 4, failed: false }, 2)).toEqual({
+      message: "Held 4 sources. 2 blocked sources left out: a blocked source is changed only on its own page.",
+      outcome: "done",
+    });
+    expect(holdReport(t, { tally: 100, failed: true, failure: requestFailed }, 1).message).toBe(
+      "Held 100 sources. 1 blocked sources left out: a blocked source is changed only on its own page. Stopped on an error: Request failed",
+    );
+    expect(approvalReport({ t, reasonLabel }, { tally: { approved: 3, skippedByReason: {} }, failed: false }, 2)).toEqual({
+      message: "Source approvals updated. 2 blocked sources left out: a blocked source is changed only on its own page.",
+      outcome: "done",
+    });
+    // The skip reasons carry no full stop of their own; the next sentence still starts a new one.
+    expect(approvalReport({ t, reasonLabel }, { tally: { approved: 1, skippedByReason: { held: 1 } }, failed: false }, 1).message).toBe(
+      "Approved 1, skipped 1. held by a person × 1. 1 blocked sources left out: a blocked source is changed only on its own page.",
+    );
+    expect(approvalReport({ t, reasonLabel }, { tally: emptyApprovalTally(), failed: true, failure: requestFailed }, 3).message).toBe(
+      "3 blocked sources left out: a blocked source is changed only on its own page. Stopped on an error: Request failed",
+    );
+    expect(blockedLeftOutText(t, 5)).toBe("5 blocked sources left out: a blocked source is changed only on its own page.");
   });
 
   it("reports a request that failed on its own with the server's words, and never with an empty reason", () => {
@@ -335,10 +364,99 @@ describe("bulk confirmations", () => {
     );
   });
 
-  it("asks about the count before a batch hold", () => {
-    expect(holdConfirmText(t, 12)).toBe(
-      "Hold 12 selected sources? A batch approval skips a held source, and lifting the hold is done by hand, one source at a time.",
+  it("asks before a batch hold with the count it sends, says a hold stops state and federal ingestion, and names the blocked rows left out", () => {
+    expect(holdConfirmText(t, { targetIds: Array.from({ length: 12 }, (_, index) => `s${index}`), blockedLeftOut: 0 })).toBe(
+      "Hold 12 selected sources? A held source stops ingesting, state and federal portals included. Batch approval skips a held county, city or township source: its hold is lifted only on that source's own page.",
     );
+    expect(holdConfirmText(t, { targetIds: ["a", "b"], blockedLeftOut: 3 })).toBe(
+      "Hold 2 selected sources? A held source stops ingesting, state and federal portals included. Batch approval skips a held county, city or township source: its hold is lifted only on that source's own page. 3 blocked sources left out: a blocked source is changed only on its own page.",
+    );
+  });
+});
+
+describe("bulk approve and hold targets", () => {
+  it("leaves blocked rows out of a bulk approve or hold and counts them", () => {
+    expect(
+      splitApprovalTargets([
+        { id: "a", approvalState: "awaiting" },
+        { id: "b", approvalState: "blocked" },
+        { id: "c", approvalState: "approved" },
+        { id: "d", approvalState: "blocked" },
+      ]),
+    ).toEqual({ targetIds: ["a", "c"], blockedLeftOut: 2 });
+  });
+
+  it("sends everything when nothing is blocked, and nothing when everything is", () => {
+    expect(splitApprovalTargets([{ id: "a", approvalState: "awaiting" }, { id: "b", approvalState: "approved" }])).toEqual({
+      targetIds: ["a", "b"],
+      blockedLeftOut: 0,
+    });
+    expect(splitApprovalTargets([{ id: "x", approvalState: "blocked" }])).toEqual({ targetIds: [], blockedLeftOut: 1 });
+    expect(splitApprovalTargets([])).toEqual({ targetIds: [], blockedLeftOut: 0 });
+  });
+});
+
+const runResponse = (statuses: string[], errors: StateCrawlerRunResponse["errors"] = undefined): StateCrawlerRunResponse => ({
+  ok: statuses.every((status) => status === "success"),
+  status: "completed",
+  results: statuses.map((status, index) => ({ source: `s${index}`, ok: status === "success", status })),
+  ...(errors ? { errors } : {}),
+});
+
+describe("list Run now, in chunks", () => {
+  it("adds up the run responses of every chunk", () => {
+    const tally = [runResponse(["success", "failure"]), runResponse(["blocked", "success", "deferred"])].reduce(addRunResponse, emptyRunTally());
+
+    expect(tally).toEqual({ ok: 2, failed: 1, skipped: 2 });
+    expect(emptyRunTally()).toEqual({ ok: 0, failed: 0, skipped: 0 });
+  });
+
+  it("reports what ran and the rows without a run id", () => {
+    expect(runReport(t, { tally: { ok: 3, failed: 1, skipped: 1 }, failed: false }, 0)).toEqual({
+      message: "Ran 5: 3 succeeded, 1 failed, 1 skipped.",
+      outcome: "done",
+    });
+    expect(runReport(t, { tally: { ok: 1, failed: 0, skipped: 0 }, failed: false }, 2).message).toBe(
+      "Ran 1: 1 succeeded, 0 failed, 0 skipped. 2 selected sources have no crawler run id and were not run.",
+    );
+    expect(runReport(t, { tally: emptyRunTally(), failed: false }, 2).message).toBe("2 selected sources have no crawler run id and were not run.");
+  });
+
+  it("shows what the chunks before a failed request ran, with the server's message", () => {
+    expect(runReport(t, { tally: { ok: 5, failed: 0, skipped: 0 }, failed: true, failure: requestFailed }, 0)).toEqual({
+      message: "Ran 5: 5 succeeded, 0 failed, 0 skipped. Stopped on an error: Request failed",
+      outcome: "failed",
+    });
+    expect(runReport(t, { tally: emptyRunTally(), failed: true, failure: requestFailed }, 0).message).toBe("Stopped on an error: Request failed");
+  });
+});
+
+describe("detail Run now of one source", () => {
+  it("reports a run that went through", () => {
+    expect(singleRunReport(t, "City of Aurora", runResponse(["success"]))).toEqual({
+      message: "State crawler run completed for City of Aurora.",
+      tone: "info",
+    });
+  });
+
+  it("reports a failed run and an unknown source as errors", () => {
+    expect(singleRunReport(t, "City of Aurora", runResponse(["failure"]))).toEqual({
+      message: "Unable to run state crawler for City of Aurora.",
+      tone: "error",
+    });
+    expect(singleRunReport(t, "City of Aurora", runResponse([], [{ source: "x", code: "UNKNOWN_SOURCE", message: "unknown" }])).tone).toBe("error");
+  });
+
+  it("names the reason a run was not made instead of reporting success (a 200 with a blocked status)", () => {
+    expect(singleRunReport(t, "City of Aurora", runResponse(["blocked"]))).toEqual({
+      message: "City of Aurora was not run: Governance hold.",
+      tone: "info",
+    });
+    expect(singleRunReport(t, "City of Aurora", runResponse(["deferred"])).message).toBe(
+      "City of Aurora was not run: Deferred: platform throttled.",
+    );
+    expect(singleRunReport(t, "City of Aurora", runResponse(["something_new"])).message).toBe("City of Aurora was not run: Unknown.");
+    expect(singleRunReport(t, "City of Aurora", runResponse([])).message).toBe("City of Aurora was not run: Unknown.");
   });
 });
 
@@ -350,6 +468,9 @@ describe("bulk action wording", () => {
     "sourcesHoldConfirm",
     "sourcesHeldResult",
     "sourcesBulkFailed",
+    "sourcesBlockedLeftOut",
+    "runSourceSkipped",
+    "batchApproveSources",
   ];
   const placeholders = (text: string) => (text.match(/\{[a-z]+\}/g) ?? []).sort();
 
@@ -364,7 +485,10 @@ describe("bulk action wording", () => {
     const tZh = (key: string) => adminZh[key.replace(/^admin\./, "")] ?? key;
 
     expect(precheckReport(tZh, { tally: 3, failed: false }, 2).message).not.toMatch(/[{}]/);
-    expect(holdReport(tZh, { tally: 4, failed: true, failure: requestFailed }).message).not.toMatch(/[{}]/);
-    expect(approvalReport({ t: tZh, reasonLabel }, { tally: { approved: 1, skippedByReason: { held: 1 } }, failed: true, failure: requestFailed }).message).not.toMatch(/[{}]/);
+    expect(holdReport(tZh, { tally: 4, failed: true, failure: requestFailed }, 2).message).not.toMatch(/[{}]/);
+    expect(approvalReport({ t: tZh, reasonLabel }, { tally: { approved: 1, skippedByReason: { held: 1 } }, failed: true, failure: requestFailed }, 1).message).not.toMatch(/[{}]/);
+    expect(holdConfirmText(tZh, { targetIds: ["a"], blockedLeftOut: 1 })).not.toMatch(/[{}]/);
+    expect(runReport(tZh, { tally: { ok: 1, failed: 1, skipped: 1 }, failed: true, failure: requestFailed }, 1).message).not.toMatch(/[{}]/);
+    expect(singleRunReport(tZh, "丹佛", runResponse(["blocked"])).message).toBe("丹佛 未运行：治理拦截。");
   });
 });

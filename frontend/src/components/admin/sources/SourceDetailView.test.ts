@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { en } from "@/lib/i18n/dictionaries/en";
 import { zh } from "@/lib/i18n/dictionaries/zh";
-import { settledPending, sourceDetailTabs } from "./SourceDetailView";
+import { crawlerConfigInputsChanged, settledPending, sourceDetailTabs } from "./SourceDetailView";
+import { adminSourceFixture } from "./test-fixtures";
 
 const read = (file: string) => readFileSync(new URL(file, import.meta.url), "utf8");
 
@@ -22,7 +23,7 @@ describe("source detail view", () => {
     expect(view).toContain("getAdminDataSourceDetail(sourceId)");
     expect(view).toContain("<SourcePrecheckPanel");
     expect(view).toContain("reviewerEmail={user.email}");
-    expect(view).toContain("onSourceUpdated={replaceSource}");
+    expect(view).toContain("onSourceUpdated={replaceSourceFromApprovalTab}");
     expect(view).toContain("<CrawlerConfigPanel");
     expect(view).toContain("onSaved={replaceSource}");
     expect(view).toContain("<CrawlerLogList");
@@ -44,8 +45,44 @@ describe("source detail view", () => {
     expect(view).not.toContain("setPending(null)");
   });
 
-  it("puts the source's profile and governance card on the approval tab", () => {
-    expect(read("SourceDetailView.tsx")).toContain("<SourceProfileCard source={source} />");
+  // Base UI's Tabs.Panel unmounts a hidden panel by default: a tab switch threw away an unsaved config edit and the
+  // precheck card's fresh result (whose robots.txt flag makes the ledgered approval form demand a legal reference).
+  it("keeps the config and approval tabs mounted while another tab is shown", () => {
+    const view = read("SourceDetailView.tsx");
+
+    expect(view).toContain('<TabsContent value="config" keepMounted>');
+    expect(view).toContain('<TabsContent value="approval" keepMounted className="flex flex-col gap-4">');
+    // The runs tab reads its first page when it is opened, so it is not kept.
+    expect(view).toContain('<TabsContent value="runs">');
+  });
+
+  // The kept config form is built from the row once; a base URL the precheck card writes back must not be undone by
+  // the form's next save, so an approval-tab write that changes the form's inputs remounts it. Its own save does not.
+  it("remounts the kept config form when a write from the approval tab changes what it was built from", () => {
+    const view = read("SourceDetailView.tsx");
+
+    expect(view).toContain("<CrawlerConfigPanel key={configFormRevision}");
+    expect(view).toContain("if (crawlerConfigInputsChanged(source, next)) setConfigFormRevision((revision) => revision + 1);");
+    expect(view.match(/setConfigFormRevision\(/g)).toHaveLength(1);
+
+    const row = adminSourceFixture({ fetchConfig: { enrichment: { enabled: true } } });
+    expect(crawlerConfigInputsChanged(row, { ...row })).toBe(false);
+    // The ledgered approval form writes governance fields only.
+    expect(crawlerConfigInputsChanged(row, adminSourceFixture({ ...row, approvalStatus: "approved", isEnabled: true }))).toBe(false);
+    expect(crawlerConfigInputsChanged(row, { ...row, fetchConfig: { enrichment: { enabled: true } } })).toBe(false);
+    expect(crawlerConfigInputsChanged(row, { ...row, baseUrl: "https://www.bidnetdirect.com/colorado/city-and-county-of-denver" })).toBe(true);
+    expect(crawlerConfigInputsChanged(row, { ...row, cadence: "weekly" })).toBe(true);
+    expect(crawlerConfigInputsChanged(row, { ...row, fetchConfig: { enrichment: { enabled: false } } })).toBe(true);
+  });
+
+  it("puts the source's profile and governance card on the approval tab and reports a run by its own outcome", () => {
+    const view = read("SourceDetailView.tsx");
+
+    expect(view).toContain("<SourceProfileCard source={source} />");
+    expect(view).toContain("setNotice(singleRunReport(t, source.label, await runStateCrawlersNow([runId])))");
+    expect(view).toContain("<AdminNotice message={notice?.message ?? null} tone={notice?.tone} />");
+    // A blocked row is changed only through an explicit Approve or the ledgered form, never by Hold.
+    expect(view).toContain('disabled={pending !== null || source.approvalStatus === "needs_review" || source.approvalStatus === "blocked"}');
   });
 
   it("clears the pending slot only for the action that is finishing", () => {

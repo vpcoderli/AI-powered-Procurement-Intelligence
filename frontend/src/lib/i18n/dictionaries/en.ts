@@ -1785,7 +1785,6 @@ export const en = {
     sourcesQueuePrechecks: "Queue prechecks",
     sourcesQueueAllMatching: "Queue all {count} matching",
     sourcesQueuedResult: "Queued {count} prechecks.",
-    sourcesApproveWithLedger: "Approve with ledger",
     sourcesRunLimit: "Select at most {max} sources to run at once.",
     sourcesRunResult: "Ran {count}: {ok} succeeded, {failed} failed, {skipped} skipped.",
     sourcesNotRunnable: "{count} selected sources have no crawler run id and were not run.",
@@ -1833,7 +1832,7 @@ export const en = {
     sourcesPrecheckLeftOut: "{count} left out: only enabled local sources awaiting approval are prechecked.",
     sourcesQueueAllConfirm: "Queue prechecks for {count} sources? The crawler worker runs them within each platform's request budget.",
     sourcesQueueAllTruncated: "More than {max} sources match; narrow the filters before queueing them all.",
-    sourcesHoldConfirm: "Hold {count} selected sources? A batch approval skips a held source, and lifting the hold is done by hand, one source at a time.",
+    sourcesHoldConfirm: "Hold {count} selected sources? A held source stops ingesting, state and federal portals included. Batch approval skips a held county, city or township source: its hold is lifted only on that source's own page.",
     sourcesHeldResult: "Held {count} sources.",
     sourcesBulkFailed: "Stopped on an error: {message}",
     sourceProfileTitle: "Source profile & governance",
@@ -1849,6 +1848,8 @@ export const en = {
     sourceTrustProfile: "Authority, trust & evidence",
     sourceValidityNotes: "Validity notes",
     sourceFallbackNotes: "Fallback notes",
+    sourcesBlockedLeftOut: "{count} blocked sources left out: a blocked source is changed only on its own page.",
+    runSourceSkipped: "{source} was not run: {status}.",
   }
 };
 

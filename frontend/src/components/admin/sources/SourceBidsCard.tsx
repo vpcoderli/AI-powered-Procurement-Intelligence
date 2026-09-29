@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { AdminDataSourceDetail } from "@/lib/api/admin";
 import { bidDetailPath } from "@/lib/bid-routes";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import { formatBidDate } from "../admin-format";
 
 const KNOWN_LIFECYCLES = ["open", "closed", "awarded"];
 
@@ -40,7 +41,7 @@ export function SourceBidsCard({ bids }: { bids: AdminDataSourceDetail["bids"] }
                 {bid.title}
               </Link>
               <span className="text-xs text-slate-500">
-                {t("admin.fieldPublished")}: {bid.publishedDate ?? "-"} · {t("admin.fieldDeadline")}: {bid.deadlineDate ?? "-"} ·{" "}
+                {t("admin.fieldPublished")}: {formatBidDate(bid.publishedDate)} · {t("admin.fieldDeadline")}: {formatBidDate(bid.deadlineDate)} ·{" "}
                 {lifecycleLabel(bid.lifecycleStatus)}
               </span>
             </li>

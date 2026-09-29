@@ -63,6 +63,12 @@ export function SummaryCard({ label, value, icon: Icon }: { label: string; value
   );
 }
 
+/**
+ * The card a phase-3 panel sits in on its page. Those panels were written to sit in a card (each root ends in a
+ * hairline), so the card drops the hairline on the panel's last edge.
+ */
+export const ADMIN_PANEL_CARD = "rounded-lg border border-slate-200 bg-white shadow-sm [&>div]:border-b-0";
+
 /** A section's notice: the outcome of the last action on it (tone `error` for a failure). */
 export function AdminNotice({ message, tone = "info" }: { message: string | null; tone?: "info" | "error" }) {
   if (!message) return null;

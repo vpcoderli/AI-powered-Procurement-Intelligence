@@ -13,23 +13,26 @@ import { appendCrawlerLogPage, visibleCrawlerLogs, type CrawlerLogMore, type Cra
 
 const PAGE_SIZE = 25;
 
-/** One crawler run. */
+/**
+ * One crawler run. Its text column may shrink below its content (min-w-0) and its messages wrap anywhere: a crawler
+ * error carries the whole portal URL, which would otherwise widen a phone-sized page.
+ */
 export function CrawlerLogRow({ log }: { log: AdminCrawlerLog }) {
   const { t } = useLanguage();
 
   return (
     <div className="grid gap-2 px-4 py-3 md:grid-cols-[1fr_auto] md:items-center">
-      <div>
+      <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-medium text-slate-900">{log.source}</span>
+          <span className="font-medium break-all text-slate-900">{log.source}</span>
           <Badge variant="outline" className={statusTone(log.status)}>
             {log.status}
           </Badge>
           <span className="text-xs text-slate-500">{formatDate(log.finishedAt ?? log.startedAt)}</span>
         </div>
-        {log.errorMessage && <div className="mt-1 text-sm text-rose-700">{log.errorMessage}</div>}
+        {log.errorMessage && <div className="mt-1 text-sm break-words text-rose-700 [overflow-wrap:anywhere]">{log.errorMessage}</div>}
         {log.fallbackSource && (
-          <div className="mt-1 text-sm text-amber-700">
+          <div className="mt-1 text-sm break-words text-amber-700 [overflow-wrap:anywhere]">
             <span className="font-medium">{t("admin.fallbackUsed")}</span>
             {fallbackMessage(log) ? `: ${fallbackMessage(log)}` : null}
           </div>

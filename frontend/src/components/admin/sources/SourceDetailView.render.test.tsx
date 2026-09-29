@@ -189,6 +189,23 @@ describe("SourceDetailView header", () => {
     }
   });
 
+  it("never offers Hold on a blocked row: a block changes only through an explicit Approve or the ledgered form", () => {
+    load({ status: "ready", data: stateDetail({ approvalStatus: "blocked", approvedForIngestion: false }) });
+    const blockedState = render();
+    expect(buttonTag(blockedState, admin.holdSource)).toContain(' disabled=""');
+    expect(buttonTag(blockedState, admin.approveSource)).not.toContain(' disabled=""');
+
+    load({
+      status: "ready",
+      data: adminSourceDetailFixture(adminSourceFixture({ approvalStatus: "blocked" }), {
+        states: { level: "county", platform: "bidnet", approval: "blocked", health: "never_run" },
+      }),
+    });
+    const blockedCounty = render();
+    expect(buttonTag(blockedCounty, admin.holdSource)).toContain(' disabled=""');
+    expect(hasButton(blockedCounty, admin.approveSource)).toBe(false);
+  });
+
   it("offers no run for a federal source, which has no crawler id", () => {
     load({
       status: "ready",
@@ -200,5 +217,64 @@ describe("SourceDetailView header", () => {
 
     expect(hasButton(html, admin.sourceDetailRunNow)).toBe(false);
     expect(hasButton(html, admin.sourceDetailDisable)).toBe(true);
+  });
+});
+
+describe("SourceDetailView kept tabs", () => {
+  /**
+   * The rendered tab panels in order, each with the markup up to the next one. On the server the overview is the
+   * shown panel, config and approval follow it hidden (kept mounted), and the runs and bids panels are not rendered.
+   */
+  const panelsOf = (html: string) => {
+    const starts = [...html.matchAll(/<div[^>]*role="tabpanel"[^>]*>/g)];
+    return starts.map((match, index) => ({
+      hidden: match[0].includes(' hidden=""'),
+      markup: html.slice(match.index, starts[index + 1]?.index ?? html.length),
+    }));
+  };
+  const profileTitle = admin.sourceProfileTitle.replace("&", "&amp;");
+
+  it("renders the config and approval tabs hidden behind the overview, so switching tabs keeps their state", () => {
+    load({
+      status: "ready",
+      data: adminSourceDetailFixture(
+        adminSourceFixture({
+          approvalNotes: "依据平台审查 #3；预检 ready @2026-09-27T10:00:00.000Z",
+          approvalHistory: [1, 2, 3, 4, 5].map((index) => ({
+            id: `event-${index}`, sourceId: "bidnet_co_denver", actorUserId: `user-${index}`, action: index === 1 ? "approved" : "held",
+            previousApprovalStatus: null, nextApprovalStatus: null, previousLegalReviewStatus: null, nextLegalReviewStatus: null,
+            previousApprovedForIngestion: null, nextApprovedForIngestion: null, reason: `reason ${index}`, createdAt: `2026-09-2${index}T10:00:00.000Z`,
+          })),
+        }),
+      ),
+    });
+    const panels = panelsOf(render());
+
+    // Overview shown; config and approval mounted but hidden; runs and bids not mounted.
+    expect(panels.map((panel) => panel.hidden)).toEqual([false, true, true]);
+    const [overview, config, approval] = panels;
+    expect(overview.markup).toContain(admin.liveSourceHealth);
+    expect(hasButton(config.markup, admin.crawlerConfigOpen)).toBe(true);
+    expect(approval.markup).toContain(admin.sourceDetailReadiness);
+    expect(approval.markup).toContain(profileTitle);
+    expect(approval.markup).toContain(admin.sourcePrecheckTitle);
+    expect(approval.markup).toContain("依据平台审查 #3；预检 ready @2026-09-27T10:00:00.000Z");
+    // Every history event the API returned, with its reason.
+    for (const index of [1, 2, 3, 4, 5]) {
+      expect(approval.markup).toContain(`Actor user-${index}`);
+      expect(approval.markup).toContain(`reason ${index}`);
+    }
+    // The governance card sits above the precheck card an admin acts in.
+    expect(approval.markup.indexOf(profileTitle)).toBeLessThan(approval.markup.indexOf(admin.sourcePrecheckTitle));
+  });
+
+  it("shows support the governance card and the read-only config without the operator panels", () => {
+    signIn("support");
+    const [, config, approval] = panelsOf(render());
+
+    expect(config.markup).toContain(admin.sourceDetailConfigReadOnly);
+    expect(hasButton(config.markup, admin.crawlerConfigOpen)).toBe(false);
+    expect(approval.markup).toContain(profileTitle);
+    expect(approval.markup).not.toContain(admin.sourcePrecheckTitle);
   });
 });

@@ -1787,7 +1787,6 @@ export const zh: Dictionary = {
     sourcesQueuePrechecks: "预检入队",
     sourcesQueueAllMatching: "全部 {count} 个匹配项入队",
     sourcesQueuedResult: "已入队 {count} 个预检。",
-    sourcesApproveWithLedger: "带台账批准",
     sourcesRunLimit: "一次最多选择 {max} 个数据源运行。",
     sourcesRunResult: "已运行 {count} 个：成功 {ok}，失败 {failed}，跳过 {skipped}。",
     sourcesNotRunnable: "{count} 个所选数据源没有可运行的抓取任务 id，未运行。",
@@ -1835,7 +1834,7 @@ export const zh: Dictionary = {
     sourcesPrecheckLeftOut: "{count} 个未入队：只有已启用、待审批的本地数据源需要预检。",
     sourcesQueueAllConfirm: "为 {count} 个数据源预检入队？抓取 worker 会在各平台的请求预算内依次运行。",
     sourcesQueueAllTruncated: "匹配的数据源超过 {max} 个，请先缩小筛选范围，再全部入队。",
-    sourcesHoldConfirm: "暂缓所选的 {count} 个数据源？批量批准会跳过已暂缓的数据源，解除暂缓需要逐个手动操作。",
+    sourcesHoldConfirm: "暂缓所选的 {count} 个数据源？暂缓后数据源停止入库，州级和联邦门户也不例外。批量批准会跳过已暂缓的县、市、镇数据源：只能在该数据源自己的页面上解除暂缓。",
     sourcesHeldResult: "已暂缓 {count} 个数据源。",
     sourcesBulkFailed: "因错误中止：{message}",
     sourceProfileTitle: "来源档案与治理",
@@ -1851,5 +1850,7 @@ export const zh: Dictionary = {
     sourceTrustProfile: "权威性、可信度与证据",
     sourceValidityNotes: "有效性备注",
     sourceFallbackNotes: "回退备注",
+    sourcesBlockedLeftOut: "已略过 {count} 个已拦截的数据源：已拦截的数据源只能在其自己的页面上更改。",
+    runSourceSkipped: "{source} 未运行：{status}。",
   }
 };

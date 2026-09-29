@@ -276,7 +276,7 @@ describe("SourcesListView bulk actions by role", () => {
     queue: admin.sourcesQueuePrechecks,
     queueAll: count(admin.sourcesQueueAllMatching, 1020),
     run: admin.sourceDetailRunNow,
-    approve: admin.sourcesApproveWithLedger,
+    approve: admin.batchApproveSources,
     hold: admin.holdSource,
   };
 

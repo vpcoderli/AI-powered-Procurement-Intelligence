@@ -346,9 +346,11 @@ describe("JurisdictionBatchRunPanel component wiring", () => {
     const resolver = readFileSync(new URL("./sources/crawler-run-id.ts", import.meta.url), "utf8");
     expect(section).toContain("JurisdictionBatchRunPanel");
     expect(section).toContain("crawlerSourceIdFor={crawlerRunIdFor}");
-    // The per-source batch report lives in the panel's own state; the section leaves onCompleted unset so
-    // nothing re-reads or remounts around the report the admin is reading.
-    expect(section).not.toContain("onCompleted=");
+    // The per-source batch report lives in the panel's own state. When a batch ends the section re-reads only the
+    // log list below it (keyed by its revision); the panel itself is never keyed, so the report stays.
+    expect(section).toContain("onCompleted={refreshLogs}");
+    expect(section).toContain("<CrawlerLogList key={logsRevision}");
+    expect(section).not.toMatch(/<JurisdictionBatchRunPanel[^>]*\bkey=/);
     // County/city registry rows carry no legacy per-state crawler metadata; the resolver must
     // fall back to the data_sources row id so sub-state sources are runnable in the batch panel.
     expect(resolver).toContain("subStateSourceId");

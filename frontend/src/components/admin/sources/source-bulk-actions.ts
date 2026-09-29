@@ -1,3 +1,4 @@
+import { batchStatusFromRunResult } from "@/components/admin/JurisdictionBatchRunPanel";
 import type { BatchUpdateAdminDataSourcesResponse, StateCrawlerRunResponse } from "@/lib/api/admin";
 import type { AdminDataSourceIndexItem } from "@/server/admin/data-source-list-contract";
 import { crawlerRunIdFor, type CrawlerRunSource } from "./crawler-run-id";
@@ -58,6 +59,29 @@ export function splitPrecheckTargets(items: readonly PrecheckCandidate[]): Prech
     if (isPrecheckEligible(item)) eligibleIds.push(item.id);
   }
   return { eligibleIds, leftOut: items.length - eligibleIds.length };
+}
+
+/** What bulk Approve and Hold read from a row; a list item carries it. */
+export type ApprovalCandidate = Pick<AdminDataSourceIndexItem, "id" | "approvalState">;
+
+export interface ApprovalSplit {
+  targetIds: string[];
+  /** How many of the rows were blocked and are not sent. */
+  blockedLeftOut: number;
+}
+
+/**
+ * Bulk Approve and Hold leave blocked rows out. The batch route's hold writes `needs_review` to every id it is
+ * given, which would lift a block that no control on the page can put back, and its approve takes a federal or
+ * state row, blocked or not, through the generic write without a ledger. A blocked source is changed only on
+ * its own page: an explicit Approve (federal/state) or the ledgered approval form (county/city/township).
+ */
+export function splitApprovalTargets(items: readonly ApprovalCandidate[]): ApprovalSplit {
+  const targetIds: string[] = [];
+  for (const item of items) {
+    if (item.approvalState !== "blocked") targetIds.push(item.id);
+  }
+  return { targetIds, blockedLeftOut: items.length - targetIds.length };
 }
 
 /** What a chunked write added up to, and the failure that stopped it (`failed: false` when every chunk went through). */
@@ -134,6 +158,16 @@ function closed(text: string): string {
   return /[.!?。！？]$/.test(text) ? text : `${text}.`;
 }
 
+/** The parts of a notice as one text: every part but the last is closed, so the next one reads as a new sentence. */
+function sentences(parts: readonly string[]): string {
+  return parts.map((part, index) => (index < parts.length - 1 ? closed(part) : part)).join(" ");
+}
+
+/** The sentence for blocked rows a bulk Approve or Hold left out. */
+export function blockedLeftOutText(t: Translate, count: number): string {
+  return t("admin.sourcesBlockedLeftOut").replace("{count}", String(count));
+}
+
 /** A request that failed on its own (not one chunk of several): nothing was tallied, the server's reason is the notice. */
 export function failedReport(t: Translate, failure: unknown): BulkReport {
   return { message: stoppedText(t, failure), outcome: "failed" };
@@ -150,6 +184,7 @@ export function precheckReport(t: Translate, outcome: ChunkedOutcome<number>, le
 export function approvalReport(
   text: { t: Translate; reasonLabel: (reason: string) => string },
   outcome: ChunkedOutcome<ApprovalTally>,
+  blockedLeftOut = 0,
 ): BulkReport {
   const { t } = text;
   const { approved, skippedByReason } = outcome.tally;
@@ -159,21 +194,75 @@ export function approvalReport(
     .map(([reason, count]) => `${text.reasonLabel(reason)} × ${count}`)
     .join("; ");
 
-  if (!outcome.failed) {
-    return { message: skipped === 0 ? t("admin.sourceBatchApprovalUpdated") : `${result} ${reasons}`, outcome: "done" };
-  }
   const parts: string[] = [];
-  if (approved + skipped > 0) parts.push(skipped === 0 ? result : closed(`${result} ${reasons}`));
-  parts.push(stoppedText(t, outcome.failure));
-  return { message: parts.join(" "), outcome: "failed" };
+  if (!outcome.failed) parts.push(skipped === 0 ? t("admin.sourceBatchApprovalUpdated") : `${result} ${reasons}`);
+  else if (approved + skipped > 0) parts.push(skipped === 0 ? result : `${result} ${reasons}`);
+  if (blockedLeftOut > 0) parts.push(blockedLeftOutText(t, blockedLeftOut));
+  if (outcome.failed) parts.push(stoppedText(t, outcome.failure));
+  return { message: sentences(parts), outcome: outcome.failed ? "failed" : "done" };
 }
 
-export function holdReport(t: Translate, outcome: ChunkedOutcome<number>): BulkReport {
-  if (!outcome.failed) return { message: t("admin.sourceBatchApprovalUpdated"), outcome: "done" };
+export function holdReport(t: Translate, outcome: ChunkedOutcome<number>, blockedLeftOut = 0): BulkReport {
   const parts: string[] = [];
-  if (outcome.tally > 0) parts.push(t("admin.sourcesHeldResult").replace("{count}", String(outcome.tally)));
-  parts.push(stoppedText(t, outcome.failure));
-  return { message: parts.join(" "), outcome: "failed" };
+  if (!outcome.failed || outcome.tally > 0) parts.push(t("admin.sourcesHeldResult").replace("{count}", String(outcome.tally)));
+  if (blockedLeftOut > 0) parts.push(blockedLeftOutText(t, blockedLeftOut));
+  if (outcome.failed) parts.push(stoppedText(t, outcome.failure));
+  return { message: sentences(parts), outcome: outcome.failed ? "failed" : "done" };
+}
+
+/** What the run requests of a "Run now" added up to (`summarizeRunResults` of each response). */
+export interface RunTally {
+  ok: number;
+  failed: number;
+  skipped: number;
+}
+
+export function emptyRunTally(): RunTally {
+  return { ok: 0, failed: 0, skipped: 0 };
+}
+
+export function addRunResponse(tally: RunTally, response: StateCrawlerRunResponse): RunTally {
+  const summary = summarizeRunResults(response);
+  return { ok: tally.ok + summary.ok, failed: tally.failed + summary.failed, skipped: tally.skipped + summary.skipped };
+}
+
+/** The list's "Run now": what the requests that went through ran, the rows without a run id, and the error that stopped the rest. */
+export function runReport(t: Translate, outcome: ChunkedOutcome<RunTally>, notRunnable: number): BulkReport {
+  const { ok, failed, skipped } = outcome.tally;
+  const ran = ok + failed + skipped;
+  const result = t("admin.sourcesRunResult")
+    .replace("{count}", String(ran))
+    .replace("{ok}", String(ok))
+    .replace("{failed}", String(failed))
+    .replace("{skipped}", String(skipped));
+  const parts: string[] = [];
+  if (ran > 0) parts.push(result);
+  if (notRunnable > 0) parts.push(t("admin.sourcesNotRunnable").replace("{count}", String(notRunnable)));
+  if (outcome.failed) parts.push(stoppedText(t, outcome.failure));
+  if (parts.length === 0) parts.push(result);
+  return { message: sentences(parts), outcome: outcome.failed ? "failed" : "done" };
+}
+
+/**
+ * The detail page's "Run now" of one source. The run route answers 200 for a run it did not make (a governance
+ * hold, a lock, a platform deferral), so the notice names the source's own outcome instead of a blanket success.
+ */
+export function singleRunReport(
+  t: Translate,
+  label: string,
+  response: StateCrawlerRunResponse,
+): { message: string; tone: "info" | "error" } {
+  const summary = summarizeRunResults(response);
+  if (summary.failed > 0) return { message: t("admin.runSourceFailed").replace("{source}", label), tone: "error" };
+  if (summary.ok > 0 && summary.skipped === 0) return { message: t("admin.runSourceQueued").replace("{source}", label), tone: "info" };
+  // The batch panel's reading of a run status: a status it does not know (or no result at all) reads as unknown.
+  const notRun = response.results.find((result) => result.status !== "success");
+  const read = notRun ? batchStatusFromRunResult(notRun) : null;
+  const status = read?.phase === "done" ? read.status : "unknown";
+  return {
+    message: t("admin.runSourceSkipped").replace("{source}", label).replace("{status}", t(`admin.batchRunStatus_${status}`)),
+    tone: "info",
+  };
 }
 
 /** The question before "Queue all matching" sends anything: how many rows will really be queued, and how many are left out. */
@@ -183,7 +272,12 @@ export function precheckConfirmText(t: Translate, split: PrecheckSplit): string 
   return parts.join(" ");
 }
 
-/** Lifting a hold is a manual per-source action, so a batch hold asks first. */
-export function holdConfirmText(t: Translate, count: number): string {
-  return t("admin.sourcesHoldConfirm").replace("{count}", String(count));
+/**
+ * A hold stops ingestion (a state or federal portal's too) and a held local source is lifted only on its own page,
+ * so a batch hold asks first, with the count it will really send and the blocked rows it leaves out.
+ */
+export function holdConfirmText(t: Translate, split: ApprovalSplit): string {
+  const parts = [t("admin.sourcesHoldConfirm").replace("{count}", String(split.targetIds.length))];
+  if (split.blockedLeftOut > 0) parts.push(blockedLeftOutText(t, split.blockedLeftOut));
+  return parts.join(" ");
 }

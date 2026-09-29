@@ -106,7 +106,9 @@ describe("SourcePrecheckPanel wiring", () => {
 
     expect(view).toContain("SourcePrecheckPanel");
     expect(view).toContain("reviewerEmail={user.email}");
-    expect(view).toContain("onSourceUpdated={replaceSource}");
+    // The row the panel wrote is swapped in (and the kept config form rebuilt when its inputs changed).
+    expect(view).toContain("onSourceUpdated={replaceSourceFromApprovalTab}");
+    expect(view).toMatch(/const replaceSourceFromApprovalTab = \(next: AdminDataSource\) => \{[^}]*\n\s*replaceSource\(next\);\n\s*\};/);
   });
 
   it("has both dictionaries carrying the pre-check keys, translated", () => {

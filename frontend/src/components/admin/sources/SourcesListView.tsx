@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { BATCH_RUN_CHUNK_SIZE } from "@/components/admin/JurisdictionBatchRunPanel";
 import { approvalReasonKey, chunkSourceIds, APPROVAL_BATCH_CHUNK_SIZE } from "@/components/admin/LedgeredApprovalPanel";
 import {
   batchUpdateAdminDataSources,
@@ -32,17 +33,21 @@ import {
   PRECHECK_REQUEST_CHUNK,
   RUN_NOW_LIMIT,
   addApprovalResponse,
+  addRunResponse,
   approvalReport,
+  blockedLeftOutText,
   emptyApprovalTally,
+  emptyRunTally,
   failedReport,
   holdConfirmText,
   holdReport,
   precheckConfirmText,
   precheckReport,
+  runReport,
   runTargets,
   sendInChunks,
+  splitApprovalTargets,
   splitPrecheckTargets,
-  summarizeRunResults,
   type BulkReport,
   type PrecheckSplit,
 } from "./source-bulk-actions";
@@ -89,12 +94,16 @@ export function SourcesListView() {
   const [busy, setBusy] = useState(false);
   const [searchDraft, setSearchDraft] = useState(query.q ?? "");
 
+  // A change the user makes is a new history entry, so the browser's Back returns to the list as it was (spec §5.2);
+  // a correction of the URL the page is already on (the 400 recovery) replaces the entry it corrects.
   const navigate = useCallback(
-    (next: SourceListQuery) => {
+    (next: SourceListQuery, mode: "push" | "replace" = "push") => {
       setSelectedIds([]);
       // A notice about the link that was opened is said once; the next thing the user does replaces it.
       setUrlNotice(null);
-      router.replace(`${pathname}${writeSourceListQuery(next)}`, { scroll: false });
+      const href = `${pathname}${writeSourceListQuery(next)}`;
+      if (mode === "replace") router.replace(href, { scroll: false });
+      else router.push(href, { scroll: false });
     },
     [pathname, router],
   );
@@ -129,7 +138,7 @@ export function SourcesListView() {
     if (!recovery) return;
     queueMicrotask(() => {
       // navigate() clears the link notice, so the reason is set after it.
-      navigate(recovery.query);
+      navigate(recovery.query, "replace");
       if (recovery.fellBack) setUrlNotice("rejected");
     });
   }, [page.error, canonical, query, navigate]);
@@ -198,28 +207,34 @@ export function SourcesListView() {
       return queueEligible(split);
     });
 
-  // Spec §5.2: chunks of 100, the result summarised as approved plus skips grouped by reason.
+  // Spec §5.2: chunks of 100, the result summarised as approved plus skips grouped by reason. Blocked rows are left
+  // out (splitApprovalTargets): a federal/state one would be approved without a ledger.
   const approveSelected = () =>
     runBulk(async () => {
+      const split = splitApprovalTargets(selectedItems);
+      if (split.targetIds.length === 0) return { message: blockedLeftOutText(t, split.blockedLeftOut), outcome: "refused" };
       const outcome = await sendInChunks(
-        chunkSourceIds(visibleSelected, APPROVAL_BATCH_CHUNK_SIZE),
+        chunkSourceIds(split.targetIds, APPROVAL_BATCH_CHUNK_SIZE),
         (chunk) => batchUpdateAdminDataSources({ sourceIds: chunk, action: "approve" }),
         addApprovalResponse,
         emptyApprovalTally(),
       );
-      return approvalReport({ t, reasonLabel }, outcome);
+      return approvalReport({ t, reasonLabel }, outcome, split.blockedLeftOut);
     });
 
+  // Blocked rows are left out: the batch hold would write needs_review over the block.
   const holdSelected = async () => {
-    if (!window.confirm(holdConfirmText(t, visibleSelected.length))) return;
+    const split = splitApprovalTargets(selectedItems);
+    if (split.targetIds.length > 0 && !window.confirm(holdConfirmText(t, split))) return;
     await runBulk(async () => {
+      if (split.targetIds.length === 0) return { message: blockedLeftOutText(t, split.blockedLeftOut), outcome: "refused" };
       const outcome = await sendInChunks(
-        chunkSourceIds(visibleSelected, APPROVAL_BATCH_CHUNK_SIZE),
+        chunkSourceIds(split.targetIds, APPROVAL_BATCH_CHUNK_SIZE),
         (chunk) => batchUpdateAdminDataSources({ sourceIds: chunk, action: "hold" }),
         (held, response) => held + response.updatedCount,
         0,
       );
-      return holdReport(t, outcome);
+      return holdReport(t, outcome, split.blockedLeftOut);
     });
   };
 
@@ -231,19 +246,15 @@ export function SourcesListView() {
     }
     await runBulk(async () => {
       const { runIds, skippedIds } = runTargets(selectedItems);
-      const parts: string[] = [];
-      if (runIds.length > 0) {
-        const summary = summarizeRunResults(await runStateCrawlersNow(runIds));
-        parts.push(
-          t("admin.sourcesRunResult")
-            .replace("{count}", String(runIds.length))
-            .replace("{ok}", String(summary.ok))
-            .replace("{failed}", String(summary.failed))
-            .replace("{skipped}", String(summary.skipped)),
-        );
-      }
-      if (skippedIds.length > 0) parts.push(t("admin.sourcesNotRunnable").replace("{count}", String(skippedIds.length)));
-      return { message: parts.join(" "), outcome: "done" };
+      // A run request waits for its runs (BidNet's platform spacing included), so up to 20 at once could outlast a
+      // proxy's idle timeout while the runs went on. They go the batch run panel's 5 at a time, one after another.
+      const outcome = await sendInChunks(
+        chunkSourceIds(runIds, BATCH_RUN_CHUNK_SIZE),
+        (chunk) => runStateCrawlersNow(chunk),
+        addRunResponse,
+        emptyRunTally(),
+      );
+      return runReport(t, outcome, skippedIds.length);
     });
   };
 
@@ -262,8 +273,9 @@ export function SourcesListView() {
 
       <section className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
+          {/* Below sm the form takes its own row and the input shrinks to fit the card. */}
           <form
-            className="flex items-center gap-2"
+            className="flex w-full items-center gap-2 sm:w-auto"
             onSubmit={(event) => {
               event.preventDefault();
               navigate({ ...query, q: searchDraft.trim() || null, page: 1 });
@@ -274,7 +286,7 @@ export function SourcesListView() {
               onChange={(event) => setSearchDraft(event.target.value)}
               placeholder={t("admin.sourcesSearchPlaceholder")}
               aria-label={t("admin.sourcesSearchPlaceholder")}
-              className="w-64"
+              className="sm:w-64"
             />
             <Button type="submit" size="sm">
               {t("admin.sourcesSearch")}
@@ -379,8 +391,9 @@ export function SourcesListView() {
           )}
           {canManageUsers && (
             <>
+              {/* Local rows are approved through the ledger, federal/state rows through the generic write. */}
               <Button type="button" size="sm" variant="outline" disabled={barLocked || visibleSelected.length === 0} onClick={() => void approveSelected()}>
-                {t("admin.sourcesApproveWithLedger")}
+                {t("admin.batchApproveSources")}
               </Button>
               <Button type="button" size="sm" variant="outline" disabled={barLocked || visibleSelected.length === 0} onClick={() => void holdSelected()}>
                 {t("admin.holdSource")}

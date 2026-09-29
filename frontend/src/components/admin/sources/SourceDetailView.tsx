@@ -29,6 +29,7 @@ import { SourceBidsCard } from "./SourceBidsCard";
 import { SourceComplianceCard } from "./SourceComplianceCard";
 import { SourceLiveHealthCard } from "./SourceLiveHealthCard";
 import { SourceProfileCard } from "./SourceProfileCard";
+import { singleRunReport } from "./source-bulk-actions";
 import { sourceHealthTriagePatchForAction, type SourceHealthTriageAction } from "./source-labels";
 
 export type SourceDetailTab = "overview" | "config" | "approval" | "runs" | "bids";
@@ -48,14 +49,32 @@ export function settledPending(current: PendingAction, finished: Exclude<Pending
   return current === finished ? null : current;
 }
 
+/** The row fields the crawler config form is built from (CrawlerConfigPanel's formFromSource). */
+export function crawlerConfigInputsChanged(
+  previous: Pick<AdminDataSource, "baseUrl" | "cadence" | "fetchConfig">,
+  next: Pick<AdminDataSource, "baseUrl" | "cadence" | "fetchConfig">,
+): boolean {
+  return (
+    previous.baseUrl !== next.baseUrl ||
+    previous.cadence !== next.cadence ||
+    JSON.stringify(previous.fetchConfig ?? {}) !== JSON.stringify(next.fetchConfig ?? {})
+  );
+}
+
+type Notice = { message: string; tone: "info" | "error" };
+
 export function SourceDetailView({ sourceId }: { sourceId: string }) {
   const { t } = useLanguage();
   const { user, canRunOperations, canManageUsers } = useAdminSession();
   const loadDetail = useCallback(() => getAdminDataSourceDetail(sourceId), [sourceId]);
   const resource = useAdminResource(loadDetail);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState<PendingAction>(null);
   const [tab, setTab] = useState<SourceDetailTab>("overview");
+  // The config tab stays mounted (keepMounted) so an unsaved edit survives a tab switch, and its form is built from
+  // the row once, when it mounts. A write from the approval tab that changes what the form was built from (the
+  // precheck card's "write to base_url") remounts it; otherwise its next save would put the old address back.
+  const [configFormRevision, setConfigFormRevision] = useState(0);
 
   const detail = resource.data;
   // The panels hand back the row they just wrote. The header badges, the readiness and the log keys are
@@ -104,16 +123,23 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
 
   const source = detail.source;
   const runId = crawlerRunIdFor(source);
+  const info = (message: string) => setNotice({ message, tone: "info" });
+  const failure = (message: string) => setNotice({ message, tone: "error" });
+
+  // The approval tab's writes (the precheck card's base URL adoption, the ledgered approval form).
+  const replaceSourceFromApprovalTab = (next: AdminDataSource) => {
+    if (crawlerConfigInputsChanged(source, next)) setConfigFormRevision((revision) => revision + 1);
+    replaceSource(next);
+  };
 
   const runNow = () =>
     act("run", async () => {
       if (!runId) return;
       try {
-        await runStateCrawlersNow([runId]);
-        setNotice(t("admin.runSourceQueued").replace("{source}", source.label));
+        setNotice(singleRunReport(t, source.label, await runStateCrawlersNow([runId])));
         await resource.reload();
       } catch {
-        setNotice(t("admin.runSourceFailed").replace("{source}", source.label));
+        failure(t("admin.runSourceFailed").replace("{source}", source.label));
       }
     });
 
@@ -123,7 +149,7 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
         await updateAdminDataSource(source.id, { isEnabled: !source.isEnabled });
         await resource.reload();
       } catch {
-        setNotice(t("admin.updateFailed"));
+        failure(t("admin.updateFailed"));
       }
     });
 
@@ -137,10 +163,10 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
             ? { approvedForIngestion: true, approvalStatus: "approved", legalReviewStatus: "approved_public", approvalNotes: "Approved from Admin source approval workflow." }
             : { approvedForIngestion: false, approvalStatus: "needs_review", legalReviewStatus: "not_reviewed", approvalNotes: "Held for source health or legal review." },
         );
-        setNotice(t("admin.sourceApprovalUpdated"));
+        info(t("admin.sourceApprovalUpdated"));
         await resource.reload();
       } catch {
-        setNotice(t("admin.sourceApprovalFailed"));
+        failure(t("admin.sourceApprovalFailed"));
       }
     });
 
@@ -149,9 +175,9 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
       try {
         const { source: updated } = await checkAdminDataSourceHealth(source.id, { timeoutMs: 10_000 });
         replaceSource(updated);
-        setNotice(t("admin.sourceHealthRechecked"));
+        info(t("admin.sourceHealthRechecked"));
       } catch {
-        setNotice(t("admin.sourceHealthRecheckFailed"));
+        failure(t("admin.sourceHealthRecheckFailed"));
       }
     });
 
@@ -163,9 +189,9 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
           sourceHealthTriagePatchForAction(action, user.email || user.displayName || user.id),
         );
         replaceSource(updated);
-        setNotice(t("admin.sourceHealthTriageUpdated"));
+        info(t("admin.sourceHealthTriageUpdated"));
       } catch {
-        setNotice(t("admin.sourceHealthTriageFailed"));
+        failure(t("admin.sourceHealthTriageFailed"));
       }
     });
 
@@ -210,7 +236,8 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
             <>
               {/* This approve writes no compliance ledger, so it is offered for federal/state rows only. A
                   county/city/township row is approved through the ledgered batch panel or the "approve
-                  county/city source" form in the precheck card (spec §7.3). Hold is offered for every row. */}
+                  county/city source" form in the precheck card (spec §7.3). Hold is offered for every row but a
+                  blocked one: a block changes only through an explicit Approve here or that ledgered form. */}
               {!isLocalJurisdictionSource(source) && (
                 <Button
                   type="button"
@@ -226,7 +253,7 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
                 type="button"
                 variant="outline"
                 onClick={() => void updateApproval("needs_review")}
-                disabled={pending !== null || source.approvalStatus === "needs_review"}
+                disabled={pending !== null || source.approvalStatus === "needs_review" || source.approvalStatus === "blocked"}
                 className="h-9 rounded-lg border-amber-200 text-amber-700"
               >
                 {t("admin.holdSource")}
@@ -236,7 +263,7 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
         </div>
       </section>
 
-      <AdminNotice message={notice} />
+      <AdminNotice message={notice?.message ?? null} tone={notice?.tone} />
       {resource.status === "error" && <AdminNotice tone="error" message={t("admin.sectionRefreshFailed")} />}
 
       <Tabs value={tab} onValueChange={(value) => setTab(value as SourceDetailTab)}>
@@ -270,9 +297,10 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
           />
         </TabsContent>
 
-        <TabsContent value="config">
+        {/* keepMounted: switching tabs must not throw away an unsaved config edit. */}
+        <TabsContent value="config" keepMounted>
           {canRunOperations ? (
-            <CrawlerConfigPanel source={source} disabled={pending !== null} onSaved={replaceSource} />
+            <CrawlerConfigPanel key={configFormRevision} source={source} disabled={pending !== null} onSaved={replaceSource} />
           ) : (
             <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm">
               <p>{t("admin.sourceDetailConfigReadOnly")}</p>
@@ -282,7 +310,9 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
           )}
         </TabsContent>
 
-        <TabsContent value="approval" className="flex flex-col gap-4">
+        {/* keepMounted: switching tabs must not throw away the precheck card's fresh result (its robots.txt flag
+            decides whether the ledgered approval form requires a legal reference) or a half-filled approval form. */}
+        <TabsContent value="approval" keepMounted className="flex flex-col gap-4">
           <section className="rounded-lg border border-slate-200 bg-white p-4 text-sm shadow-sm">
             <div className="font-semibold text-slate-950">{t("admin.sourceDetailReadiness")}</div>
             {detail.readiness ? (
@@ -301,7 +331,12 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
           </section>
           <SourceProfileCard source={source} />
           {canRunOperations && (
-            <SourcePrecheckPanel source={source} reviewerEmail={user.email} disabled={pending !== null} onSourceUpdated={replaceSource} />
+            <SourcePrecheckPanel
+              source={source}
+              reviewerEmail={user.email}
+              disabled={pending !== null}
+              onSourceUpdated={replaceSourceFromApprovalTab}
+            />
           )}
           <SourceComplianceCard source={source} />
         </TabsContent>
