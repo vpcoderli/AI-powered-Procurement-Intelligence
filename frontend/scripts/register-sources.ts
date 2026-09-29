@@ -345,9 +345,13 @@ async function main() {
   const now = new Date().toISOString();
 
   if (isMysqlDatabaseUrlConfigured()) {
-    const result = await registerSourcesInMysql(resolveMysqlPool(), candidates, now);
-    await closeResolvedMysqlPool();
-    console.log(`Registered ${result.inserted} sources (MySQL), ${result.errors.length} errors`);
+    try {
+      const result = await registerSourcesInMysql(resolveMysqlPool(), candidates, now);
+      console.log(`Registered ${result.inserted} sources (MySQL), ${result.errors.length} errors`);
+    } finally {
+      // Also on a failed write: an open pool keeps this process alive (see src/server/db/mysql.ts).
+      await closeResolvedMysqlPool();
+    }
   } else {
     const db = createDatabase();
     runMigrations(db);

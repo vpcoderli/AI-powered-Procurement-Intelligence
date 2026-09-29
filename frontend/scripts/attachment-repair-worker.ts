@@ -193,23 +193,26 @@ export async function runLoop() {
   // throwaway in-memory SQLite handle purely to satisfy the `database` argument; every read and
   // write goes through the MySQL pool inside the repair service.
   const db = mysqlEnabled ? createDatabase(":memory:") : createDatabase(databasePath());
-  if (mysqlEnabled) {
-    await runMysqlMigrations(resolveMysqlPool());
-  } else {
-    runMigrations(db);
-  }
-
-  let stopping = false;
-  const stop = () => {
-    stopping = true;
-  };
-
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
-
-  const mysql = mysqlEnabled ? resolveMysqlPool() : undefined;
-
+  // The startup migrations below are what opens the shared pool, so this try/finally has to cover them: a
+  // worker that crashes while starting (MySQL down, a migration failing) must still release the pool, or its
+  // idle-connection timer keeps the process alive and the supervisor never restarts it.
   try {
+    if (mysqlEnabled) {
+      await runMysqlMigrations(resolveMysqlPool());
+    } else {
+      runMigrations(db);
+    }
+
+    let stopping = false;
+    const stop = () => {
+      stopping = true;
+    };
+
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+
+    const mysql = mysqlEnabled ? resolveMysqlPool() : undefined;
+
     do {
       const result = await runAttachmentRepairOnce({
         database: db,

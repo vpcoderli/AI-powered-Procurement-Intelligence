@@ -185,34 +185,37 @@ async function runLoop() {
   ]);
   const mysqlEnabled = isMysqlDatabaseUrlConfigured();
   const db = mysqlEnabled ? createDatabase(":memory:") : createDatabase(databasePath());
-  if (mysqlEnabled) {
-    await runMysqlMigrations(resolveMysqlPool());
-  } else {
-    runMigrations(db);
-  }
-
-  let stopping = false;
-  const stop = () => {
-    stopping = true;
-  };
-
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
-
-  // Wrap the configured notification provider (file/console/http) so a single transient
-  // send failure (e.g. a dropped connection to the http provider endpoint) gets a few fast
-  // in-process retries before this tick's delivery attempt is recorded. This does not
-  // change how many times `notification_outbox.attempt_count` increments per tick — see
-  // `createRetryingNotificationProvider` for why that durable, cross-tick retry mechanism
-  // (governed by NOTIFICATION_WORKER_MAX_ATTEMPTS) is left untouched.
-  const retryingProvider = createRetryingNotificationProvider(createNotificationProvider(), {
-    worker: "notification-worker",
-    maxAttempts: sendRetryMaxAttempts(),
-    baseDelayMs: sendRetryBaseDelayMs(),
-    maxDelayMs: sendRetryMaxDelayMs(),
-  });
-
+  // The startup migrations below are what opens the shared pool, so this try/finally has to cover them: a
+  // worker that crashes while starting (MySQL down, a migration failing) must still release the pool, or its
+  // idle-connection timer keeps the process alive and the supervisor never restarts it.
   try {
+    if (mysqlEnabled) {
+      await runMysqlMigrations(resolveMysqlPool());
+    } else {
+      runMigrations(db);
+    }
+
+    let stopping = false;
+    const stop = () => {
+      stopping = true;
+    };
+
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+
+    // Wrap the configured notification provider (file/console/http) so a single transient
+    // send failure (e.g. a dropped connection to the http provider endpoint) gets a few fast
+    // in-process retries before this tick's delivery attempt is recorded. This does not
+    // change how many times `notification_outbox.attempt_count` increments per tick — see
+    // `createRetryingNotificationProvider` for why that durable, cross-tick retry mechanism
+    // (governed by NOTIFICATION_WORKER_MAX_ATTEMPTS) is left untouched.
+    const retryingProvider = createRetryingNotificationProvider(createNotificationProvider(), {
+      worker: "notification-worker",
+      maxAttempts: sendRetryMaxAttempts(),
+      baseDelayMs: sendRetryBaseDelayMs(),
+      maxDelayMs: sendRetryMaxDelayMs(),
+    });
+
     do {
       const result = await runNotificationWorkerOnce(db, {
         dunningLimit: positiveIntegerEnv("NOTIFICATION_WORKER_DUNNING_LIMIT"),

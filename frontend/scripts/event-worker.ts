@@ -157,21 +157,24 @@ async function runLoop() {
 
   const mysqlEnabled = isMysqlDatabaseUrlConfigured();
   const db = mysqlEnabled ? createDatabase(":memory:") : createDatabase(process.env.DATABASE_PATH?.trim() || undefined);
-  if (mysqlEnabled) {
-    await runMysqlMigrations(resolveMysqlPool());
-  } else {
-    runMigrations(db);
-  }
-
-  let stopping = false;
-  const stop = () => {
-    stopping = true;
-  };
-
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
-
+  // The startup migrations below are what opens the shared pool, so this try/finally has to cover them: a
+  // worker that crashes while starting (MySQL down, a migration failing) must still release the pool, or its
+  // idle-connection timer keeps the process alive and the supervisor never restarts it.
   try {
+    if (mysqlEnabled) {
+      await runMysqlMigrations(resolveMysqlPool());
+    } else {
+      runMigrations(db);
+    }
+
+    let stopping = false;
+    const stop = () => {
+      stopping = true;
+    };
+
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+
     do {
       const result = await runWorkerOnce(db);
       workerLogger.info("event_delivery_run_completed", { result });

@@ -248,20 +248,23 @@ async function main() {
   process.once("SIGTERM", stop);
 
   const retryingRunCrawlerSourceOnce = createRetryingRunCrawlerSourceOnce(defaultRunCrawlerSourceOnce);
-  const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : undefined;
-  const notifier = createRetryingCrawlerNotifier(db, mysql);
-  // One registry for the worker's whole lifetime: a platform pause (spec 2026-09-24 §5.5) must
-  // outlive the tick that observed the throttle signature.
-  const platformPauses = new PlatformPauseRegistry();
-  // Same lifetime for the retry state of challenged/errored prechecks: without it one broken source
-  // would head the queue, and re-pause its platform, on every tick.
-  const precheckRetries = new PrecheckRetryRegistry();
-  // The spacing waits between two requests of one platform (both steps) reuse the ref'd `sleep` above, so the
-  // worker keeps one timer. The tracker's own default is ref'd as well now (an unref'd timer would let a
-  // SQLite-topology worker exit 0 in the middle of a wait); injecting this one keeps that from depending on it.
-  const platformDeferral = { sleep };
-
+  // Everything from the moment the shared pool is resolved sits inside this try/finally, so a worker that crashes
+  // while starting (a bad notification provider config, say) still releases it: the pool's idle-connection timer
+  // would otherwise keep the process alive and its supervisor would never restart it.
   try {
+    const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : undefined;
+    const notifier = createRetryingCrawlerNotifier(db, mysql);
+    // One registry for the worker's whole lifetime: a platform pause (spec 2026-09-24 §5.5) must
+    // outlive the tick that observed the throttle signature.
+    const platformPauses = new PlatformPauseRegistry();
+    // Same lifetime for the retry state of challenged/errored prechecks: without it one broken source
+    // would head the queue, and re-pause its platform, on every tick.
+    const precheckRetries = new PrecheckRetryRegistry();
+    // The spacing waits between two requests of one platform (both steps) reuse the ref'd `sleep` above, so the
+    // worker keeps one timer. The tracker's own default is ref'd as well now (an unref'd timer would let a
+    // SQLite-topology worker exit 0 in the middle of a wait); injecting this one keeps that from depending on it.
+    const platformDeferral = { sleep };
+
     while (!stopping) {
       // One budget per tick: the daily lists spend first, the precheck queue gets what is left (spec §5.5).
       const budget = new PlatformTickBudget(platformBudgetsFromEnv(), intervalMs());

@@ -204,8 +204,12 @@ async function main() {
   const rows = buildSourceRegistryRows();
 
   if (isMysqlDatabaseUrlConfigured()) {
-    await upsertSourceRegistryInMysql(resolveMysqlPool(), rows, now);
-    await closeResolvedMysqlPool();
+    try {
+      await upsertSourceRegistryInMysql(resolveMysqlPool(), rows, now);
+    } finally {
+      // Also on a failed write: an open pool keeps this process alive (see src/server/db/mysql.ts).
+      await closeResolvedMysqlPool();
+    }
   } else {
     const db = createDatabase();
     runMigrations(db);
