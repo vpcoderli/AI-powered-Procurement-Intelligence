@@ -1,3 +1,4 @@
+import { CRAWLABLE_SOURCE_WHERE_SQL } from "@/server/crawler/source-registry";
 import { COVERAGE_LEVELS } from "./data-source-list-contract";
 
 /*
@@ -24,3 +25,6 @@ export const APPROVAL_STATE_SQL = `(CASE WHEN approval_status = 'blocked' THEN '
 
 /** Spec §5.1 health, first match wins: disabled > failing > healthy > never_run. */
 export const HEALTH_STATE_SQL = `(CASE WHEN is_enabled = 0 THEN 'disabled' WHEN consecutive_failures > 0 THEN 'failing' WHEN last_success_at IS NOT NULL THEN 'healthy' ELSE 'never_run' END)`;
+
+/** Spec §4.2 "in the crawl schedule": the scheduler's own predicate. */
+export const SCHEDULED_SQL = `(${CRAWLABLE_SOURCE_WHERE_SQL})`;

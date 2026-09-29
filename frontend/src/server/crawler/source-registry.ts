@@ -167,15 +167,13 @@ function toCrawlableSourceFromMysqlRow(row: MysqlSourceRow): CrawlableSource {
   };
 }
 
-export async function listCrawlableSourcesFromMysql(
-  pool: MysqlSourceStore,
-): Promise<CrawlableSource[]> {
-  const rows = await mysqlSelectMany<MysqlSourceRow>(
-    pool,
-    `
-      SELECT ${MYSQL_SOURCE_COLUMNS}
-      FROM data_sources
-      WHERE is_enabled = 1
+/**
+ * The scheduler's governance predicate as SQL. listCrawlableSourcesFromMysql uses it verbatim and
+ * the admin overview counts "in the crawl schedule" with it on both runtimes (spec 2026-09-29 §4.2).
+ * It must stay equivalent to listCrawlableSources' Drizzle predicate; source-registry.test.ts pins
+ * the two against the same rows.
+ */
+export const CRAWLABLE_SOURCE_WHERE_SQL = `is_enabled = 1
         AND (approved_for_ingestion IS NULL OR approved_for_ingestion = 1)
         AND (
           approval_status = 'approved'
@@ -184,7 +182,17 @@ export async function listCrawlableSourcesFromMysql(
             AND ((jurisdiction_level IS NULL AND issuer_type IN ('federal', 'state')) OR jurisdiction_level IN ('federal', 'state'))
           )
         )
-        AND (legal_review_status IS NULL OR legal_review_status IN ('approved_public', 'approved'))
+        AND (legal_review_status IS NULL OR legal_review_status IN ('approved_public', 'approved'))`;
+
+export async function listCrawlableSourcesFromMysql(
+  pool: MysqlSourceStore,
+): Promise<CrawlableSource[]> {
+  const rows = await mysqlSelectMany<MysqlSourceRow>(
+    pool,
+    `
+      SELECT ${MYSQL_SOURCE_COLUMNS}
+      FROM data_sources
+      WHERE ${CRAWLABLE_SOURCE_WHERE_SQL}
     `,
   );
 

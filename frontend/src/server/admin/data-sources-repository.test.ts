@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { crawlerLogs, dataSources, eventLog, sourceApprovalEvents } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { recordLiveSourceHealthSnapshot } from "@/server/source-validity/health-snapshots";
@@ -11,6 +11,8 @@ import {
   listAdminCrawlerLogsFromMysql,
   listAdminDataSources,
   listAdminDataSourcesFromMysql,
+  listLocalLedgerSources,
+  listLocalLedgerSourcesFromMysql,
   missingApprovalRequirements,
   recordSourcePrecheck,
   recordSourcePrecheckFromMysql,
@@ -1345,6 +1347,89 @@ describe("governance defaults of held local sources", () => {
   it("names the levels the gate holds: any set level other than federal or state", () => {
     expect(["county", "city", "township", "special_district", "school_board"].map(isGatedLocalJurisdictionLevel)).toEqual([true, true, true, true, true]);
     expect(["federal", "state", "", null, undefined].map(isGatedLocalJurisdictionLevel)).toEqual([false, false, false, false, false]);
+  });
+});
+
+describe("local ledger source loader", () => {
+  let testDb: TestDatabase;
+
+  beforeEach(async () => {
+    testDb = await createTestDatabase({ seed: false });
+  });
+
+  afterEach(async () => {
+    await testDb.cleanup();
+  });
+
+  function insertSource(id: string, overrides: Partial<typeof dataSources.$inferInsert>) {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id,
+        label: id,
+        issuerType: "county",
+        stateCode: "CO",
+        providerFamily: "bidnet",
+        isEnabled: 1,
+        cadence: "daily",
+        createdAt: NOW,
+        updatedAt: NOW,
+        ...overrides,
+      })
+      .run();
+  }
+
+  it("returns the local rows only, as DTOs without logs, live health or approval history (SQLite)", async () => {
+    insertSource("ca_state", { issuerType: "state", stateCode: "CA", jurisdictionLevel: "state", providerFamily: null });
+    insertSource("legacy_no_level", { jurisdictionLevel: null });
+    insertSource("bidnet_co_denver", { jurisdictionLevel: "county", approvalStatus: null });
+    insertSource("bidnet_co_aurora", { issuerType: "city", jurisdictionLevel: "city", approvalStatus: "approved" });
+    // Both feed the log/health/history lookups that the light loader must skip.
+    testDb.db
+      .insert(crawlerLogs)
+      .values({ id: "log_1", source: "bidnet_co_denver", runId: "run_1", status: "success", startedAt: NOW })
+      .run();
+    testDb.db
+      .insert(sourceApprovalEvents)
+      .values({ id: "event_1", sourceId: "bidnet_co_aurora", action: "approved", createdAt: NOW })
+      .run();
+
+    const sources = await listLocalLedgerSources(testDb.db);
+
+    // Ordered by label; a state row and a legacy row without a level are not local.
+    expect(sources.map((source) => source.id)).toEqual(["bidnet_co_aurora", "bidnet_co_denver"]);
+    const denver = sources.find((source) => source.id === "bidnet_co_denver");
+    expect(denver).toMatchObject({ approvalStatus: "needs_review", approvedForIngestion: false, approvalHistory: [], latestLog: null, latestLiveHealth: null });
+    expect(sources.find((source) => source.id === "bidnet_co_aurora")).toMatchObject({ approvalStatus: "approved", approvalHistory: [], latestLog: null });
+  });
+
+  it("reads local rows through one governance-scoped MySQL select (MySQL)", async () => {
+    const row = {
+      id: "bidnet_co_denver", label: "Denver", issuerType: "county", stateCode: "CO", isEnabled: 1, cadence: "daily",
+      jurisdictionLevel: "county", providerFamily: "bidnet", requiresLogin: null, approvalStatus: null, legalReviewStatus: null,
+      approvedForIngestion: null, tosReviewed: null, complianceReviewer: null, legalOpinionReference: null,
+      precheckRequestedAt: "2026-09-29T01:00:00.000Z", consecutiveFailures: 0, createdAt: NOW, updatedAt: NOW,
+    };
+    const query = vi.fn(async () => [[row]] as [unknown[]]);
+
+    const sources = await listLocalLedgerSourcesFromMysql({ query, execute: vi.fn() } as never);
+
+    // One select: no crawler-log, health-snapshot or approval-event reads.
+    expect(query).toHaveBeenCalledTimes(1);
+    const sql = (query.mock.calls[0] as unknown as [string])[0];
+    expect(sql).toContain("FROM data_sources");
+    expect(sql).toContain("jurisdiction_level NOT IN ('federal', 'state')");
+    expect(sql).toContain("precheck_requested_at AS precheckRequestedAt");
+    expect(sql).toMatch(/ORDER BY label ASC\s*$/);
+    expect(sources).toEqual([
+      expect.objectContaining({
+        id: "bidnet_co_denver",
+        approvalStatus: "needs_review",
+        precheckRequestedAt: "2026-09-29T01:00:00.000Z",
+        approvalHistory: [],
+        latestLog: null,
+      }),
+    ]);
   });
 });
 

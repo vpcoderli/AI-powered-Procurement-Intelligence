@@ -7,6 +7,7 @@ import {
   createAdminUser,
   deliverAdminNotifications,
   getAdminApprovalReadiness,
+  getAdminOverview,
   getAdminRiskChecklist,
   getAdminBidQaCorrections,
   getAdminMarketingFunnel,
@@ -71,6 +72,34 @@ describe("admin API client", () => {
 
     await expect(listAdminDataSourceIndex({ levels: ["county", "city"], states: ["CO"], q: "den" })).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources/index?level=county&level=city&state=CO&q=den");
+  });
+
+  it("gets the admin overview and hands a failed section through as null with its error", async () => {
+    const body = {
+      generatedAt: "2026-09-29T12:00:00.000Z",
+      coverage: {
+        totals: { sources: 9, scheduled: 4, awaitingApproval: 4, neverRun: 5 },
+        byLevel: [{ level: "county", total: 2, enabled: 1, approved: 1, awaitingApproval: 0, blocked: 1, neverRun: 1 }],
+        byState: [{ stateCode: "CO", total: 2, byLevel: { county: 2 } }],
+      },
+      pipeline: [],
+      crawlHealth: null,
+      bids: null,
+      errors: {
+        crawlHealth: { code: "SECTION_FAILED", message: "This section could not be computed." },
+        bids: { code: "SECTION_FAILED", message: "This section could not be computed." },
+      },
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(getAdminOverview()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/overview");
+  });
+
+  it("surfaces a refused overview read as an AdminApiError", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ error: { code: "FORBIDDEN", message: "Admin access is required." } }, { status: 403 }));
+
+    await expect(getAdminOverview()).rejects.toMatchObject({ name: "AdminApiError", status: 403, code: "FORBIDDEN" });
   });
 
   it("gets admin risk checklist report", async () => {

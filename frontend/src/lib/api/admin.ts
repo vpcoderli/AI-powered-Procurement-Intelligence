@@ -7,6 +7,17 @@ import type {
 } from "@/server/admin/data-sources-repository";
 import type { AdminDataSourceIndexResponse, SourceListFilters } from "@/server/admin/data-source-list-contract";
 import type {
+  AdminOverview,
+  AdminOverviewBids,
+  AdminOverviewCoverage,
+  AdminOverviewCrawlHealth,
+  AdminOverviewPipelineRow,
+  AdminOverviewRunCounts,
+  AdminOverviewSectionError,
+  AdminOverviewSectionKey,
+  CoverageLevelCounts,
+} from "@/server/admin/overview";
+import type {
   ApprovalReadinessBucket,
   ApprovalReadinessEntry,
   ApprovalReadinessSummary,
@@ -64,6 +75,15 @@ import type {
 export type {
   AdminDataSourceIndexResponse,
   SourceListFilters,
+  AdminOverview,
+  AdminOverviewBids,
+  AdminOverviewCoverage,
+  AdminOverviewCrawlHealth,
+  AdminOverviewPipelineRow,
+  AdminOverviewRunCounts,
+  AdminOverviewSectionError,
+  AdminOverviewSectionKey,
+  CoverageLevelCounts,
   AdminBidQaArchiveStatus,
   AdminBidQaCorrectionField,
   AdminBidQaCorrectionHistoryItem,
@@ -406,6 +426,13 @@ async function parseResponse<T>(response: Response): Promise<T> {
   }
 
   return body as T;
+}
+
+/** Spec §4: the overview's four blocks; a null block failed on the server (see `errors`). */
+export async function getAdminOverview() {
+  const response = await fetch("/api/admin/overview");
+
+  return parseResponse<AdminOverview>(response);
 }
 
 export async function listAdminDataSources() {

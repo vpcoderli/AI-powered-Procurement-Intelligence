@@ -5,6 +5,7 @@ import {
   DEFAULT_PLATFORM_MIN_INTERVAL_MS,
   PlatformDeferralTracker,
   isPlatformThrottleSignature,
+  isThrottleFailure,
   platformDeferredResult,
   platformMinIntervalMs,
 } from "./platform-deferral";
@@ -166,6 +167,16 @@ describe("isPlatformThrottleSignature", () => {
     ])("$what: throttle signature is $expected", ({ message, expected }) => {
       expect(isPlatformThrottleSignature(failure("HtmlPageError", message))).toBe(expected);
     });
+  });
+});
+
+describe("isThrottleFailure", () => {
+  it("applies the platform throttle rule to a log row's code and message", () => {
+    expect(isThrottleFailure({ errorCode: "BidNetChallengeError", errorMessage: null })).toBe(true);
+    expect(isThrottleFailure({ errorCode: "HtmlPageError", errorMessage: "HTML request failed with status 429: slow down" })).toBe(true);
+    expect(isThrottleFailure({ errorCode: "HtmlPageError", errorMessage: "HTML request failed with status 404: body says code 403" })).toBe(false);
+    expect(isThrottleFailure({ errorCode: "EmptyCrawlerResultError", errorMessage: "status 429" })).toBe(false);
+    expect(isThrottleFailure({ errorCode: null, errorMessage: null })).toBe(false);
   });
 });
 

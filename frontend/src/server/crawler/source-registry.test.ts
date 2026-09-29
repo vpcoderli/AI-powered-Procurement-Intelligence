@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { dataSources } from "@/server/db/schema";
 import {
+  CRAWLABLE_SOURCE_WHERE_SQL,
   listAllSources,
   listAllSourcesFromMysql,
   listCrawlableSources,
@@ -295,5 +296,43 @@ describe("listAllSourcesFromMysql", () => {
     expect(sources[0].fipsCode).toBe("48");
     expect(sources[0].fetchConfig).toEqual({ tenant: "tx" });
     expect(capturedSql).not.toMatch(/WHERE/i);
+  });
+});
+
+describe("CRAWLABLE_SOURCE_WHERE_SQL", () => {
+  let testDb: TestDatabase;
+
+  beforeEach(async () => {
+    testDb = await createTestDatabase({ seed: false });
+  });
+
+  afterEach(async () => {
+    await testDb.cleanup();
+  });
+
+  it("selects exactly the rows listCrawlableSources returns", () => {
+    testDb.db
+      .insert(dataSources)
+      .values([
+        sourceRow({ id: "approved_state" }),
+        sourceRow({ id: "null_state", approvalStatus: null, approvedForIngestion: null, legalReviewStatus: null }),
+        sourceRow({ id: "federal", issuerType: "federal", stateCode: "US", approvalStatus: null }),
+        sourceRow({ id: "held_state", approvalStatus: "needs_review" }),
+        sourceRow({ id: "disabled", isEnabled: 0 }),
+        sourceRow({ id: "denied", approvedForIngestion: 0 }),
+        sourceRow({ id: "legal_restricted", legalReviewStatus: "restricted" }),
+        sourceRow({ id: "county_null", issuerType: "county", jurisdictionLevel: "county", approvalStatus: null }),
+        sourceRow({ id: "county_approved", issuerType: "county", jurisdictionLevel: "county" }),
+        sourceRow({ id: "legacy_county", issuerType: "county", jurisdictionLevel: null, approvalStatus: null }),
+        sourceRow({ id: "state_level", issuerType: "county", jurisdictionLevel: "state", approvalStatus: null }),
+      ])
+      .run();
+
+    const viaDrizzle = listCrawlableSources(testDb.db).map((source) => source.id).sort();
+    const viaSql = (testDb.db.$client.prepare(`SELECT id FROM data_sources WHERE ${CRAWLABLE_SOURCE_WHERE_SQL}`).all() as { id: string }[])
+      .map((row) => row.id)
+      .sort();
+    expect(viaSql).toEqual(viaDrizzle);
+    expect(viaSql).toEqual(["approved_state", "county_approved", "federal", "null_state", "state_level"]);
   });
 });

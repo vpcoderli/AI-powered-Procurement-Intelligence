@@ -46,6 +46,15 @@ function isThrottleErrorCode(errorCode: string | null) {
   return errorCode === "BidNetChallengeError" || /ChallengeError$/.test(errorCode);
 }
 
+/** isPlatformThrottleSignature's check for a failed run's error code and message — a crawler_logs row stores both. */
+export function isThrottleFailure(input: { errorCode: string | null; errorMessage: string | null }): boolean {
+  if (isThrottleErrorCode(input.errorCode)) return true;
+  if (input.errorCode !== "HtmlPageError") return false;
+  // No `g` flag: `exec` returns the first (leftmost) status token only.
+  const firstStatus = STATUS_TOKEN_PATTERN.exec(input.errorMessage ?? "")?.[1];
+  return firstStatus !== undefined && THROTTLE_STATUSES.has(firstStatus);
+}
+
 /**
  * True when a finished source run carries a platform challenge/throttle signature, i.e. the
  * platform (not this source's own page) refused the request.
@@ -53,11 +62,7 @@ function isThrottleErrorCode(errorCode: string | null) {
 export function isPlatformThrottleSignature(result: RunCrawlerSourceOnceResult): boolean {
   if (result.status !== "failure") return false;
   const input = buildCrawlerFailureInput(result.runner);
-  if (isThrottleErrorCode(input.errorCode ?? null)) return true;
-  if (input.errorCode !== "HtmlPageError") return false;
-  // No `g` flag: `exec` returns the first (leftmost) status token only.
-  const firstStatus = STATUS_TOKEN_PATTERN.exec(input.errorMessage ?? "")?.[1];
-  return firstStatus !== undefined && THROTTLE_STATUSES.has(firstStatus);
+  return isThrottleFailure({ errorCode: input.errorCode ?? null, errorMessage: input.errorMessage ?? null });
 }
 
 export function platformDeferredResult(sourceId: string, throttledBy: string): RunCrawlerSourceOnceResult {

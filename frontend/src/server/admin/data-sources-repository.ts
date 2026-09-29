@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull, notInArray } from "drizzle-orm";
 import {
   getStateCrawlerSourceMetadata,
   STATE_CRAWLER_SOURCE_IDS_BY_STATE,
@@ -890,6 +890,28 @@ export async function listAdminDataSourcesFromMysql(mysql: MysqlDataSourcesStore
     summary: dataSourcesSummary(sources),
     sources,
   };
+}
+
+/**
+ * Local (gated) rows as full DTOs without logs, live health or approval history — the governance
+ * inputs of the ledgered readiness rules, for the admin overview's pipeline (plan decision 7).
+ */
+export async function listLocalLedgerSources(db: AppDatabase): Promise<AdminDataSource[]> {
+  return db
+    .select()
+    .from(dataSources)
+    .where(and(isNotNull(dataSources.jurisdictionLevel), notInArray(dataSources.jurisdictionLevel, ["federal", "state"])))
+    .orderBy(dataSources.label)
+    .all()
+    .map((row) => toAdminSource(row, null));
+}
+
+export async function listLocalLedgerSourcesFromMysql(mysql: MysqlDataSourcesStore): Promise<AdminDataSource[]> {
+  const rows = await mysqlSelectMany<DataSourceRow>(
+    mysql,
+    `${dataSourceSelectSql("WHERE jurisdiction_level IS NOT NULL AND jurisdiction_level NOT IN ('federal', 'state')")} ORDER BY label ASC`,
+  );
+  return rows.map((row) => toAdminSource(row, null));
 }
 
 export async function updateAdminDataSource(
