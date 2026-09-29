@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 const PAGES: Array<[file: string, section: string]> = [
   ["users/page.tsx", "<UsersSection />"],
   ["users/audit/page.tsx", "<UserAuditSection />"],
+  ["notifications/page.tsx", "<NotificationsSection />"],
+  ["growth/page.tsx", "<GrowthFunnelSection />"],
+  ["config/page.tsx", "<ConfigRegistrySection />"],
 ];
 
 describe("admin pages", () => {

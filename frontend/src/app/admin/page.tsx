@@ -4,16 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
-  Bell,
   Database,
   Download,
   History,
   Play,
   RefreshCw,
-  Search,
   ServerCog,
   ShieldCheck,
-  UserCog,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -36,17 +33,12 @@ import {
   batchUpdateAdminDataSources,
   batchUpdateAdminBidQaItems,
   checkAdminDataSourceHealth,
-  deliverAdminNotifications,
-  getAdminMarketingFunnel,
   getAdminRiskChecklist,
   getAdminBidQaCorrections,
-  listAdminConfigEntries,
   listAdminBidQaItems,
   listAdminCrawlerLogs,
   listAdminDataSources,
-  listAdminNotifications,
   runStateCrawlersNow,
-  updateAdminConfigEntry,
   updateAdminDataSource,
   updateAdminBidQaReview,
   type AdminBidQaItem,
@@ -55,11 +47,8 @@ import {
   type AdminBidQaDisplayStatus,
   type AdminBidQaReviewStatus,
   type AdminCrawlerLog,
-  type AdminConfigRegistryEntry,
   type AdminDataSource,
   type AdminDataSourcesResponse,
-  type AdminNotificationsResponse,
-  type AdminMarketingFunnelResponse,
   type AdminRiskChecklistResponse,
   type StateDataQualityReasonCode,
   type StateDataQualityReport,
@@ -105,8 +94,6 @@ export type AdminDashboardSections = {
   risk: AdminSectionState<AdminRiskSectionData | null>;
   crawlerLogs: AdminSectionState<AdminCrawlerLog[]>;
   bidQa: AdminSectionState<AdminBidQaResponse | null>;
-  notifications: AdminSectionState<AdminNotificationsResponse["notifications"]>;
-  marketingFunnel: AdminSectionState<AdminMarketingFunnelResponse["summary"] | null>;
 };
 
 export type AdminDashboardLoaders = {
@@ -114,14 +101,7 @@ export type AdminDashboardLoaders = {
   risk: () => Promise<AdminRiskChecklistResponse>;
   crawlerLogs: () => Promise<{ logs: AdminCrawlerLog[] }>;
   bidQa: () => Promise<AdminBidQaResponse>;
-  notifications: () => Promise<AdminNotificationsResponse>;
-  marketingFunnel: () => Promise<AdminMarketingFunnelResponse>;
 };
-
-type ConfigRegistryStatus =
-  | { status: "loading"; configEntries: AdminConfigRegistryEntry[] }
-  | { status: "error"; configEntries: AdminConfigRegistryEntry[] }
-  | { status: "ready"; configEntries: AdminConfigRegistryEntry[] };
 
 type BidQaCorrectionDraft = {
   title: string;
@@ -179,12 +159,6 @@ type SourceOpsFilters = {
   recommendedAction: RecommendedActionFilter;
 };
 
-type ConfigEditDraft = {
-  configValueJson: string;
-  status: AdminConfigRegistryEntry["status"];
-  changeReason: string;
-};
-
 const DEFAULT_BID_QA_FILTERS: BidQaFilters = {
   q: "",
   stateCode: "",
@@ -222,11 +196,6 @@ export const STATE_DATA_QUALITY_RISK_FILTERS: StateDataQualityRiskFilter[] = ["a
 const STATE_DATA_QUALITY_P0_BLOCKER_STATES = ["CA", "FL", "IL", "NY", "TX"] as const;
 const STATE_DATA_QUALITY_P0_BLOCKER_COPY =
   "CA/FL/IL/NY/TX P0 blockers are state data quality blockers";
-const MARKETING_CONTENT_CONFIG_MODULE = "ux_state";
-const MARKETING_CONTENT_CONFIG_KEY = "copy_library";
-const MARKETING_CONTENT_CONFIG_ID = "ux_state.copy_library";
-const MARKETING_CONTENT_SAFE_VALIDATION_COPY =
-  "Unsafe outcome, compliance, or submission claims are rejected before publish and the site falls back to default marketing copy.";
 
 function sectionLoading<T>(data: T): AdminSectionState<T> {
   return { status: "loading", data };
@@ -246,8 +215,6 @@ export function createInitialAdminSectionState(): AdminDashboardSections {
     risk: sectionLoading(null),
     crawlerLogs: sectionLoading([]),
     bidQa: sectionLoading(null),
-    notifications: sectionLoading([]),
-    marketingFunnel: sectionLoading(null),
   };
 }
 
@@ -257,8 +224,6 @@ function createRefreshingAdminSectionState(current: AdminDashboardSections): Adm
     risk: sectionLoading(current.risk.data),
     crawlerLogs: sectionLoading(current.crawlerLogs.data),
     bidQa: sectionLoading(current.bidQa.data),
-    notifications: sectionLoading(current.notifications.data),
-    marketingFunnel: sectionLoading(current.marketingFunnel.data),
   };
 }
 
@@ -283,15 +248,11 @@ export async function loadAdminDashboardSections(
     risk,
     crawlerLogs,
     bidQa,
-    notifications,
-    marketingFunnel,
   ] = await Promise.allSettled([
     loaders.dataSources(),
     loaders.risk(),
     loaders.crawlerLogs(),
     loaders.bidQa(),
-    loaders.notifications(),
-    loaders.marketingFunnel(),
   ]);
 
   return {
@@ -304,8 +265,6 @@ export async function loadAdminDashboardSections(
     })),
     crawlerLogs: sectionFromSettled(crawlerLogs, current.crawlerLogs.data, (value) => value.logs),
     bidQa: sectionFromSettled(bidQa, current.bidQa.data, (value) => value),
-    notifications: sectionFromSettled(notifications, current.notifications.data, (value) => value.notifications),
-    marketingFunnel: sectionFromSettled(marketingFunnel, current.marketingFunnel.data, (value) => value.summary),
   };
 }
 
@@ -721,220 +680,6 @@ function formatCrawlerBaseUrl(value: string | null) {
   } catch {
     return value;
   }
-}
-
-function formatConfigScope(entry: AdminConfigRegistryEntry) {
-  return entry.scopeId ? `${entry.scopeType}: ${entry.scopeId}` : entry.scopeType;
-}
-
-function configStatusTone(status: AdminConfigRegistryEntry["status"]) {
-  if (status === "active") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (status === "draft") return "border-amber-200 bg-amber-50 text-amber-700";
-  return "border-slate-200 bg-slate-50 text-slate-600";
-}
-
-function formatConfigValueJson(entry: AdminConfigRegistryEntry) {
-  return JSON.stringify(entry.configValue, null, 2);
-}
-
-function isMarketingContentConfigEntry(entry: AdminConfigRegistryEntry) {
-  return entry.module === MARKETING_CONTENT_CONFIG_MODULE && entry.configKey === MARKETING_CONTENT_CONFIG_KEY;
-}
-
-function configDraftFor(entry: AdminConfigRegistryEntry, drafts: Record<string, ConfigEditDraft>) {
-  return drafts[entry.id] ?? {
-    configValueJson: formatConfigValueJson(entry),
-    status: entry.status,
-    changeReason: "",
-  };
-}
-
-function ConfigRegistrySection({
-  configEntries,
-  configEditDrafts,
-  isLoading,
-  isError,
-  savingConfigEntryId,
-  onDraftChange,
-  onRefresh,
-  onSave,
-}: {
-  configEntries: AdminConfigRegistryEntry[];
-  configEditDrafts: Record<string, ConfigEditDraft>;
-  isLoading: boolean;
-  isError: boolean;
-  savingConfigEntryId: string | null;
-  onDraftChange: (id: string, updater: (draft: ConfigEditDraft) => ConfigEditDraft) => void;
-  onRefresh: () => void;
-  onSave: (entry: AdminConfigRegistryEntry) => void;
-}) {
-  return (
-    <section id="configuration" className="rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <div className="flex items-center gap-2 font-semibold text-slate-950">
-            <ServerCog size={18} />
-            Config Registry
-          </div>
-          <div className="mt-1 text-xs font-medium text-slate-500">Config Matrix</div>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={onRefresh}
-          disabled={isLoading}
-          className="h-8 rounded-lg border-slate-200 px-2 text-xs"
-        >
-          <RefreshCw size={14} />
-          {isLoading ? "Refreshing" : "Refresh"}
-        </Button>
-      </div>
-      {isError && (
-        <div className="border-b border-rose-100 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
-          Config registry could not be loaded.
-        </div>
-      )}
-      <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-              <ShieldCheck size={16} className="text-emerald-600" />
-              Marketing Content CMS
-            </div>
-            <div className="mt-1 text-xs leading-5 text-slate-600">
-              Copy Library edits live in <code className="rounded bg-white px-1">{MARKETING_CONTENT_CONFIG_ID}</code>{" "}
-              and cover homepage/resources scope. Keep local JSON copy-only; no external CMS or rich text editor is
-              connected here.
-            </div>
-          </div>
-          <div className="max-w-xl rounded-md border border-emerald-100 bg-white px-3 py-2 text-xs leading-5 text-slate-600">
-            <span className="font-semibold text-emerald-700">safe validation</span>
-            {": "}
-            unsafe claim guard is enforced by the marketing content resolver. {MARKETING_CONTENT_SAFE_VALIDATION_COPY}
-          </div>
-        </div>
-      </div>
-      {isLoading && configEntries.length === 0 ? (
-        <div className="grid gap-3 p-4 md:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, index) => (
-            <div key={index} className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-              <Skeleton className="h-4 w-28" />
-              <Skeleton className="mt-3 h-4 w-20" />
-              <Skeleton className="mt-3 h-4 w-full" />
-            </div>
-          ))}
-        </div>
-      ) : configEntries.length === 0 ? (
-        <div className="px-4 py-5 text-sm text-slate-500">No config registry entries found.</div>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Module</TableHead>
-              <TableHead>Key</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Scope</TableHead>
-              <TableHead>Config JSON</TableHead>
-              <TableHead>Change reason</TableHead>
-              <TableHead>Updated</TableHead>
-              <TableHead className="text-right">Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {configEntries.map((entry) => {
-              const draft = configDraftFor(entry, configEditDrafts);
-              const isSaving = savingConfigEntryId === entry.id;
-
-              return (
-                <TableRow key={entry.id} className="align-top">
-                  <TableCell className="font-medium text-slate-900">{entry.module}</TableCell>
-                  <TableCell>
-                    <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-700">
-                      {entry.configKey}
-                    </code>
-                    {isMarketingContentConfigEntry(entry) && (
-                      <div className="mt-2 rounded-md border border-emerald-100 bg-emerald-50 px-2 py-1 text-xs leading-5 text-emerald-800">
-                        Copy Library: homepage/resources scope uses safe validation and the unsafe claim guard before
-                        marketing overrides are applied.
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-col gap-2">
-                      <Badge variant="outline" className={configStatusTone(draft.status)}>
-                        {draft.status}
-                      </Badge>
-                      <select
-                        value={draft.status}
-                        onChange={(event) =>
-                          onDraftChange(entry.id, (current) => ({
-                            ...current,
-                            status: event.target.value as AdminConfigRegistryEntry["status"],
-                          }))
-                        }
-                        className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 outline-none"
-                      >
-                        <option value="active">active</option>
-                        <option value="draft">draft</option>
-                        <option value="inactive">inactive</option>
-                      </select>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-sm text-slate-700">{formatConfigScope(entry)}</div>
-                    <div className="text-xs text-slate-500">v{entry.schemaVersion}</div>
-                  </TableCell>
-                  <TableCell>
-                    <textarea
-                      aria-label={`${entry.module}.${entry.configKey} Config JSON`}
-                      value={draft.configValueJson}
-                      onChange={(event) =>
-                        onDraftChange(entry.id, (current) => ({
-                          ...current,
-                          configValueJson: event.target.value,
-                        }))
-                      }
-                      spellCheck={false}
-                      className="min-h-28 w-80 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs leading-5 text-slate-700 outline-none focus:border-slate-400"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Input
-                      aria-label={`${entry.module}.${entry.configKey} Change reason`}
-                      value={draft.changeReason}
-                      onChange={(event) =>
-                        onDraftChange(entry.id, (current) => ({
-                          ...current,
-                          changeReason: event.target.value,
-                        }))
-                      }
-                      placeholder="Change reason"
-                      className="h-9 min-w-56 rounded-lg border-slate-200 text-sm"
-                    />
-                    <div className="mt-2 max-w-56 truncate text-xs text-slate-500" title={entry.changeReason}>
-                      Last: {entry.changeReason || "-"}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm text-slate-500">{formatDate(entry.updatedAt)}</TableCell>
-                  <TableCell className="text-right">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => onSave(entry)}
-                      disabled={isSaving || draft.changeReason.trim().length === 0}
-                      className="h-8 rounded-lg border-slate-200 px-2 text-xs"
-                    >
-                      {isSaving ? "Saving" : "Save config"}
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      )}
-    </section>
-  );
 }
 
 function riskCheckTone(ok: boolean) {
@@ -1372,12 +1117,6 @@ export default function AdminPage() {
   const { user, isLoading: isAuthLoading } = useAuth();
   const [state, setState] = useState<AdminDashboardSections>(() => createInitialAdminSectionState());
   const stateRef = useRef(state);
-  const [configRegistryStatus, setConfigRegistryStatus] = useState<ConfigRegistryStatus>({
-    status: "loading",
-    configEntries: [],
-  });
-  const [configEditDrafts, setConfigEditDrafts] = useState<Record<string, ConfigEditDraft>>({});
-  const [savingConfigEntryId, setSavingConfigEntryId] = useState<string | null>(null);
   const [pendingSourceId, setPendingSourceId] = useState<string | null>(null);
   const [sourceApprovalPendingId, setSourceApprovalPendingId] = useState<string | null>(null);
   const [sourceApprovalBatchPending, setSourceApprovalBatchPending] = useState(false);
@@ -1401,32 +1140,17 @@ export default function AdminPage() {
   const [runningSourceId, setRunningSourceId] = useState<string | null>(null);
   const [runMessage, setRunMessage] = useState<string | null>(null);
   const [isRefreshingRiskReport, setIsRefreshingRiskReport] = useState(false);
-  const [isDeliveringNotifications, setIsDeliveringNotifications] = useState(false);
   // Bumped when a platform review is saved so the ledgered approval panel re-reads its readiness.
   const [platformReviewRevision, setPlatformReviewRevision] = useState(0);
   const isAdmin = user?.role === "admin";
   const isOperator = user?.role === "operator";
   const canAccessAdminConsole = Boolean(user && ADMIN_CONSOLE_USER_ROLES.includes(user.role));
   const canManageUsers = isAdmin;
-  const canManageConfig = isAdmin;
   const canRunOperations = isAdmin || isOperator;
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
-
-  const refreshConfigRegistry = useCallback(() => {
-    if (!canManageConfig) return Promise.resolve();
-
-    setConfigRegistryStatus((current) => ({ status: "loading", configEntries: current.configEntries }));
-    return listAdminConfigEntries()
-      .then((response) => {
-        setConfigRegistryStatus({ status: "ready", configEntries: response.entries });
-      })
-      .catch(() => {
-        setConfigRegistryStatus((current) => ({ status: "error", configEntries: current.configEntries }));
-      });
-  }, [canManageConfig]);
 
   const bidQaRequest = useCallback(() => ({
     limit: 10,
@@ -1448,21 +1172,18 @@ export default function AdminPage() {
     const current = stateRef.current;
 
     setState(createRefreshingAdminSectionState(current));
-    void refreshConfigRegistry();
     void loadAdminDashboardSections(
       {
         dataSources: listAdminDataSources,
         risk: getAdminRiskChecklist,
         crawlerLogs: listAdminCrawlerLogs,
         bidQa: () => listAdminBidQaItems(bidQaRequest()),
-        notifications: () => listAdminNotifications({ limit: 10 }),
-        marketingFunnel: getAdminMarketingFunnel,
       },
       current,
     ).then((sections) => {
       setState(sections);
     });
-  }, [bidQaRequest, canAccessAdminConsole, refreshConfigRegistry]);
+  }, [bidQaRequest, canAccessAdminConsole]);
 
   useEffect(() => {
     if (isAuthLoading) return;
@@ -1473,8 +1194,7 @@ export default function AdminPage() {
 
   const isLoadingDashboard = isAdminDashboardLoading(state);
   const areMainSectionsFullyFailed = isAdminDashboardFullyFailed(state);
-  const isFullyFailedDashboard =
-    areMainSectionsFullyFailed && (!canManageConfig || configRegistryStatus.status === "error");
+  const isFullyFailedDashboard = areMainSectionsFullyFailed;
   const allSources = state.dataSources.status === "ready" ? state.dataSources.data?.sources ?? [] : [];
   const sourceOpsFilters: SourceOpsFilters = {
     classification: sourceHealthClassificationFilter,
@@ -1504,62 +1224,6 @@ export default function AdminPage() {
   const allVisibleBidQaSelected = bidQaItems.length > 0 && bidQaItems.every((item) => selectedBidQaIds.includes(item.id));
   const visibleSelectedSourceIds = selectedSourceIds.filter((id) => sources.some((source) => source.id === id));
   const allVisibleSourcesSelected = sources.length > 0 && sources.every((source) => selectedSourceIds.includes(source.id));
-  const notifications = state.notifications.status === "ready" ? state.notifications.data : [];
-  const marketingFunnel = state.marketingFunnel.status === "ready" ? state.marketingFunnel.data : null;
-  const configEntries = configRegistryStatus.configEntries;
-
-  const updateConfigEditDraft = (id: string, updater: (draft: ConfigEditDraft) => ConfigEditDraft) => {
-    const entry = configEntries.find((item) => item.id === id);
-    if (!entry) return;
-
-    setConfigEditDrafts((current) => ({
-      ...current,
-      [id]: updater(configDraftFor(entry, current)),
-    }));
-  };
-
-  const handleConfigRegistrySave = (entry: AdminConfigRegistryEntry) => {
-    const draft = configDraftFor(entry, configEditDrafts);
-    let configValue: unknown;
-
-    try {
-      configValue = JSON.parse(draft.configValueJson);
-    } catch {
-      setRunMessage("Config JSON is invalid.");
-      return;
-    }
-
-    if (draft.changeReason.trim().length === 0) {
-      setRunMessage("Change reason is required.");
-      return;
-    }
-
-    setSavingConfigEntryId(entry.id);
-    setRunMessage(null);
-    updateAdminConfigEntry(entry.id, {
-      configValue,
-      status: draft.status,
-      changeReason: draft.changeReason.trim(),
-    })
-      .then(({ entry: updated }) => {
-        setConfigRegistryStatus((current) => ({
-          ...current,
-          configEntries: current.configEntries.map((item) => (item.id === updated.id ? updated : item)),
-        }));
-        setConfigEditDrafts((current) => {
-          const next = { ...current };
-          delete next[entry.id];
-          return next;
-        });
-        setRunMessage("Config saved.");
-      })
-      .catch(() => {
-        setRunMessage("Config update failed.");
-      })
-      .finally(() => {
-        setSavingConfigEntryId(null);
-      });
-  };
 
   const replaceSource = (updated: AdminDataSource) => {
     setState((current) => {
@@ -2027,58 +1691,6 @@ export default function AdminPage() {
       });
   };
 
-  const refreshNotifications = () => {
-    setState((current) => ({
-      ...current,
-      notifications: sectionLoading(current.notifications.data),
-    }));
-
-    return listAdminNotifications({ limit: 10 })
-      .then((response) => {
-        setState((current) => ({
-          ...current,
-          notifications: sectionReady(response.notifications),
-        }));
-        return response;
-      })
-      .catch((error) => {
-        setState((current) => ({
-          ...current,
-          notifications: sectionError(current.notifications.data),
-        }));
-        throw error;
-      });
-  };
-
-  const deliverNotifications = () => {
-    setIsDeliveringNotifications(true);
-    setRunMessage(null);
-    deliverAdminNotifications({ limit: 25, maxAttempts: 3 })
-      .then((result) => {
-        setRunMessage(
-          t("admin.notificationDeliveryResult")
-            .replace("{sent}", String(result.sent))
-            .replace("{failed}", String(result.failed))
-            .replace("{skipped}", String(result.skipped)),
-        );
-        return listAdminNotifications({ limit: 10 });
-      })
-      .then((response) => {
-        setState((current) => {
-          return {
-            ...current,
-            notifications: sectionReady(response.notifications),
-          };
-        });
-      })
-      .catch(() => {
-        setRunMessage(t("admin.notificationDeliveryFailed"));
-      })
-      .finally(() => {
-        setIsDeliveringNotifications(false);
-      });
-  };
-
   if (isAuthLoading) {
     return (
       <AdminAccessState
@@ -2176,71 +1788,6 @@ export default function AdminPage() {
         </div>
       )}
 
-      {!isFullyFailedDashboard && state.marketingFunnel.status === "error" && (
-        <AdminSectionStateCard
-          action={load}
-          actionLabel={t("admin.refresh")}
-          code="error"
-          message={t("admin.errorDescription")}
-          title="Marketing Funnel"
-        />
-      )}
-
-      {!isFullyFailedDashboard && state.marketingFunnel.status === "loading" && !marketingFunnel && (
-        <AdminSectionStateCard
-          actionLabel={t("admin.refresh")}
-          code="loading"
-          message={t("admin.loading")}
-          title="Marketing Funnel"
-        />
-      )}
-
-      {!isFullyFailedDashboard && marketingFunnel && (
-        <section id="data-sources" className="rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
-            <div className="flex items-center gap-2 font-semibold text-slate-950">
-              <Bell size={18} />
-              Marketing Funnel
-            </div>
-            <a
-              href="/api/admin/marketing/leads/export"
-              className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
-            >
-              <Download size={16} />
-              Export leads CSV
-            </a>
-          </div>
-          <div className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-5">
-            <SummaryCard label="Request Demo" value={marketingFunnel.counts.requestDemoSubmitted} icon={Bell} />
-            <SummaryCard label="Signup complete" value={marketingFunnel.counts.completeSignup} icon={UserCog} />
-            <SummaryCard label="Profile started" value={marketingFunnel.counts.startSupplierProfile} icon={Activity} />
-            <SummaryCard label="Profile complete" value={marketingFunnel.counts.completeSupplierProfile} icon={ShieldCheck} />
-            <SummaryCard label="First matched bid" value={marketingFunnel.counts.firstMatchedBidViewed} icon={Search} />
-          </div>
-          <div className="border-t border-slate-100 px-4 py-3">
-            <div className="text-sm font-black text-slate-950">Latest request-demo leads</div>
-            {marketingFunnel.latestRequestDemoLeads.length === 0 ? (
-              <div className="mt-2 text-sm font-medium text-slate-500">No request-demo leads recorded yet.</div>
-            ) : (
-              <div className="mt-3 grid gap-2">
-                {marketingFunnel.latestRequestDemoLeads.map((lead) => (
-                  <div
-                    key={lead.eventId}
-                    className="grid gap-1 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-sm md:grid-cols-[1fr_auto]"
-                  >
-                    <div>
-                      <div className="font-bold text-slate-900">{lead.companyName ?? lead.email ?? lead.eventId}</div>
-                      <div className="text-slate-500">{lead.email ?? "-"}</div>
-                    </div>
-                    <div className="text-xs font-medium text-slate-500">{formatDate(lead.occurredAt)}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
-
       {!isFullyFailedDashboard && state.risk.status === "error" && (
         <AdminSectionStateCard
           action={() => refreshRiskReport()}
@@ -2270,19 +1817,6 @@ export default function AdminPage() {
           stateDataQuality={stateDataQuality}
           t={t}
           trend={riskTrend}
-        />
-      )}
-
-      {canManageConfig && !isFullyFailedDashboard && (
-        <ConfigRegistrySection
-          configEntries={configEntries}
-          configEditDrafts={configEditDrafts}
-          isError={configRegistryStatus.status === "error"}
-          isLoading={configRegistryStatus.status === "loading"}
-          savingConfigEntryId={savingConfigEntryId}
-          onDraftChange={updateConfigEditDraft}
-          onRefresh={refreshConfigRegistry}
-          onSave={handleConfigRegistrySave}
         />
       )}
 
@@ -2678,73 +2212,6 @@ export default function AdminPage() {
               )}
             </div>
           )}
-        </section>
-      )}
-
-      {!isFullyFailedDashboard && state.notifications.status === "error" && (
-        <AdminSectionStateCard
-          action={() => void refreshNotifications().catch(() => undefined)}
-          actionLabel={t("admin.refresh")}
-          code="error"
-          message={t("admin.errorDescription")}
-          title={t("admin.notificationDelivery")}
-        />
-      )}
-
-      {!isFullyFailedDashboard && state.notifications.status === "loading" && state.notifications.data.length === 0 && (
-        <AdminSectionStateCard
-          actionLabel={t("admin.refresh")}
-          code="loading"
-          message={t("admin.loading")}
-          title={t("admin.notificationDelivery")}
-        />
-      )}
-
-      {!isFullyFailedDashboard && state.notifications.status === "ready" && (
-        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2 font-semibold text-slate-950">
-              <Bell size={18} />
-              {t("admin.notificationDelivery")}
-            </div>
-            {canRunOperations && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={deliverNotifications}
-                disabled={isDeliveringNotifications}
-                className="h-9 rounded-lg border-slate-200 px-3"
-              >
-                <Play size={14} />
-                {isDeliveringNotifications ? t("admin.deliveringNotifications") : t("admin.deliverNotifications")}
-              </Button>
-            )}
-          </div>
-          <div className="divide-y divide-slate-100">
-            {notifications.length === 0 && (
-              <div className="px-4 py-5 text-sm text-slate-500">{t("admin.noNotifications")}</div>
-            )}
-            {notifications.map((notification) => (
-              <div key={notification.id} className="grid gap-2 px-4 py-3 md:grid-cols-[1fr_auto] md:items-center">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-slate-900">{notification.recipient}</span>
-                    <Badge variant="outline" className={statusTone(notification.status)}>
-                      {t(`admin.notificationStatus_${notification.status}`)}
-                    </Badge>
-                    <span className="text-xs text-slate-500">{formatDate(notification.sentAt ?? notification.createdAt)}</span>
-                  </div>
-                  <div className="mt-1 text-sm text-slate-600">{notification.subject}</div>
-                  {notification.lastError && (
-                    <div className="mt-1 text-sm text-rose-700">{compactErrorMessage(notification.lastError)}</div>
-                  )}
-                </div>
-                <div className="text-xs font-medium text-slate-500">
-                  {t("admin.notificationAttempts").replace("{count}", String(notification.attemptCount))}
-                </div>
-              </div>
-            ))}
-          </div>
         </section>
       )}
 

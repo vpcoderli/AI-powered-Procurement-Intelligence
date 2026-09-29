@@ -1727,6 +1727,15 @@ export const en = {
     forbiddenPageDescription: "Your back-office role cannot open this page. Pick a page you can use from the menu.",
     backToOverview: "Back to overview",
     sectionRefreshFailed: "Refresh failed; showing the last loaded data.",
+    growthFunnelTitle: "Marketing funnel",
+    growthExportLeads: "Export leads CSV",
+    growthRequestDemo: "Request demo",
+    growthSignupComplete: "Signup complete",
+    growthProfileStarted: "Profile started",
+    growthProfileComplete: "Profile complete",
+    growthFirstMatchedBid: "First matched bid",
+    growthLatestLeads: "Latest request-demo leads",
+    growthNoLeads: "No request-demo leads recorded yet.",
   }
 };
 

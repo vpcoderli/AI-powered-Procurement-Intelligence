@@ -16,19 +16,11 @@ describe("admin page", () => {
   it("renders user access controls alongside crawler operations", () => {
     const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
 
-    expect(page).toContain("listAdminNotifications");
-    expect(page).toContain("getAdminMarketingFunnel");
-    expect(page).toContain("Marketing Funnel");
-    expect(page).toContain("requestDemoSubmitted");
-    expect(page).toContain("latestRequestDemoLeads");
-    expect(page).toContain("/api/admin/marketing/leads/export");
-    expect(page).toContain("Export leads CSV");
     expect(page).toContain("getAdminRiskChecklist");
     expect(page).toContain("listAdminBidQaItems");
     expect(page).toContain("getAdminBidQaCorrections");
     expect(page).toContain("batchUpdateAdminBidQaItems");
     expect(page).toContain("batchUpdateAdminDataSources");
-    expect(page).toContain("deliverAdminNotifications");
     expect(page).toContain("updateAdminBidQaReview");
     expect(page).toContain("StateDataQualityMatrix");
     expect(page).toContain("stateDataQuality");
@@ -153,21 +145,6 @@ describe("admin page", () => {
     expect(page).toContain("source.approvalHistory");
     expect(page).toContain('t("admin.sourceApprovalHistory")');
     expect(page).toContain('t("admin.sourceApprovalActor")');
-    expect(page).toContain('t("admin.notificationDelivery")');
-    expect(page).toContain('t("admin.deliverNotifications")');
-  });
-
-  it("surfaces marketing content CMS copy-library scope and safe-claim guard cues in the config matrix", () => {
-    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
-
-    expect(page).toContain("Marketing Content CMS");
-    expect(page).toContain("Copy Library");
-    expect(page).toContain("homepage/resources scope");
-    expect(page).toContain("ux_state.copy_library");
-    expect(page).toContain("safe validation");
-    expect(page).toContain("unsafe claim guard");
-    expect(page).toContain("Unsafe outcome, compliance, or submission claims are rejected");
-    expect(page).toContain("falls back to default marketing copy");
   });
 
   it("keeps successful admin sections ready when one admin API rejects", async () => {
@@ -204,22 +181,6 @@ describe("admin page", () => {
           summary: { needsReview: 1, archiveIssues: 0, lowQuality: 0 },
           items: [],
         }),
-        notifications: async () => ({
-          notifications: [{ id: "notification-1", recipient: "ops@example.com" }],
-        }),
-        marketingFunnel: async () => ({
-          summary: {
-            counts: {
-              requestDemoSubmitted: 1,
-              startSignup: 0,
-              completeSignup: 1,
-              startSupplierProfile: 1,
-              completeSupplierProfile: 0,
-              firstMatchedBidViewed: 0,
-            },
-            latestRequestDemoLeads: [],
-          },
-        }),
       },
       createInitialAdminSectionState(),
     );
@@ -232,10 +193,6 @@ describe("admin page", () => {
       p0BlockerStates: 5,
     });
     expect(sections.bidQa.status).toBe("ready");
-    expect(sections.notifications.status).toBe("ready");
-    expect(sections.notifications.data).toHaveLength(1);
-    expect(sections.marketingFunnel.status).toBe("ready");
-    expect(sections.marketingFunnel.data?.counts.requestDemoSubmitted).toBe(1);
     expect(isAdminDashboardFullyFailed(sections)).toBe(false);
   });
 
@@ -250,8 +207,6 @@ describe("admin page", () => {
         risk: fail,
         crawlerLogs: fail,
         bidQa: fail,
-        notifications: fail,
-        marketingFunnel: fail,
       },
       createInitialAdminSectionState(),
     );
@@ -261,8 +216,6 @@ describe("admin page", () => {
     expect(sections.risk.status).toBe("error");
     expect(sections.crawlerLogs.status).toBe("error");
     expect(sections.bidQa.status).toBe("error");
-    expect(sections.notifications.status).toBe("error");
-    expect(sections.marketingFunnel.status).toBe("error");
   });
 
   it("defines source health classification filter options and readable labels", () => {

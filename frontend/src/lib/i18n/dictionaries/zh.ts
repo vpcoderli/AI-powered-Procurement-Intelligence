@@ -1729,5 +1729,14 @@ export const zh: Dictionary = {
     forbiddenPageDescription: "你的后台角色无法打开此页面，请从菜单中选择可访问的页面。",
     backToOverview: "返回概览",
     sectionRefreshFailed: "刷新失败，显示的是上次加载的数据。",
+    growthFunnelTitle: "营销漏斗",
+    growthExportLeads: "导出线索 CSV",
+    growthRequestDemo: "预约演示",
+    growthSignupComplete: "完成注册",
+    growthProfileStarted: "开始填写资料",
+    growthProfileComplete: "资料已完善",
+    growthFirstMatchedBid: "首次查看匹配招标",
+    growthLatestLeads: "最新演示预约线索",
+    growthNoLeads: "暂无演示预约线索。",
   }
 };
