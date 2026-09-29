@@ -48,4 +48,12 @@ describe("config registry section", () => {
     expect(source).toContain('t("admin.sectionRefreshFailed")');
     expect(source).toContain("registry.setData(");
   });
+
+  // A failed reload with entries on screen shows the render rule's notice only, never a second banner.
+  it("reports a failed refresh once, through the render rule's notice", () => {
+    const source = readFileSync(new URL("ConfigRegistrySection.tsx", import.meta.url), "utf8");
+    expect(source).not.toContain("isError");
+    expect(source).not.toContain("Config registry could not be loaded.");
+    expect(source).toContain('{registry.status === "error" && <AdminNotice tone="error" message={t("admin.sectionRefreshFailed")} />}');
+  });
 });

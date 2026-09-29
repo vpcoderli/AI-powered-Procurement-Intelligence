@@ -7,7 +7,17 @@ describe("notifications section", () => {
     expect(source).toContain("listAdminNotifications({ limit: 10 })");
     expect(source).toContain("deliverAdminNotifications(");
     expect(source).toContain('t("admin.notificationDelivery")');
-    expect(source).toContain("reload()");
+  });
+
+  // A bare `reload()` also matches the error card's retry, so pin the call inside the delivery handler.
+  it("awaits a reload of the outbox once a delivery run succeeds", () => {
+    const source = readFileSync(new URL("NotificationsSection.tsx", import.meta.url), "utf8");
+    const start = source.indexOf("const deliverNotifications = () => {");
+    const end = source.indexOf("const notifications = outbox.data", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+
+    expect(source.slice(start, end)).toContain("await outbox.reload();");
   });
 
   // Moved from src/app/admin/page.test.ts ("renders user access controls alongside crawler operations").

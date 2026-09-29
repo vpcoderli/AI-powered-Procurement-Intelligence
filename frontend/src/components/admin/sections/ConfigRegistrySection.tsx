@@ -61,7 +61,6 @@ export function ConfigRegistrySection() {
   const [savingConfigEntryId, setSavingConfigEntryId] = useState<string | null>(null);
   const configEntries = registry.data ?? [];
   const isLoading = registry.status === "loading";
-  const isError = registry.status === "error";
   const onRefresh = () => void registry.reload();
 
   const updateConfigEditDraft = (id: string, updater: (draft: ConfigEditDraft) => ConfigEditDraft) => {
@@ -156,11 +155,6 @@ export function ConfigRegistrySection() {
             {isLoading ? "Refreshing" : "Refresh"}
           </Button>
         </div>
-        {isError && (
-          <div className="border-b border-rose-100 bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">
-            Config registry could not be loaded.
-          </div>
-        )}
         <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
