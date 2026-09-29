@@ -200,8 +200,20 @@ describe("risk check section", () => {
       "CA/FL/IL/NY/TX P0 blockers are state data quality blockers; currently blocked: CA/TX. These are not live source-health failures.",
     );
     const zhNotice = stateDataQualityP0BlockerNotice(rows, tIn(zhAdmin));
-    expect(zhNotice).toBe("CA/FL/IL/NY/TX 的 P0 阻断项属于州级数据质量阻断项；当前受阻：CA/TX。这些并非实时数据源健康故障。");
+    expect(zhNotice).toBe("CA/FL/IL/NY/TX 的 P0 阻断项属于州级数据质量阻断项；当前受阻：CA/TX。这些并非 Live 来源健康故障。");
     expect(zhNotice).not.toMatch(/[{}]/);
+  });
+
+  it("words the matrix as its summary sentence and the console do", () => {
+    // The columns are named as the summary sentence names them, in both languages.
+    for (const dictionary of [enAdmin, zhAdmin]) {
+      for (const key of ["stateQualityColumnBids", "stateQualityColumnAttachmentRatio", "stateQualityColumnReasonCode"]) {
+        expect(dictionary.stateQualitySummary, key).toContain(dictionary[key]);
+      }
+    }
+    // A table row is a 记录 in the empty-state message, and the notice uses the console's own "Live 来源健康" term.
+    expect(zhAdmin.stateQualityNoRows).toContain("数据质量记录");
+    expect(zhAdmin.stateQualityP0Notice).toContain(zhAdmin.liveSourceHealth);
   });
 
   it("keeps no English UI copy in the matrix", () => {

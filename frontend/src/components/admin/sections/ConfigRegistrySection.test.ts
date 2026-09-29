@@ -130,6 +130,17 @@ describe("config registry section", () => {
 
   it("gives every config status a label", () => {
     expect(statusKeys.map((key) => enAdmin[key])).toEqual(["active", "draft", "inactive"]);
-    expect(statusKeys.map((key) => zhAdmin[key])).toEqual(["启用", "草稿", "停用"]);
+    expect(statusKeys.map((key) => zhAdmin[key])).toEqual(["已启用", "草稿", "已停用"]);
+  });
+
+  it("words the Chinese status labels and the safe-validation sentence as the console does", () => {
+    // 已启用 / 已停用 are the console's status words (overview column, source health); 启用 / 停用 alone are its buttons.
+    expect(zhAdmin.configRegistryStatus_active).toBe(zhAdmin.overviewColumnEnabled);
+    expect(zhAdmin.configRegistryStatus_inactive).toBe(zhAdmin.sourcesHealth_disabled);
+    expect(zhAdmin.configRegistryStatus_active).not.toBe(zhAdmin.sourceDetailEnable);
+    expect(zhAdmin.configRegistryStatus_inactive).not.toBe(zhAdmin.sourceDetailDisable);
+    // The label ends in the colon, so the sentence after it carries none of its own.
+    expect(zhAdmin.configRegistrySafeValidationLabel).toMatch(/：$/);
+    expect(zhAdmin.configRegistrySafeValidationText).not.toMatch(/[:：]/);
   });
 });

@@ -207,9 +207,11 @@ detection) is a regex heuristic over raw source text, not an AST/type-aware pars
 some false positives (e.g., a `<Badge>{learningSummary.outcomeClass}</Badge>` where the braces
 happen to survive the tag-content pattern check, non-English proper nouns, or JSX comments) and can
 miss unusual call shapes (e.g., a translated string built through several intermediate variables
-before reaching JSX). Treat its findings as leads to manually verify, the same way the findings in
-this report were manually verified before being fixed — this is why `--fail-on-findings` is opt-in
-rather than wired into `risk:check` or CI by default.
+before reaching JSX). The JSX-text pattern only sees capitalised text on a single line
+(`>Text<`), so multi-line JSX text and lower-case labels (a bare `<option>high</option>`, a
+lower-case table header) are not detected. Treat its findings as leads to manually verify, the
+same way the findings in this report were manually verified before being fixed — this is why
+`--fail-on-findings` is opt-in rather than wired into `risk:check` or CI by default.
 
 ## Outstanding / recommended follow-ups (honest gap list)
 

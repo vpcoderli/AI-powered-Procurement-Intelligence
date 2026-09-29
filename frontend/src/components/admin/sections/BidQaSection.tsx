@@ -372,9 +372,9 @@ export function BidQaSection() {
               className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
             >
               <option value="all">{t("admin.allConfidence")}</option>
-              <option value="high">high</option>
-              <option value="medium">medium</option>
-              <option value="low">low</option>
+              <option value="high">{t("intentsPage.confidence.high")}</option>
+              <option value="medium">{t("intentsPage.confidence.medium")}</option>
+              <option value="low">{t("intentsPage.confidence.low")}</option>
             </select>
             <Input
               type="number"

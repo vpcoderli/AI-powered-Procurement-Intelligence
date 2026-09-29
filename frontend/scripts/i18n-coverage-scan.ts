@@ -223,7 +223,10 @@ function walk(dir: string, out: string[]): void {
 // at least one letter and excludes lines that are purely `{...}` expressions,
 // pure punctuation, or a single short acronym-like token (heuristic to keep
 // noise down — this is intentionally conservative to avoid drowning real
-// findings in false positives from icons/whitespace-only lines).
+// findings in false positives from icons/whitespace-only lines). It only sees
+// text that starts with a capital letter and closes on the same line
+// (`>Text<`), so multi-line JSX text and lower-case labels
+// (`<option>high</option>`) are not detected.
 const JSX_TEXT_PATTERN = />([A-Z][A-Za-z0-9 ,.'/&()-]{3,})</g;
 
 // Matches hardcoded aria-label / title / placeholder / alt attributes with a
