@@ -27,11 +27,18 @@ export function platformMinIntervalMs(env: Record<string, string | undefined> = 
 }
 
 /**
- * `status 403` / `HTTP 429` / `status_code=202` in the Python error message. Deliberately
- * requires a status-ish token before the number so an id or byte count that happens to contain
- * 403 never reads as a throttle.
+ * A status token in the Python error message: `status 403`, `HTTP 429`, `status_code=202` — a
+ * status-ish word, up to 4 non-word characters, then a 3-digit code. Deliberately requires the word
+ * so an id or byte count that happens to contain 403 never reads as a status.
+ *
+ * Only the FIRST status token in the message decides, because the crawler's own status always
+ * precedes any quoted body: an `HtmlPageError` status message is
+ * `HTML request failed with status <code>: <response body>` (crawler/apsi_crawler/html/public_page.py),
+ * and the errorMessage checked here carries the run's stderr after that message. A 404 or 5xx body
+ * that mentions "code 403" or "HTTP 202" therefore never pauses the whole platform.
  */
-const THROTTLE_STATUS_PATTERN = /\b(?:status|http|code)\w*\W{0,4}(?:403|429|202)\b/i;
+const STATUS_TOKEN_PATTERN = /\b(?:status|http|code)\w*\W{0,4}(\d{3})\b/i;
+const THROTTLE_STATUSES: ReadonlySet<string> = new Set(["403", "429", "202"]);
 
 function isThrottleErrorCode(errorCode: string | null) {
   if (!errorCode) return false;
@@ -48,7 +55,9 @@ export function isPlatformThrottleSignature(result: RunCrawlerSourceOnceResult):
   const input = buildCrawlerFailureInput(result.runner);
   if (isThrottleErrorCode(input.errorCode ?? null)) return true;
   if (input.errorCode !== "HtmlPageError") return false;
-  return THROTTLE_STATUS_PATTERN.test(input.errorMessage ?? "");
+  // No `g` flag: `exec` returns the first (leftmost) status token only.
+  const firstStatus = STATUS_TOKEN_PATTERN.exec(input.errorMessage ?? "")?.[1];
+  return firstStatus !== undefined && THROTTLE_STATUSES.has(firstStatus);
 }
 
 export function platformDeferredResult(sourceId: string, throttledBy: string): RunCrawlerSourceOnceResult {

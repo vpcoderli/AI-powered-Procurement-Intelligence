@@ -130,6 +130,42 @@ describe("isPlatformThrottleSignature", () => {
 
       expect(isPlatformThrottleSignature(result)).toBe(expected);
     });
+
+    it("reads the crawler's own status, not one its quoted 404 body mentions", async () => {
+      const { result } = await crawledFailure(
+        "HtmlPageError",
+        "HTML request failed with status 404: <html><body>Tenant not found (upstream error code 403)</body></html>",
+      );
+
+      expect(isPlatformThrottleSignature(result)).toBe(false);
+    });
+  });
+
+  describe("only the first status token decides: the crawler's own status precedes any quoted body (final review M6)", () => {
+    it.each([
+      {
+        what: "a 404 whose quoted body says 'code 403'",
+        message: "HTML request failed with status 404: <html><body>Not found: error code 403 from the upstream proxy</body></html>",
+        expected: false,
+      },
+      {
+        what: "a 500 whose quoted body says 'HTTP 202'",
+        message: "HTML request failed with status 500: <html><body>Upstream answered HTTP 202 Accepted</body></html>",
+        expected: false,
+      },
+      {
+        what: "a 429 answer",
+        message: "HTML request failed with status 429: <html><body>Too Many Requests</body></html>",
+        expected: true,
+      },
+      {
+        what: "a message with no status token (a bare 403 is not one)",
+        message: "HTML table was missing required headers: title (403 rows on the page)",
+        expected: false,
+      },
+    ])("$what: throttle signature is $expected", ({ message, expected }) => {
+      expect(isPlatformThrottleSignature(failure("HtmlPageError", message))).toBe(expected);
+    });
   });
 });
 
