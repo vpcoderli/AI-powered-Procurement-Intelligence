@@ -8,6 +8,7 @@ const adminOnlyRoutes = [
   "../../app/api/admin/config/route.ts",
   "../../app/api/admin/config/[id]/route.ts",
   "../../app/api/admin/data-sources/batch/route.ts",
+  "../../app/api/admin/platform-reviews/route.ts",
   "../../app/api/admin/subscriptions/reconcile/route.ts",
   "../../app/api/admin/users/route.ts",
   "../../app/api/admin/users/[id]/route.ts",

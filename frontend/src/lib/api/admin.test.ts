@@ -19,6 +19,8 @@ import {
   runStateCrawlersNow,
   scheduleAdminBillingDunning,
   checkAdminDataSourceHealth,
+  createAdminPlatformReview,
+  listAdminPlatformReviews,
   precheckAdminDataSource,
   reconcileAdminSubscriptions,
   requestAdminSourcePrechecks,
@@ -450,6 +452,81 @@ describe("admin API client", () => {
       status: 400,
       code: "INVALID_REQUEST",
       message: "pass sourceIds, or providerFamily together with pending: true",
+    });
+  });
+
+  it("lists platform reviews together with the effective review per platform", async () => {
+    const review = {
+      id: "prv_1",
+      providerFamily: "bidnet",
+      tosUrl: "https://www.bidnetdirect.com/tsandcs",
+      tosReviewedAt: "2026-09-29",
+      robotsUrl: "https://www.bidnetdirect.com/robots.txt",
+      robotsCheckedAt: "2026-09-29T07:00:00.000Z",
+      robotsSummary: "list and detail paths allowed",
+      accessBoundary: "只读公开列表与详情页；不登录、不取会员内容、不绕 WAF",
+      reviewer: "apsi.lily@gmail.com",
+      legalOpinionReference: null,
+      reviewedAt: "2026-09-29T08:00:00.000Z",
+      nextReviewAt: "2027-09-29",
+      notes: null,
+      createdBy: "admin_1",
+      createdAt: "2026-09-29T08:00:00.000Z",
+    };
+    const body = { reviews: [review], effective: { bidnet: { status: "valid", review } } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(listAdminPlatformReviews()).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/platform-reviews");
+  });
+
+  it("records a platform review", async () => {
+    const input = {
+      providerFamily: "bidnet",
+      tosUrl: "https://www.bidnetdirect.com/tsandcs",
+      tosReviewedAt: "2026-09-29",
+      robotsUrl: "https://www.bidnetdirect.com/robots.txt",
+      robotsCheckedAt: "2026-09-29T07:00:00.000Z",
+      robotsSummary: "list and detail paths allowed",
+      reviewer: "apsi.lily@gmail.com",
+      nextReviewAt: "2027-09-29",
+    };
+    const body = { review: { id: "prv_1", ...input } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body, { status: 201 }));
+
+    await expect(createAdminPlatformReview(input)).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/platform-reviews", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  });
+
+  it("surfaces every platform review validation issue verbatim", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse(
+        { error: { code: "INVALID_REQUEST", message: "tosUrl must be an http(s) URL; reviewer is required" } },
+        { status: 400 },
+      ),
+    );
+
+    // The form shows error.message as-is, so the joined issue list must not be paraphrased.
+    await expect(
+      createAdminPlatformReview({
+        providerFamily: "bidnet",
+        tosUrl: "nope",
+        tosReviewedAt: "2026-09-29",
+        robotsUrl: "https://www.bidnetdirect.com/robots.txt",
+        robotsCheckedAt: "2026-09-29T07:00:00.000Z",
+        robotsSummary: "ok",
+        reviewer: "",
+        nextReviewAt: "2027-09-29",
+      }),
+    ).rejects.toMatchObject({
+      name: "AdminApiError",
+      status: 400,
+      code: "INVALID_REQUEST",
+      message: "tosUrl must be an http(s) URL; reviewer is required",
     });
   });
 

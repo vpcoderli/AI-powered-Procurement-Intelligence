@@ -6,6 +6,11 @@ import type {
   UpdateAdminDataSourceInput,
 } from "@/server/admin/data-sources-repository";
 import type {
+  CreatePlatformReviewInput,
+  EffectivePlatformReview,
+  PlatformReview,
+} from "@/server/admin/platform-reviews-repository";
+import type {
   AdminBidQaArchiveStatus,
   AdminBidQaCorrectionField,
   AdminBidQaCorrectionHistoryItem,
@@ -256,6 +261,20 @@ export interface RequestAdminSourcePrechecksInput {
 export interface RequestAdminSourcePrechecksResponse {
   requestedCount: number;
   sourceIds: string[];
+}
+
+/**
+ * Platform compliance reviews (`/api/admin/platform-reviews`, spec 2026-09-24 §7.1): one ledger
+ * row per review of a source platform. `effective` holds each platform's latest review with its
+ * `valid | expired | missing` status; a platform with no row has no key.
+ */
+export type AdminPlatformReview = PlatformReview;
+export type AdminEffectivePlatformReview = EffectivePlatformReview;
+export type CreateAdminPlatformReviewInput = CreatePlatformReviewInput;
+
+export interface AdminPlatformReviewsResponse {
+  reviews: AdminPlatformReview[];
+  effective: Record<string, AdminEffectivePlatformReview>;
 }
 
 /**
@@ -524,6 +543,27 @@ export async function requestAdminSourcePrechecks(input: RequestAdminSourcePrech
   });
 
   return parseResponse<RequestAdminSourcePrechecksResponse>(response);
+}
+
+/** Lists every platform review plus each platform's effective review. Any admin-console role. */
+export async function listAdminPlatformReviews() {
+  const response = await fetch("/api/admin/platform-reviews");
+
+  return parseResponse<AdminPlatformReviewsResponse>(response);
+}
+
+/**
+ * Records a platform review (admin only, CSRF-checked). The newest `reviewedAt` becomes the
+ * platform's effective review. A 400 carries every validation issue joined by "; " in `message`.
+ */
+export async function createAdminPlatformReview(input: CreateAdminPlatformReviewInput) {
+  const response = await fetch("/api/admin/platform-reviews", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<{ review: AdminPlatformReview }>(response);
 }
 
 export async function listAdminCrawlerLogs() {
