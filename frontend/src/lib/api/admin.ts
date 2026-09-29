@@ -5,6 +5,7 @@ import type {
   AdminLiveSourceHealth,
   UpdateAdminDataSourceInput,
 } from "@/server/admin/data-sources-repository";
+import type { AdminDataSourceIndexResponse, SourceListFilters } from "@/server/admin/data-source-list-contract";
 import type {
   ApprovalReadinessBucket,
   ApprovalReadinessEntry,
@@ -61,6 +62,8 @@ import type {
 } from "@/server/config/registry";
 
 export type {
+  AdminDataSourceIndexResponse,
+  SourceListFilters,
   AdminBidQaArchiveStatus,
   AdminBidQaCorrectionField,
   AdminBidQaCorrectionHistoryItem,
@@ -447,17 +450,42 @@ export async function getAdminMarketingFunnel() {
   return parseResponse<AdminMarketingFunnelResponse>(response);
 }
 
-function buildQueryString(params: Record<string, string | number | undefined>) {
+type QueryValue = string | number | readonly string[] | null | undefined;
+
+function buildQueryString(params: Record<string, QueryValue>) {
   const searchParams = new URLSearchParams();
 
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== "") {
-      searchParams.set(key, String(value));
+    if (value === undefined || value === null || value === "") continue;
+    if (typeof value === "object") {
+      for (const item of value) {
+        if (item !== "") searchParams.append(key, item);
+      }
+      continue;
     }
+    searchParams.set(key, String(value));
   }
 
   const query = searchParams.toString();
   return query ? `?${query}` : "";
+}
+
+function sourceFilterParams(filters: Partial<SourceListFilters>): Record<string, QueryValue> {
+  return {
+    level: filters.levels,
+    state: filters.states,
+    platform: filters.platforms,
+    approval: filters.approvals,
+    health: filters.healths,
+    q: filters.q,
+  };
+}
+
+/** Spec §5.1 index (admin, operator): every source matching the list's filters. */
+export async function listAdminDataSourceIndex(filters: Partial<SourceListFilters> = {}) {
+  const response = await fetch(`/api/admin/data-sources/index${buildQueryString(sourceFilterParams(filters))}`);
+
+  return parseResponse<AdminDataSourceIndexResponse>(response);
 }
 
 export async function listAdminUsers(filters: ListAdminUsersFilters = {}) {

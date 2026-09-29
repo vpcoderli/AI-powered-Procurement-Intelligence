@@ -14,6 +14,7 @@ import {
   listAdminNotifications,
   listAdminCrawlerLogs,
   listAdminBidQaItems,
+  listAdminDataSourceIndex,
   listAdminDataSources,
   listAdminUserAuditLogs,
   listAdminUsers,
@@ -62,6 +63,14 @@ describe("admin API client", () => {
 
     await expect(listAdminDataSources()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources");
+  });
+
+  it("requests the source index with repeated filter parameters", async () => {
+    const body = { items: [], total: 0, truncated: false };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(listAdminDataSourceIndex({ levels: ["county", "city"], states: ["CO"], q: "den" })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources/index?level=county&level=city&state=CO&q=den");
   });
 
   it("gets admin risk checklist report", async () => {
