@@ -12,10 +12,8 @@ import {
   UserRound,
   Route,
   BookOpen,
-  Database,
   LogOut,
   LogIn,
-  ServerCog,
   UserPlus,
 } from "lucide-react"
 import { useLanguage } from "@/lib/i18n/LanguageContext"
@@ -33,6 +31,8 @@ import {
   SidebarMenuItem,
   SidebarHeader,
 } from "@/components/ui/sidebar"
+import { AdminSidebarTree } from "@/components/layout/admin-sidebar-tree"
+import { isAdminConsoleRole, isAdminPath } from "@/components/admin/admin-nav"
 
 export function AppSidebar() {
   const { t } = useLanguage();
@@ -101,24 +101,16 @@ export function AppSidebar() {
   const adminItems = [
     ...ordinaryItems,
     {
-      title: t("admin.title"),
+      title: t("admin.nav_root"),
       url: "/admin",
       icon: ShieldCheck,
-    },
-    {
-      title: t("admin.sources"),
-      url: "/admin#data-sources",
-      icon: Database,
-    },
-    {
-      title: t("admin.config"),
-      url: "/admin#configuration",
-      icon: ServerCog,
     },
   ];
 
   const authenticatedItems = isAdminUser ? adminItems : ordinaryItems;
   const items = user ? authenticatedItems : anonymousItems;
+  const adminRole = isAdminUser && user && isAdminConsoleRole(user.role) ? user.role : null;
+  const showAdminTree = adminRole !== null && isAdminPath(pathname);
 
   return (
     <Sidebar className="winbids-sidebar border-r-0 bg-transparent">
@@ -134,30 +126,34 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel className="text-white/50">{t('common.application')}</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {items.map((item) => {
-                const itemPath = item.url.split(/[?#]/)[0];
-                const active = itemPath === "/" ? pathname === "/" : pathname.startsWith(itemPath);
-                return (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton
-                      className={`winbids-sidebar-link ${active ? "winbids-sidebar-link-active" : ""}`}
-                      render={
-                        <Link href={item.url}>
-                          <item.icon />
-                          <span>{item.title}</span>
-                        </Link>
-                      }
-                    />
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {showAdminTree && adminRole ? (
+          <AdminSidebarTree role={adminRole} pathname={pathname ?? ""} />
+        ) : (
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-white/50">{t('common.application')}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {items.map((item) => {
+                  const itemPath = item.url.split(/[?#]/)[0];
+                  const active = itemPath === "/" ? pathname === "/" : pathname.startsWith(itemPath);
+                  return (
+                    <SidebarMenuItem key={item.title}>
+                      <SidebarMenuButton
+                        className={`winbids-sidebar-link ${active ? "winbids-sidebar-link-active" : ""}`}
+                        render={
+                          <Link href={item.url}>
+                            <item.icon />
+                            <span>{item.title}</span>
+                          </Link>
+                        }
+                      />
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
       <SidebarFooter className="px-4 pb-5">
         <SidebarMenu>

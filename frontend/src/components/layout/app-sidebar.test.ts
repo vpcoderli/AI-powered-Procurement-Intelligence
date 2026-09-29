@@ -29,25 +29,25 @@ describe("app sidebar", () => {
     expect(sidebar).toContain("ordinaryItems");
     expect(sidebar).toContain("const authenticatedItems = isAdminUser ? adminItems : ordinaryItems");
     expect(sidebar).toContain("const isAdminUser = user ? ADMIN_CONSOLE_ROLES.includes(user.role");
-    expect(ordinaryMenuBlock).not.toContain("admin.title");
-    expect(ordinaryMenuBlock).not.toContain("admin.sources");
-    expect(ordinaryMenuBlock).not.toContain("admin.config");
+    expect(ordinaryMenuBlock).not.toContain("admin.nav_root");
+    expect(ordinaryMenuBlock).not.toContain("/admin");
   });
 
-  it("adds a distinct admin operations cluster for admin console roles", () => {
+  it("gives admin-console users one admin entry and the admin tree under /admin", () => {
     const sidebar = readFileSync(new URL("app-sidebar.tsx", import.meta.url), "utf8");
-    const adminPage = readFileSync(new URL("../../app/admin/page.tsx", import.meta.url), "utf8");
+    const tree = readFileSync(new URL("admin-sidebar-tree.tsx", import.meta.url), "utf8");
 
     expect(sidebar).toContain("adminItems");
-    expect(sidebar).toContain('title: t("admin.title")');
-    expect(sidebar).toContain('title: t("admin.sources")');
-    expect(sidebar).toContain('title: t("admin.config")');
-    expect(sidebar).toContain('url: "/admin#data-sources"');
-    expect(sidebar).toContain('url: "/admin#configuration"');
-    expect(adminPage).toContain('id="data-sources"');
-    expect(adminPage).toContain('id="configuration"');
-    expect(sidebar).toContain("ServerCog");
-    expect(sidebar).toContain("Database");
+    expect(sidebar).toContain('title: t("admin.nav_root")');
+    expect(sidebar).toContain('url: "/admin"');
+    expect(sidebar).not.toContain("/admin#data-sources");
+    expect(sidebar).not.toContain("/admin#configuration");
+    expect(sidebar).toContain("isAdminPath(pathname)");
+    expect(sidebar).toContain("<AdminSidebarTree");
+    expect(tree).toContain("visibleAdminNav(role)");
+    expect(tree).toContain("isActiveAdminItem(");
+    expect(tree).toContain("SidebarMenuSub");
+    expect(tree).toContain('t("admin.nav_backToApp")');
   });
 
   it("provides a visible authenticated logout action that clears the session and returns to login", () => {
