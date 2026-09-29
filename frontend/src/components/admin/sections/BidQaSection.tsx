@@ -17,7 +17,7 @@ import {
   type AdminBidQaReviewStatus,
 } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
-import { compactErrorMessage, endOfDayIsoFromDateInput, formatDate, formatDateInputValue } from "../admin-format";
+import { compactErrorMessage, endOfDayIsoFromDateInput, formatBidDate, formatDate, formatDateInputValue } from "../admin-format";
 import { useAdminSession } from "../admin-session";
 import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
 import { useAdminResource } from "../use-admin-resource";
@@ -548,7 +548,7 @@ export function BidQaSection() {
                         {displayStatusLabel(t, item.displayStatus)}
                       </Badge>
                     </TableCell>
-                    <TableCell>{formatDate(item.deadlineDate)}</TableCell>
+                    <TableCell>{formatBidDate(item.deadlineDate)}</TableCell>
                     {canRunOperations && (
                       <TableCell className="text-right">
                         <div className="flex flex-wrap justify-end gap-2">

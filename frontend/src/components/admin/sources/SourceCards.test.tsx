@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -81,6 +82,43 @@ describe("SourceComplianceCard", () => {
     expect(html).toContain(admin.complianceLedger);
     expect(html).toContain(admin.tosReviewed_no);
     expect(html).not.toContain(admin.sourceApprovalHistory);
+    expect(html).not.toContain(admin.complianceReviewDue);
+  });
+
+  // Every stored review due date is a YYYY-MM-DD day (ledgered approval copies the platform review's next_review_at).
+  // formatDate printed 2027-09-16 as "Sep 16, 08:00 AM": no year, a midnight UTC shown as 08:00 in UTC+8, and the
+  // day before west of UTC.
+  it("prints the review due date as the day it is: with its year, without a time and in any viewer's zone", () => {
+    const previous = process.env.TZ;
+    try {
+      for (const zone of ["Asia/Shanghai", "UTC", "America/Los_Angeles", "Pacific/Honolulu", "Pacific/Kiritimati"]) {
+        process.env.TZ = zone;
+        const html = text(render(<SourceComplianceCard source={source({ complianceReviewDueAt: "2027-09-16" })} />));
+
+        expect(html, zone).toContain(`${admin.complianceReviewDue}: 2027-09-16</div>`);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.TZ;
+      else process.env.TZ = previous;
+    }
+  });
+
+  it("prints a review due date stored as a timestamp as its date, and any other text as stored", () => {
+    const due = (complianceReviewDueAt: string) => text(render(<SourceComplianceCard source={source({ complianceReviewDueAt })} />));
+
+    expect(due("2027-01-15T00:00:00.000Z")).toContain(`${admin.complianceReviewDue}: 2027-01-15</div>`);
+    expect(due("2027-01-15T23:59:59.000Z")).toContain(`${admin.complianceReviewDue}: 2027-01-15</div>`);
+    expect(due("2027-01-15 08:00:00")).toContain(`${admin.complianceReviewDue}: 2027-01-15</div>`);
+    expect(due("next spring")).toContain(`${admin.complianceReviewDue}: next spring</div>`);
+  });
+
+  it("prints the review due date with the shared date-only label and keeps formatDate for the event times", () => {
+    const card = readFileSync(new URL("SourceComplianceCard.tsx", import.meta.url), "utf8");
+
+    expect(card).toContain("platformReviewDateLabel(source.complianceReviewDueAt)");
+    expect(card).not.toContain("formatDate(source.complianceReviewDueAt");
+    // An approval event's createdAt is a real timestamp.
+    expect(card).toContain("formatDate(event.createdAt)");
   });
 });
 

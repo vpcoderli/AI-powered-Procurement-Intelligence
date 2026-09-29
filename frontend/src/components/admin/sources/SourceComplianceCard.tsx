@@ -4,12 +4,17 @@ import { Badge } from "@/components/ui/badge";
 import type { AdminDataSource } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { formatDate } from "../admin-format";
+import { platformReviewDateLabel } from "../PlatformReviewsPanel";
 import { robotsTxtStatusLabel, robotsTxtTone, sourceApprovalActionLabel, tosReviewedTone } from "./source-labels";
 
 /**
  * The compliance ledger of one source and its approval history: every event the API returns (the newest
  * five), each with its time, its actor and the reason written with it. The card has no width or outer
  * margin of its own; the detail page's tab spaces it.
+ *
+ * The review due date is a calendar day (ledgered approval copies the platform review's next_review_at), so it is
+ * printed the way the onboarding page prints a review date, not as a timestamp: formatDate would add a midnight
+ * time, drop the year and show the day before west of UTC.
  */
 export function SourceComplianceCard({ source }: { source: AdminDataSource }) {
   const { t } = useLanguage();
@@ -43,7 +48,7 @@ export function SourceComplianceCard({ source }: { source: AdminDataSource }) {
         )}
         {source.complianceReviewDueAt && (
           <div className="mt-1">
-            {t("admin.complianceReviewDue")}: {formatDate(source.complianceReviewDueAt)}
+            {t("admin.complianceReviewDue")}: {platformReviewDateLabel(source.complianceReviewDueAt)}
           </div>
         )}
       </div>

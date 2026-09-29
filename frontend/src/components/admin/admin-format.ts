@@ -1,14 +1,25 @@
 import type { AdminCrawlerLog } from "@/lib/api/admin";
 
+/**
+ * A timestamp as month, day and time in the viewer's zone. It never throws: Intl's format() raises a RangeError on
+ * an Invalid Date, and one such value takes the whole page down, so a value that is not a date (a portal's own
+ * text, an epoch written as a string) is printed as stored, trimmed, and a missing or blank one as "-".
+ *
+ * This is for moments (created, started, checked). A calendar day has no time and no zone: print a bid's
+ * published or deadline value with formatBidDate and a review date with platformReviewDateLabel instead.
+ */
 export function formatDate(value: string | null) {
   if (!value) return "-";
+
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return String(value).trim() || "-";
 
   return new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(value));
+  }).format(date);
 }
 
 const ISO_DAY = /^(\d{4})-(\d{2})-(\d{2})$/;

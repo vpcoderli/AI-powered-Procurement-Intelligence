@@ -101,6 +101,53 @@ describe("bid dates", () => {
   });
 });
 
+/** A timestamp as formatDate prints it: month, day and time in the viewer's zone and locale, and no year. */
+const timestampLabel = (iso: string) =>
+  new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
+
+describe("formatDate", () => {
+  it("formats a valid timestamp as month, day and time, as it always has", () => {
+    for (const iso of ["2026-09-28T12:52:06.313Z", "2026-07-08T20:12:00.000+00:00", "2027-01-15T00:00:00.000Z", "2026-09-30T20:00:00"]) {
+      expect(formatDate(iso), iso).toBe(timestampLabel(iso));
+    }
+  });
+
+  // Intl's format() throws "RangeError: Invalid time value" on an Invalid Date, and one such value took the whole page down.
+  // A bid's published or deadline value is the portal's own text, so it can be anything.
+  it("returns a value that is not a date as stored, trimmed, instead of throwing", () => {
+    for (const raw of ["TBD", "next spring", "13/01/2026", "10/12/2026 3:30:00PM EST", "20260831"]) {
+      expect(new Date(raw).getTime(), `${raw} is not a date`).toBeNaN();
+      expect(() => formatDate(raw), raw).not.toThrow();
+      expect(formatDate(raw), raw).toBe(raw);
+    }
+    expect(formatDate("  next spring \n")).toBe("next spring");
+  });
+
+  it("does not throw on an epoch written as a string, and shows it as stored", () => {
+    // Only new Date(1788984000000), the number, reads an epoch; the same digits as a string are an Invalid Date.
+    expect(new Date("1788984000000").getTime()).toBeNaN();
+    expect(() => formatDate("1788984000000")).not.toThrow();
+    expect(formatDate("1788984000000")).toBe("1788984000000");
+    expect(formatDate("1788984000")).toBe("1788984000");
+  });
+
+  it("never throws, whatever a portal wrote", () => {
+    const hostile = [
+      "Aug 31, 2026 @ 02:00 PM", "2026-02-31", "2026-13-45", "Invalid Date", "NaN", "undefined", "null", "0", "-1", "\u0000",
+      "9".repeat(400), "x".repeat(10_000), "<script>alert(1)</script>", "😀", "２０２６-０９-０１", "+275760-09-13T00:00:01.000Z",
+    ];
+    for (const raw of hostile) {
+      expect(() => formatDate(raw), raw).not.toThrow();
+      expect(formatDate(raw), raw).toEqual(expect.any(String));
+      expect(formatDate(raw), raw).not.toBe("");
+    }
+  });
+
+  it("keeps a dash for a value that is missing or blank", () => {
+    for (const empty of [null, "", "   ", "\n\t "]) expect(formatDate(empty), JSON.stringify(empty)).toBe("-");
+  });
+});
+
 describe("admin formatters", () => {
   it("formats dates and date inputs", () => {
     expect(formatDate(null)).toBe("-");

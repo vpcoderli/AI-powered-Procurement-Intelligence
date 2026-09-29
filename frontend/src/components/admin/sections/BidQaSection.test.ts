@@ -50,6 +50,17 @@ describe("bid QA section", () => {
     expect(source).not.toContain("setRunMessage");
   });
 
+  // A bid's deadline is stored as the portal gave it: "2026-07-10" for most rows. formatDate printed that as "Jul 10, 08:00 AM"
+  // (no year, a midnight UTC shown as 08:00 in UTC+8, and the day before west of UTC); formatBidDate keeps a calendar day a day.
+  it("prints the deadline column with formatBidDate and keeps formatDate for the correction's own time", () => {
+    const source = readFileSync(new URL("BidQaSection.tsx", import.meta.url), "utf8");
+    expect(source).toMatch(/import \{[^}]*\bformatBidDate\b[^}]*\} from "\.\.\/admin-format";/);
+    expect(source).toContain("<TableCell>{formatBidDate(item.deadlineDate)}</TableCell>");
+    expect(source).not.toContain("formatDate(item.deadlineDate)");
+    // A correction's correctedAt is a real timestamp.
+    expect(source).toContain("formatDate(correction.correctedAt)");
+  });
+
   // Moved from src/app/admin/page.test.ts ("renders user access controls alongside crawler operations").
   it("keeps the bid QA review controls it took over from the dashboard page", () => {
     const source = readFileSync(new URL("BidQaSection.tsx", import.meta.url), "utf8");
