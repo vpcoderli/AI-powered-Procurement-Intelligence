@@ -1724,5 +1724,10 @@ export const zh: Dictionary = {
     nav_notifications: "通知投递",
     nav_growth: "增长漏斗",
     nav_config: "配置",
+    breadcrumbLabel: "面包屑导航",
+    forbiddenPageTitle: "当前角色无权访问此页面",
+    forbiddenPageDescription: "你的后台角色无法打开此页面，请从菜单中选择可访问的页面。",
+    backToOverview: "返回概览",
+    sectionRefreshFailed: "刷新失败，显示的是上次加载的数据。",
   }
 };

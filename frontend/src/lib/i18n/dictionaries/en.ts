@@ -1722,6 +1722,11 @@ export const en = {
     nav_notifications: "Notification delivery",
     nav_growth: "Growth funnel",
     nav_config: "Configuration",
+    breadcrumbLabel: "Breadcrumb",
+    forbiddenPageTitle: "This page is not available for your role",
+    forbiddenPageDescription: "Your back-office role cannot open this page. Pick a page you can use from the menu.",
+    backToOverview: "Back to overview",
+    sectionRefreshFailed: "Refresh failed; showing the last loaded data.",
   }
 };
 

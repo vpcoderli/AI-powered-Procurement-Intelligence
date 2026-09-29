@@ -83,6 +83,15 @@ import {
 } from "@/lib/api/admin";
 import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlements";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import {
+  compactErrorMessage,
+  endOfDayIsoFromDateInput,
+  fallbackMessage,
+  formatDate,
+  formatDateInputValue,
+  statusTone,
+} from "@/components/admin/admin-format";
+import { AdminAccessState, AdminSectionStateCard, SummaryCard } from "@/components/admin/AdminStateCards";
 import { JurisdictionBatchRunPanel } from "@/components/admin/JurisdictionBatchRunPanel";
 import { CrawlerConfigPanel } from "@/components/admin/CrawlerConfigPanel";
 import { SourcePrecheckPanel } from "@/components/admin/SourcePrecheckPanel";
@@ -397,44 +406,6 @@ function stateCrawlerSourceIdFor(source: AdminDataSource) {
   return source.crawlerSourceId ?? stateCrawlerSourceIdForAdminSource(source) ?? subStateSourceId;
 }
 
-function formatDate(value: string | null) {
-  if (!value) return "-";
-
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-
-function formatDateInputValue(value: string | null) {
-  if (!value) return "";
-
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return "";
-
-  return date.toISOString().slice(0, 10);
-}
-
-function expiresAtFromDateInput(value: string) {
-  if (!value) return null;
-
-  const date = new Date(`${value}T23:59:59.000Z`);
-  if (!Number.isFinite(date.getTime())) return null;
-
-  return date.toISOString();
-}
-
-function deadlineFromDateInput(value: string) {
-  if (!value) return null;
-
-  const date = new Date(`${value}T23:59:59.000Z`);
-  if (!Number.isFinite(date.getTime())) return null;
-
-  return date.toISOString();
-}
-
 function bidQaCorrectionDraftFor(item: AdminBidQaItem, drafts: Record<string, BidQaCorrectionDraft>) {
   return drafts[item.id] ?? {
     title: item.title,
@@ -456,13 +427,6 @@ function featureOverrideFormValues(
 
 function latestRunAt(source: AdminDataSource) {
   return source.latestLog?.finishedAt ?? source.latestLog?.startedAt ?? source.lastSuccessAt ?? source.lastFailureAt;
-}
-
-function statusTone(status: string | null | undefined) {
-  if (status === "success") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (status === "running" || status === "locked") return "border-sky-200 bg-sky-50 text-sky-700";
-  if (status) return "border-rose-200 bg-rose-50 text-rose-700";
-  return "border-slate-200 bg-slate-50 text-slate-600";
 }
 
 function liveSourceHealthTone(status: string | null | undefined) {
@@ -837,16 +801,6 @@ function formatCrawlerBaseUrl(value: string | null) {
   }
 }
 
-function compactErrorMessage(message: string) {
-  return message.length > 96 ? `${message.slice(0, 93)}...` : message;
-}
-
-function fallbackMessage(log: AdminCrawlerLog | null | undefined) {
-  if (!log?.fallbackSource) return null;
-
-  return log.fallbackReason ? compactErrorMessage(log.fallbackReason) : null;
-}
-
 function formatAuditChanges(log: AdminUserAuditLog) {
   if (log.changes.length === 0) return "-";
 
@@ -869,26 +823,6 @@ function formatAuditChanges(log: AdminUserAuditLog) {
       return `${change.featureKey}: ${formatOverrideState(change.before)} -> ${formatOverrideState(change.after)}`;
     })
     .join(", ");
-}
-
-function SummaryCard({
-  label,
-  value,
-  icon: Icon,
-}: {
-  label: string;
-  value: number;
-  icon: typeof Database;
-}) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <span className="text-sm font-medium text-slate-500">{label}</span>
-        <Icon size={18} className="text-slate-400" />
-      </div>
-      <div className="mt-3 text-2xl font-semibold tracking-normal text-slate-950">{value}</div>
-    </div>
-  );
 }
 
 function formatConfigScope(entry: AdminConfigRegistryEntry) {
@@ -1535,57 +1469,6 @@ function RiskCheck({
   );
 }
 
-function AdminAccessState({
-  code,
-  title,
-  description,
-  action,
-}: {
-  code: "loading" | "permission_denied";
-  title: string;
-  description: string;
-  action?: {
-    href: string;
-    label: string;
-  };
-}) {
-  return (
-    <main className="mx-auto flex w-full max-w-3xl flex-col gap-5 pb-8">
-      <UniversalState
-        actions={action ? [{ href: action.href, label: action.label }] : undefined}
-        className="bg-white p-6"
-        code={code}
-        message={description}
-        title={title}
-      />
-    </main>
-  );
-}
-
-function AdminSectionStateCard({
-  action,
-  actionLabel,
-  code,
-  message,
-  title,
-}: {
-  action?: () => void;
-  actionLabel: string;
-  code: "error" | "loading";
-  message: string;
-  title: string;
-}) {
-  return (
-    <UniversalState
-      actions={action ? [{ label: actionLabel, onClick: action }] : undefined}
-      className="bg-white"
-      code={code}
-      message={message}
-      title={title}
-    />
-  );
-}
-
 export default function AdminPage() {
   const { t } = useLanguage();
   const { user, isLoading: isAuthLoading } = useAuth();
@@ -2179,7 +2062,7 @@ export default function AdminPage() {
     updateAdminBidQaReview(item.id, {
       corrections: {
         title: draft.title.trim(),
-        deadlineDate: deadlineFromDateInput(draft.deadlineDate),
+        deadlineDate: endOfDayIsoFromDateInput(draft.deadlineDate),
       },
       note: "Admin QA correction",
     })
@@ -2343,7 +2226,7 @@ export default function AdminPage() {
       featureKey: featureOverrideFeature,
       isEnabled,
       reason: isEnabled === null ? null : reason || null,
-      expiresAt: isEnabled === null ? null : expiresAtFromDateInput(featureOverrideExpiresAt),
+      expiresAt: isEnabled === null ? null : endOfDayIsoFromDateInput(featureOverrideExpiresAt),
     })
       .then((response) => {
         setFeatureOverrideData(response);
