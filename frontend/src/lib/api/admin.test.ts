@@ -10,6 +10,7 @@ import {
   getAdminOverview,
   getAdminRiskChecklist,
   getAdminBidQaCorrections,
+  getAdminDataSourceDetail,
   getAdminMarketingFunnel,
   listAdminUserFeatureOverrides,
   listAdminNotifications,
@@ -701,11 +702,41 @@ describe("admin API client", () => {
   });
 
   it("lists crawler logs", async () => {
-    const body = { logs: [{ id: "log_1" }] };
+    const body = { logs: [{ id: "log_1" }], nextCursor: null };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));
 
     await expect(listAdminCrawlerLogs()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/admin/crawler-logs");
+  });
+
+  it("filters crawler logs by source and pages them with the cursor the server handed back", async () => {
+    const body = { logs: [{ id: "log_8" }], nextCursor: { before: "2026-09-28T00:00:00.000Z", beforeId: "log_8" } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(
+      listAdminCrawlerLogs({ sources: ["a", "b"], before: "2026-09-29T00:00:00.000Z", beforeId: "log_9", limit: 20 }),
+    ).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/admin/crawler-logs?limit=20&source=a&source=b&before=2026-09-29T00%3A00%3A00.000Z&beforeId=log_9",
+    );
+  });
+
+  it("gets the detail of one data source, encoding its id", async () => {
+    const body = { source: { id: "a b" }, logSourceKeys: ["a b"], states: {}, readiness: null, bids: { counts: {}, latest: [] } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(getAdminDataSourceDetail("a b")).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources/a%20b");
+  });
+
+  it("surfaces an unknown source as DATA_SOURCE_NOT_FOUND", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ error: { code: "DATA_SOURCE_NOT_FOUND", message: "Data source was not found." } }, { status: 404 }));
+
+    await expect(getAdminDataSourceDetail("missing")).rejects.toMatchObject({
+      name: "AdminApiError",
+      status: 404,
+      code: "DATA_SOURCE_NOT_FOUND",
+    });
   });
 
   it("lists admin bid QA items with filters", async () => {

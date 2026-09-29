@@ -6,6 +6,7 @@ import type {
   UpdateAdminDataSourceInput,
 } from "@/server/admin/data-sources-repository";
 import type { AdminDataSourceIndexResponse, SourceListFilters } from "@/server/admin/data-source-list-contract";
+import type { AdminDataSourceDetail } from "@/server/admin/source-detail";
 import type {
   AdminOverview,
   AdminOverviewBids,
@@ -73,6 +74,7 @@ import type {
 } from "@/server/config/registry";
 
 export type {
+  AdminDataSourceDetail,
   AdminDataSourceIndexResponse,
   SourceListFilters,
   AdminOverview,
@@ -175,8 +177,15 @@ const ADMIN_API_ERROR_CODES: readonly AdminApiErrorCode[] = [
   "INTERNAL_ERROR",
 ];
 
+/** Where the next page of crawler logs starts: the (`started_at`, `id`) of the last row of this page. */
+export interface AdminCrawlerLogsCursor {
+  before: string;
+  beforeId: string;
+}
+
 export interface AdminCrawlerLogsResponse {
   logs: AdminCrawlerLog[];
+  nextCursor: AdminCrawlerLogsCursor | null;
 }
 
 export interface AdminRiskChecklistResponse {
@@ -668,10 +677,26 @@ export async function createAdminPlatformReview(input: CreateAdminPlatformReview
   return parseResponse<{ review: AdminPlatformReview }>(response);
 }
 
-export async function listAdminCrawlerLogs() {
-  const response = await fetch("/api/admin/crawler-logs");
+export async function listAdminCrawlerLogs(
+  options: { limit?: number; sources?: readonly string[]; before?: string; beforeId?: string } = {},
+) {
+  const response = await fetch(
+    `/api/admin/crawler-logs${buildQueryString({
+      limit: options.limit,
+      source: options.sources,
+      before: options.before,
+      beforeId: options.beforeId,
+    })}`,
+  );
 
   return parseResponse<AdminCrawlerLogsResponse>(response);
+}
+
+/** Spec §6.1: one source with its run keys, states, readiness and bids. Any admin-console role. */
+export async function getAdminDataSourceDetail(id: string) {
+  const response = await fetch(`/api/admin/data-sources/${encodeURIComponent(id)}`);
+
+  return parseResponse<AdminDataSourceDetail>(response);
 }
 
 export async function listAdminBidQaItems(

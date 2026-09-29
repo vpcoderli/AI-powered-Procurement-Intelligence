@@ -9,6 +9,8 @@ import {
   type MysqlDataSourcesStore,
   type UpdateAdminDataSourceInput,
 } from "@/server/admin/data-sources-repository";
+import type { MysqlPlatformReviewsStore } from "@/server/admin/platform-reviews-repository";
+import { getAdminDataSourceDetail, getAdminDataSourceDetailFromMysql } from "@/server/admin/source-detail";
 import type { AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import type { SourceApprovalStatus, SourceLegalReviewStatus } from "@/lib/state-crawler-sources";
@@ -231,5 +233,27 @@ export function createAdminDataSourcePatch(database?: AppDatabase, mysql?: Mysql
     }
   };
 }
+
+/** Spec §6.1: the full source with its run keys, states, readiness and bids. Console read. */
+export function createAdminDataSourceGet(database?: AppDatabase, mysql?: MysqlDataSourcesStore & MysqlPlatformReviewsStore) {
+  const shouldUseMysqlRuntime = () => Boolean(mysql) || (!database && isMysqlDatabaseUrlConfigured());
+
+  return async function GET(request: Request, context: RouteContext) {
+    try {
+      const resolvedDb = await resolveDatabase(database);
+      await requireAdminAccess(resolvedDb, request, { roles: ["admin", "operator", "support"] });
+      const { id } = await context.params;
+      return NextResponse.json(
+        shouldUseMysqlRuntime()
+          ? await getAdminDataSourceDetailFromMysql(mysql ?? resolveMysqlPool(), id)
+          : await getAdminDataSourceDetail(resolvedDb, id),
+      );
+    } catch (error) {
+      return routeError(error);
+    }
+  };
+}
+
+export const GET = createAdminDataSourceGet();
 
 export const PATCH = createAdminDataSourcePatch();

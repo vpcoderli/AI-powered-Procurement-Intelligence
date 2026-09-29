@@ -41,7 +41,7 @@ function notes(baseUrl: string | null, verdict = "empty") {
 function source(overrides: Partial<AdminDataSource> = {}): AdminDataSource {
   return {
     id: "bidnet_mi_a", label: "A", issuerType: "county", stateCode: "MI", baseUrl: URL_A, isEnabled: true, cadence: "daily", fetchConfig: {},
-    jurisdictionLevel: "county", jurisdictionName: "A County", lastSuccessAt: null, lastFailureAt: null, consecutiveFailures: 0,
+    jurisdictionLevel: "county", jurisdictionName: "A County", fipsCode: null, lastSuccessAt: null, lastFailureAt: null, consecutiveFailures: 0,
     crawlerSourceId: null, crawlerAdapterKind: "none", crawlerMaturity: "none", crawlerCapabilities: [], crawlerBaseUrl: null,
     sourceAuthority: null, trustStatus: null, evidenceMode: null, validityNotes: null, providerFamily: "bidnet", accessMode: "public",
     sourceType: "portal", sourceConfidence: "unknown", activationStatus: "inactive", requiresBrowser: false, requiresManual: false,

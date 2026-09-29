@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, isNotNull, notInArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, lt, notInArray, or, type SQL } from "drizzle-orm";
 import {
   getStateCrawlerSourceMetadata,
   STATE_CRAWLER_SOURCE_IDS_BY_STATE,
@@ -14,7 +14,7 @@ import {
   type SourceTrustStatus,
 } from "@/lib/state-crawler-sources";
 import type { AppDatabase } from "@/server/db/client";
-import { mysqlExecute, mysqlSelectMany, mysqlSelectOne } from "@/server/db/mysql-runtime";
+import { expandMysqlInClause, mysqlExecute, mysqlSelectMany, mysqlSelectOne } from "@/server/db/mysql-runtime";
 import { crawlerLogs, dataSources, sourceApprovalEvents } from "@/server/db/schema";
 import { writeAuditEvent, writeAuditEventFromMysql } from "@/server/events/event-log";
 import {
@@ -59,6 +59,7 @@ export interface AdminDataSource {
   fetchConfig: Record<string, unknown>;
   jurisdictionLevel: string | null;
   jurisdictionName: string | null;
+  fipsCode: string | null;
   lastSuccessAt: string | null;
   lastFailureAt: string | null;
   consecutiveFailures: number;
@@ -183,6 +184,25 @@ interface MysqlAdminCrawlerLogRow {
   metadata: string | null;
 }
 
+/** The crawler_logs columns of every MySQL log read, aliased to `MysqlAdminCrawlerLogRow` (kept on one line so a query reads `… FROM crawler_logs WHERE …`). */
+const MYSQL_CRAWLER_LOG_COLUMNS = [
+  "id",
+  "source",
+  "run_id AS runId",
+  "status",
+  "started_at AS startedAt",
+  "finished_at AS finishedAt",
+  "duration_ms AS durationMs",
+  "fetched_count AS fetchedCount",
+  "inserted_count AS insertedCount",
+  "updated_count AS updatedCount",
+  "skipped_count AS skippedCount",
+  "failed_count AS failedCount",
+  "error_code AS errorCode",
+  "error_message AS errorMessage",
+  "metadata",
+].join(", ");
+
 export interface MysqlAdminCrawlerLogsReader {
   query: (sql: string, values?: unknown[]) => Promise<[unknown[], unknown?]>;
 }
@@ -296,10 +316,10 @@ function hasComplianceLedgerUpdate(input: UpdateAdminDataSourceInput) {
   );
 }
 
-function crawlerLogKeysForSource(source: typeof dataSources.$inferSelect) {
-  return [CRAWLER_LOG_SOURCE_BY_STATE[source.stateCode], source.label, source.id].filter(
-    (value): value is string => Boolean(value),
-  );
+/** crawler_logs.source values that belong to a row, most specific first. Only a state-portal row owns its state's crawler id (plan decision 10). */
+export function crawlerLogKeysForSource(source: Pick<DataSourceRow, "issuerType" | "stateCode" | "label" | "id">): string[] {
+  const stateCrawlerId = source.issuerType === "state" ? CRAWLER_LOG_SOURCE_BY_STATE[source.stateCode] : undefined;
+  return Array.from(new Set([stateCrawlerId, source.label, source.id].filter((value): value is string => Boolean(value))));
 }
 
 function latestLogForSource(
@@ -346,17 +366,18 @@ function approvalHistoryBySource(rows: SourceApprovalEventRow[]) {
   return grouped;
 }
 
+/** Snapshot keys that belong to a row. Only a state-portal row falls back to its state's key (plan decision 10). */
+function liveHealthCandidates(source: DataSourceRow, crawlerSourceId: string | null): string[] {
+  const stateKeys = source.issuerType === "state" ? [source.stateCode.toLowerCase(), source.stateCode] : [];
+  return [crawlerSourceId, source.id, ...stateKeys].filter((value): value is string => Boolean(value));
+}
+
 function latestLiveHealthForSource(
   source: typeof dataSources.$inferSelect,
   crawlerSourceId: string | null,
   latestLiveHealthBySource: Map<string, LatestLiveSourceHealth>,
 ) {
-  const candidates = [
-    crawlerSourceId,
-    source.id,
-    source.stateCode.toLowerCase(),
-    source.stateCode,
-  ].filter((value): value is string => Boolean(value));
+  const candidates = liveHealthCandidates(source, crawlerSourceId);
 
   for (const candidate of candidates) {
     const health = latestLiveHealthBySource.get(candidate);
@@ -393,12 +414,7 @@ function sourceHealthTrendForSource(
   crawlerSourceId: string | null,
   trendBySource: Map<string, SourceHealthTrend>,
 ) {
-  const candidates = [
-    crawlerSourceId,
-    source.id,
-    source.stateCode.toLowerCase(),
-    source.stateCode,
-  ].filter((value): value is string => Boolean(value));
+  const candidates = liveHealthCandidates(source, crawlerSourceId);
 
   for (const candidate of candidates) {
     const trend = trendBySource.get(candidate);
@@ -673,6 +689,7 @@ function toAdminSource(
     fetchConfig: parseFetchConfigJson(row.fetchConfig),
     jurisdictionLevel: row.jurisdictionLevel ?? null,
     jurisdictionName: row.jurisdictionName ?? null,
+    fipsCode: row.fipsCode ?? null,
     lastSuccessAt: row.lastSuccessAt,
     lastFailureAt: row.lastFailureAt,
     consecutiveFailures: row.consecutiveFailures,
@@ -752,6 +769,7 @@ function dataSourceSelectSql(where = "") {
       fetch_config AS fetchConfig,
       jurisdiction_level AS jurisdictionLevel,
       jurisdiction_name AS jurisdictionName,
+      fips_code AS fipsCode,
       provider_family AS providerFamily,
       access_mode AS accessMode,
       source_type AS sourceType,
@@ -912,6 +930,68 @@ export async function listLocalLedgerSourcesFromMysql(mysql: MysqlDataSourcesSto
     `${dataSourceSelectSql("WHERE jurisdiction_level IS NOT NULL AND jurisdiction_level NOT IN ('federal', 'state')")} ORDER BY label ASC`,
   );
   return rows.map((row) => toAdminSource(row, null));
+}
+
+export interface AdminDataSourceRecord {
+  source: AdminDataSource;
+  /** The crawler_logs.source values this row owns (`crawlerLogKeysForSource`), for filtering its run history. */
+  logSourceKeys: string[];
+}
+
+/** One source with its own latest run, live health and approval history (throws `AdminDataSourceNotFoundError`). */
+export async function getAdminDataSource(db: AppDatabase, id: string): Promise<AdminDataSourceRecord> {
+  const row = db.select().from(dataSources).where(eq(dataSources.id, id)).limit(1).get();
+  if (!row) throw new AdminDataSourceNotFoundError(id);
+
+  const logSourceKeys = crawlerLogKeysForSource(row);
+  const latestLogRow = db
+    .select()
+    .from(crawlerLogs)
+    .where(inArray(crawlerLogs.source, logSourceKeys))
+    .orderBy(desc(crawlerLogs.startedAt), desc(crawlerLogs.id))
+    .limit(1)
+    .get();
+  const approvalHistory = approvalHistoryBySource(
+    db.select().from(sourceApprovalEvents).where(eq(sourceApprovalEvents.sourceId, id)).orderBy(desc(sourceApprovalEvents.createdAt)).all(),
+  );
+  const snapshots = listLiveSourceHealthSnapshots(db, 10);
+
+  return {
+    source: toAdminSource(
+      row,
+      latestLogRow ? toAdminLog(latestLogRow) : null,
+      latestLiveSourceHealthBySource(snapshots.slice(0, 1)),
+      sourceHealthTrendBySource(snapshots),
+      approvalHistory.get(id),
+    ),
+    logSourceKeys,
+  };
+}
+
+export async function getAdminDataSourceFromMysql(mysql: MysqlDataSourcesStore, id: string): Promise<AdminDataSourceRecord> {
+  const row = await mysqlSelectOne<DataSourceRow>(mysql, `${dataSourceSelectSql("WHERE id = ?")} LIMIT 1`, [id]);
+  if (!row) throw new AdminDataSourceNotFoundError(id);
+
+  const logSourceKeys = crawlerLogKeysForSource(row);
+  const keys = expandMysqlInClause(logSourceKeys);
+  const latestLog = await mysqlSelectOne<MysqlAdminCrawlerLogRow>(
+    mysql,
+    `SELECT ${MYSQL_CRAWLER_LOG_COLUMNS} FROM crawler_logs WHERE source IN (${keys.placeholders}) ORDER BY started_at DESC, id DESC LIMIT 1`,
+    keys.values,
+  );
+  const approvalHistory = approvalHistoryBySource(await listSourceApprovalEventsFromMysql(mysql, id));
+  const snapshots = await listLiveSourceHealthSnapshotsFromMysql(mysql, 10);
+
+  return {
+    source: toAdminSource(
+      row,
+      latestLog ? toAdminLogFromMysql(latestLog) : null,
+      latestLiveSourceHealthBySource(snapshots.slice(0, 1)),
+      sourceHealthTrendBySource(snapshots),
+      approvalHistory.get(id),
+    ),
+    logSourceKeys,
+  };
 }
 
 export async function updateAdminDataSource(
@@ -1330,50 +1410,64 @@ function hasGovernanceUpdate(input: UpdateAdminDataSourceInput) {
   );
 }
 
-export async function listAdminCrawlerLogs(
-  db: AppDatabase,
-  options: { limit?: number } = {},
-): Promise<AdminCrawlerLog[]> {
-  const limit = Math.min(Math.max(options.limit ?? 25, 1), 100);
+export interface AdminCrawlerLogsOptions {
+  limit?: number;
+  /** crawler_logs.source values to keep (a source's logSourceKeys); empty or absent keeps every source. */
+  sources?: readonly string[];
+  /** Cursor: rows after (before, beforeId) in `started_at DESC, id DESC` order. */
+  before?: string | null;
+  beforeId?: string | null;
+}
+
+export function normalizeCrawlerLogLimit(limit: number | undefined): number {
+  return Math.min(Math.max(limit ?? 25, 1), 100);
+}
+
+export async function listAdminCrawlerLogs(db: AppDatabase, options: AdminCrawlerLogsOptions = {}): Promise<AdminCrawlerLog[]> {
+  const conditions: SQL[] = [];
+  if (options.sources && options.sources.length > 0) conditions.push(inArray(crawlerLogs.source, [...options.sources]));
+  if (options.before) {
+    const cursor = options.beforeId
+      ? or(lt(crawlerLogs.startedAt, options.before), and(eq(crawlerLogs.startedAt, options.before), lt(crawlerLogs.id, options.beforeId)))
+      : lt(crawlerLogs.startedAt, options.before);
+    if (cursor) conditions.push(cursor);
+  }
 
   return db
     .select()
     .from(crawlerLogs)
-    .orderBy(desc(crawlerLogs.startedAt))
-    .limit(limit)
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .orderBy(desc(crawlerLogs.startedAt), desc(crawlerLogs.id))
+    .limit(normalizeCrawlerLogLimit(options.limit))
     .all()
     .map(toAdminLog);
 }
 
 export async function listAdminCrawlerLogsFromMysql(
   mysql: MysqlAdminCrawlerLogsReader,
-  options: { limit?: number } = {},
+  options: AdminCrawlerLogsOptions = {},
 ): Promise<AdminCrawlerLog[]> {
-  const limit = Math.min(Math.max(options.limit ?? 25, 1), 100);
+  const clauses: string[] = [];
+  const values: unknown[] = [];
+  if (options.sources && options.sources.length > 0) {
+    const sources = expandMysqlInClause(options.sources);
+    clauses.push(`source IN (${sources.placeholders})`);
+    values.push(...sources.values);
+  }
+  if (options.before) {
+    if (options.beforeId) {
+      clauses.push("(started_at < ? OR (started_at = ? AND id < ?))");
+      values.push(options.before, options.before, options.beforeId);
+    } else {
+      clauses.push("started_at < ?");
+      values.push(options.before);
+    }
+  }
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")} ` : "";
   const rows = await mysqlSelectMany<MysqlAdminCrawlerLogRow>(
     mysql,
-    `
-      SELECT
-        id,
-        source,
-        run_id AS runId,
-        status,
-        started_at AS startedAt,
-        finished_at AS finishedAt,
-        duration_ms AS durationMs,
-        fetched_count AS fetchedCount,
-        inserted_count AS insertedCount,
-        updated_count AS updatedCount,
-        skipped_count AS skippedCount,
-        failed_count AS failedCount,
-        error_code AS errorCode,
-        error_message AS errorMessage,
-        metadata
-      FROM crawler_logs
-      ORDER BY started_at DESC
-      LIMIT ?
-    `,
-    [limit],
+    `SELECT ${MYSQL_CRAWLER_LOG_COLUMNS} FROM crawler_logs ${where}ORDER BY started_at DESC, id DESC LIMIT ?`,
+    [...values, normalizeCrawlerLogLimit(options.limit)],
   );
 
   return rows.map(toAdminLogFromMysql);

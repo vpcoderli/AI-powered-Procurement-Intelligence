@@ -6,6 +6,9 @@ import { recordLiveSourceHealthSnapshot } from "@/server/source-validity/health-
 import {
   AdminDataSourceNotFoundError,
   SourceApprovalRequirementsError,
+  crawlerLogKeysForSource,
+  getAdminDataSource,
+  getAdminDataSourceFromMysql,
   isGatedLocalJurisdictionLevel,
   listAdminCrawlerLogs,
   listAdminCrawlerLogsFromMysql,
@@ -14,6 +17,7 @@ import {
   listLocalLedgerSources,
   listLocalLedgerSourcesFromMysql,
   missingApprovalRequirements,
+  normalizeCrawlerLogLimit,
   recordSourcePrecheck,
   recordSourcePrecheckFromMysql,
   updateAdminDataSource,
@@ -1606,3 +1610,279 @@ function fakeEventLogRow(executed: Array<{ sql: string; values: unknown[] }>) {
 
   return Object.fromEntries(EVENT_LOG_INSERT_COLUMNS.map((column, index) => [column, insert.values[index]]));
 }
+
+describe("run and live-health ownership of a source (plan decision 10)", () => {
+  let testDb: TestDatabase;
+
+  beforeEach(async () => {
+    testDb = await createTestDatabase({ seed: false });
+  });
+
+  afterEach(async () => {
+    await testDb.cleanup();
+  });
+
+  function insertSource(id: string, overrides: Partial<typeof dataSources.$inferInsert> = {}) {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id,
+        label: id,
+        issuerType: "county",
+        stateCode: "CA",
+        jurisdictionLevel: "county",
+        providerFamily: "bidnet",
+        isEnabled: 1,
+        cadence: "daily",
+        createdAt: NOW,
+        updatedAt: NOW,
+        ...overrides,
+      })
+      .run();
+  }
+
+  function insertStateAndCounty() {
+    insertSource("ca_state", { label: "California", issuerType: "state", jurisdictionLevel: null, providerFamily: null });
+    insertSource("bidnet_ca_county", { label: "Alameda County", fipsCode: "08031" });
+  }
+
+  /** The same CA snapshot the `latestLiveHealth` test above records. */
+  function recordCaliforniaLiveHealth() {
+    recordLiveSourceHealthSnapshot(
+      testDb.db,
+      {
+        ok: true,
+        checkedAt: "2026-06-01T02:00:00.000Z",
+        summary: { total: 1, healthy: 1, unhealthy: 0, skipped: 0 },
+        results: [
+          {
+            stateCode: "CA",
+            sourceId: "ca_caleprocure",
+            label: "California Cal eProcure",
+            url: "https://caleprocure.ca.gov",
+            sourceAuthority: "official",
+            trustStatus: "verified",
+            status: "healthy",
+            method: "HEAD",
+            httpStatus: 200,
+            statusText: "OK",
+            errorCode: null,
+            errorMessage: null,
+            latencyMs: 311,
+            operationalSeverity: "none",
+            recommendedAction: "none",
+          },
+        ],
+      },
+      "2026-06-01T02:00:01.000Z",
+    );
+  }
+
+  it("does not hand a local row its state's latest run or live health", async () => {
+    insertStateAndCounty();
+    insertCrawlerLog(testDb, { id: "log_ca", source: "ca_caleprocure", status: "success", startedAt: "2026-05-19T01:00:00.000Z" });
+    recordCaliforniaLiveHealth();
+
+    const { sources } = await listAdminDataSources(testDb.db);
+    const state = sources.find((item) => item.id === "ca_state");
+    const county = sources.find((item) => item.id === "bidnet_ca_county");
+
+    expect(state?.latestLog?.source).toBe("ca_caleprocure");
+    expect(state?.latestLiveHealth).not.toBeNull();
+    expect(state?.sourceHealthTrend).not.toBeNull();
+    expect(county?.latestLog).toBeNull();
+    expect(county?.latestLiveHealth).toBeNull();
+    expect(county?.sourceHealthTrend).toBeNull();
+  });
+
+  it("names the crawler_logs.source values a row owns, most specific first", () => {
+    expect(crawlerLogKeysForSource({ issuerType: "state", stateCode: "CA", label: "California", id: "ca_state" })).toEqual([
+      "ca_caleprocure",
+      "California",
+      "ca_state",
+    ]);
+    expect(crawlerLogKeysForSource({ issuerType: "county", stateCode: "CA", label: "Alameda County", id: "bidnet_ca_county" })).toEqual([
+      "Alameda County",
+      "bidnet_ca_county",
+    ]);
+    // A label that repeats the id, and a state without a crawler id, add nothing twice.
+    expect(crawlerLogKeysForSource({ issuerType: "county", stateCode: "CA", label: "bidnet_ca_county", id: "bidnet_ca_county" })).toEqual([
+      "bidnet_ca_county",
+    ]);
+    expect(crawlerLogKeysForSource({ issuerType: "federal", stateCode: "US", label: "SAM.gov", id: "sam_gov" })).toEqual([
+      "SAM.gov",
+      "sam_gov",
+    ]);
+  });
+
+  it("loads one source with its own latest run, its log keys and its approval history (SQLite)", async () => {
+    insertStateAndCounty();
+    insertCrawlerLog(testDb, { id: "log_old", source: "bidnet_ca_county", status: "failure", startedAt: "2026-05-18T00:00:00.000Z" });
+    insertCrawlerLog(testDb, { id: "log_new", source: "bidnet_ca_county", status: "success", startedAt: "2026-05-19T00:00:00.000Z" });
+    // Newer than both, but the state's: the county must not pick it up.
+    insertCrawlerLog(testDb, { id: "log_state", source: "ca_caleprocure", status: "success", startedAt: "2026-05-20T00:00:00.000Z" });
+    testDb.db
+      .insert(sourceApprovalEvents)
+      .values([
+        { id: "event_held", sourceId: "bidnet_ca_county", action: "held", createdAt: "2026-05-10T00:00:00.000Z" },
+        { id: "event_approved", sourceId: "bidnet_ca_county", action: "approved", createdAt: "2026-05-11T00:00:00.000Z" },
+        { id: "event_other", sourceId: "ca_state", action: "approved", createdAt: "2026-05-12T00:00:00.000Z" },
+      ])
+      .run();
+    recordCaliforniaLiveHealth();
+
+    const record = await getAdminDataSource(testDb.db, "bidnet_ca_county");
+
+    expect(record.logSourceKeys).toEqual(["Alameda County", "bidnet_ca_county"]);
+    expect(record.source).toMatchObject({
+      id: "bidnet_ca_county",
+      fipsCode: "08031",
+      latestLog: expect.objectContaining({ id: "log_new", source: "bidnet_ca_county", status: "success" }),
+      latestLiveHealth: null,
+      sourceHealthTrend: null,
+    });
+    expect(record.source.approvalHistory.map((event) => event.action)).toEqual(["approved", "held"]);
+    // The state-portal row owns that state-keyed log and live health; with no fips_code its field reads null, not undefined.
+    await expect(getAdminDataSource(testDb.db, "ca_state")).resolves.toMatchObject({
+      source: {
+        fipsCode: null,
+        latestLog: expect.objectContaining({ id: "log_state", source: "ca_caleprocure" }),
+        latestLiveHealth: expect.objectContaining({ status: "healthy" }),
+      },
+      logSourceKeys: ["ca_caleprocure", "California", "ca_state"],
+    });
+    await expect(getAdminDataSource(testDb.db, "missing")).rejects.toBeInstanceOf(AdminDataSourceNotFoundError);
+  });
+
+  it("loads one source through the MySQL twin with a single owned-run query (MySQL)", async () => {
+    const row = {
+      id: "bidnet_ca_county",
+      label: "Alameda County",
+      issuerType: "county",
+      stateCode: "CA",
+      isEnabled: 1,
+      cadence: "daily",
+      jurisdictionLevel: "county",
+      jurisdictionName: "Alameda County",
+      fipsCode: "06001",
+      providerFamily: "bidnet",
+      consecutiveFailures: 0,
+      createdAt: NOW,
+      updatedAt: NOW,
+    };
+    const logRow = {
+      id: "log_mysql",
+      source: "bidnet_ca_county",
+      runId: "run_mysql",
+      status: "success",
+      startedAt: "2026-05-19T00:00:00.000Z",
+      finishedAt: "2026-05-19T00:01:00.000Z",
+      durationMs: "60000",
+      fetchedCount: "2",
+      insertedCount: "1",
+      updatedCount: "1",
+      skippedCount: "0",
+      failedCount: "0",
+      errorCode: null,
+      errorMessage: null,
+      metadata: null,
+    };
+    const calls: Array<{ sql: string; values: unknown[] }> = [];
+    const query = vi.fn(async (sql: string, values: unknown[] = []) => {
+      calls.push({ sql, values });
+      if (sql.includes("FROM data_sources")) return [values[0] === "bidnet_ca_county" ? [row] : []] as [unknown[]];
+      if (sql.includes("FROM crawler_logs")) return [[logRow]] as [unknown[]];
+      return [[]] as [unknown[]];
+    });
+    const store = { query, execute: vi.fn() } as never;
+
+    const record = await getAdminDataSourceFromMysql(store, "bidnet_ca_county");
+
+    const sourceCall = calls.find((call) => call.sql.includes("FROM data_sources"));
+    expect(sourceCall?.sql).toContain("fips_code AS fipsCode");
+    expect(sourceCall?.sql).toContain("WHERE id = ?");
+    expect(sourceCall?.values).toEqual(["bidnet_ca_county"]);
+    const logCalls = calls.filter((call) => call.sql.includes("FROM crawler_logs"));
+    expect(logCalls).toHaveLength(1);
+    expect(logCalls[0].sql).toContain("FROM crawler_logs WHERE source IN (?, ?)");
+    expect(logCalls[0].sql.trim()).toMatch(/ORDER BY started_at DESC, id DESC LIMIT 1$/);
+    expect(logCalls[0].values).toEqual(["Alameda County", "bidnet_ca_county"]);
+    expect(record.logSourceKeys).toEqual(["Alameda County", "bidnet_ca_county"]);
+    expect(record.source).toMatchObject({
+      id: "bidnet_ca_county",
+      fipsCode: "06001",
+      latestLog: expect.objectContaining({ id: "log_mysql", fetchedCount: 2, durationMs: 60000 }),
+      latestLiveHealth: null,
+      approvalHistory: [],
+    });
+
+    // An unknown id stops at the first read: no log, approval or health query follows.
+    calls.length = 0;
+    await expect(getAdminDataSourceFromMysql(store, "missing")).rejects.toBeInstanceOf(AdminDataSourceNotFoundError);
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe("crawler log filters and cursor", () => {
+  const T1 = "2026-05-18T00:00:00.000Z";
+  const T2 = "2026-05-19T00:00:00.000Z";
+  let testDb: TestDatabase;
+
+  beforeEach(async () => {
+    testDb = await createTestDatabase({ seed: false });
+    // b and c share T2, so only the id breaks the tie; b is the other source.
+    insertCrawlerLog(testDb, { id: "a", source: "x", status: "success", startedAt: T1 });
+    insertCrawlerLog(testDb, { id: "b", source: "y", status: "success", startedAt: T2 });
+    insertCrawlerLog(testDb, { id: "c", source: "x", status: "success", startedAt: T2 });
+  });
+
+  afterEach(async () => {
+    await testDb.cleanup();
+  });
+
+  const ids = async (options?: Parameters<typeof listAdminCrawlerLogs>[1]) =>
+    (await listAdminCrawlerLogs(testDb.db, options)).map((log) => log.id);
+
+  it("orders by started_at then id, newest first", async () => {
+    await expect(ids()).resolves.toEqual(["c", "b", "a"]);
+    await expect(ids({ limit: 1 })).resolves.toEqual(["c"]);
+  });
+
+  it("keeps only the requested sources", async () => {
+    await expect(ids({ sources: ["x"] })).resolves.toEqual(["c", "a"]);
+    await expect(ids({ sources: ["x", "y"] })).resolves.toEqual(["c", "b", "a"]);
+    await expect(ids({ sources: ["nobody"] })).resolves.toEqual([]);
+    // An empty list is "no filter", not "match nothing".
+    await expect(ids({ sources: [] })).resolves.toEqual(["c", "b", "a"]);
+  });
+
+  it("pages after a (started_at, id) cursor", async () => {
+    await expect(ids({ before: T2, beforeId: "c" })).resolves.toEqual(["b", "a"]);
+    await expect(ids({ before: T2, beforeId: "b" })).resolves.toEqual(["a"]);
+    // Without a tie-breaker the cursor is strictly before the timestamp.
+    await expect(ids({ before: T2 })).resolves.toEqual(["a"]);
+    await expect(ids({ sources: ["x"], before: T2, beforeId: "c" })).resolves.toEqual(["a"]);
+    await expect(ids({ before: T2, beforeId: "c", limit: 1 })).resolves.toEqual(["b"]);
+  });
+
+  it("clamps the page size to 1..100 and defaults to 25", () => {
+    expect([undefined, 0, -5, 1, 25, 100, 101, 5000].map(normalizeCrawlerLogLimit)).toEqual([25, 1, 1, 1, 25, 100, 100, 100]);
+  });
+
+  it("builds the MySQL filter, cursor and limit as bound values (MySQL)", async () => {
+    const query = vi.fn(async () => [[]] as [unknown[]]);
+
+    await listAdminCrawlerLogsFromMysql({ query }, { sources: ["x"], before: T2, beforeId: "c", limit: 2 });
+    await listAdminCrawlerLogsFromMysql({ query }, { sources: ["x", "y"], before: T2 });
+    await listAdminCrawlerLogsFromMysql({ query });
+
+    const calls = query.mock.calls as unknown as Array<[string, unknown[]]>;
+    expect(calls[0][0]).toContain("WHERE source IN (?) AND (started_at < ? OR (started_at = ? AND id < ?))");
+    expect(calls[0][0]).toMatch(/ORDER BY started_at DESC, id DESC LIMIT \?\s*$/);
+    expect(calls[0][1]).toEqual(["x", T2, T2, "c", 2]);
+    expect(calls[1][0]).toContain("WHERE source IN (?, ?) AND started_at < ? ORDER BY");
+    expect(calls[1][1]).toEqual(["x", "y", T2, 25]);
+    expect(calls[2][0]).not.toContain("WHERE");
+    expect(calls[2][1]).toEqual([25]);
+  });
+});
