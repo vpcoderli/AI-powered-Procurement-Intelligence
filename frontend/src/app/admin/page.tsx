@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -36,7 +36,6 @@ import {
   batchUpdateAdminDataSources,
   batchUpdateAdminBidQaItems,
   checkAdminDataSourceHealth,
-  createAdminUser,
   deliverAdminNotifications,
   getAdminMarketingFunnel,
   getAdminRiskChecklist,
@@ -46,16 +45,10 @@ import {
   listAdminCrawlerLogs,
   listAdminDataSources,
   listAdminNotifications,
-  listAdminUserFeatureOverrides,
-  listAdminUserAuditLogs,
-  listAdminUsers,
-  reconcileAdminSubscriptions,
   runStateCrawlersNow,
   updateAdminConfigEntry,
   updateAdminDataSource,
   updateAdminBidQaReview,
-  updateAdminUserFeatureOverride,
-  updateAdminUser as updateAdminUserAccess,
   type AdminBidQaItem,
   type AdminBidQaResponse,
   type AdminBidQaCorrectionHistoryItem,
@@ -65,23 +58,16 @@ import {
   type AdminConfigRegistryEntry,
   type AdminDataSource,
   type AdminDataSourcesResponse,
-  type AdminUserFeatureOverridesResponse,
   type AdminNotificationsResponse,
   type AdminMarketingFunnelResponse,
   type AdminRiskChecklistResponse,
-  type AdminUserAuditLog,
-  type AdminUserAuditAction,
-  type AdminUserAuditActorKind,
-  type AdminUserFilterStatus,
-  type AdminUser,
   type StateDataQualityReasonCode,
   type StateDataQualityReport,
   type StateDataQualityRiskLevel,
   type StateDataQualityRow,
   type UpdateAdminDataSourceInput,
-  type UpdateAdminUserInput,
 } from "@/lib/api/admin";
-import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlements";
+import type { UserRole } from "@/server/auth/entitlements";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import {
   compactErrorMessage,
@@ -119,8 +105,6 @@ export type AdminDashboardSections = {
   risk: AdminSectionState<AdminRiskSectionData | null>;
   crawlerLogs: AdminSectionState<AdminCrawlerLog[]>;
   bidQa: AdminSectionState<AdminBidQaResponse | null>;
-  users: AdminSectionState<AdminUser[]>;
-  userAuditLogs: AdminSectionState<AdminUserAuditLog[]>;
   notifications: AdminSectionState<AdminNotificationsResponse["notifications"]>;
   marketingFunnel: AdminSectionState<AdminMarketingFunnelResponse["summary"] | null>;
 };
@@ -130,8 +114,6 @@ export type AdminDashboardLoaders = {
   risk: () => Promise<AdminRiskChecklistResponse>;
   crawlerLogs: () => Promise<{ logs: AdminCrawlerLog[] }>;
   bidQa: () => Promise<AdminBidQaResponse>;
-  users: () => Promise<{ users: AdminUser[] }>;
-  userAuditLogs: () => Promise<{ logs: AdminUserAuditLog[] }>;
   notifications: () => Promise<AdminNotificationsResponse>;
   marketingFunnel: () => Promise<AdminMarketingFunnelResponse>;
 };
@@ -140,27 +122,6 @@ type ConfigRegistryStatus =
   | { status: "loading"; configEntries: AdminConfigRegistryEntry[] }
   | { status: "error"; configEntries: AdminConfigRegistryEntry[] }
   | { status: "ready"; configEntries: AdminConfigRegistryEntry[] };
-
-type UserFilters = {
-  q?: string;
-  role?: UserRole;
-  tier?: AccountTier;
-  status?: AdminUserFilterStatus;
-};
-
-type UserAuditFilters = {
-  actorKind?: AdminUserAuditActorKind;
-  action?: AdminUserAuditAction;
-  target?: string;
-  featureKey?: FeatureKey;
-};
-
-type InvitationDraft = {
-  email: string;
-  displayName: string;
-  role: UserRole;
-  tier: AccountTier;
-};
 
 type BidQaCorrectionDraft = {
   title: string;
@@ -237,18 +198,7 @@ const DEFAULT_BID_QA_FILTERS: BidQaFilters = {
   reviewedTo: "",
 };
 
-const USER_ROLES: UserRole[] = ["user", "admin", "operator", "support"];
 const ADMIN_CONSOLE_USER_ROLES: UserRole[] = ["admin", "operator", "support"];
-const ACCOUNT_TIERS: AccountTier[] = ["free", "pro", "business", "enterprise"];
-const AUDIT_ACTOR_KINDS: AdminUserAuditActorKind[] = ["admin", "local-bypass", "self-service"];
-const AUDIT_ACTIONS: AdminUserAuditAction[] = ["user_access_updated", "user_invited", "user_self_deleted"];
-const OVERRIDABLE_FEATURES: FeatureKey[] = [
-  "submission_guidance",
-  "compliance_manifest",
-  "pursue_no_bid",
-  "quote_workflow",
-  "knowledge_station",
-];
 export const SOURCE_HEALTH_CLASSIFICATION_FILTERS: SourceHealthClassificationFilter[] = [
   "all",
   "ok",
@@ -277,12 +227,6 @@ const MARKETING_CONTENT_CONFIG_KEY = "copy_library";
 const MARKETING_CONTENT_CONFIG_ID = "ux_state.copy_library";
 const MARKETING_CONTENT_SAFE_VALIDATION_COPY =
   "Unsafe outcome, compliance, or submission claims are rejected before publish and the site falls back to default marketing copy.";
-const DEFAULT_INVITATION_DRAFT: InvitationDraft = {
-  email: "",
-  displayName: "",
-  role: "user",
-  tier: "free",
-};
 
 function sectionLoading<T>(data: T): AdminSectionState<T> {
   return { status: "loading", data };
@@ -302,8 +246,6 @@ export function createInitialAdminSectionState(): AdminDashboardSections {
     risk: sectionLoading(null),
     crawlerLogs: sectionLoading([]),
     bidQa: sectionLoading(null),
-    users: sectionLoading([]),
-    userAuditLogs: sectionLoading([]),
     notifications: sectionLoading([]),
     marketingFunnel: sectionLoading(null),
   };
@@ -315,8 +257,6 @@ function createRefreshingAdminSectionState(current: AdminDashboardSections): Adm
     risk: sectionLoading(current.risk.data),
     crawlerLogs: sectionLoading(current.crawlerLogs.data),
     bidQa: sectionLoading(current.bidQa.data),
-    users: sectionLoading(current.users.data),
-    userAuditLogs: sectionLoading(current.userAuditLogs.data),
     notifications: sectionLoading(current.notifications.data),
     marketingFunnel: sectionLoading(current.marketingFunnel.data),
   };
@@ -343,8 +283,6 @@ export async function loadAdminDashboardSections(
     risk,
     crawlerLogs,
     bidQa,
-    users,
-    userAuditLogs,
     notifications,
     marketingFunnel,
   ] = await Promise.allSettled([
@@ -352,8 +290,6 @@ export async function loadAdminDashboardSections(
     loaders.risk(),
     loaders.crawlerLogs(),
     loaders.bidQa(),
-    loaders.users(),
-    loaders.userAuditLogs(),
     loaders.notifications(),
     loaders.marketingFunnel(),
   ]);
@@ -368,8 +304,6 @@ export async function loadAdminDashboardSections(
     })),
     crawlerLogs: sectionFromSettled(crawlerLogs, current.crawlerLogs.data, (value) => value.logs),
     bidQa: sectionFromSettled(bidQa, current.bidQa.data, (value) => value),
-    users: sectionFromSettled(users, current.users.data, (value) => value.users),
-    userAuditLogs: sectionFromSettled(userAuditLogs, current.userAuditLogs.data, (value) => value.logs),
     notifications: sectionFromSettled(notifications, current.notifications.data, (value) => value.notifications),
     marketingFunnel: sectionFromSettled(marketingFunnel, current.marketingFunnel.data, (value) => value.summary),
   };
@@ -410,18 +344,6 @@ function bidQaCorrectionDraftFor(item: AdminBidQaItem, drafts: Record<string, Bi
   return drafts[item.id] ?? {
     title: item.title,
     deadlineDate: formatDateInputValue(item.deadlineDate),
-  };
-}
-
-function featureOverrideFormValues(
-  data: AdminUserFeatureOverridesResponse | null,
-  feature: FeatureKey,
-) {
-  const override = data?.overrides.find((item) => item.featureKey === feature);
-
-  return {
-    reason: override?.reason ?? "",
-    expiresAt: formatDateInputValue(override?.expiresAt ?? null),
   };
 }
 
@@ -799,30 +721,6 @@ function formatCrawlerBaseUrl(value: string | null) {
   } catch {
     return value;
   }
-}
-
-function formatAuditChanges(log: AdminUserAuditLog) {
-  if (log.changes.length === 0) return "-";
-
-  return log.changes
-    .map((change) => {
-      if (change.field !== "featureOverride") {
-        return `${change.field}: ${String(change.before)} -> ${String(change.after)}`;
-      }
-
-      const formatOverrideState = (value: typeof change.before) => {
-        if (!value) return "default";
-
-        const parts = [value.isEnabled ? "enabled" : "disabled"];
-        if (value.reason) parts.push(`reason=${value.reason}`);
-        if (value.expiresAt) parts.push(`expires=${formatDate(value.expiresAt)}`);
-
-        return parts.join(" ");
-      };
-
-      return `${change.featureKey}: ${formatOverrideState(change.before)} -> ${formatOverrideState(change.after)}`;
-    })
-    .join(", ");
 }
 
 function formatConfigScope(entry: AdminConfigRegistryEntry) {
@@ -1485,7 +1383,6 @@ export default function AdminPage() {
   const [sourceApprovalBatchPending, setSourceApprovalBatchPending] = useState(false);
   const [sourceHealthPendingId, setSourceHealthPendingId] = useState<string | null>(null);
   const [sourceTriagePendingId, setSourceTriagePendingId] = useState<string | null>(null);
-  const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [pendingBidQaId, setPendingBidQaId] = useState<string | null>(null);
   const [pendingBidQaBatch, setPendingBidQaBatch] = useState(false);
   const [bidQaFilters, setBidQaFilters] = useState<BidQaFilters>(DEFAULT_BID_QA_FILTERS);
@@ -1500,25 +1397,11 @@ export default function AdminPage() {
   const [correctionHistoryItems, setCorrectionHistoryItems] = useState<AdminBidQaCorrectionHistoryItem[]>([]);
   const [isLoadingCorrectionHistory, setIsLoadingCorrectionHistory] = useState(false);
   const [correctionDrafts, setCorrectionDrafts] = useState<Record<string, BidQaCorrectionDraft>>({});
-  const [userFilters, setUserFilters] = useState<UserFilters>({});
-  const [userAuditFilters, setUserAuditFilters] = useState<UserAuditFilters>({});
   const [isRunning, setIsRunning] = useState(false);
   const [runningSourceId, setRunningSourceId] = useState<string | null>(null);
   const [runMessage, setRunMessage] = useState<string | null>(null);
-  const [invitationDraft, setInvitationDraft] = useState<InvitationDraft>(DEFAULT_INVITATION_DRAFT);
-  const [invitedTemporaryPassword, setInvitedTemporaryPassword] = useState<string | null>(null);
-  const [isInvitingUser, setIsInvitingUser] = useState(false);
-  const [inviteError, setInviteError] = useState<string | null>(null);
   const [isRefreshingRiskReport, setIsRefreshingRiskReport] = useState(false);
   const [isDeliveringNotifications, setIsDeliveringNotifications] = useState(false);
-  const [isReconcilingSubscriptions, setIsReconcilingSubscriptions] = useState(false);
-  const [featureOverrideUser, setFeatureOverrideUser] = useState<AdminUser | null>(null);
-  const [featureOverrideData, setFeatureOverrideData] = useState<AdminUserFeatureOverridesResponse | null>(null);
-  const [featureOverrideFeature, setFeatureOverrideFeature] = useState<FeatureKey>("submission_guidance");
-  const [featureOverrideReason, setFeatureOverrideReason] = useState("");
-  const [featureOverrideExpiresAt, setFeatureOverrideExpiresAt] = useState("");
-  const [isLoadingFeatureOverrides, setIsLoadingFeatureOverrides] = useState(false);
-  const [isUpdatingFeatureOverride, setIsUpdatingFeatureOverride] = useState(false);
   // Bumped when a platform review is saved so the ledgered approval panel re-reads its readiness.
   const [platformReviewRevision, setPlatformReviewRevision] = useState(0);
   const isAdmin = user?.role === "admin";
@@ -1531,14 +1414,6 @@ export default function AdminPage() {
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
-
-  const auditLogRequest = useCallback(() => ({
-    limit: 10,
-    actorKind: userAuditFilters.actorKind,
-    action: userAuditFilters.action,
-    target: userAuditFilters.target?.trim() || undefined,
-    featureKey: userAuditFilters.featureKey,
-  }), [userAuditFilters]);
 
   const refreshConfigRegistry = useCallback(() => {
     if (!canManageConfig) return Promise.resolve();
@@ -1580,9 +1455,6 @@ export default function AdminPage() {
         risk: getAdminRiskChecklist,
         crawlerLogs: listAdminCrawlerLogs,
         bidQa: () => listAdminBidQaItems(bidQaRequest()),
-        users: () => (canManageUsers ? listAdminUsers(userFilters) : Promise.resolve({ users: [] })),
-        userAuditLogs: () =>
-          canManageUsers ? listAdminUserAuditLogs(auditLogRequest()) : Promise.resolve({ logs: [] }),
         notifications: () => listAdminNotifications({ limit: 10 }),
         marketingFunnel: getAdminMarketingFunnel,
       },
@@ -1590,7 +1462,7 @@ export default function AdminPage() {
     ).then((sections) => {
       setState(sections);
     });
-  }, [auditLogRequest, bidQaRequest, canAccessAdminConsole, canManageUsers, refreshConfigRegistry, userFilters]);
+  }, [bidQaRequest, canAccessAdminConsole, refreshConfigRegistry]);
 
   useEffect(() => {
     if (isAuthLoading) return;
@@ -1632,8 +1504,6 @@ export default function AdminPage() {
   const allVisibleBidQaSelected = bidQaItems.length > 0 && bidQaItems.every((item) => selectedBidQaIds.includes(item.id));
   const visibleSelectedSourceIds = selectedSourceIds.filter((id) => sources.some((source) => source.id === id));
   const allVisibleSourcesSelected = sources.length > 0 && sources.every((source) => selectedSourceIds.includes(source.id));
-  const users = state.users.status === "ready" ? state.users.data : [];
-  const userAuditLogs = state.userAuditLogs.status === "ready" ? state.userAuditLogs.data : [];
   const notifications = state.notifications.status === "ready" ? state.notifications.data : [];
   const marketingFunnel = state.marketingFunnel.status === "ready" ? state.marketingFunnel.data : null;
   const configEntries = configRegistryStatus.configEntries;
@@ -2157,149 +2027,6 @@ export default function AdminPage() {
       });
   };
 
-  const updateUserAccess = (user: AdminUser, input: UpdateAdminUserInput) => {
-    setPendingUserId(user.id);
-    updateAdminUserAccess(user.id, input)
-      .then(({ user: updated }) => {
-        setState((current) => {
-          return {
-            ...current,
-            users: sectionReady(current.users.data.map((item) => (item.id === updated.id ? updated : item))),
-          };
-        });
-        return listAdminUserAuditLogs(auditLogRequest());
-      })
-      .then((response) => {
-        if (!response) return;
-
-        setState((current) => {
-          return {
-            ...current,
-            userAuditLogs: sectionReady(response.logs),
-          };
-        });
-      })
-      .catch(() => {
-        setRunMessage(t("admin.userUpdateFailed"));
-      })
-      .finally(() => {
-        setPendingUserId(null);
-      });
-  };
-
-  const syncFeatureOverrideForm = (data: AdminUserFeatureOverridesResponse | null, feature: FeatureKey) => {
-    const form = featureOverrideFormValues(data, feature);
-
-    setFeatureOverrideReason(form.reason);
-    setFeatureOverrideExpiresAt(form.expiresAt);
-  };
-
-  const openFeatureOverrides = (targetUser: AdminUser) => {
-    setFeatureOverrideUser(targetUser);
-    setFeatureOverrideData(null);
-    syncFeatureOverrideForm(null, featureOverrideFeature);
-    setIsLoadingFeatureOverrides(true);
-    listAdminUserFeatureOverrides(targetUser.id)
-      .then((response) => {
-        setFeatureOverrideData(response);
-        syncFeatureOverrideForm(response, featureOverrideFeature);
-      })
-      .catch(() => {
-        setRunMessage(t("admin.featureOverrideLoadFailed"));
-      })
-      .finally(() => {
-        setIsLoadingFeatureOverrides(false);
-      });
-  };
-
-  const selectedFeatureOverride = featureOverrideData?.overrides.find(
-    (override) => override.featureKey === featureOverrideFeature,
-  );
-
-  const saveFeatureOverride = (isEnabled: boolean | null) => {
-    if (!featureOverrideUser) return;
-
-    const reason = featureOverrideReason.trim();
-
-    setIsUpdatingFeatureOverride(true);
-    updateAdminUserFeatureOverride(featureOverrideUser.id, {
-      featureKey: featureOverrideFeature,
-      isEnabled,
-      reason: isEnabled === null ? null : reason || null,
-      expiresAt: isEnabled === null ? null : endOfDayIsoFromDateInput(featureOverrideExpiresAt),
-    })
-      .then((response) => {
-        setFeatureOverrideData(response);
-        syncFeatureOverrideForm(response, featureOverrideFeature);
-        setRunMessage(t("admin.featureOverrideUpdated"));
-        return listAdminUserAuditLogs(auditLogRequest());
-      })
-      .then((response) => {
-        setState((current) => {
-          return {
-            ...current,
-            userAuditLogs: sectionReady(response.logs),
-          };
-        });
-      })
-      .catch(() => {
-        setRunMessage(t("admin.featureOverrideUpdateFailed"));
-      })
-      .finally(() => {
-        setIsUpdatingFeatureOverride(false);
-      });
-  };
-
-  const refreshUsers = () => {
-    if (!canManageUsers) return Promise.resolve();
-
-    setState((current) => ({
-      ...current,
-      users: sectionLoading(current.users.data),
-    }));
-
-    return listAdminUsers(userFilters)
-      .then((response) => {
-        setState((current) => ({
-          ...current,
-          users: sectionReady(response.users),
-        }));
-        return response;
-      })
-      .catch((error) => {
-        setState((current) => ({
-          ...current,
-          users: sectionError(current.users.data),
-        }));
-        throw error;
-      });
-  };
-
-  const refreshUserAuditLogs = () => {
-    if (!canManageUsers) return Promise.resolve();
-
-    setState((current) => ({
-      ...current,
-      userAuditLogs: sectionLoading(current.userAuditLogs.data),
-    }));
-
-    return listAdminUserAuditLogs(auditLogRequest())
-      .then((response) => {
-        setState((current) => ({
-          ...current,
-          userAuditLogs: sectionReady(response.logs),
-        }));
-        return response;
-      })
-      .catch((error) => {
-        setState((current) => ({
-          ...current,
-          userAuditLogs: sectionError(current.userAuditLogs.data),
-        }));
-        throw error;
-      });
-  };
-
   const refreshNotifications = () => {
     setState((current) => ({
       ...current,
@@ -2320,52 +2047,6 @@ export default function AdminPage() {
           notifications: sectionError(current.notifications.data),
         }));
         throw error;
-      });
-  };
-
-  const handleCreateAdminUser = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-
-    const email = invitationDraft.email.trim();
-    if (!email || isInvitingUser) return;
-
-    setIsInvitingUser(true);
-    setInviteError(null);
-    setInvitedTemporaryPassword(null);
-
-    createAdminUser({
-      email,
-      displayName: invitationDraft.displayName.trim() || undefined,
-      role: invitationDraft.role,
-      tier: invitationDraft.tier,
-    })
-      .then((response) => {
-        setInvitationDraft(DEFAULT_INVITATION_DRAFT);
-        setInvitedTemporaryPassword(response.temporaryPassword);
-        setRunMessage(t("admin.inviteCreated").replace("{email}", response.user.email ?? response.user.id));
-        setState((current) => {
-          return {
-            ...current,
-            users: sectionReady([...current.users.data, response.user]),
-          };
-        });
-        return listAdminUserAuditLogs(auditLogRequest());
-      })
-      .then((response) => {
-        if (!response) return;
-
-        setState((current) => {
-          return {
-            ...current,
-            userAuditLogs: sectionReady(response.logs),
-          };
-        });
-      })
-      .catch(() => {
-        setInviteError(t("admin.inviteError"));
-      })
-      .finally(() => {
-        setIsInvitingUser(false);
       });
   };
 
@@ -2395,35 +2076,6 @@ export default function AdminPage() {
       })
       .finally(() => {
         setIsDeliveringNotifications(false);
-      });
-  };
-
-  const reconcileSubscriptions = () => {
-    setIsReconcilingSubscriptions(true);
-    setRunMessage(null);
-    reconcileAdminSubscriptions({ pastDueGraceDays: 7 })
-      .then((result) => {
-        setRunMessage(
-          t("admin.subscriptionReconcileResult")
-            .replace("{checked}", String(result.checked))
-            .replace("{pastDue}", String(result.markedPastDue))
-            .replace("{downgraded}", String(result.downgradedPastDue + result.canceledAtPeriodEnd + result.expiredTrials)),
-        );
-        return listAdminUsers(userFilters);
-      })
-      .then((response) => {
-        setState((current) => {
-          return {
-            ...current,
-            users: sectionReady(response.users),
-          };
-        });
-      })
-      .catch(() => {
-        setRunMessage(t("admin.subscriptionReconcileFailed"));
-      })
-      .finally(() => {
-        setIsReconcilingSubscriptions(false);
       });
   };
 
@@ -2484,17 +2136,6 @@ export default function AdminPage() {
             >
               <Play size={16} />
               {isRunning ? t("admin.running") : t("admin.runStateCrawlers")}
-            </Button>
-          )}
-          {canManageUsers && (
-            <Button
-              variant="outline"
-              onClick={reconcileSubscriptions}
-              disabled={isReconcilingSubscriptions}
-              className="h-10 rounded-lg border-slate-200"
-            >
-              <RefreshCw size={16} />
-              {isReconcilingSubscriptions ? t("admin.reconcilingSubscriptions") : t("admin.reconcileSubscriptions")}
             </Button>
           )}
         </div>
@@ -3040,377 +2681,6 @@ export default function AdminPage() {
         </section>
       )}
 
-      {!isFullyFailedDashboard && canManageUsers && state.users.status === "error" && (
-        <AdminSectionStateCard
-          action={() => void refreshUsers().catch(() => undefined)}
-          actionLabel={t("admin.refresh")}
-          code="error"
-          message={t("admin.errorDescription")}
-          title={t("admin.users")}
-        />
-      )}
-
-      {!isFullyFailedDashboard && canManageUsers && state.users.status === "loading" && state.users.data.length === 0 && (
-        <AdminSectionStateCard
-          actionLabel={t("admin.refresh")}
-          code="loading"
-          message={t("admin.loading")}
-          title={t("admin.users")}
-        />
-      )}
-
-      {!isFullyFailedDashboard && state.users.status === "ready" && canManageUsers && (
-        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
-            <div className="flex items-center gap-2 font-semibold text-slate-950">
-              <UserCog size={18} />
-              {t("admin.users")}
-            </div>
-            <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
-              {users.length}
-            </Badge>
-          </div>
-          <form
-            onSubmit={handleCreateAdminUser}
-            className="grid gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-4 lg:grid-cols-[minmax(180px,1.2fr)_minmax(160px,1fr)_140px_150px_auto]"
-          >
-            <div className="lg:col-span-5">
-              <p className="text-sm font-semibold text-slate-950">{t("admin.inviteUser")}</p>
-              <p className="mt-1 text-xs leading-5 text-slate-500">{t("admin.inviteDescription")}</p>
-            </div>
-            <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
-              {t("admin.email")}
-              <Input
-                type="email"
-                value={invitationDraft.email}
-                onChange={(event) =>
-                  setInvitationDraft((current) => ({ ...current, email: event.target.value }))
-                }
-                placeholder="buyer@example.com"
-                className="h-9 rounded-lg border-slate-200 bg-white"
-                required
-              />
-            </label>
-            <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
-              {t("admin.displayName")}
-              <Input
-                value={invitationDraft.displayName}
-                onChange={(event) =>
-                  setInvitationDraft((current) => ({ ...current, displayName: event.target.value }))
-                }
-                className="h-9 rounded-lg border-slate-200 bg-white"
-              />
-            </label>
-            <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
-              {t("admin.role")}
-              <select
-                value={invitationDraft.role}
-                onChange={(event) =>
-                  setInvitationDraft((current) => ({ ...current, role: event.target.value as UserRole }))
-                }
-                className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
-              >
-                {USER_ROLES.map((role) => (
-                  <option key={role} value={role}>
-                    {t(`admin.role_${role}`)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
-              {t("admin.tier")}
-              <select
-                value={invitationDraft.tier}
-                onChange={(event) =>
-                  setInvitationDraft((current) => ({ ...current, tier: event.target.value as AccountTier }))
-                }
-                className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
-              >
-                {ACCOUNT_TIERS.map((tier) => (
-                  <option key={tier} value={tier}>
-                    {t(`admin.tier_${tier}`)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="flex items-end">
-              <Button
-                type="submit"
-                disabled={isInvitingUser || invitationDraft.email.trim().length === 0}
-                className="h-9 rounded-lg bg-slate-900 px-3 text-white hover:bg-slate-800"
-              >
-                {isInvitingUser ? t("admin.creatingInvite") : t("admin.createInvite")}
-              </Button>
-            </div>
-            {(invitedTemporaryPassword || inviteError) && (
-              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm lg:col-span-5">
-                {invitedTemporaryPassword ? (
-                  <div>
-                    <span className="font-semibold text-slate-950">{t("admin.temporaryPassword")}:</span>{" "}
-                    <code className="rounded-md bg-slate-100 px-2 py-1 font-mono text-slate-800">
-                      {invitedTemporaryPassword}
-                    </code>
-                    <p className="mt-2 text-xs leading-5 text-slate-500">{t("admin.temporaryPasswordHelp")}</p>
-                  </div>
-                ) : (
-                  <span className="font-medium text-rose-700">{inviteError}</span>
-                )}
-              </div>
-            )}
-          </form>
-          <div className="grid gap-3 border-b border-slate-100 px-4 py-3 md:grid-cols-[minmax(220px,1fr)_160px_160px_160px]">
-            <div className="relative">
-              <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <Input
-                value={userFilters.q ?? ""}
-                onChange={(event) => setUserFilters((current) => ({ ...current, q: event.target.value || undefined }))}
-                placeholder={t("admin.searchUsers")}
-                className="h-9 rounded-lg border-slate-200 pl-9"
-              />
-            </div>
-            <select
-              value={userFilters.role ?? "all"}
-              onChange={(event) =>
-                setUserFilters((current) => ({
-                  ...current,
-                  role: event.target.value === "all" ? undefined : event.target.value as UserRole,
-                }))
-              }
-              aria-label={t("admin.role")}
-              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
-            >
-              <option value="all">{t("admin.allRoles")}</option>
-              {USER_ROLES.map((role) => (
-                <option key={role} value={role}>
-                  {t(`admin.role_${role}`)}
-                </option>
-              ))}
-            </select>
-            <select
-              value={userFilters.tier ?? "all"}
-              onChange={(event) =>
-                setUserFilters((current) => ({
-                  ...current,
-                  tier: event.target.value === "all" ? undefined : event.target.value as AccountTier,
-                }))
-              }
-              aria-label={t("admin.tier")}
-              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
-            >
-              <option value="all">{t("admin.allTiers")}</option>
-              {ACCOUNT_TIERS.map((tier) => (
-                <option key={tier} value={tier}>
-                  {t(`admin.tier_${tier}`)}
-                </option>
-              ))}
-            </select>
-            <select
-              value={userFilters.status ?? "all"}
-              onChange={(event) =>
-                setUserFilters((current) => ({
-                  ...current,
-                  status: event.target.value === "all" ? undefined : event.target.value as AdminUserFilterStatus,
-                }))
-              }
-              aria-label={t("admin.status")}
-              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
-            >
-              <option value="all">{t("admin.allStatuses")}</option>
-              <option value="enabled">{t("admin.enabled")}</option>
-              <option value="disabled">{t("admin.disabled")}</option>
-            </select>
-          </div>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t("admin.account")}</TableHead>
-                <TableHead>{t("admin.role")}</TableHead>
-                <TableHead>{t("admin.tier")}</TableHead>
-                <TableHead>{t("admin.lastLogin")}</TableHead>
-                <TableHead>{t("admin.featureOverrides")}</TableHead>
-                <TableHead className="text-right">{t("admin.enabled")}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {users.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="py-6 text-center text-sm text-slate-500">
-                    {t("admin.noUsers")}
-                  </TableCell>
-                </TableRow>
-              )}
-              {users.map((user) => {
-                const isPending = pendingUserId === user.id;
-
-                return (
-                  <TableRow key={user.id}>
-                    <TableCell>
-                      <div className="font-medium text-slate-900">{user.displayName || user.email || user.id}</div>
-                      <div className="text-xs text-slate-500">{user.email ?? user.id}</div>
-                    </TableCell>
-                    <TableCell>
-                      <select
-                        value={user.role}
-                        disabled={isPending}
-                        onChange={(event) => updateUserAccess(user, { role: event.target.value as UserRole })}
-                        aria-label={t("admin.role")}
-                        className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
-                      >
-                        {USER_ROLES.map((role) => (
-                          <option key={role} value={role}>
-                            {t(`admin.role_${role}`)}
-                          </option>
-                        ))}
-                      </select>
-                    </TableCell>
-                    <TableCell>
-                      <select
-                        value={user.tier}
-                        disabled={isPending}
-                        onChange={(event) => updateUserAccess(user, { tier: event.target.value as AccountTier })}
-                        aria-label={t("admin.tier")}
-                        className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
-                      >
-                        {ACCOUNT_TIERS.map((tier) => (
-                          <option key={tier} value={tier}>
-                            {t(`admin.tier_${tier}`)}
-                          </option>
-                        ))}
-                      </select>
-                    </TableCell>
-                    <TableCell>{formatDate(user.lastLoginAt)}</TableCell>
-                    <TableCell>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => openFeatureOverrides(user)}
-                        disabled={isLoadingFeatureOverrides || isUpdatingFeatureOverride}
-                        className="h-8 rounded-lg border-slate-200 px-2"
-                      >
-                        {t("admin.manageFeatureOverrides")}
-                      </Button>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex items-center justify-end gap-3">
-                        <Label htmlFor={`user-${user.id}`} className="text-xs font-medium text-slate-500">
-                          {user.isDisabled ? t("admin.disabled") : t("admin.enabled")}
-                        </Label>
-                        <Switch
-                          id={`user-${user.id}`}
-                          checked={!user.isDisabled}
-                          disabled={isPending}
-                          onCheckedChange={(checked) => updateUserAccess(user, { isDisabled: !checked })}
-                          className="data-checked:bg-slate-900"
-                        />
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-          {featureOverrideUser && (
-            <div className="grid gap-3 border-t border-slate-100 bg-slate-50/60 px-4 py-4 lg:grid-cols-[minmax(220px,1fr)_220px_180px_180px_auto] lg:items-end">
-              <div>
-                <p className="text-sm font-semibold text-slate-950">{t("admin.featureOverrides")}</p>
-                <p className="mt-1 text-xs leading-5 text-slate-500">
-                  {t("admin.featureOverrideDescription").replace(
-                    "{account}",
-                    featureOverrideUser.email ?? featureOverrideUser.id,
-                  )}
-                </p>
-                {featureOverrideData && (
-                  <p className="mt-1 text-xs font-medium text-slate-500">
-                    {t("admin.organization")}: {featureOverrideData.organizationName}
-                  </p>
-                )}
-              </div>
-              <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
-                {t("admin.feature")}
-                <select
-                  value={featureOverrideFeature}
-                  onChange={(event) => {
-                    const feature = event.target.value as FeatureKey;
-
-                    setFeatureOverrideFeature(feature);
-                    syncFeatureOverrideForm(featureOverrideData, feature);
-                  }}
-                  className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
-                >
-                  {OVERRIDABLE_FEATURES.map((feature) => (
-                    <option key={feature} value={feature}>
-                      {t(`admin.feature_${feature}`)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline" className="border-slate-200 bg-white text-slate-600">
-                  {selectedFeatureOverride
-                    ? selectedFeatureOverride.isEnabled
-                      ? t("admin.overrideEnabled")
-                      : t("admin.overrideDisabled")
-                    : t("admin.overrideDefault")}
-                </Badge>
-                {selectedFeatureOverride?.isExpired && (
-                  <Badge variant="outline" className="border-rose-200 bg-rose-50 text-rose-700">
-                    {t("admin.overrideExpired")}
-                  </Badge>
-                )}
-              </div>
-              <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
-                {t("admin.overrideReason")}
-                <Input
-                  value={featureOverrideReason}
-                  onChange={(event) => setFeatureOverrideReason(event.target.value)}
-                  placeholder={t("admin.overrideReasonPlaceholder")}
-                  className="h-9 rounded-lg border-slate-200 bg-white"
-                />
-              </label>
-              <label className="grid gap-1.5 text-xs font-semibold text-slate-600">
-                {t("admin.overrideExpiresAt")}
-                <Input
-                  type="date"
-                  value={featureOverrideExpiresAt}
-                  onChange={(event) => setFeatureOverrideExpiresAt(event.target.value)}
-                  className="h-9 rounded-lg border-slate-200 bg-white"
-                />
-              </label>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => saveFeatureOverride(true)}
-                  disabled={isLoadingFeatureOverrides || isUpdatingFeatureOverride}
-                  className="h-9 rounded-lg border-slate-200 px-3"
-                >
-                  {t("admin.enableOverride")}
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => saveFeatureOverride(false)}
-                  disabled={isLoadingFeatureOverrides || isUpdatingFeatureOverride}
-                  className="h-9 rounded-lg border-slate-200 px-3"
-                >
-                  {t("admin.disableOverride")}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => saveFeatureOverride(null)}
-                  disabled={isLoadingFeatureOverrides || isUpdatingFeatureOverride}
-                  className="h-9 rounded-lg px-3 text-slate-600"
-                >
-                  {t("admin.clearOverride")}
-                </Button>
-              </div>
-            </div>
-          )}
-        </section>
-      )}
-
       {!isFullyFailedDashboard && state.notifications.status === "error" && (
         <AdminSectionStateCard
           action={() => void refreshNotifications().catch(() => undefined)}
@@ -3472,132 +2742,6 @@ export default function AdminPage() {
                 <div className="text-xs font-medium text-slate-500">
                   {t("admin.notificationAttempts").replace("{count}", String(notification.attemptCount))}
                 </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {!isFullyFailedDashboard && canManageUsers && state.userAuditLogs.status === "error" && (
-        <AdminSectionStateCard
-          action={() => void refreshUserAuditLogs().catch(() => undefined)}
-          actionLabel={t("admin.refresh")}
-          code="error"
-          message={t("admin.errorDescription")}
-          title={t("admin.userAuditLogs")}
-        />
-      )}
-
-      {!isFullyFailedDashboard &&
-        canManageUsers &&
-        state.userAuditLogs.status === "loading" &&
-        state.userAuditLogs.data.length === 0 && (
-          <AdminSectionStateCard
-            actionLabel={t("admin.refresh")}
-            code="loading"
-            message={t("admin.loading")}
-            title={t("admin.userAuditLogs")}
-          />
-        )}
-
-      {!isFullyFailedDashboard && state.userAuditLogs.status === "ready" && canManageUsers && (
-        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 font-semibold text-slate-950">
-            <History size={18} />
-            {t("admin.userAuditLogs")}
-          </div>
-          <div className="grid gap-3 border-b border-slate-100 bg-slate-50/60 px-4 py-3 md:grid-cols-[minmax(180px,1fr)_160px_180px_190px_auto]">
-            <div className="relative">
-              <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <Input
-                value={userAuditFilters.target ?? ""}
-                onChange={(event) =>
-                  setUserAuditFilters((current) => ({ ...current, target: event.target.value || undefined }))
-                }
-                placeholder={t("admin.auditFilterTarget")}
-                className="h-9 rounded-lg border-slate-200 pl-9"
-              />
-            </div>
-            <select
-              value={userAuditFilters.actorKind ?? "all"}
-              onChange={(event) =>
-                setUserAuditFilters((current) => ({
-                  ...current,
-                  actorKind: event.target.value === "all" ? undefined : event.target.value as AdminUserAuditActorKind,
-                }))
-              }
-              aria-label={t("admin.allAuditActors")}
-              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
-            >
-              <option value="all">{t("admin.allAuditActors")}</option>
-              {AUDIT_ACTOR_KINDS.map((actorKind) => (
-                <option key={actorKind} value={actorKind}>
-                  {t(`admin.auditActor_${actorKind.replace("-", "_")}`)}
-                </option>
-              ))}
-            </select>
-            <select
-              value={userAuditFilters.action ?? "all"}
-              onChange={(event) =>
-                setUserAuditFilters((current) => ({
-                  ...current,
-                  action: event.target.value === "all" ? undefined : event.target.value as AdminUserAuditAction,
-                }))
-              }
-              aria-label={t("admin.allAuditActions")}
-              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
-            >
-              <option value="all">{t("admin.allAuditActions")}</option>
-              {AUDIT_ACTIONS.map((action) => (
-                <option key={action} value={action}>
-                  {t(`admin.auditAction_${action}`)}
-                </option>
-              ))}
-            </select>
-            <select
-              value={userAuditFilters.featureKey ?? "all"}
-              onChange={(event) =>
-                setUserAuditFilters((current) => ({
-                  ...current,
-                  featureKey: event.target.value === "all" ? undefined : event.target.value as FeatureKey,
-                }))
-              }
-              aria-label={t("admin.auditFilterFeature")}
-              className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 outline-none"
-            >
-              <option value="all">{t("admin.allAuditFeatures")}</option>
-              {OVERRIDABLE_FEATURES.map((feature) => (
-                <option key={feature} value={feature}>
-                  {t(`admin.feature_${feature}`)}
-                </option>
-              ))}
-            </select>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setUserAuditFilters({})}
-              className="h-9 rounded-lg px-3 text-slate-600"
-            >
-              {t("admin.clearAuditFilters")}
-            </Button>
-          </div>
-          <div className="divide-y divide-slate-100">
-            {userAuditLogs.length === 0 && (
-              <div className="px-4 py-5 text-sm text-slate-500">{t("admin.noUserAuditLogs")}</div>
-            )}
-            {userAuditLogs.map((log) => (
-              <div key={log.id} className="grid gap-2 px-4 py-3 md:grid-cols-[1fr_auto] md:items-center">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium text-slate-900">{log.targetEmail ?? log.targetUserId}</span>
-                    <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
-                      {log.actorKind}
-                    </Badge>
-                    <span className="text-xs text-slate-500">{formatDate(log.createdAt)}</span>
-                  </div>
-                  <div className="mt-1 text-sm text-slate-600">{formatAuditChanges(log)}</div>
-                </div>
-                <div className="text-xs font-medium text-slate-500">{log.action}</div>
               </div>
             ))}
           </div>

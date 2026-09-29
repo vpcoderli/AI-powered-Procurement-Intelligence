@@ -16,10 +16,6 @@ describe("admin page", () => {
   it("renders user access controls alongside crawler operations", () => {
     const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
 
-    expect(page).toContain("listAdminUsers");
-    expect(page).toContain("createAdminUser");
-    expect(page).toContain("listAdminUserAuditLogs");
-    expect(page).toContain("listAdminUserFeatureOverrides");
     expect(page).toContain("listAdminNotifications");
     expect(page).toContain("getAdminMarketingFunnel");
     expect(page).toContain("Marketing Funnel");
@@ -33,9 +29,6 @@ describe("admin page", () => {
     expect(page).toContain("batchUpdateAdminBidQaItems");
     expect(page).toContain("batchUpdateAdminDataSources");
     expect(page).toContain("deliverAdminNotifications");
-    expect(page).toContain("reconcileAdminSubscriptions");
-    expect(page).toContain("updateAdminUserAccess");
-    expect(page).toContain("updateAdminUserFeatureOverride");
     expect(page).toContain("updateAdminBidQaReview");
     expect(page).toContain("StateDataQualityMatrix");
     expect(page).toContain("stateDataQuality");
@@ -59,7 +52,6 @@ describe("admin page", () => {
     expect(page).toContain('t("admin.loginRequiredTitle")');
     expect(page).toContain('t("admin.forbiddenTitle")');
     expect(page).toContain("if (!canAccessAdminConsole) return");
-    expect(page).toContain('t("admin.users")');
     expect(page).toContain('t("admin.crawler")');
     expect(page).toContain('t("admin.bidQa")');
     expect(page).toContain('t("admin.riskCheck")');
@@ -161,29 +153,8 @@ describe("admin page", () => {
     expect(page).toContain("source.approvalHistory");
     expect(page).toContain('t("admin.sourceApprovalHistory")');
     expect(page).toContain('t("admin.sourceApprovalActor")');
-    expect(page).toContain('t("admin.inviteUser")');
-    expect(page).toContain('t("admin.temporaryPassword")');
-    expect(page).toContain("invitationDraft");
-    expect(page).toContain("handleCreateAdminUser");
-    expect(page).toContain('t("admin.userAuditLogs")');
-    expect(page).toContain('t("admin.auditFilterTarget")');
-    expect(page).toContain('t("admin.auditFilterFeature")');
-    expect(page).toContain('t("admin.allAuditActors")');
-    expect(page).toContain('t("admin.allAuditActions")');
-    expect(page).toContain("userAuditFilters");
-    expect(page).toContain('t("admin.featureOverrides")');
-    expect(page).toContain('t("admin.overrideReason")');
-    expect(page).toContain('t("admin.overrideExpiresAt")');
-    expect(page).toContain('t("admin.overrideExpired")');
-    expect(page).toContain("featureOverrideReason");
-    expect(page).toContain("featureOverrideExpiresAt");
-    expect(page).toContain("userFilters");
-    expect(page).toContain("featureOverrideUser");
-    expect(page).toContain("USER_ROLES");
-    expect(page).toContain("ACCOUNT_TIERS");
     expect(page).toContain('t("admin.notificationDelivery")');
     expect(page).toContain('t("admin.deliverNotifications")');
-    expect(page).toContain('t("admin.reconcileSubscriptions")');
   });
 
   it("surfaces marketing content CMS copy-library scope and safe-claim guard cues in the config matrix", () => {
@@ -233,8 +204,6 @@ describe("admin page", () => {
           summary: { needsReview: 1, archiveIssues: 0, lowQuality: 0 },
           items: [],
         }),
-        users: async () => ({ users: [{ id: "admin-user" }] }),
-        userAuditLogs: async () => ({ logs: [] }),
         notifications: async () => ({
           notifications: [{ id: "notification-1", recipient: "ops@example.com" }],
         }),
@@ -263,7 +232,6 @@ describe("admin page", () => {
       p0BlockerStates: 5,
     });
     expect(sections.bidQa.status).toBe("ready");
-    expect(sections.users.status).toBe("ready");
     expect(sections.notifications.status).toBe("ready");
     expect(sections.notifications.data).toHaveLength(1);
     expect(sections.marketingFunnel.status).toBe("ready");
@@ -282,8 +250,6 @@ describe("admin page", () => {
         risk: fail,
         crawlerLogs: fail,
         bidQa: fail,
-        users: fail,
-        userAuditLogs: fail,
         notifications: fail,
         marketingFunnel: fail,
       },
@@ -295,8 +261,6 @@ describe("admin page", () => {
     expect(sections.risk.status).toBe("error");
     expect(sections.crawlerLogs.status).toBe("error");
     expect(sections.bidQa.status).toBe("error");
-    expect(sections.users.status).toBe("error");
-    expect(sections.userAuditLogs.status).toBe("error");
     expect(sections.notifications.status).toBe("error");
     expect(sections.marketingFunnel.status).toBe("error");
   });
