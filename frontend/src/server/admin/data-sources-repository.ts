@@ -644,9 +644,11 @@ function crawlerConfigSnapshot(row: DataSourceRow) {
 }
 
 /**
- * True for every jurisdiction level the orchestrator's governance gate (`blockedReasonFor`) holds
- * until a person approves it: any set level other than federal/state. A row without a level is
- * a legacy state/federal row and is not held.
+ * True for any set jurisdiction level other than federal/state: the batch approval's (and
+ * `toAdminSource`'s) notion of a local source. The orchestrator's governance gate
+ * (`blockedReasonFor`) also falls back to `issuer_type` when the level is NULL, so a NULL-level row
+ * with a county/city `issuer_type` is held by the gate but is not local here (see
+ * docs/operations/local-source-approval.md §8.3; the live data has no such rows).
  */
 export function isGatedLocalJurisdictionLevel(level: string | null | undefined): boolean {
   return Boolean(level) && level !== "federal" && level !== "state";
