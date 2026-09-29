@@ -1498,7 +1498,7 @@ export const zh: Dictionary = {
     sourceEvidence_direct_portal: "直营网页",
     sourceEvidence_api: "API 证据",
     sourceEvidence_aggregator_page: "聚合页",
-    sourceEvidence_fixture_fallback: "Fixture fallback",
+    sourceEvidence_fixture_fallback: "Fixture 兜底",
     liveSourceHealth: "Live 来源健康",
     liveSourceHealth_healthy: "健康",
     liveSourceHealth_unhealthy: "异常",

@@ -206,9 +206,9 @@ describe("source label dictionary keys", () => {
     }
   });
 
-  it("gives the triage and disposition labels a Chinese text of their own", () => {
-    for (const family of ["sourceHealthTriage", "sourceHealthDisposition"]) {
-      for (const value of families[family]) expect(adminZh[`${family}_${value}`]).not.toBe(adminEn[`${family}_${value}`]);
+  it("gives every one of those labels a Chinese text of its own", () => {
+    for (const [family, values] of Object.entries(families)) {
+      for (const value of values) expect(adminZh[`${family}_${value}`], `${family}_${value}`).not.toBe(adminEn[`${family}_${value}`]);
     }
   });
 
