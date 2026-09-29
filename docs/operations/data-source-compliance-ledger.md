@@ -68,18 +68,19 @@ Every write to a compliance ledger field through the Admin API goes through the 
 | `last_approval_reviewed_at`；`source_approval_events` 一行 | 写入时自动生成（`action = 'approved'`，`reason` 即 `approval_notes`） |
 | `compliance_notes`、`robots_txt_*` | 不复制：前者保持原值，后者由各源自己的预检写入 |
 
-三项检查（该平台有 `valid` 的平台审查；`live_health_disposition` 为 `ready` / `empty` 且 `live_health_reviewed_at` 不超过 14 天；预检记录的 `precheck.baseUrl` 等于当前 `base_url`）任一不满足，该源被跳过并给出原因，什么都不写。
+三项检查（该平台有 `valid` 的平台审查；`live_health_disposition` 为 `ready` / `empty` 且 `live_health_reviewed_at` 不超过 14 天；预检记录的 `precheck.baseUrl` 等于当前 `base_url`）任一不满足，该源被跳过并给出原因，什么都不写。被人暂缓、已停用、需登录而审查缺法务参考、已排队重新预检，或预检之后发生过失败或治理变更的源同样跳过（[本地源批准](./local-source-approval.md) 8.7）。
 
 **与上面 "What 'approved' requires" 四条的关系。**
 
 1. 第 1 条（`tos_reviewed = true` 且有具名复核人）：由上表复制满足，复核人与 ToS 日期来自平台审查。
 2. 第 2 条（robots.txt 结果不是 `disallow_*`）：批量批准的三项检查**不读逐源的 `robots_txt_status`**；平台审查的 `robots_summary` 是同一主机的平台级陈述，每个源的预检仍把自己的 robots 结果写进 `robots_txt_*`。
 3. 第 3 条（复核到期日是真实的未来日期）：`compliance_review_due_at` = `next_review_at`；创建时要求它晚于 `reviewed_at`，批准时要求该审查仍是 `valid`。
-4. 第 4 条（robots 被标记或无法访问过的源必须有法务参考）：`legal_opinion_reference` 原样复制，审查没有就为空。硬性要求只对 `requires_login = 1` 的源生效（缺复核人、法务参考或 ToS 复核 → 400 `APPROVAL_REQUIREMENTS_UNMET`）；"逐源 robots 被标记过"这种情形批量路径不拦——批准前用下面的查询看一眼分布，有异常的源改走单源批准表单。
+4. 第 4 条（robots 被标记或无法访问过的源必须有法务参考）：`legal_opinion_reference` 原样复制，审查没有就为空。硬性要求只对 `requires_login = 1` 的源生效（单源表单 / PATCH 与联邦、州级的通用批准缺复核人、法务参考或 ToS 复核 → 400 `APPROVAL_REQUIREMENTS_UNMET`；带台账的批量批准遇到平台审查缺法务参考的这类本地源，不报错，跳过并记 `login_requirements_unmet`）；"逐源 robots 被标记过"这种情形批量路径不拦——批准前用下面的查询看一眼分布，有异常的源改走单源批准表单。
 
 ```sql
 SELECT robots_txt_status, COUNT(*) FROM data_sources
- WHERE provider_family = 'bidnet' AND jurisdiction_level IN ('county','city','township') AND approval_status IS NULL
+ WHERE provider_family = 'bidnet' AND jurisdiction_level IN ('county','city','township')
+   AND (approval_status IS NULL OR approval_status = 'needs_review')
  GROUP BY 1;
 ```
 

@@ -278,6 +278,7 @@ discover-sources（阶段 2 规则）→ 人工审阅 → npm run source:registe
 - **管理端面板**：平台审查面板与带台账批准面板在 `/admin` 数据源区块的最上方；admin 建审查、批准，admin / operator 可为待预检源入队，support 只读。
 - **§7.1"有效审查"的读法**：§7.1 写"取 `reviewed_at` 最新、且 `next_review_at` 未到期的一条"。实现为：取 `reviewed_at` 最新的一行，它未到期即 `valid`、已到期即 `expired`，不回退到更早的未到期行；没有行为 `missing`。两种读法只在续期的 `next_review_at` 比仍未到期的旧行更早时不同（如提前重审并选了更短的周期）：§7.1 的字面读法会在续期到期后回退到旧行（仍是 `valid`），实现则报 `expired`，批量批准随之停止——实现的理由是续期即取代旧判断。
 - **预算算术**：默认 `bidnet=60`、tick 15 分钟，每 tick 15 次请求，日常列表先花，预检每次预扣 2，余下的每 tick 约 7 个预检、每小时约 28 个，952 个待预检源至少约 34 小时（每个 404 多花 6，已批准源的日常列表还要占额度）；`CRAWLER_PLATFORM_BUDGETS=bidnet=120` 约缩短到一半，代价是持续请求率翻倍。BidNet 对持续请求率的容忍度仍是 §14 待实测的风险。
+- **§7.3 之外的跳过（最终审查修正）**：批量批准还跳过被人暂缓的（`held`：`needs_review` 由治理变更写下、之后没有更晚的失败）、已停用的（`disabled`）、需登录而平台审查缺法务参考的（`login_requirements_unmet`）、已排队重新预检的（`precheck_queued`）和预检之后发生过失败或治理变更的（`precheck_superseded`）源；人的暂缓只能通过单源表单解除，`blocked` 仍是拦截。"待预检"入队与就绪度的"待预检"共用同一条预检证据规则（`precheckEvidence`：待预检且尚未入队）。
 - **已知限制，本阶段未修**：（1）批准时复制进源行的 `compliance_review_due_at` 是当时平台审查的 `next_review_at`，续期平台审查不回写已批准的源，批量批准对它们只答 `already_approved`，目前没有批量续期入口；（2）逐源的 robots.txt 标记（`robots_txt_status`）不在三项检查里，由平台审查的 `robots_summary` 覆盖同一主机，批准前需要自查分布；（3）`provider_family` 为空的本地源在管理端读作占位家族 `public_portal`，未批准时恒缺平台审查、走单源表单，不要为 `public_portal` 建平台审查；（4）预算、平台暂停和预检退避都在 worker 进程内存里，队列没有逐源租约，只能起一个 crawler worker；（5）批量批准逐个写入、没有事务，中途失败时前面的已经生效。
 
 ## 8. 阶段 4：历史回补
