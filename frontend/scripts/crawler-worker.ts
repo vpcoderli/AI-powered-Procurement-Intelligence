@@ -2,7 +2,8 @@ import { createDatabase } from "../src/server/db/client";
 import { closeResolvedMysqlPool, isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "../src/server/db/mysql";
 import { runMigrations } from "../src/server/db/migrate";
 import { parseStateCrawlerLimit, runConfiguredCrawlerSourcesOnce } from "../src/server/crawler/configured-runner";
-import { PlatformPauseRegistry } from "../src/server/crawler/platform-budget";
+import { PlatformPauseRegistry, PlatformTickBudget, platformBudgetsFromEnv } from "../src/server/crawler/platform-budget";
+import { runQueuedPrechecksOnce } from "../src/server/crawler/precheck-queue-runner";
 import { createLogger } from "../src/lib/observability/logger";
 import { captureException } from "../src/lib/observability/sentry";
 
@@ -251,6 +252,8 @@ async function main() {
 
   try {
     while (!stopping) {
+      // One budget per tick: the daily lists spend first, the precheck queue gets what is left (spec §5.5).
+      const budget = new PlatformTickBudget(platformBudgetsFromEnv(), intervalMs());
       const results = await runConfiguredCrawlerSourcesOnce({
         database: db,
         mysql,
@@ -259,9 +262,22 @@ async function main() {
         runCrawlerSourceOnce: retryingRunCrawlerSourceOnce,
         notifier,
         platformPauses,
+        platformBudget: budget,
         tickMs: intervalMs(),
       });
       workerLogger.info("crawler_run_completed", { results });
+
+      // A shutdown requested during the crawl step must not start a new batch of platform requests;
+      // queued flags survive and the next worker start picks them up.
+      if (!stopping) {
+        try {
+          const prechecks = await runQueuedPrechecksOnce({ database: db, mysql, budget, pauses: platformPauses });
+          workerLogger.info("crawler_precheck_queue_completed", { prechecks });
+        } catch (error) {
+          workerLogger.error("crawler_precheck_queue_failed", { error });
+          captureException(error, { worker: "crawler", step: "precheck_queue" });
+        }
+      }
 
       if (!stopping) {
         await sleep(intervalMs());

@@ -54,6 +54,8 @@ export interface RunConfiguredCrawlerSourcesOnceOptions {
   platformBudgets?: Map<string, number | null>;
   /** Length of one worker tick: a tick may spend budget × tickMs / 1 h. Defaults to 15 minutes. */
   tickMs?: number;
+  /** Spec §5.5: one budget per tick, shared with the precheck step that runs after the lists; default: built here. */
+  platformBudget?: PlatformTickBudget;
   /** The worker passes one registry for its lifetime so a pause outlives a tick; default: fresh per call. */
   platformPauses?: PlatformPauseRegistry;
   /** Wall clock for pauses (tests). */
@@ -94,7 +96,7 @@ export async function runConfiguredCrawlerSourcesOnce(
   // throttle signature is paused for CRAWLER_PLATFORM_PAUSE_MS regardless of budget. Neither
   // check contacts the source, records a result, or consumes a retry — the source stays due
   // for a later tick.
-  const budget = new PlatformTickBudget(options.platformBudgets ?? platformBudgetsFromEnv(), options.tickMs ?? DEFAULT_TICK_MS);
+  const budget = options.platformBudget ?? new PlatformTickBudget(options.platformBudgets ?? platformBudgetsFromEnv(), options.tickMs ?? DEFAULT_TICK_MS);
   const pauses = options.platformPauses ?? new PlatformPauseRegistry();
   const clock = options.clock ?? (() => Date.now());
   const pauseMs = platformPauseMs();

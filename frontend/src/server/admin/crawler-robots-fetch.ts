@@ -98,3 +98,33 @@ export function createCrawlerBackedRobotsFetch(options: CrawlerBackedFetchOption
   }) as typeof fetch;
   return fetchImpl;
 }
+
+/**
+ * One tick's robots.txt answers, memoised by URL (spec 2026-09-24 §7.2: "同一主机的 robots.txt 每轮只取一次").
+ * The cached entry stores status, headers and body so every caller gets a fresh Response.
+ */
+export function createCachedRobotsFetch(inner: typeof fetch): typeof fetch & { hits: () => number; misses: () => number } {
+  const cache = new Map<string, Promise<{ status: number; headers: [string, string][]; body: string }>>();
+  let hits = 0;
+  let misses = 0;
+  const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    let entry = cache.get(url);
+    if (entry) {
+      hits += 1;
+    } else {
+      misses += 1;
+      entry = inner(input, init).then(async (response) => ({
+        status: response.status,
+        headers: [...response.headers.entries()],
+        body: await response.text(),
+      }));
+      cache.set(url, entry);
+    }
+    const snapshot = await entry;
+    return new Response(snapshot.body, { status: snapshot.status, headers: snapshot.headers });
+  }) as typeof fetch & { hits: () => number; misses: () => number };
+  fetchImpl.hits = () => hits;
+  fetchImpl.misses = () => misses;
+  return fetchImpl;
+}

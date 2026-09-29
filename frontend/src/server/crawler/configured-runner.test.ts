@@ -9,7 +9,7 @@ import { runSamGovCrawler } from "./sam-gov-runner";
 import { runCrawlTask } from "./state-runner";
 import { importCrawlerJsonRunIntoSqlite } from "./sqlite-json-importer";
 import type { CrawlerJsonRunPayload } from "./mysql-json-importer";
-import { PlatformPauseRegistry } from "./platform-budget";
+import { PlatformPauseRegistry, PlatformTickBudget } from "./platform-budget";
 import {
   buildCrawlerFailureInput,
   parseStateCrawlerLimit,
@@ -488,6 +488,41 @@ describe("runConfiguredCrawlerSourcesOnce reads sources from the database", () =
     await runConfiguredCrawlerSourcesOnce({
       database: testDb.db, owner: "test", now: new Date(NOW), matcher: noopMatcher, notifier: noopNotifier,
       platformDeferral: { minIntervalMs: 0 }, platformBudgets: new Map([["bidnet", 1000]]), tickMs: 60 * 60 * 1000,
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
+        attempted.push(options.source);
+        return { ok: true, source: options.source, status: "success" };
+      }) as never,
+    });
+    expect(attempted).toHaveLength(12);
+  });
+
+  it("spends a caller-supplied PlatformTickBudget so a later step in the same tick sees what the crawl used", async () => {
+    insertSource("bidnet_a", { providerFamily: "bidnet", lastSuccessAt: null });
+    const budget = new PlatformTickBudget(new Map([["bidnet", 60]]), 15 * 60 * 1000); // 15 requests per tick
+    const reserve = vi.spyOn(budget, "reserve");
+
+    await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db, owner: "test", now: new Date(NOW), matcher: noopMatcher, notifier: noopNotifier,
+      platformDeferral: { minIntervalMs: 0 }, platformBudget: budget,
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => ({ ok: true, source: options.source, status: "success" })) as never,
+    });
+
+    expect(reserve).toHaveBeenCalledWith("bidnet", expect.any(Number));
+    // The run reserved its 4 default pages and reported no request count, so 4 stay charged: the
+    // remaining 11 are what a later step (the precheck queue) is left with.
+    expect(budget.reserve("bidnet", 12)).toBeNull();
+    expect(budget.reserve("bidnet", 11)).toBe(11);
+  });
+
+  it("lets a caller-supplied PlatformTickBudget decide which families are uncapped, over platformBudgets", async () => {
+    for (let index = 0; index < 12; index += 1) insertSource(`bidnet_${String(index).padStart(2, "0")}`, { providerFamily: "bidnet", lastSuccessAt: null });
+    const attempted: string[] = [];
+    await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db, owner: "test", now: new Date(NOW), matcher: noopMatcher, notifier: noopNotifier,
+      platformDeferral: { minIntervalMs: 0 },
+      // Would cap bidnet at one run per tick if the supplied budget were ignored.
+      platformBudgets: new Map([["bidnet", 1]]), tickMs: 60 * 60 * 1000,
+      platformBudget: new PlatformTickBudget(new Map([["bidnet", 1000]]), 60 * 60 * 1000),
       runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
         attempted.push(options.source);
         return { ok: true, source: options.source, status: "success" };
