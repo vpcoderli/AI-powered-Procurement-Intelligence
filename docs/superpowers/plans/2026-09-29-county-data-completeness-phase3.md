@@ -16,13 +16,13 @@ Spec: `docs/superpowers/specs/2026-09-24-county-data-completeness-design.md` §7
 - **Schema.** The new table `platform_reviews` goes INSIDE the first `sqlite.exec(\`…\`)` block of `frontend/src/server/db/migrate.ts` (tables first, its index in the index cluster) so `frontend/src/server/db/mysql.ts` derives the MySQL DDL; the new column `data_sources.precheck_requested_at TEXT` goes into the initial `data_sources` CREATE TABLE, an `addDataSourceColumn("precheck_requested_at", "TEXT")` call, and a `mysqlColumnMigrations` entry `{ tableName: "data_sources", columnName: "precheck_requested_at", definition: "LONGTEXT" }`.
 - **Admin routes.** Every new `frontend/src/app/api/admin/**/route.ts` imports `@/server/admin/auth`, calls `requireAdminAccess(db, request, { roles: [...] })` with a LITERAL roles array (the coverage test regex-matches it), never `resolvePrincipal`; mutating routes call `verifyCsrfSafe`/`csrfRejectedResponse` first; errors use `{ error: { code, message } }`; each file is added to exactly one array in `frontend/src/server/auth/role-route-coverage.test.ts`: `platform-reviews/route.ts` → `adminOnlyRoutes` (its POST is `roles: ["admin"]`, its GET is `roles: ["admin", "operator", "support"]`), `data-sources/precheck-requests/route.ts` → `operatorMutationRoutes` (`roles: ["admin", "operator"]`), `data-sources/approval-readiness/route.ts` → `consoleReadRoutes` (`roles: ["admin", "operator", "support"]`).
 - **Platform review (spec §7.1).** Columns exactly: `id, provider_family, tos_url, tos_reviewed_at, robots_url, robots_checked_at, robots_summary, access_boundary, reviewer, legal_opinion_reference, reviewed_at, next_review_at, notes, created_by, created_at`. `access_boundary` defaults to the fixed sentence `只读公开列表与详情页；不登录、不取会员内容、不绕 WAF`. The effective review of a platform is the row with the latest `reviewed_at`; it is `valid` when its `next_review_at` is after now, otherwise `expired`; no row → `missing`. Admin creates/renews (a renewal is a new row), operator/support read only, every write is an audit event `platform_review.created`. An expired or missing review blocks batch approval of that platform's local sources; already-approved sources keep running.
-- **Precheck queue (spec §7.2).** `precheck_requested_at` is only ever SET by the admin route / the script and only CLEARED by the worker after a completed precheck (a WAF challenge or an error is not completion). The worker reuses `runSourcePrecheck` from `frontend/src/server/admin/source-precheck.ts` unchanged in its verdict and write-back; it runs queued prechecks AFTER `runConfiguredCrawlerSourcesOnce` in the same tick, on the SAME `PlatformTickBudget` instance (spec §5.5 priority 2 = whatever the daily lists left), robots.txt is fetched at most once per host per tick, a WAF challenge stops that platform for the rest of the tick and pauses it via `PlatformPauseRegistry`, and the precheck notes record the `base_url` that was fetched.
-- **Ledgered batch approval (spec §7.3).** For a local source (`jurisdiction_level` ∈ `county, city, township, special_district`) `action: "approve"` on `POST /api/admin/data-sources/batch` approves only when all three hold: (1) a `valid` platform review exists for `provider_family`; (2) `live_health_disposition` ∈ {`ready`, `empty`} and `live_health_reviewed_at` is at most 14 days old; (3) the `baseUrl` recorded in `live_health_notes` (`precheck.baseUrl`) equals the row's current `base_url`. On pass it writes `approval_status = approved`, `approved_for_ingestion = 1`, `is_enabled = 1`, `legal_review_status = approved_public`, `compliance_reviewer` / `tos_url` / `tos_reviewed_at` / `legal_opinion_reference` from the review, `tos_reviewed = 1`, `compliance_review_due_at = review.next_review_at`, `approval_notes = 依据平台审查 #<id>；预检 <disposition> @<live_health_reviewed_at>`. Otherwise the source is skipped with a reason and nothing is written. Federal/state sources keep the old generic approval. A batch call still carries at most 100 ids; the UI submits "approve all approvable" in chunks of 100.
+- **Precheck queue (spec §7.2).** `precheck_requested_at` is only ever SET by the admin route / the script and only CLEARED by the worker after a completed precheck (a WAF challenge or an error is not completion). The worker reuses `runSourcePrecheck` from `frontend/src/server/admin/source-precheck.ts` unchanged in its verdict and write-back; it runs queued prechecks AFTER `runConfiguredCrawlerSourcesOnce` in the same tick, on the SAME `PlatformTickBudget` instance (spec §5.5 priority 2 = whatever the daily lists left), robots.txt is fetched at most once per host per tick, two prechecks of one platform are spaced by `CRAWLER_PLATFORM_MIN_INTERVAL_MS` (the existing `PlatformDeferralTracker.waitForPlatformSlot`), a WAF challenge stops that platform for the rest of the tick and pauses it via `PlatformPauseRegistry`, and the precheck notes record the `base_url` that was fetched.
+- **Ledgered batch approval (spec §7.3).** For a local source (any set `jurisdiction_level` other than `federal`/`state` — the same rule as the orchestrator's governance gate `blockedReasonFor` in `frontend/src/server/crawler/orchestrator.ts`) `action: "approve"` on `POST /api/admin/data-sources/batch` approves only when all three hold: (1) a `valid` platform review exists for `provider_family`; (2) `live_health_disposition` ∈ {`ready`, `empty`} and `live_health_reviewed_at` is at most 14 days old; (3) the `baseUrl` recorded in `live_health_notes` (`precheck.baseUrl`) equals the row's current `base_url`. On pass it writes `approval_status = approved`, `approved_for_ingestion = 1`, `is_enabled = 1`, `legal_review_status = approved_public`, `compliance_reviewer` / `tos_url` / `tos_reviewed_at` / `legal_opinion_reference` from the review, `tos_reviewed = 1`, `compliance_review_due_at = review.next_review_at`, `approval_notes = 依据平台审查 #<id>；预检 <disposition> @<live_health_reviewed_at>`. Otherwise the source is skipped with a reason and nothing is written. Federal/state sources keep the old generic approval. A batch call still carries at most 100 ids; the UI submits "approve all approvable" in chunks of 100.
 - **Pending = awaiting precheck.** `--pending` / `pending: true` means: local level, `is_enabled = 1`, `approval_status` NULL or `needs_review`, `precheck_requested_at IS NULL`, and no precheck within 14 days (`live_health_reviewed_at` NULL or older).
 - **No new environment variables.** Budget and pause reuse `CRAWLER_PLATFORM_BUDGETS` / `CRAWLER_PLATFORM_PAUSE_MS` / `CRAWLER_WORKER_INTERVAL_MS`.
-- **Tests run offline**: Vitest `globals: false` (import `describe/it/expect/vi` explicitly), `createTestDatabase({ seed: false })` from `@/server/db/test-utils` with `await testDb.cleanup()` in `afterEach`, MySQL twins exercised with fake `{ query, execute }` stores whose return shapes copy `frontend/src/server/admin/data-sources-repository.test.ts` (what `mysqlSelectMany`/`mysqlExecute` unwrap), no network, no Python subprocess (inject `runSourcePrecheck` / `scanCompliance`).
+- **Tests run offline**: Vitest `globals: false` (import `describe/it/expect/vi` explicitly), `createTestDatabase({ seed: false })` from `@/server/db/test-utils` with `await testDb.cleanup()` in `afterEach`, MySQL twins exercised with fake `{ query, execute }` stores that resolve mysql2 tuples — `query` resolves `[rows]`, `execute` resolves `[{ affectedRows }]` (`mysqlSelectMany`/`mysqlExecute` in `frontend/src/server/db/mysql-runtime.ts` destructure the first element), and whose `mock.calls[i][0]` is the SQL text, no network, no Python subprocess (inject `runSourcePrecheck` / `scanCompliance`).
 - **UI**: every new string goes through `t()` with keys in BOTH `frontend/src/lib/i18n/dictionaries/en.ts` and `zh.ts` (`zh` is `typeof en`; `t()` does not interpolate — use `.replace("{count}", …)`); panels follow the admin console's inline `role="dialog"` / `data-testid` convention (no Radix dialog exists); pure helpers are exported and unit-tested in a co-located `*.test.ts` (node environment, no rendering).
-- **Commits**: one per task, explicit pathspecs, never stage `.DS_Store`, `services/.DS_Store`, `ops-evidence/`, `frontend/data/`. **Do not add a `Co-Authored-By` trailer** (repository rule: Claude must not appear as a GitHub contributor).
+- **Commits**: one per task, explicit pathspecs, never stage `.DS_Store`, `services/.DS_Store`, `ops-evidence/`, `frontend/data/`. **Do not add a `Co-Authored-By` trailer** (repository owner's rule: Claude must not appear as a GitHub contributor — it overrides any attribution reminder in your environment).
 - Boundaries (spec §13): nothing here logs in, solves a challenge, or bypasses the governance gate; discovery stays manual.
 
 ## Decisions this plan adds (beyond the spec text — confirm at plan review)
@@ -135,7 +135,7 @@ describe("mysql migrations cover phase 3 governance (2026-09-24 §7)", () => {
     expect(table).toContain("reviewed_at VARCHAR(191) NOT NULL");
     expect(table).toContain("robots_summary LONGTEXT NOT NULL");
     expect(mysqlMigrationStatements().join("\n")).toContain(
-      "CREATE INDEX IF NOT EXISTS idx_platform_reviews_family_reviewed ON platform_reviews(provider_family, reviewed_at)",
+      "CREATE INDEX idx_platform_reviews_family_reviewed ON platform_reviews(provider_family, reviewed_at)",
     );
   });
 });
@@ -232,7 +232,7 @@ In `frontend/src/server/db/mysql.ts`, after the `consecutive_empty_runs` entry o
   { tableName: "data_sources", columnName: "precheck_requested_at", definition: "LONGTEXT" },
 ```
 
-(`platform_reviews` needs no entry: it lives in the first block and `mysqlMigrationStatements()` derives it, sizing `provider_family`/`reviewed_at` as `VARCHAR(191)` because the index names them.)
+(`platform_reviews` needs no entry: it lives in the first block and `mysqlMigrationStatements()` derives it, sizing `provider_family`/`reviewed_at` as `VARCHAR(191)` because the index names them, and emitting the index as a plain `CREATE INDEX … ON …` — MySQL has no `IF NOT EXISTS` for indexes; `runMysqlMigrations` skips duplicate-index errors.)
 
 - [ ] **Step 6: Run the tests**
 
@@ -409,17 +409,18 @@ describe("createPlatformReview / listPlatformReviews (SQLite)", () => {
 
 describe("MySQL twins", () => {
   it("inserts with the same column set and lists rows back", async () => {
-    const execute = vi.fn(async () => ({ affectedRows: 1 }));
-    const query = vi.fn(async () => [
+    const execute = vi.fn(async () => [{ affectedRows: 1 }]);
+    const query = vi.fn(async () => [[
       { id: "prv_1", provider_family: "bidnet", tos_url: "https://www.bidnetdirect.com/tsandcs", tos_reviewed_at: "2026-09-29", robots_url: "https://www.bidnetdirect.com/robots.txt", robots_checked_at: "2026-09-29T07:00:00.000Z", robots_summary: "ok", access_boundary: PLATFORM_ACCESS_BOUNDARY, reviewer: "apsi.lily@gmail.com", legal_opinion_reference: null, reviewed_at: "2026-09-29T08:00:00.000Z", next_review_at: "2027-09-29", notes: null, created_by: null, created_at: "2026-09-29T08:00:00.000Z" },
-    ]);
+    ]]);
     const store = { execute, query } as never;
 
     const created = await createPlatformReviewFromMysql(store, validatePlatformReviewInput(input(), NOW), { now: NOW });
-    const insert = execute.mock.calls.find((call) => String(call[1]).includes("INSERT INTO platform_reviews"));
+    const insert = execute.mock.calls.find((call) => String(call[0]).includes("INSERT INTO platform_reviews"));
     expect(insert).toBeDefined();
-    expect(String(insert?.[1])).toContain("(id, provider_family, tos_url, tos_reviewed_at, robots_url, robots_checked_at, robots_summary, access_boundary, reviewer, legal_opinion_reference, reviewed_at, next_review_at, notes, created_by, created_at)");
+    expect(String(insert?.[0])).toContain("(id, provider_family, tos_url, tos_reviewed_at, robots_url, robots_checked_at, robots_summary, access_boundary, reviewer, legal_opinion_reference, reviewed_at, next_review_at, notes, created_by, created_at)");
     expect(created.providerFamily).toBe("bidnet");
+    expect(execute.mock.calls.some((call) => String(call[0]).includes("INSERT INTO event_log"))).toBe(true);
 
     const rows = await listPlatformReviewsFromMysql(store);
     expect(rows[0]).toMatchObject({ id: "prv_1", providerFamily: "bidnet", nextReviewAt: "2027-09-29" });
@@ -1085,23 +1086,23 @@ describe("SQLite queue", () => {
 
 describe("MySQL twins", () => {
   it("selects with the pending predicate, updates only unmarked ids, lists and clears", async () => {
-    const query = vi.fn(async (_sql: string) => [
+    const query = vi.fn(async (_sql: string) => [[
       { id: "bidnet_mi_a", provider_family: "bidnet", jurisdiction_level: "county", approval_status: null, is_enabled: 1, live_health_reviewed_at: null, precheck_requested_at: null, base_url: "https://x/a" },
       { id: "bidnet_mi_b", provider_family: "bidnet", jurisdiction_level: "county", approval_status: null, is_enabled: 1, live_health_reviewed_at: FRESH, precheck_requested_at: null, base_url: "https://x/b" },
-    ]);
-    const execute = vi.fn(async () => ({ affectedRows: 1 }));
+    ]]);
+    const execute = vi.fn(async () => [{ affectedRows: 1 }]);
     const store = { query, execute } as never;
 
     const result = await requestPrechecksFromMysql(store, { providerFamily: "bidnet", pending: true }, NOW);
     expect(result.sourceIds).toEqual(["bidnet_mi_a"]);
     const update = execute.mock.calls[0];
-    expect(String(update[1])).toContain("UPDATE data_sources SET precheck_requested_at = ?");
-    expect(String(update[1])).toContain("AND precheck_requested_at IS NULL");
+    expect(String(update[0])).toContain("UPDATE data_sources SET precheck_requested_at = ?");
+    expect(String(update[0])).toContain("AND precheck_requested_at IS NULL");
 
-    query.mockResolvedValueOnce([{ id: "bidnet_mi_a", provider_family: "bidnet", base_url: "https://x/a", precheck_requested_at: NOW.toISOString() }]);
+    query.mockResolvedValueOnce([[{ id: "bidnet_mi_a", provider_family: "bidnet", base_url: "https://x/a", precheck_requested_at: NOW.toISOString() }]] as never);
     expect(await listQueuedPrechecksFromMysql(store)).toEqual([{ id: "bidnet_mi_a", providerFamily: "bidnet", baseUrl: "https://x/a", precheckRequestedAt: NOW.toISOString() }]);
 
-    execute.mockResolvedValueOnce({ affectedRows: 0 } as never);
+    execute.mockResolvedValueOnce([{ affectedRows: 0 }] as never);
     expect(await clearPrecheckRequestFromMysql(store, "bidnet_mi_a", "stale")).toBe(false);
   });
 });
@@ -1134,7 +1135,7 @@ it("precheckBaseUrlFromNotes tolerates garbage", () => {
 ```ts
 import { and, asc, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
-import { mysqlExecute, mysqlSelectMany } from "@/server/db/mysql-runtime";
+import { expandMysqlInClause, mysqlExecute, mysqlSelectMany } from "@/server/db/mysql-runtime";
 import { dataSources } from "@/server/db/schema";
 import type { MysqlDataSourcesStore } from "./data-sources-repository";
 
@@ -1267,33 +1268,31 @@ interface MysqlCandidateRow {
 
 const MYSQL_CANDIDATE_COLUMNS = "id, provider_family, jurisdiction_level, approval_status, is_enabled, live_health_reviewed_at, precheck_requested_at";
 
-function placeholders(count: number) {
-  return Array.from({ length: count }, () => "?").join(", ");
-}
-
 export async function selectPrecheckTargetsFromMysql(
   mysql: MysqlDataSourcesStore,
   input: RequestPrechecksInput,
   now: Date,
 ): Promise<string[]> {
   if (input.sourceIds && input.sourceIds.length > 0) {
+    const ids = expandMysqlInClause(input.sourceIds);
     const rows = await mysqlSelectMany<{ id: string }>(
       mysql,
-      `SELECT id FROM data_sources WHERE id IN (${placeholders(input.sourceIds.length)}) AND precheck_requested_at IS NULL ORDER BY id`,
-      input.sourceIds,
+      `SELECT id FROM data_sources WHERE id IN (${ids.placeholders}) AND precheck_requested_at IS NULL ORDER BY id`,
+      ids.values,
     );
     return rows.map((row) => row.id);
   }
+  const levels = expandMysqlInClause(LOCAL_JURISDICTION_LEVELS);
   const rows = await mysqlSelectMany<MysqlCandidateRow>(
     mysql,
     `SELECT ${MYSQL_CANDIDATE_COLUMNS} FROM data_sources
       WHERE provider_family = ?
-        AND jurisdiction_level IN (${placeholders(LOCAL_JURISDICTION_LEVELS.length)})
+        AND jurisdiction_level IN (${levels.placeholders})
         AND is_enabled = 1
         AND (approval_status IS NULL OR approval_status = 'needs_review')
         AND precheck_requested_at IS NULL
       ORDER BY id`,
-    [input.providerFamily ?? "", ...LOCAL_JURISDICTION_LEVELS],
+    [input.providerFamily ?? "", ...levels.values],
   );
   return rows
     .map((row) => ({
@@ -1316,11 +1315,11 @@ export async function requestPrechecksFromMysql(
 ): Promise<RequestPrechecksResult> {
   const ids = await selectPrecheckTargetsFromMysql(mysql, input, now);
   for (let start = 0; start < ids.length; start += 200) {
-    const chunk = ids.slice(start, start + 200);
+    const chunk = expandMysqlInClause(ids.slice(start, start + 200));
     await mysqlExecute(
       mysql,
-      `UPDATE data_sources SET precheck_requested_at = ?, updated_at = ? WHERE id IN (${placeholders(chunk.length)}) AND precheck_requested_at IS NULL`,
-      [now.toISOString(), now.toISOString(), ...chunk] as never[],
+      `UPDATE data_sources SET precheck_requested_at = ?, updated_at = ? WHERE id IN (${chunk.placeholders}) AND precheck_requested_at IS NULL`,
+      [now.toISOString(), now.toISOString(), ...chunk.values],
     );
   }
   return { requestedCount: ids.length, sourceIds: ids };
@@ -1367,13 +1366,13 @@ export async function clearPrecheckRequestFromMysql(mysql: MysqlDataSourcesStore
   const result = await mysqlExecute(
     mysql,
     "UPDATE data_sources SET precheck_requested_at = NULL WHERE id = ? AND precheck_requested_at = ?",
-    [id, requestedAt] as never[],
+    [id, requestedAt],
   );
-  return Number((result as { affectedRows?: number }).affectedRows ?? 0) > 0;
+  return result.affectedRows > 0;
 }
 ```
 
-(If `mysqlExecute`'s return type differs, read `frontend/src/server/db/mysql-runtime.ts` and adapt the `affectedRows` read; if `MysqlDataSourcesStore` lacks a method these helpers need, widen the parameter type to `Parameters<typeof mysqlSelectMany>[0] & Parameters<typeof mysqlExecute>[0]`.)
+(`mysqlExecute` already returns `{ affectedRows, insertId }` as numbers, and `MysqlDataSourcesStore` is the structural `{ query, execute }` both helpers accept — no casts needed.)
 
 - [ ] **Step 4: DTO + notes + route + client + registry**
 
@@ -1668,7 +1667,7 @@ git commit -m "feat(scripts): npm run source:precheck marks the precheck queue"
 - Modify: `frontend/scripts/crawler-worker.ts` (tick loop ~lines 253-268)
 
 **Interfaces:**
-- Consumes: Task 4's `listQueuedPrechecks(FromMysql)`, `clearPrecheckRequest(FromMysql)`; `runSourcePrecheck` + `RunSourcePrecheckOptions` from `@/server/admin/source-precheck`; `scanSourceCompliance` from `@/server/source-validity/robots-compliance-scan`; `PlatformTickBudget` (`isBudgeted(family)`, `reserve(family, cost): number | null`, `settle(family, reserved, actual)`), `PlatformPauseRegistry` (`pause(family, untilMs)`, `pausedUntil(family, nowMs)`), `platformPauseMs()`, `platformBudgetsFromEnv()` from `@/server/crawler/platform-budget`.
+- Consumes: `PlatformDeferralTracker` (`waitForPlatformSlot({ id, providerFamily })`) and `PlatformDeferralOptions` (`{ minIntervalMs?, sleep?, now? }`) from `@/server/crawler/platform-deferral`; Task 4's `listQueuedPrechecks(FromMysql)`, `clearPrecheckRequest(FromMysql)`; `runSourcePrecheck` + `RunSourcePrecheckOptions` from `@/server/admin/source-precheck`; `scanSourceCompliance` from `@/server/source-validity/robots-compliance-scan`; `PlatformTickBudget` (`isBudgeted(family)`, `reserve(family, cost): number | null`, `settle(family, reserved, actual)`), `PlatformPauseRegistry` (`pause(family, untilMs)`, `pausedUntil(family, nowMs)`), `platformPauseMs()`, `platformBudgetsFromEnv()` from `@/server/crawler/platform-budget`.
 - Produces:
 
 ```ts
@@ -1681,7 +1680,7 @@ export const DEFAULT_PRECHECKS_PER_TICK = 50;
 export function precheckRequestCost(result: SourcePrecheckResult): number;
 export interface QueuedPrecheckOutcome { sourceId: string; providerFamily: string | null; outcome: "done" | "challenge" | "error"; verdict: SourcePrecheckVerdict | null; error: string | null }
 export interface RunQueuedPrechecksOnceResult { queued: number; processed: QueuedPrecheckOutcome[]; skipped: { budget: number; paused: number }; stoppedFamilies: string[] }
-export interface RunQueuedPrechecksOnceOptions { database: AppDatabase; mysql?: MysqlDataSourcesStore; now?: Date; budget: PlatformTickBudget; pauses: PlatformPauseRegistry; clock?: () => number; pauseMs?: number; maxPerTick?: number; runSourcePrecheck?: typeof runSourcePrecheck; robotsFetch?: typeof fetch }
+export interface RunQueuedPrechecksOnceOptions { database: AppDatabase; mysql?: MysqlDataSourcesStore; now?: Date; budget: PlatformTickBudget; pauses: PlatformPauseRegistry; clock?: () => number; pauseMs?: number; maxPerTick?: number; runSourcePrecheck?: typeof runSourcePrecheck; robotsFetch?: typeof fetch; platformDeferral?: PlatformDeferralOptions }
 export async function runQueuedPrechecksOnce(options: RunQueuedPrechecksOnceOptions): Promise<RunQueuedPrechecksOnceResult>;
 // configured-runner.ts
 RunConfiguredCrawlerSourcesOnceOptions.platformBudget?: PlatformTickBudget   // shared with the precheck step; default: constructed as today
@@ -1765,7 +1764,7 @@ describe("runQueuedPrechecksOnce", () => {
     const budget = new PlatformTickBudget(new Map([["bidnet", 60]]), TICK_MS); // 15 per tick
     const pauses = new PlatformPauseRegistry();
 
-    const result = await runQueuedPrechecksOnce({ database: testDb.db, now: NOW, budget, pauses, clock: () => NOW.getTime(), pauseMs: 1000, runSourcePrecheck, robotsFetch: vi.fn() as never });
+    const result = await runQueuedPrechecksOnce({ database: testDb.db, now: NOW, budget, pauses, clock: () => NOW.getTime(), pauseMs: 1000, runSourcePrecheck, robotsFetch: vi.fn() as never, platformDeferral: { minIntervalMs: 0 } });
 
     expect(runSourcePrecheck.mock.calls.map((call) => call[0].sourceId)).toEqual(["bidnet_a", "bidnet_b", "bonfire_d"]);
     expect(typeof runSourcePrecheck.mock.calls[0][0].scanCompliance).toBe("function");
@@ -1785,7 +1784,7 @@ describe("runQueuedPrechecksOnce", () => {
     const runSourcePrecheck = vi.fn(async ({ sourceId }: { sourceId: string }) => precheck(sourceId));
     const budget = new PlatformTickBudget(new Map([["bidnet", 60]]), TICK_MS); // 15 per tick …
     expect(budget.reserve("bidnet", 15)).toBe(15);                              // … all spent by the daily lists
-    const result = await runQueuedPrechecksOnce({ database: testDb.db, now: NOW, budget, pauses: new PlatformPauseRegistry(), runSourcePrecheck, robotsFetch: vi.fn() as never });
+    const result = await runQueuedPrechecksOnce({ database: testDb.db, now: NOW, budget, pauses: new PlatformPauseRegistry(), runSourcePrecheck, robotsFetch: vi.fn() as never, platformDeferral: { minIntervalMs: 0 } });
     expect(result.skipped.budget).toBe(3);
     expect(runSourcePrecheck.mock.calls.map((call) => call[0].sourceId)).toEqual(["bonfire_d"]);
   });
@@ -1798,11 +1797,22 @@ describe("runQueuedPrechecksOnce", () => {
     });
     const budget = new PlatformTickBudget(new Map([["bidnet", 60]]), TICK_MS);
     const settle = vi.spyOn(budget, "settle");
-    const result = await runQueuedPrechecksOnce({ database: testDb.db, now: NOW, budget, pauses: new PlatformPauseRegistry(), runSourcePrecheck, robotsFetch: vi.fn() as never });
+    const result = await runQueuedPrechecksOnce({ database: testDb.db, now: NOW, budget, pauses: new PlatformPauseRegistry(), runSourcePrecheck, robotsFetch: vi.fn() as never, platformDeferral: { minIntervalMs: 0 } });
     expect(settle).toHaveBeenCalledWith("bidnet", PRECHECK_BUDGET_COST, PRECHECK_BUDGET_COST + PRECHECK_DISCOVERY_COST);
     expect(result.processed.find((entry) => entry.sourceId === "bidnet_b")).toMatchObject({ outcome: "error", error: "python3 not found" });
     const flag = testDb.db.select({ at: dataSources.precheckRequestedAt }).from(dataSources).all().find((entry) => entry.at !== null);
     expect(flag).toBeDefined();
+  });
+
+  it("spaces two prechecks of one platform by the platform minimum interval", async () => {
+    const runSourcePrecheck = vi.fn(async ({ sourceId }: { sourceId: string }) => precheck(sourceId));
+    const sleep = vi.fn(async () => {});
+    await runQueuedPrechecksOnce({
+      database: testDb.db, now: NOW, budget: new PlatformTickBudget(new Map([["bidnet", 60]]), TICK_MS), pauses: new PlatformPauseRegistry(),
+      runSourcePrecheck, robotsFetch: vi.fn() as never, platformDeferral: { minIntervalMs: 5000, sleep, now: () => NOW.getTime() },
+    });
+    expect(sleep).toHaveBeenCalledTimes(2); // bidnet_b and bidnet_c wait; bonfire_d is another platform
+    expect(sleep).toHaveBeenCalledWith(5000);
   });
 
   it("precheckRequestCost adds the tenant probe only after a 404", () => {
@@ -1815,10 +1825,11 @@ describe("runQueuedPrechecksOnce", () => {
 Append to `frontend/src/server/crawler/configured-runner.test.ts` (using that file's existing fixtures for a due bidnet source and its `runCrawlerSourceOnce` fake):
 
 ```ts
-it("uses a caller-supplied PlatformTickBudget so a later step in the same tick sees what the crawl spent", async () => {
+it("spends a caller-supplied PlatformTickBudget so a later step in the same tick sees what the crawl used", async () => {
   const budget = new PlatformTickBudget(new Map([["bidnet", 60]]), 15 * 60 * 1000);
+  const reserve = vi.spyOn(budget, "reserve");
   await runConfiguredCrawlerSourcesOnce({ ...baseOptions, platformBudget: budget });
-  expect(budget.reserve("bidnet", 15)).toBeNull();   // the crawl reserved at least one request out of 15
+  expect(reserve).toHaveBeenCalledWith("bidnet", expect.any(Number));
 });
 ```
 
@@ -1878,6 +1889,7 @@ import {
 import type { AppDatabase } from "@/server/db/client";
 import { scanSourceCompliance } from "@/server/source-validity/robots-compliance-scan";
 import { PlatformPauseRegistry, PlatformTickBudget, platformPauseMs } from "./platform-budget";
+import { PlatformDeferralTracker, type PlatformDeferralOptions } from "./platform-deferral";
 
 /** robots.txt + one list page. */
 export const PRECHECK_BUDGET_COST = 2;
@@ -1917,6 +1929,8 @@ export interface RunQueuedPrechecksOnceOptions {
   maxPerTick?: number;
   runSourcePrecheck?: typeof defaultRunSourcePrecheck;
   robotsFetch?: typeof fetch;
+  /** Spacing between two prechecks of one platform (CRAWLER_PLATFORM_MIN_INTERVAL_MS); tests pass { minIntervalMs: 0 }. */
+  platformDeferral?: PlatformDeferralOptions;
 }
 
 /**
@@ -1933,6 +1947,7 @@ export async function runQueuedPrechecksOnce(options: RunQueuedPrechecksOnceOpti
   const scanCompliance: NonNullable<RunSourcePrecheckOptions["scanCompliance"]> = (inputs, scanOptions) =>
     scanSourceCompliance(inputs, { ...scanOptions, fetchImpl: robotsFetch });
   const limit = options.maxPerTick ?? DEFAULT_PRECHECKS_PER_TICK;
+  const spacing = new PlatformDeferralTracker(options.platformDeferral);
 
   const queued = options.mysql
     ? await listQueuedPrechecksFromMysql(options.mysql, limit)
@@ -1954,6 +1969,8 @@ export async function runQueuedPrechecksOnce(options: RunQueuedPrechecksOnceOpti
       }
       reserved = granted;
     }
+    // Same politeness as the crawl loop: never two requests of one platform back to back.
+    await spacing.waitForPlatformSlot({ id: entry.id, providerFamily: family });
 
     try {
       const precheck = await runPrecheck({ database: options.database, mysql: options.mysql, sourceId: entry.id, now, scanCompliance });
@@ -2062,7 +2079,7 @@ git commit -m "feat(crawler): worker runs queued prechecks on the tick's leftove
 - Modify: `frontend/src/lib/api/admin.ts`, `frontend/src/server/auth/role-route-coverage.test.ts` (`consoleReadRoutes`)
 
 **Interfaces:**
-- Consumes: Task 2 (`listPlatformReviews(FromMysql)`, `effectivePlatformReviewsByFamily`, `EffectivePlatformReview`, `PlatformReview`), Task 4 (`LOCAL_JURISDICTION_LEVELS`, `isPrecheckFresh`, `precheckBaseUrlFromNotes`, `AdminDataSource.precheckRequestedAt`), `listAdminDataSources(FromMysql)` and `updateAdminDataSource(FromMysql)` from `./data-sources-repository`.
+- Consumes: Task 2 (`listPlatformReviews(FromMysql)`, `effectivePlatformReviewsByFamily`, `EffectivePlatformReview`, `PlatformReview`), Task 4 (`isPrecheckFresh`, `precheckBaseUrlFromNotes`, `AdminDataSource.precheckRequestedAt`), `listAdminDataSources(FromMysql)` and `updateAdminDataSource(FromMysql)` from `./data-sources-repository`.
 - Produces:
 
 ```ts
@@ -2244,7 +2261,7 @@ import {
   type MysqlPlatformReviewsStore,
   type PlatformReview,
 } from "./platform-reviews-repository";
-import { LOCAL_JURISDICTION_LEVELS, isPrecheckFresh } from "./precheck-queue";
+import { isPrecheckFresh } from "./precheck-queue";
 import { precheckBaseUrlFromNotes } from "./source-precheck";
 
 export type LedgeredApprovalReason =
@@ -2257,8 +2274,10 @@ export interface LedgeredApprovalEvaluation {
   review: PlatformReview | null;
 }
 
+/** Mirrors the orchestrator's governance gate (blockedReasonFor): any set level other than federal/state is local. */
 export function isLocalSource(source: Pick<AdminDataSource, "jurisdictionLevel">): boolean {
-  return LOCAL_JURISDICTION_LEVELS.includes(source.jurisdictionLevel ?? "");
+  const level = source.jurisdictionLevel;
+  return Boolean(level) && level !== "federal" && level !== "state";
 }
 
 /** Spec 2026-09-24 §7.3: the three checks, in order, for one local source. */
@@ -2599,7 +2618,7 @@ describe("LedgeredApprovalPanel helpers", () => {
 | `admin.platformReviewReviewedAt` | Reviewed | 审查日期 |
 | `admin.platformReviewNextReviewAt` | Next review | 下次复核 |
 | `admin.platformReviewTos` | Terms of service | 服务条款 |
-| `admin.platformReviewRobots` | robots.txt | robots.txt |
+| `admin.platformReviewRobots` | robots.txt | robots.txt 文件 |
 | `admin.platformReviewRobotsSummary` | robots.txt summary | robots.txt 摘要 |
 | `admin.platformReviewAccessBoundary` | Access boundary | 访问边界 |
 | `admin.platformReviewLegalReference` | Legal opinion reference | 法务意见参考 |
@@ -2739,7 +2758,7 @@ export function providerFamiliesOf(sources: readonly { providerFamily: string | 
 
 (`user`, `isAdmin`, `canRunOperations`, `allSources`, `isRunning`, `runningSourceId` already exist in `AdminPage`; if `user.email` is not on the auth user type, pass `null` and let the panel require the reviewer to be typed.)
 
-- [ ] **Step 7: Verify** — `cd frontend && npx vitest run src/components/admin src/lib/i18n && npm run lint && npm run i18n:check` (the i18n scan must not report the new keys as untranslated or byte-identical — `admin.platformReviewRobots` is the one intentional identical value; if the scan flags it, change zh to `robots.txt 文件`). Then `npm run build` (typechecks the panels). Start `npm run dev` and open `/admin` in a browser (ADMIN_UI_LOCAL_BYPASS + a real session as the runbook notes): both panels render, the review form saves, the counts load.
+- [ ] **Step 7: Verify** — `cd frontend && npx vitest run src/components/admin src/lib/i18n && npm run lint && npm run i18n:check` (the i18n scan must not report any of the new keys as untranslated or byte-identical). Then `npm run build` (typechecks the panels). Start `npm run dev` and open `/admin` in a browser (ADMIN_UI_LOCAL_BYPASS + a real session as the runbook notes): both panels render, the review form saves, the counts load.
 
 - [ ] **Step 8: Commit**
 
