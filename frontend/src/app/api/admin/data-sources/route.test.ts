@@ -1,10 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { dataSources } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { recordLiveSourceHealthSnapshot } from "@/server/source-validity/health-snapshots";
 import { createAdminDataSourcesGet } from "./route";
 
 const NOW = "2026-05-19T00:00:00.000Z";
+const URL_BASE = "http://localhost/api/admin/data-sources";
 
 describe("GET /api/admin/data-sources", () => {
   let testDb: TestDatabase;
@@ -24,119 +24,78 @@ describe("GET /api/admin/data-sources", () => {
     }
   });
 
+  function insertCaliforniaSource() {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id: "california_caleprocure",
+        label: "California Cal eProcure",
+        issuerType: "state",
+        stateCode: "CA",
+        isEnabled: 1,
+        cadence: "daily",
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+      .run();
+  }
+
   it("denies requests without admin auth or local bypass", async () => {
     const GET = createAdminDataSourcesGet(testDb.db);
 
-    const response = await GET(new Request("http://localhost/api/admin/data-sources"));
+    const response = await GET(new Request(URL_BASE));
     const body = await response.json();
 
     expect(response.status).toBe(403);
     expect(body).toEqual({ error: { code: "FORBIDDEN", message: "Admin access is required." } });
   });
 
-  it("returns data source summaries with crawler metadata for local bypass", async () => {
+  it("returns one page of compact rows with facets for local bypass", async () => {
     process.env.ADMIN_UI_LOCAL_BYPASS = "true";
-    testDb.db
-      .insert(dataSources)
-      .values({
-        id: "california_caleprocure",
-        label: "California Cal eProcure",
-        issuerType: "state",
-        stateCode: "CA",
-        isEnabled: 1,
-        cadence: "daily",
-        createdAt: NOW,
-        updatedAt: NOW,
-      })
-      .run();
+    insertCaliforniaSource();
 
     const GET = createAdminDataSourcesGet(testDb.db);
-    const response = await GET(new Request("http://localhost/api/admin/data-sources"));
+    const response = await GET(new Request(URL_BASE));
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toEqual(
-      expect.objectContaining({
-        summary: expect.objectContaining({ totalSources: 1 }),
-        sources: [
-          expect.objectContaining({
-            id: "california_caleprocure",
-            isEnabled: true,
-            crawlerSourceId: "ca_caleprocure",
-            crawlerAdapterKind: "dedicated",
-            crawlerMaturity: "verified",
-            crawlerCapabilities: expect.arrayContaining(["query", "pagination"]),
-            crawlerBaseUrl: "https://caleprocure.ca.gov",
-          }),
-        ],
-      }),
-    );
+    expect(body).toEqual({
+      items: [expect.objectContaining({ id: "california_caleprocure", crawlerSourceId: "ca_caleprocure", level: "state" })],
+      total: 1,
+      page: 1,
+      pageSize: 50,
+      facets: expect.objectContaining({ level: [{ value: "state", count: 1 }] }),
+    });
   });
 
-  it("projects latest source health snapshot fields for local bypass", async () => {
+  it.each([["pageSize=500"], ["sort=bogus"], ["page=3"]])("answers 400 INVALID_REQUEST for ?%s", async (query) => {
     process.env.ADMIN_UI_LOCAL_BYPASS = "true";
-    testDb.db
-      .insert(dataSources)
-      .values({
-        id: "california_caleprocure",
-        label: "California Cal eProcure",
-        issuerType: "state",
-        stateCode: "CA",
-        isEnabled: 1,
-        cadence: "daily",
-        createdAt: NOW,
-        updatedAt: NOW,
-      })
-      .run();
-    recordLiveSourceHealthSnapshot(testDb.db, {
-      ok: false,
-      checkedAt: "2026-06-01T03:00:00.000Z",
-      summary: {
-        total: 1,
-        healthy: 0,
-        unhealthy: 1,
-        skipped: 0,
-      },
-      results: [
-        {
-          stateCode: "CA",
-          sourceId: "ca_caleprocure",
-          label: "California Cal eProcure",
-          url: "https://caleprocure.ca.gov",
-          sourceAuthority: "official",
-          trustStatus: "verified",
-          status: "unhealthy",
-          method: "GET",
-          httpStatus: 503,
-          statusText: "Service Unavailable",
-          errorCode: "http_error",
-          errorMessage: "HTTP 503 Service Unavailable",
-          classification: "http_error",
-          reason: "HTTP 503 Service Unavailable",
-          evidenceSnippets: ["HTTP 503 Service Unavailable"],
-          latencyMs: 842,
-          operationalSeverity: "warning",
-          recommendedAction: "browser_or_access_review",
-        },
-      ],
-    }, "2026-06-01T03:00:01.000Z");
+    insertCaliforniaSource();
 
     const GET = createAdminDataSourcesGet(testDb.db);
-    const response = await GET(new Request("http://localhost/api/admin/data-sources"));
+    const response = await GET(new Request(`${URL_BASE}?${query}`));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error.code).toBe("INVALID_REQUEST");
+  });
+
+  it("reads MySQL when a store is injected", async () => {
+    process.env.ADMIN_UI_LOCAL_BYPASS = "true";
+    // The SQLite row must not show up: the injected store serves the page.
+    insertCaliforniaSource();
+    const query = vi.fn(async (sql: string) => {
+      if (sql.startsWith("SELECT COUNT(*) AS total")) return [[{ total: "0" }]] as [unknown[]];
+      return [[]] as [unknown[]];
+    });
+
+    const GET = createAdminDataSourcesGet(testDb.db, { query });
+    const response = await GET(new Request(URL_BASE));
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.sources[0].latestLiveHealth).toMatchObject({
-      checkedAt: "2026-06-01T03:00:00.000Z",
-      status: "unhealthy",
-      statusCode: 503,
-      classification: "http_error",
-      reason: "HTTP 503 Service Unavailable",
-      error: "HTTP 503 Service Unavailable",
-      evidenceSnippets: ["HTTP 503 Service Unavailable"],
-      latencyMs: 842,
-      operationalSeverity: "warning",
-      recommendedAction: "browser_or_access_review",
-    });
+    expect(body).toMatchObject({ items: [], total: 0, page: 1, pageSize: 50 });
+    expect(query.mock.calls.some(([sql]) => sql.startsWith("SELECT COUNT(*) AS total"))).toBe(true);
+    expect(query.mock.calls.some(([sql]) => sql.includes("LIMIT ? OFFSET ?"))).toBe(true);
   });
 });

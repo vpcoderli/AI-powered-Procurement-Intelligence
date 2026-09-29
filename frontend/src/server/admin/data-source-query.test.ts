@@ -1,13 +1,21 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { dataSources } from "@/server/db/schema";
-import { emptySourceListFilters, type SourceListFilters } from "./data-source-list-contract";
+import {
+  defaultSourceListQuery,
+  emptySourceListFilters,
+  type SourceListFilters,
+  type SourceListQuery,
+} from "./data-source-list-contract";
 import {
   DataSourceQueryError,
   likeContainsPattern,
   listAdminDataSourceIndex,
   listAdminDataSourceIndexFromMysql,
+  listAdminDataSourcesPage,
+  listAdminDataSourcesPageFromMysql,
   parseSourceListFilters,
+  parseSourceListQuery,
   sourceFilterWhere,
 } from "./data-source-query";
 
@@ -147,5 +155,197 @@ describe("source index", () => {
     expect(sql).toContain("FROM data_sources WHERE");
     expect(sql).toContain("LIMIT 5001");
     expect(values).toEqual(["county"]);
+  });
+});
+
+const PAGE_ROWS = [
+  row("ca_state", { label: "California Cal eProcure", issuerType: "state", stateCode: "CA", jurisdictionLevel: null, providerFamily: null, approvalStatus: "approved", lastSuccessAt: "2026-09-29T06:00:00.000Z" }),
+  row("sam_gov", { label: "SAM.gov", issuerType: "federal", stateCode: "US", jurisdictionLevel: null, providerFamily: null }),
+  row("bidnet_co_denver", { label: "City and County of Denver", jurisdictionName: "Denver", approvalStatus: "approved", lastSuccessAt: "2026-09-29T07:00:00.000Z" }),
+  row("bidnet_co_aurora", { label: "City of Aurora", issuerType: "city", jurisdictionLevel: "city", jurisdictionName: "Aurora" }),
+  row("bidnet_mi_twp", { label: "Canton Township", issuerType: "township", stateCode: "MI", jurisdictionLevel: "township", approvalStatus: "needs_review", consecutiveFailures: 2, lastFailureAt: "2026-09-29T05:00:00.000Z" }),
+  row("bidnet_oh_block", { label: "Blocked County", stateCode: "OH", approvalStatus: "blocked", isEnabled: 0 }),
+  row("odd_level", { label: "Odd 100% match", issuerType: "municipal", jurisdictionLevel: null, stateCode: "TX", providerFamily: "periscope" }),
+];
+
+function pageQuery(overrides: Partial<SourceListQuery>): SourceListQuery {
+  return { ...defaultSourceListQuery(), ...overrides };
+}
+
+describe("parseSourceListQuery", () => {
+  it("reads sort, direction and paging", () => {
+    expect(parseSourceListQuery(new URLSearchParams("sort=-lastRun&page=2&pageSize=25"))).toMatchObject({ sort: "lastRun", descending: true, page: 2, pageSize: 25 });
+    expect(parseSourceListQuery(new URLSearchParams(""))).toEqual(defaultSourceListQuery());
+  });
+
+  it("carries the filters alongside sort and paging, and accepts the largest page size", () => {
+    expect(parseSourceListQuery(new URLSearchParams("level=county&state=co&q=den&sort=updated&pageSize=200"))).toEqual({
+      ...emptySourceListFilters(),
+      levels: ["county"],
+      states: ["CO"],
+      q: "den",
+      sort: "updated",
+      descending: false,
+      page: 1,
+      pageSize: 200,
+    });
+  });
+
+  it.each([["sort=bogus"], ["page=0"], ["page=1.5"], ["pageSize=201"], ["pageSize=abc"]])("rejects %s", (query) => {
+    expect(() => parseSourceListQuery(new URLSearchParams(query))).toThrow(DataSourceQueryError);
+  });
+});
+
+describe("source list page", () => {
+  let testDb: TestDatabase;
+
+  beforeEach(async () => {
+    testDb = await createTestDatabase({ seed: false });
+    testDb.db.insert(dataSources).values(PAGE_ROWS).run();
+  });
+
+  afterEach(async () => {
+    await testDb.cleanup();
+  });
+
+  const pageIds = async (overrides: Partial<SourceListQuery>) =>
+    (await listAdminDataSourcesPage(testDb.db, pageQuery(overrides))).items.map((item) => item.id);
+
+  it("returns compact rows with the list's health and approval views", async () => {
+    const page = await listAdminDataSourcesPage(testDb.db, defaultSourceListQuery());
+    expect(page.total).toBe(7);
+    expect(page.page).toBe(1);
+    expect(page.pageSize).toBe(50);
+    expect(page.items.find((item) => item.id === "bidnet_mi_twp")).toEqual({
+      id: "bidnet_mi_twp",
+      label: "Canton Township",
+      stateCode: "MI",
+      level: "township",
+      issuerType: "township",
+      jurisdictionLevel: "township",
+      jurisdictionName: null,
+      providerFamily: "bidnet",
+      approvalState: "awaiting",
+      isEnabled: true,
+      health: "failing",
+      lastSuccessAt: null,
+      lastFailureAt: "2026-09-29T05:00:00.000Z",
+      consecutiveFailures: 2,
+      precheckRequestedAt: null,
+      liveHealthDisposition: null,
+      crawlerSourceId: null,
+    });
+  });
+
+  it("pages and rejects a page past the end", async () => {
+    expect(await pageIds({ pageSize: 2, page: 2 })).toEqual(["bidnet_mi_twp", "bidnet_co_denver"]);
+    expect(await pageIds({ pageSize: 2, page: 4 })).toEqual(["sam_gov"]);
+    await expect(listAdminDataSourcesPage(testDb.db, pageQuery({ pageSize: 2, page: 5 }))).rejects.toThrow(DataSourceQueryError);
+  });
+
+  it("sorts by failures and by last run with never-run rows last", async () => {
+    expect(await pageIds({ sort: "failures", descending: true })).toEqual([
+      "bidnet_mi_twp",
+      "bidnet_oh_block",
+      "ca_state",
+      "bidnet_co_denver",
+      "bidnet_co_aurora",
+      "odd_level",
+      "sam_gov",
+    ]);
+    expect(await pageIds({ sort: "lastRun", descending: true })).toEqual([
+      "bidnet_co_denver",
+      "ca_state",
+      "bidnet_mi_twp",
+      "bidnet_co_aurora",
+      "bidnet_oh_block",
+      "odd_level",
+      "sam_gov",
+    ]);
+  });
+
+  it("keeps never-run rows last when sorting last run ascending", async () => {
+    expect(await pageIds({ sort: "lastRun", descending: false })).toEqual([
+      "bidnet_mi_twp",
+      "ca_state",
+      "bidnet_co_denver",
+      "bidnet_co_aurora",
+      "bidnet_oh_block",
+      "odd_level",
+      "sam_gov",
+    ]);
+  });
+
+  it("sorts by label in either direction and by last update, breaking ties on id", async () => {
+    const touch = testDb.db.$client.prepare("UPDATE data_sources SET updated_at = ? WHERE id = ?");
+    touch.run("2026-09-29T09:00:00.000Z", "odd_level");
+    touch.run("2026-09-29T10:00:00.000Z", "sam_gov");
+
+    expect(await pageIds({ sort: "label", descending: true })).toEqual([
+      "sam_gov",
+      "odd_level",
+      "bidnet_co_aurora",
+      "bidnet_co_denver",
+      "bidnet_mi_twp",
+      "ca_state",
+      "bidnet_oh_block",
+    ]);
+    expect(await pageIds({ sort: "updated", descending: true })).toEqual([
+      "sam_gov",
+      "odd_level",
+      "bidnet_co_aurora",
+      "bidnet_co_denver",
+      "bidnet_mi_twp",
+      "bidnet_oh_block",
+      "ca_state",
+    ]);
+    expect(await pageIds({ sort: "updated", descending: false })).toEqual([
+      "bidnet_co_aurora",
+      "bidnet_co_denver",
+      "bidnet_mi_twp",
+      "bidnet_oh_block",
+      "ca_state",
+      "odd_level",
+      "sam_gov",
+    ]);
+  });
+
+  it("counts each facet with the other dimensions' filters only", async () => {
+    const { facets, total } = await listAdminDataSourcesPage(testDb.db, pageQuery({ levels: ["county"] }));
+    expect(total).toBe(2);
+    expect(facets.level).toEqual([
+      { value: "federal", count: 1 },
+      { value: "state", count: 1 },
+      { value: "county", count: 2 },
+      { value: "city", count: 1 },
+      { value: "township", count: 1 },
+      { value: "unknown", count: 1 },
+    ]);
+    expect(facets.state).toEqual([
+      { value: "CO", count: 1 },
+      { value: "OH", count: 1 },
+    ]);
+    expect(facets.approval).toEqual([
+      { value: "approved", count: 1 },
+      { value: "blocked", count: 1 },
+    ]);
+    expect(facets.health).toEqual([
+      { value: "healthy", count: 1 },
+      { value: "disabled", count: 1 },
+    ]);
+    expect(facets.platform).toEqual([{ value: "bidnet", count: 2 }]);
+  });
+
+  it("runs the same SQL on MySQL with LIMIT/OFFSET values and string counts", async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (sql.startsWith("SELECT COUNT(*) AS total")) return [[{ total: "3" }]] as [unknown[]];
+      if (sql.includes(" AS facet_value")) return [[{ facet_value: "county", total: "3" }]] as [unknown[]];
+      return [[]] as [unknown[]];
+    });
+    const page = await listAdminDataSourcesPageFromMysql({ query }, pageQuery({ page: 2, pageSize: 2 }));
+    expect(page.total).toBe(3);
+    const listCall = query.mock.calls.find(([sql]) => sql.includes("LIMIT ? OFFSET ?")) as unknown as [string, unknown[]];
+    expect(listCall[1]).toEqual([2, 2]);
+    expect(page.facets.level).toEqual([{ value: "county", count: 3 }]);
   });
 });

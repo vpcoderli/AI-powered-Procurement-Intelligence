@@ -56,3 +56,57 @@ export function isCoverageLevel(value: string): value is CoverageLevel {
 export function coverageLevelOf(value: string | null | undefined): CoverageLevel {
   return typeof value === "string" && isCoverageLevel(value) ? value : "unknown";
 }
+
+export const SOURCE_LIST_SORT_KEYS = ["label", "lastRun", "failures", "updated"] as const;
+export type SourceListSortKey = (typeof SOURCE_LIST_SORT_KEYS)[number];
+
+export const SOURCE_LIST_DEFAULT_PAGE_SIZE = 50;
+export const SOURCE_LIST_MAX_PAGE_SIZE = 200;
+export const SOURCE_LIST_PAGE_SIZES = [25, 50, 100, 200] as const;
+export const SOURCE_FACET_KEYS: readonly SourceFacetKey[] = ["level", "state", "platform", "approval", "health"];
+
+export interface SourceListQuery extends SourceListFilters {
+  sort: SourceListSortKey;
+  descending: boolean;
+  page: number;
+  pageSize: number;
+}
+
+export function defaultSourceListQuery(): SourceListQuery {
+  return { ...emptySourceListFilters(), sort: "label", descending: false, page: 1, pageSize: SOURCE_LIST_DEFAULT_PAGE_SIZE };
+}
+
+export interface AdminDataSourceListItem {
+  id: string;
+  label: string;
+  stateCode: string;
+  level: CoverageLevel;
+  issuerType: string;
+  jurisdictionLevel: string | null;
+  jurisdictionName: string | null;
+  providerFamily: string;
+  approvalState: SourceApprovalState;
+  isEnabled: boolean;
+  health: SourceHealthState;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  consecutiveFailures: number;
+  precheckRequestedAt: string | null;
+  liveHealthDisposition: string | null;
+  crawlerSourceId: string | null;
+}
+
+export interface SourceFacetCount {
+  value: string;
+  count: number;
+}
+
+export type SourceListFacets = Record<SourceFacetKey, SourceFacetCount[]>;
+
+export interface AdminDataSourceListResponse {
+  items: AdminDataSourceListItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+  facets: SourceListFacets;
+}

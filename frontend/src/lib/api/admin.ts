@@ -5,7 +5,14 @@ import type {
   AdminLiveSourceHealth,
   UpdateAdminDataSourceInput,
 } from "@/server/admin/data-sources-repository";
-import type { AdminDataSourceIndexResponse, SourceListFilters } from "@/server/admin/data-source-list-contract";
+import type {
+  AdminDataSourceIndexResponse,
+  AdminDataSourceListItem,
+  AdminDataSourceListResponse,
+  SourceFacetCount,
+  SourceListFilters,
+  SourceListQuery,
+} from "@/server/admin/data-source-list-contract";
 import type { AdminDataSourceDetail } from "@/server/admin/source-detail";
 import type {
   AdminOverview,
@@ -76,7 +83,11 @@ import type {
 export type {
   AdminDataSourceDetail,
   AdminDataSourceIndexResponse,
+  AdminDataSourceListItem,
+  AdminDataSourceListResponse,
+  SourceFacetCount,
   SourceListFilters,
+  SourceListQuery,
   AdminOverview,
   AdminOverviewBids,
   AdminOverviewCoverage,
@@ -444,12 +455,6 @@ export async function getAdminOverview() {
   return parseResponse<AdminOverview>(response);
 }
 
-export async function listAdminDataSources() {
-  const response = await fetch("/api/admin/data-sources");
-
-  return parseResponse<AdminDataSourcesResponse>(response);
-}
-
 export async function listAdminConfigEntries(filters: ListAdminConfigEntriesFilters = {}) {
   const response = await fetch(
     `/api/admin/config${buildQueryString({
@@ -515,6 +520,20 @@ function sourceFilterParams(filters: Partial<SourceListFilters>): Record<string,
     health: filters.healths,
     q: filters.q,
   };
+}
+
+/** Spec §5.1: one page of the source list with facets. */
+export async function listAdminDataSourcesPage(query: Partial<SourceListQuery> = {}) {
+  const response = await fetch(
+    `/api/admin/data-sources${buildQueryString({
+      ...sourceFilterParams(query),
+      sort: query.sort ? `${query.descending ? "-" : ""}${query.sort}` : undefined,
+      page: query.page,
+      pageSize: query.pageSize,
+    })}`,
+  );
+
+  return parseResponse<AdminDataSourceListResponse>(response);
 }
 
 /** Spec §5.1 index (admin, operator): every source matching the list's filters. */

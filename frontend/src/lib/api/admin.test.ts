@@ -17,7 +17,7 @@ import {
   listAdminCrawlerLogs,
   listAdminBidQaItems,
   listAdminDataSourceIndex,
-  listAdminDataSources,
+  listAdminDataSourcesPage,
   listAdminUserAuditLogs,
   listAdminUsers,
   runSamGovCrawlerNow,
@@ -56,14 +56,26 @@ describe("admin API client", () => {
     vi.unstubAllGlobals();
   });
 
-  it("lists admin data sources", async () => {
+  it("requests one page of the source list with filters, sort and paging", async () => {
     const body = {
-      summary: { totalSources: 1, enabledSources: 1, healthySources: 0, failingSources: 0 },
-      sources: [],
+      items: [],
+      total: 0,
+      page: 2,
+      pageSize: 25,
+      facets: { level: [], state: [], platform: [], approval: [], health: [] },
     };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));
 
-    await expect(listAdminDataSources()).resolves.toEqual(body);
+    await expect(
+      listAdminDataSourcesPage({ levels: ["county"], approvals: ["awaiting"], sort: "lastRun", descending: true, page: 2, pageSize: 25 }),
+    ).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources?level=county&approval=awaiting&sort=-lastRun&page=2&pageSize=25");
+  });
+
+  it("requests the bare source list without a query string", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ items: [], total: 0, page: 1, pageSize: 50, facets: {} }));
+
+    await listAdminDataSourcesPage();
     expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources");
   });
 
@@ -930,7 +942,7 @@ describe("admin API client", () => {
       jsonResponse({ error: { code: "FORBIDDEN", message: "Admin access is required." } }, { status: 403 }),
     );
 
-    const promise = listAdminDataSources();
+    const promise = listAdminDataSourcesPage();
 
     await expect(promise).rejects.toMatchObject({
       name: "AdminApiError",
