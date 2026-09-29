@@ -22,7 +22,7 @@ import {
 } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlements";
-import { endOfDayIsoFromDateInput, formatDate, formatDateInputValue } from "../admin-format";
+import { endOfDayIsoFromDateInput, formatDate, formatDateInputValue, isUnreadableDateInput } from "../admin-format";
 import { useAdminSession } from "../admin-session";
 import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
 import { useAdminResource } from "../use-admin-resource";
@@ -59,6 +59,18 @@ export function featureOverrideFormValues(
     reason: override?.reason ?? "",
     expiresAt: formatDateInputValue(override?.expiresAt ?? null),
   };
+}
+
+/**
+ * Whether an override save may go out for the form as it stands. Enabling or disabling sends the expiry input as
+ * `expiresAt`, and endOfDayIsoFromDateInput answers null for text Date cannot read (a five- or six-digit year, which
+ * a date input in desktop Chrome takes) just as it does for an emptied input; the route stores null as "no expiry",
+ * so one slip in the year would save a permanent override. An emptied input still means no expiry and a day is still
+ * sent as the end of that day in UTC. Clearing (`isEnabled` null) removes the override and sends no expiry whatever
+ * the field holds, so it is never held back.
+ */
+export function featureOverrideCanBeSaved(isEnabled: boolean | null, expiresAt: string): boolean {
+  return isEnabled === null || !isUnreadableDateInput(expiresAt);
 }
 
 export function UsersSection() {
@@ -126,7 +138,7 @@ export function UsersSection() {
   );
 
   const saveFeatureOverride = (isEnabled: boolean | null) => {
-    if (!featureOverrideUser) return;
+    if (!featureOverrideUser || !featureOverrideCanBeSaved(isEnabled, featureOverrideExpiresAt)) return;
 
     const reason = featureOverrideReason.trim();
 
@@ -549,6 +561,7 @@ export function UsersSection() {
                 type="date"
                 value={featureOverrideExpiresAt}
                 onChange={(event) => setFeatureOverrideExpiresAt(event.target.value)}
+                aria-invalid={isUnreadableDateInput(featureOverrideExpiresAt) || undefined}
                 className="h-9 rounded-lg border-slate-200 bg-white"
               />
             </label>
@@ -557,7 +570,7 @@ export function UsersSection() {
                 type="button"
                 variant="outline"
                 onClick={() => saveFeatureOverride(true)}
-                disabled={isLoadingFeatureOverrides || isUpdatingFeatureOverride}
+                disabled={isLoadingFeatureOverrides || isUpdatingFeatureOverride || !featureOverrideCanBeSaved(true, featureOverrideExpiresAt)}
                 className="h-9 rounded-lg border-slate-200 px-3"
               >
                 {t("admin.enableOverride")}
@@ -566,7 +579,7 @@ export function UsersSection() {
                 type="button"
                 variant="outline"
                 onClick={() => saveFeatureOverride(false)}
-                disabled={isLoadingFeatureOverrides || isUpdatingFeatureOverride}
+                disabled={isLoadingFeatureOverrides || isUpdatingFeatureOverride || !featureOverrideCanBeSaved(false, featureOverrideExpiresAt)}
                 className="h-9 rounded-lg border-slate-200 px-3"
               >
                 {t("admin.disableOverride")}
