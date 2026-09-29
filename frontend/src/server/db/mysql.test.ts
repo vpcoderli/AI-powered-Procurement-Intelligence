@@ -166,3 +166,22 @@ describe("mysql migrations cover the bid lifecycle columns (2026-09-24 phase 1)"
     ]);
   });
 });
+
+describe("mysql migrations cover phase 3 governance (2026-09-24 §7)", () => {
+  it("adds precheck_requested_at to existing databases", () => {
+    expect(mysqlColumnMigrationStatements().join("\n")).toContain(
+      "data_sources ADD COLUMN precheck_requested_at LONGTEXT",
+    );
+  });
+
+  it("derives platform_reviews with key-sized indexed columns and long text elsewhere", () => {
+    const table = mysqlMigrationStatements().find((statement) => statement.includes("CREATE TABLE IF NOT EXISTS platform_reviews"));
+    expect(table).toBeDefined();
+    expect(table).toContain("provider_family VARCHAR(191) NOT NULL");
+    expect(table).toContain("reviewed_at VARCHAR(191) NOT NULL");
+    expect(table).toContain("robots_summary LONGTEXT NOT NULL");
+    expect(mysqlMigrationStatements().join("\n")).toContain(
+      "CREATE INDEX idx_platform_reviews_family_reviewed ON platform_reviews(provider_family, reviewed_at)",
+    );
+  });
+});

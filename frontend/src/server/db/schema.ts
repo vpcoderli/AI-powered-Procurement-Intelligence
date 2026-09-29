@@ -1373,6 +1373,8 @@ export const dataSources = sqliteTable("data_sources", {
   liveHealthNextReviewAt: text("live_health_next_review_at"),
   liveHealthNotes: text("live_health_notes"),
   liveHealthReviewedAt: text("live_health_reviewed_at"),
+  /** Precheck queue flag (spec 2026-09-24 §7.2): set by admins/scripts, cleared by the worker. */
+  precheckRequestedAt: text("precheck_requested_at"),
   lastSuccessAt: text("last_success_at"),
   lastFailureAt: text("last_failure_at"),
   consecutiveFailures: integer("consecutive_failures").notNull().default(0),
@@ -1420,5 +1422,30 @@ export const sourceApprovalEvents = sqliteTable(
   (table) => ({
     sourceCreatedIdx: index("idx_source_approval_events_source_created").on(table.sourceId, table.createdAt),
     actorCreatedIdx: index("idx_source_approval_events_actor_created").on(table.actorUserId, table.createdAt),
+  }),
+);
+
+/** Platform-level compliance review (spec 2026-09-24 §7.1); a renewal is a new row. */
+export const platformReviews = sqliteTable(
+  "platform_reviews",
+  {
+    id: text("id").primaryKey(),
+    providerFamily: text("provider_family").notNull(),
+    tosUrl: text("tos_url").notNull(),
+    tosReviewedAt: text("tos_reviewed_at").notNull(),
+    robotsUrl: text("robots_url").notNull(),
+    robotsCheckedAt: text("robots_checked_at").notNull(),
+    robotsSummary: text("robots_summary").notNull(),
+    accessBoundary: text("access_boundary").notNull(),
+    reviewer: text("reviewer").notNull(),
+    legalOpinionReference: text("legal_opinion_reference"),
+    reviewedAt: text("reviewed_at").notNull(),
+    nextReviewAt: text("next_review_at").notNull(),
+    notes: text("notes"),
+    createdBy: text("created_by"),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    familyReviewedIdx: index("idx_platform_reviews_family_reviewed").on(table.providerFamily, table.reviewedAt),
   }),
 );

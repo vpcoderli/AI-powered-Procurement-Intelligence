@@ -1848,3 +1848,34 @@ describe("attachment repair migration (C4)", () => {
     }
   });
 });
+
+describe("phase-3 governance migration (spec 2026-09-24 §7)", () => {
+  let testDb: ReturnType<typeof createTestDatabase>;
+
+  afterEach(async () => {
+    await testDb.cleanup();
+  });
+
+  it("adds precheck_requested_at to data_sources", async () => {
+    testDb = await createTestDatabase({ seed: false });
+    const columns = (testDb.db.$client.prepare("PRAGMA table_info(data_sources)").all() as { name: string }[]).map((row) => row.name);
+    expect(columns).toContain("precheck_requested_at");
+  });
+
+  it("creates platform_reviews with the spec's columns and its family/reviewed index", async () => {
+    testDb = await createTestDatabase({ seed: false });
+    const columns = (testDb.db.$client.prepare("PRAGMA table_info(platform_reviews)").all() as { name: string }[]).map((row) => row.name);
+    expect(columns).toEqual([
+      "id", "provider_family", "tos_url", "tos_reviewed_at", "robots_url", "robots_checked_at", "robots_summary",
+      "access_boundary", "reviewer", "legal_opinion_reference", "reviewed_at", "next_review_at", "notes", "created_by", "created_at",
+    ]);
+    const indexes = (testDb.db.$client.prepare("PRAGMA index_list(platform_reviews)").all() as { name: string }[]).map((row) => row.name);
+    expect(indexes).toContain("idx_platform_reviews_family_reviewed");
+  });
+
+  it("is idempotent when an older database is migrated twice", async () => {
+    testDb = await createTestDatabase({ seed: false });
+    expect(() => runMigrations(testDb.db)).not.toThrow();
+    expect(() => runMigrations(testDb.db)).not.toThrow();
+  });
+});

@@ -816,6 +816,7 @@ export function runMigrations(db: AppDatabase) {
       live_health_next_review_at TEXT,
       live_health_notes TEXT,
       live_health_reviewed_at TEXT,
+      precheck_requested_at TEXT,
       last_success_at TEXT,
       last_failure_at TEXT,
       consecutive_failures INTEGER NOT NULL DEFAULT 0,
@@ -852,6 +853,24 @@ export function runMigrations(db: AppDatabase) {
       previous_approved_for_ingestion INTEGER,
       next_approved_for_ingestion INTEGER,
       reason TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS platform_reviews (
+      id TEXT PRIMARY KEY,
+      provider_family TEXT NOT NULL,
+      tos_url TEXT NOT NULL,
+      tos_reviewed_at TEXT NOT NULL,
+      robots_url TEXT NOT NULL,
+      robots_checked_at TEXT NOT NULL,
+      robots_summary TEXT NOT NULL,
+      access_boundary TEXT NOT NULL,
+      reviewer TEXT NOT NULL,
+      legal_opinion_reference TEXT,
+      reviewed_at TEXT NOT NULL,
+      next_review_at TEXT NOT NULL,
+      notes TEXT,
+      created_by TEXT,
       created_at TEXT NOT NULL
     );
 
@@ -997,6 +1016,7 @@ export function runMigrations(db: AppDatabase) {
     CREATE INDEX IF NOT EXISTS idx_source_compliance_snapshots_created_at ON source_compliance_snapshots(created_at);
     CREATE INDEX IF NOT EXISTS idx_source_approval_events_source_created ON source_approval_events(source_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_source_approval_events_actor_created ON source_approval_events(actor_user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_platform_reviews_family_reviewed ON platform_reviews(provider_family, reviewed_at);
   `);
 
   const userColumns = new Set(
@@ -1289,5 +1309,7 @@ export function runMigrations(db: AppDatabase) {
   addDataSourceColumn("fips_code", "TEXT");
   addDataSourceColumn("fetch_config", "TEXT");
   addDataSourceColumn("consecutive_empty_runs", "INTEGER NOT NULL DEFAULT 0");
+  // Precheck queue (spec 2026-09-24 §7.2).
+  addDataSourceColumn("precheck_requested_at", "TEXT");
   sqlite.exec("CREATE INDEX IF NOT EXISTS idx_data_sources_jurisdiction ON data_sources(jurisdiction_level, state_code)");
 }

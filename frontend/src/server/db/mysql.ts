@@ -387,6 +387,8 @@ const mysqlColumnMigrations: MysqlColumnMigration[] = [
   { tableName: "bids", columnName: "awarded_date", definition: "LONGTEXT" },
   { tableName: "bids", columnName: "solicitation_number", definition: "LONGTEXT" },
   { tableName: "data_sources", columnName: "consecutive_empty_runs", definition: "INT NOT NULL DEFAULT 0" },
+  // Precheck queue (spec 2026-09-24 phase 3).
+  { tableName: "data_sources", columnName: "precheck_requested_at", definition: "LONGTEXT" },
 ];
 
 export function mysqlColumnMigrationStatements() {
