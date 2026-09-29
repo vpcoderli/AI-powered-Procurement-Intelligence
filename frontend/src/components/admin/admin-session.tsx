@@ -19,7 +19,7 @@ export interface AdminSession extends AdminRoleFlags {
   user: PublicUser;
 }
 
-/** The old page's role flags (page.tsx: isAdmin, isOperator, canRunOperations, canManageUsers, canManageConfig). */
+/** What a console role may do; the shell provides these flags to every admin page. */
 export function adminRoleFlags(role: AdminConsoleRole): AdminRoleFlags {
   const isAdmin = role === "admin";
   const isOperator = role === "operator";

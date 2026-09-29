@@ -33,7 +33,7 @@ export interface SourceLiveHealthCardProps {
 }
 
 /**
- * Live source health and its triage queue fields (moved from the old sources table's status cell). The card has
+ * Live source health and its triage queue fields, with the operator's recheck and triage controls. The card has
  * no outer margin of its own; the container spaces it.
  */
 export function SourceLiveHealthCard({ source, canRunOperations, pending, busy = false, onRecheck, onTriage }: SourceLiveHealthCardProps) {

@@ -4,10 +4,12 @@ import { describe, expect, it } from "vitest";
 import type { AdminCrawlerLog, AdminDataSourceDetail } from "@/lib/api/admin";
 import { en } from "@/lib/i18n/dictionaries/en";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
+import { formatDate } from "../admin-format";
 import { CrawlerLogRow } from "./CrawlerLogList";
 import { SourceBidsCard } from "./SourceBidsCard";
 import { SourceComplianceCard } from "./SourceComplianceCard";
 import { SourceLiveHealthCard } from "./SourceLiveHealthCard";
+import { SourceProfileCard } from "./SourceProfileCard";
 import { adminSourceFixture as source } from "./test-fixtures";
 
 const admin = en.admin as Record<string, string>;
@@ -15,19 +17,28 @@ const admin = en.admin as Record<string, string>;
 // The cards only need the language context; the provider renders as English on the server.
 const render = (node: React.ReactElement) => renderToStaticMarkup(<LanguageProvider>{node}</LanguageProvider>);
 const text = (html: string) => html.replace(/<!-- -->/g, "");
+/** A dictionary value as renderToStaticMarkup escapes it. */
+const escaped = (value: string) => value.replace(/&/g, "&amp;").replace(/'/g, "&#x27;");
 
-function approvalEvent(id: string, action: string, actorUserId: string | null) {
+function approvalEvent(id: string, action: string, actorUserId: string | null, reason: string | null = null) {
   return {
     id, sourceId: "bidnet_co_denver", actorUserId, action, previousApprovalStatus: null, nextApprovalStatus: null,
     previousLegalReviewStatus: null, nextLegalReviewStatus: null, previousApprovedForIngestion: null, nextApprovedForIngestion: null,
-    reason: null, createdAt: "2026-09-10T12:00:00.000Z",
+    reason, createdAt: "2026-09-10T12:00:00.000Z",
   };
 }
 
 const noop = () => undefined;
 
 describe("SourceComplianceCard", () => {
-  it("renders the ledger and the two latest approval events, with no width cap of its own", () => {
+  it("renders the ledger and every approval event the API returns, each with its reason, actor and time", () => {
+    const history = [
+      approvalEvent("e1", "approved", "user-1", "依据平台审查 #3；预检 ready @2026-09-27T10:00:00.000Z"),
+      approvalEvent("e2", "held", null, "Held for source health or legal review."),
+      approvalEvent("e3", "approved", "user-3"),
+      approvalEvent("e4", "blocked", "user-4", "Blocked 2026-09-21: no such tenant (HTTP 404)."),
+      approvalEvent("e5", "updated", null, "Approved from Admin batch source approval workflow."),
+    ];
     const html = text(
       render(
         <SourceComplianceCard
@@ -37,7 +48,7 @@ describe("SourceComplianceCard", () => {
             complianceReviewer: "reviewer@example.com",
             legalOpinionReference: "LEGAL-42",
             complianceReviewDueAt: "2027-01-15T00:00:00.000Z",
-            approvalHistory: [approvalEvent("e1", "approved", "user-1"), approvalEvent("e2", "held", null), approvalEvent("e3", "approved", "user-3")],
+            approvalHistory: history,
           })}
         />,
       ),
@@ -49,9 +60,14 @@ describe("SourceComplianceCard", () => {
     expect(html).toContain("Reviewer: reviewer@example.com");
     expect(html).toContain("LEGAL-42");
     expect(html).toContain(admin.sourceApprovalHistory);
-    expect(html).toContain("Actor user-1");
-    expect(html).not.toContain("Actor user-3");
-    // The table cell that still hosts the card caps its width; the detail page lets it fill the tab.
+    expect(html.match(/<li>/g)).toHaveLength(5);
+    for (const actor of ["user-1", "user-3", "user-4"]) expect(html).toContain(`Actor ${actor}`);
+    for (const event of history) if (event.reason) expect(html).toContain(event.reason);
+    for (const label of [admin.sourceApprovalAction_approved, admin.sourceApprovalAction_held, admin.sourceApprovalAction_blocked, admin.sourceApprovalAction_updated]) {
+      expect(html).toContain(`<span class="font-medium">${label}</span>`);
+    }
+    expect(html).toContain(formatDate("2026-09-10T12:00:00.000Z"));
+    // The card has no width cap of its own; the detail page lets it fill the tab.
     expect(html).not.toContain("max-w-64");
   });
 
@@ -220,5 +236,86 @@ describe("CrawlerLogRow", () => {
     expect(html).toContain(">success<");
     expect(html).not.toContain("text-rose-700\">Portal");
     expect(html).not.toContain(admin.fallbackUsed);
+  });
+});
+
+describe("SourceProfileCard", () => {
+  const stateSource = source({
+    id: "california_caleprocure", label: "California Cal eProcure", issuerType: "state", jurisdictionLevel: "state", stateCode: "CA",
+    approvalStatus: "approved", approvedForIngestion: true, legalReviewStatus: "approved_public", approvalNotes: "Default public non-state source governance.",
+    accessPattern: "public_http", accessMode: "http", activationStatus: "active", sourceConfidence: "high",
+    requiresLogin: true, requiresBrowser: true, sourceAuthority: "official", trustStatus: "verified", evidenceMode: "direct_portal",
+    crawlerSourceId: "ca_caleprocure", crawlerAdapterKind: "dedicated", crawlerMaturity: "verified",
+    crawlerCapabilities: ["query", "attachments", "detail_pages", "pagination"], crawlerBaseUrl: "https://www.caleprocure.ca.gov/pages/Events-BS3/event-search.aspx",
+    validityNotes: "Cal eProcure lists every state agency's open events.", fallbackNotes: "Use the event search when the list API is down.",
+  });
+
+  it("shows the approval, ingestion, legal review and approval notes the admin reads before Hold or Approve", () => {
+    const html = text(
+      render(
+        <SourceProfileCard
+          source={source({ approvalStatus: "blocked", approvedForIngestion: false, legalReviewStatus: "not_reviewed", approvalNotes: "Blocked 2026-09-21: no tenant at https://www.bidnetdirect.com/franklin-county-oh (HTTP 404)." })}
+        />,
+      ),
+    );
+
+    expect(html).toContain(`<h3 class="text-sm font-semibold text-slate-950">${escaped(admin.sourceProfileTitle)}</h3>`);
+    expect(html).toContain(`>${admin.fieldApproval}</dt>`);
+    expect(html).toContain(`>${admin.sourceApproval_blocked}</span>`);
+    // Not approved for ingestion.
+    expect(html).toContain(`>${admin.sourceApprovalRequired}</span>`);
+    expect(html).toContain(`>${admin.sourceLegalReview}</dt>`);
+    expect(html).toContain(`>${admin.sourceLegalReview_not_reviewed}</span>`);
+    expect(html).toContain(`>${admin.sourceApprovalNotes}</dt>`);
+    expect(html).toContain("Blocked 2026-09-21: no tenant at https://www.bidnetdirect.com/franklin-county-oh (HTTP 404).");
+  });
+
+  it("shows the access, trust and crawler profile and the validity and fallback notes of a state portal", () => {
+    const html = text(render(<SourceProfileCard source={stateSource} />));
+
+    expect(html).toContain(`>${admin.sourceApproval_approved}</span>`);
+    expect(html).not.toContain(admin.sourceApprovalRequired);
+    expect(html).toContain(`>${admin.sourceLegalReview_approved_public}</span>`);
+    for (const [label, value] of [
+      [admin.sourceAccessPattern, "public_http"],
+      [admin.sourceAccessMode, "http"],
+      [admin.sourceActivationStatus, "active"],
+      [admin.sourceConfidence, "high"],
+    ]) {
+      expect(html).toContain(`>${label}</dt><dd class="mt-1 flex flex-wrap items-center gap-1 text-sm text-slate-900">${value}</dd>`);
+    }
+    // Login decides the ledger an approval must carry; browser and login are listed, manual is not.
+    expect(html).toContain(`>${admin.sourceRequiresLogin}</span>`);
+    expect(html).toContain(`>${admin.sourceRequiresBrowser}</span>`);
+    expect(html).not.toContain(`>${admin.sourceRequiresManual}</span>`);
+    for (const label of [admin.sourceAuthority_official, admin.sourceTrust_verified, admin.sourceEvidence_direct_portal]) expect(html).toContain(`>${label}</span>`);
+    for (const label of [admin.crawlerAdapter_dedicated, admin.crawlerMaturity_verified, admin.crawlerCapability_query, admin.crawlerCapability_attachments, admin.crawlerCapability_detail_pages, admin.crawlerCapability_pagination]) {
+      expect(html).toContain(`>${label}</span>`);
+    }
+    expect(html).toContain('title="https://www.caleprocure.ca.gov/pages/Events-BS3/event-search.aspx">ca_caleprocure - caleprocure.ca.gov</span>');
+    expect(html).toContain("Cal eProcure lists every state agency&#x27;s open events.");
+    expect(html).toContain("Use the event search when the list API is down.");
+  });
+
+  it("says a field is empty with a dash instead of leaving it out", () => {
+    const html = text(render(<SourceProfileCard source={source()} />));
+    /** What the <dd> after the <dt> named `label` holds. */
+    const valueOf = (label: string) => {
+      const marker = `>${escaped(label)}</dt><dd`;
+      const start = html.indexOf(marker);
+      if (start < 0) return undefined;
+      const open = html.indexOf(">", start + marker.length) + 1;
+      return html.slice(open, html.indexOf("</dd>", open));
+    };
+
+    expect(valueOf(admin.sourceRequirements)).toBe("-");
+    expect(valueOf(admin.sourceTrustProfile)).toBe("-");
+    expect(valueOf(admin.sourceValidityNotes)).toBe('<span class="whitespace-pre-line break-words [overflow-wrap:anywhere]">-</span>');
+    expect(valueOf(admin.sourceFallbackNotes)).toBe('<span class="whitespace-pre-line break-words [overflow-wrap:anywhere]">-</span>');
+    expect(valueOf(admin.sourceApprovalNotes)).toBe('<span class="whitespace-pre-line break-words [overflow-wrap:anywhere]">-</span>');
+    // A registry row without legacy crawler metadata still names its adapter and maturity ("None").
+    expect(html).toContain(`>${admin.crawler}</dt>`);
+    expect(html).toContain(`>${admin.crawlerAdapter_none}</span>`);
+    expect(html).not.toContain(" - ");
   });
 });

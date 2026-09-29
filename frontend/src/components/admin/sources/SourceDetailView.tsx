@@ -28,6 +28,7 @@ import { crawlerRunIdFor } from "./crawler-run-id";
 import { SourceBidsCard } from "./SourceBidsCard";
 import { SourceComplianceCard } from "./SourceComplianceCard";
 import { SourceLiveHealthCard } from "./SourceLiveHealthCard";
+import { SourceProfileCard } from "./SourceProfileCard";
 import { sourceHealthTriagePatchForAction, type SourceHealthTriageAction } from "./source-labels";
 
 export type SourceDetailTab = "overview" | "config" | "approval" | "runs" | "bids";
@@ -126,7 +127,7 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
       }
     });
 
-  // The old table's per-row approve/hold (it writes no compliance ledger).
+  // Approve (federal/state rows) and Hold of this one source; neither writes a compliance ledger.
   const updateApproval = (approvalStatus: "approved" | "needs_review") =>
     act(approvalStatus === "approved" ? "approve" : "hold", async () => {
       try {
@@ -209,8 +210,7 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
             <>
               {/* This approve writes no compliance ledger, so it is offered for federal/state rows only. A
                   county/city/township row is approved through the ledgered batch panel or the "approve
-                  county/city source" form in the precheck card (spec §7.3). Hold stays available for every row,
-                  as it was in the old table. */}
+                  county/city source" form in the precheck card (spec §7.3). Hold is offered for every row. */}
               {!isLocalJurisdictionSource(source) && (
                 <Button
                   type="button"
@@ -299,6 +299,7 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
               <p className="mt-2 text-slate-600">{t("admin.sourceDetailReadinessNotLocal")}</p>
             )}
           </section>
+          <SourceProfileCard source={source} />
           {canRunOperations && (
             <SourcePrecheckPanel source={source} reviewerEmail={user.email} disabled={pending !== null} onSourceUpdated={replaceSource} />
           )}

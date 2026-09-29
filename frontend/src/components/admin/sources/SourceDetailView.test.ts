@@ -44,6 +44,10 @@ describe("source detail view", () => {
     expect(view).not.toContain("setPending(null)");
   });
 
+  it("puts the source's profile and governance card on the approval tab", () => {
+    expect(read("SourceDetailView.tsx")).toContain("<SourceProfileCard source={source} />");
+  });
+
   it("clears the pending slot only for the action that is finishing", () => {
     expect(settledPending("run", "run")).toBeNull();
     expect(settledPending("triage", "triage")).toBeNull();
@@ -106,7 +110,9 @@ describe("source detail view", () => {
   it("renders the compliance ledger and the approval history in the compliance card", () => {
     const card = read("SourceComplianceCard.tsx");
 
-    expect(card).toContain("source.approvalHistory");
+    expect(card).toContain("source.approvalHistory.map(");
+    expect(card).not.toContain("approvalHistory.slice(");
+    expect(card).toContain("{event.reason}");
     expect(card).toContain('t("admin.sourceApprovalHistory")');
     expect(card).toContain('t("admin.sourceApprovalActor")');
     expect(card).toContain("source.robotsTxtFlagReason");

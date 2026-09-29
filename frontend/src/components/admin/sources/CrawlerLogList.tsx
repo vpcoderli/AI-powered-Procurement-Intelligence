@@ -13,7 +13,7 @@ import { appendCrawlerLogPage, visibleCrawlerLogs, type CrawlerLogMore, type Cra
 
 const PAGE_SIZE = 25;
 
-/** One crawler run (moved from the old page's recent-logs section). */
+/** One crawler run. */
 export function CrawlerLogRow({ log }: { log: AdminCrawlerLog }) {
   const { t } = useLanguage();
 
@@ -49,8 +49,9 @@ export function CrawlerLogList({ sources, title }: { sources?: readonly string[]
   // The page carries the source set it was read for: the resource keeps the previous set's page while a new one loads.
   const loadFirstPage = useCallback(
     async (): Promise<CrawlerLogPage> => ({
-      key: sourceKey,
       ...(await listAdminCrawlerLogs({ sources: sourceKey ? sourceKey.split("\u0000") : undefined, limit: PAGE_SIZE })),
+      // After the response, so nothing in it can overwrite the tag.
+      key: sourceKey,
     }),
     [sourceKey],
   );

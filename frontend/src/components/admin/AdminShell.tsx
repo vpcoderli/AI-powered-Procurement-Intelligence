@@ -11,7 +11,7 @@ import { AdminAccessState } from "./AdminStateCards";
 
 export type AdminShellState = "loading" | "login_required" | "forbidden" | "forbidden_page" | "ready";
 
-/** The old page's gate order (loading → signed in → console role), plus the per-page role guard. */
+/** The console's gate order: loading → signed in → console role → the page's own role guard. */
 export function adminShellState(input: {
   isLoading: boolean;
   hasUser: boolean;

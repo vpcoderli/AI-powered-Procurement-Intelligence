@@ -82,9 +82,12 @@ describe("useAdminResource source", () => {
     expect(source).toMatch(/useEffect\(\(\) => \{\s*loadRef\.current = load;\s*\}, \[load\]\);/);
   });
 
-  it("still starts a load when `load` changes, deferred to a microtask", () => {
-    expect(source).toContain("}, [enabled, load, reload]);");
+  it("starts a load on mount and whenever `load` changes, deferred to a microtask", () => {
+    expect(source).toContain("}, [load, reload]);");
     expect(source).toContain("queueMicrotask(");
+    // No option can hold the first load back (an `enabled: false` resource stayed "loading" forever).
+    expect(source).toContain("export function useAdminResource<T>(load: () => Promise<T>) {");
+    expect(source).not.toContain("enabled");
   });
 
   it("clears a stale failure through resourceUpdated when data is written", () => {

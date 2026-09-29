@@ -7,7 +7,7 @@ export interface CrawlerRunSource {
   crawlerSourceId: string | null;
 }
 
-/** The id POST /api/crawler/state/run accepts for a source (was page.tsx's stateCrawlerSourceIdFor). */
+/** The id POST /api/crawler/state/run accepts for a source; null when it has none (SAM.gov runs through its own route). */
 export function crawlerRunIdFor(source: CrawlerRunSource): string | null {
   // County/city/special-district registry rows have no legacy per-state crawler metadata;
   // since the data_sources migration they run through /api/crawler/state/run by their own row

@@ -63,7 +63,7 @@ export function SummaryCard({ label, value, icon: Icon }: { label: string; value
   );
 }
 
-/** The old page's single `runMessage` banner, now one per section. */
+/** A section's notice: the outcome of the last action on it (tone `error` for a failure). */
 export function AdminNotice({ message, tone = "info" }: { message: string | null; tone?: "info" | "error" }) {
   if (!message) return null;
 

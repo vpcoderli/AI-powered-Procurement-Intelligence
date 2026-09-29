@@ -7,9 +7,9 @@ import { formatDate } from "../admin-format";
 import { robotsTxtStatusLabel, robotsTxtTone, sourceApprovalActionLabel, tosReviewedTone } from "./source-labels";
 
 /**
- * The compliance ledger and the latest approval events of one source (moved from the old sources
- * table's crawler cell). The card has no width or outer margin of its own: the table cell caps it at
- * max-w-64, the detail page lets it fill the tab.
+ * The compliance ledger of one source and its approval history: every event the API returns (the newest
+ * five), each with its time, its actor and the reason written with it. The card has no width or outer
+ * margin of its own; the detail page's tab spaces it.
  */
 export function SourceComplianceCard({ source }: { source: AdminDataSource }) {
   const { t } = useLanguage();
@@ -50,19 +50,26 @@ export function SourceComplianceCard({ source }: { source: AdminDataSource }) {
       {source.approvalHistory.length > 0 && (
         <div className="rounded-md border border-slate-200 bg-slate-50/70 p-2 text-xs leading-5 text-slate-600">
           <div className="font-semibold text-slate-700">{t("admin.sourceApprovalHistory")}</div>
-          {source.approvalHistory.slice(0, 2).map((event) => (
-            <div key={event.id} className="mt-1">
-              <span className="font-medium">{sourceApprovalActionLabel(t, event.action)}</span>
-              {" · "}
-              <span>{formatDate(event.createdAt)}</span>
-              {event.actorUserId ? (
-                <>
+          <ol className="mt-1 flex flex-col gap-1.5">
+            {source.approvalHistory.map((event) => (
+              <li key={event.id}>
+                <div>
+                  <span className="font-medium">{sourceApprovalActionLabel(t, event.action)}</span>
                   {" · "}
-                  <span>{t("admin.sourceApprovalActor").replace("{actor}", event.actorUserId)}</span>
-                </>
-              ) : null}
-            </div>
-          ))}
+                  <span>{formatDate(event.createdAt)}</span>
+                  {event.actorUserId ? (
+                    <>
+                      {" · "}
+                      <span>{t("admin.sourceApprovalActor").replace("{actor}", event.actorUserId)}</span>
+                    </>
+                  ) : null}
+                </div>
+                {event.reason && (
+                  <div className="whitespace-pre-line break-words text-slate-500 [overflow-wrap:anywhere]">{event.reason}</div>
+                )}
+              </li>
+            ))}
+          </ol>
         </div>
       )}
     </div>

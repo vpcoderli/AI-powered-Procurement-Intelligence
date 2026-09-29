@@ -23,10 +23,6 @@ export type SourceHealthTriageFields = {
   liveHealthReviewedAt?: string | null;
 };
 
-export function latestRunAt(source: AdminDataSource) {
-  return source.latestLog?.finishedAt ?? source.latestLog?.startedAt ?? source.lastSuccessAt ?? source.lastFailureAt;
-}
-
 export function liveSourceHealthTone(status: string | null | undefined) {
   if (status === "healthy") return "border-emerald-200 bg-emerald-50 text-emerald-700";
   if (status === "skipped") return "border-slate-200 bg-slate-50 text-slate-600";
@@ -228,6 +224,22 @@ export function sourceApprovalLabel(t: (key: string) => string, source: AdminDat
   if (source.approvalStatus === "approved") return t("admin.sourceApproval_approved");
   if (source.approvalStatus === "blocked") return t("admin.sourceApproval_blocked");
   return t("admin.sourceApproval_needs_review");
+}
+
+/** The crawler gate also lets a plain `approved` through (orchestrator.ts), so it gets the approved tone. */
+export function sourceLegalReviewTone(value: string | null | undefined) {
+  if (value === "approved_public" || value === "approved") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (value === "restricted") return "border-rose-200 bg-rose-50 text-rose-700";
+  if (value === "not_reviewed") return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-slate-200 bg-slate-50 text-slate-600";
+}
+
+/** A value outside the three the registry writes is shown as stored, never as "not reviewed". */
+export function sourceLegalReviewLabel(t: (key: string) => string, value: string | null | undefined) {
+  if (value === "approved_public") return t("admin.sourceLegalReview_approved_public");
+  if (value === "not_reviewed") return t("admin.sourceLegalReview_not_reviewed");
+  if (value === "restricted") return t("admin.sourceLegalReview_restricted");
+  return value || "-";
 }
 
 export function sourceApprovalActionLabel(t: (key: string) => string, action: string) {

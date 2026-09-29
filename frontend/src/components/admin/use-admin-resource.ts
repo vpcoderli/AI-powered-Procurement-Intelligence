@@ -44,8 +44,7 @@ export function resourceUpdated<T>(
  * `reload` has a stable identity and always runs the newest `load`, so a mutation handler that
  * captured it at click time still reloads with the filters as they are when it runs.
  */
-export function useAdminResource<T>(load: () => Promise<T>, options: { enabled?: boolean } = {}) {
-  const enabled = options.enabled ?? true;
+export function useAdminResource<T>(load: () => Promise<T>) {
   const [state, setState] = useState<AdminResourceState<T>>({ status: "loading", data: null, error: null });
   const latestRequest = useRef(0);
   const loadRef = useRef(load);
@@ -69,11 +68,10 @@ export function useAdminResource<T>(load: () => Promise<T>, options: { enabled?:
   }, []);
 
   useEffect(() => {
-    if (!enabled) return;
     queueMicrotask(() => {
       void reload();
     });
-  }, [enabled, load, reload]);
+  }, [load, reload]);
 
   const setData = useCallback((update: (data: T | null) => T | null) => {
     setState((previous) => resourceUpdated(previous, update));
