@@ -626,6 +626,15 @@ function crawlerConfigSnapshot(row: DataSourceRow) {
   };
 }
 
+/**
+ * True for every jurisdiction level the orchestrator's governance gate (`blockedReasonFor`) holds
+ * until a person approves it: any set level other than federal/state. A row without a level is
+ * a legacy state/federal row and is not held.
+ */
+export function isGatedLocalJurisdictionLevel(level: string | null | undefined): boolean {
+  return Boolean(level) && level !== "federal" && level !== "state";
+}
+
 function toAdminSource(
   row: DataSourceRow,
   latestLog: AdminCrawlerLog | null,
@@ -637,13 +646,18 @@ function toAdminSource(
   const crawlerCapabilities = [...(crawlerMetadata?.capabilities ?? [])];
   const crawlerMaturity = crawlerMetadata?.maturity ?? "none";
   const crawlerSourceId = crawlerMetadata?.id ?? null;
+  // A registered county/city/township row lands with NULL governance columns, and the gate reads
+  // that as "not approved yet". Reporting it as approved here would hide every such source from
+  // the ledgered batch approval and would log its first approval as "approved -> approved". A local
+  // row that is explicitly approved keeps the old defaults for its remaining NULL columns.
+  const heldLocal = isGatedLocalJurisdictionLevel(row.jurisdictionLevel) && row.approvalStatus !== "approved";
   const defaultGovernance = crawlerMetadata ?? {
-    approvedForIngestion: row.issuerType !== "state",
-    approvalStatus: "approved" as SourceApprovalStatus,
+    approvedForIngestion: row.issuerType !== "state" && !heldLocal,
+    approvalStatus: (heldLocal ? "needs_review" : "approved") as SourceApprovalStatus,
     accessPattern: "public_http" as SourceAccessPattern,
-    legalReviewStatus: "approved_public" as SourceLegalReviewStatus,
+    legalReviewStatus: (heldLocal ? "not_reviewed" : "approved_public") as SourceLegalReviewStatus,
     sourceOwner: "APSI Data Ops",
-    approvalNotes: "Default public non-state source governance.",
+    approvalNotes: heldLocal ? null : "Default public non-state source governance.",
     lastApprovalReviewedAt: null,
   };
 

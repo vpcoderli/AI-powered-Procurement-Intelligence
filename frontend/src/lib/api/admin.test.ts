@@ -5,6 +5,7 @@ import {
   batchUpdateAdminBidQaItems,
   createAdminUser,
   deliverAdminNotifications,
+  getAdminApprovalReadiness,
   getAdminRiskChecklist,
   getAdminBidQaCorrections,
   getAdminMarketingFunnel,
@@ -542,6 +543,60 @@ describe("admin API client", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sourceIds: ["ca_caleprocure", "tx_esbd"], action: "approve" }),
+    });
+  });
+
+  it("returns the ledgered outcomes the batch route adds for an approve", async () => {
+    const body = {
+      updatedCount: 1,
+      skippedCount: 1,
+      outcomes: [
+        { sourceId: "bidnet_mi_a", outcome: "approved", reason: null },
+        { sourceId: "bidnet_mi_b", outcome: "skipped", reason: "precheck_needs_fix" },
+      ],
+      sources: [{ id: "bidnet_mi_a" }],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    const result = await batchUpdateAdminDataSources({ sourceIds: ["bidnet_mi_a", "bidnet_mi_b"], action: "approve" });
+
+    expect(result).toEqual(body);
+    expect(result.skippedCount).toBe(1);
+    expect(result.outcomes?.[1]).toEqual({ sourceId: "bidnet_mi_b", outcome: "skipped", reason: "precheck_needs_fix" });
+  });
+
+  it("reads the approval readiness of one platform", async () => {
+    const body = {
+      providerFamily: "bidnet",
+      platformReview: { status: "missing", review: null },
+      counts: { approvable: 0, awaiting_precheck: 2, needs_fix: 0, missing_platform_review: 0, approved: 0, blocked: 0 },
+      sources: [],
+    };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(getAdminApprovalReadiness("bidnet")).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources/approval-readiness?providerFamily=bidnet");
+  });
+
+  it("reads the approval readiness of every local source when no platform is named", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ providerFamily: null, platformReview: null, counts: {}, sources: [] }),
+    );
+
+    await getAdminApprovalReadiness();
+
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources/approval-readiness");
+  });
+
+  it("surfaces a refused approval readiness read as an AdminApiError", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ error: { code: "FORBIDDEN", message: "Admin access is required." } }, { status: 403 }),
+    );
+
+    await expect(getAdminApprovalReadiness("bidnet")).rejects.toMatchObject({
+      name: "AdminApiError",
+      status: 403,
+      code: "FORBIDDEN",
     });
   });
 

@@ -2,12 +2,15 @@ import { NextResponse } from "next/server";
 import { requireAdminAccess, AdminAuthError, type AdminAccessPrincipal } from "@/server/admin/auth";
 import {
   AdminDataSourceNotFoundError,
+  SourceApprovalRequirementsError,
   updateAdminDataSource,
   updateAdminDataSourceFromMysql,
   type AdminDataSource,
   type MysqlDataSourcesStore,
   type UpdateAdminDataSourceInput,
 } from "@/server/admin/data-sources-repository";
+import { approveSourcesWithLedger } from "@/server/admin/ledgered-approval";
+import type { MysqlPlatformReviewsStore } from "@/server/admin/platform-reviews-repository";
 import type { AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { csrfRejectedResponse, verifyCsrfSafe } from "@/server/security/csrf";
@@ -30,6 +33,10 @@ function routeError(error: unknown) {
 
   if (error instanceof AdminDataSourceNotFoundError) {
     return errorResponse("DATA_SOURCE_NOT_FOUND", "Data source was not found.", 404);
+  }
+
+  if (error instanceof SourceApprovalRequirementsError) {
+    return errorResponse("APPROVAL_REQUIREMENTS_UNMET", error.message, 400);
   }
 
   return errorResponse("INTERNAL_ERROR", "Internal server error", 500);
@@ -90,7 +97,12 @@ function inputForBatchAction(action: BatchSourceApprovalAction): UpdateAdminData
   };
 }
 
-export function createAdminDataSourcesBatchPost(database?: AppDatabase, mysql?: MysqlDataSourcesStore) {
+/**
+ * Batch approve / hold. `hold` and the approval of federal/state sources keep the old generic
+ * writes; a local (county/city/township/...) source is approved only through the platform-review
+ * ledger (spec 2026-09-24 §7.3) and is otherwise skipped with a reason, writing nothing.
+ */
+export function createAdminDataSourcesBatchPost(database?: AppDatabase, mysql?: MysqlDataSourcesStore & MysqlPlatformReviewsStore) {
   const shouldUseMysqlRuntime = () => Boolean(mysql) || (!database && isMysqlDatabaseUrlConfigured());
 
   return async function POST(request: Request) {
@@ -108,9 +120,27 @@ export function createAdminDataSourcesBatchPost(database?: AppDatabase, mysql?: 
       const access = await requireAdminAccess(resolvedDb, request, { roles: ["admin"] });
       const actorUserId = actorUserIdForAdminAccess(access);
       const input = inputForBatchAction(body.action);
-      const sources: AdminDataSource[] = [];
       const store = shouldUseMysqlRuntime() ? mysql ?? resolveMysqlPool() : null;
 
+      if (body.action === "approve") {
+        const outcomes = await approveSourcesWithLedger(
+          { database: resolvedDb, mysql: store ?? undefined },
+          body.sourceIds,
+          { actorUserId, genericInput: input },
+        );
+        if (outcomes.some((entry) => entry.outcome === "not_found")) {
+          return errorResponse("DATA_SOURCE_NOT_FOUND", "Data source was not found.", 404);
+        }
+        const approved = outcomes.filter((entry) => entry.outcome === "approved");
+        return NextResponse.json({
+          updatedCount: approved.length,
+          skippedCount: outcomes.length - approved.length,
+          outcomes: outcomes.map(({ sourceId, outcome, reason }) => ({ sourceId, outcome, reason })),
+          sources: approved.map((entry) => entry.source),
+        });
+      }
+
+      const sources: AdminDataSource[] = [];
       for (const sourceId of body.sourceIds) {
         sources.push(
           store

@@ -6,6 +6,7 @@ import { recordLiveSourceHealthSnapshot } from "@/server/source-validity/health-
 import {
   AdminDataSourceNotFoundError,
   SourceApprovalRequirementsError,
+  isGatedLocalJurisdictionLevel,
   listAdminCrawlerLogs,
   listAdminCrawlerLogsFromMysql,
   listAdminDataSources,
@@ -1176,6 +1177,174 @@ describe("compliance ledger and approval requirements", () => {
       "Disallow: /",
     ]);
     expect(executed[0].values.at(-1)).toBe("bidnet_ny_erie");
+  });
+});
+
+describe("governance defaults of held local sources", () => {
+  let testDb: TestDatabase;
+
+  beforeEach(async () => {
+    testDb = await createTestDatabase({ seed: false });
+  });
+
+  afterEach(async () => {
+    await testDb.cleanup();
+  });
+
+  function insertLocal(id: string, level: string | null, overrides: Partial<typeof dataSources.$inferInsert> = {}) {
+    testDb.db
+      .insert(dataSources)
+      .values({
+        id,
+        label: id,
+        issuerType: level ?? "county",
+        stateCode: "MI",
+        jurisdictionLevel: level,
+        providerFamily: "bidnet",
+        isEnabled: 1,
+        cadence: "daily",
+        createdAt: NOW,
+        updatedAt: NOW,
+        ...overrides,
+      })
+      .run();
+  }
+
+  it.each(["county", "city", "township", "special_district"])(
+    "reports a registered %s source with NULL governance columns as awaiting approval, like the gate does",
+    async (level) => {
+      insertLocal("registered", level);
+
+      const listed = await listAdminDataSources(testDb.db);
+
+      expect(listed.sources.find((item) => item.id === "registered")).toMatchObject({
+        approvalStatus: "needs_review",
+        approvedForIngestion: false,
+        legalReviewStatus: "not_reviewed",
+        approvalNotes: null,
+      });
+    },
+  );
+
+  it("still reports what an explicit approval wrote on a local source", async () => {
+    insertLocal("approved_county", "county", {
+      approvalStatus: "approved",
+      approvedForIngestion: 1,
+      legalReviewStatus: "approved_public",
+      approvalNotes: "Approved after pre-check.",
+    });
+    insertLocal("blocked_county", "county", { approvalStatus: "blocked", approvedForIngestion: 0, legalReviewStatus: "restricted" });
+
+    const listed = await listAdminDataSources(testDb.db);
+
+    expect(listed.sources.find((item) => item.id === "approved_county")).toMatchObject({
+      approvalStatus: "approved",
+      approvedForIngestion: true,
+      legalReviewStatus: "approved_public",
+      approvalNotes: "Approved after pre-check.",
+    });
+    expect(listed.sources.find((item) => item.id === "blocked_county")).toMatchObject({
+      approvalStatus: "blocked",
+      approvedForIngestion: false,
+      legalReviewStatus: "restricted",
+    });
+  });
+
+  it("keeps the crawlable defaults of an explicitly approved local row whose other governance columns are NULL", async () => {
+    // Approved by hand with only approval_status set: the gate lets it run (NULL is "not denied"), so must the DTO.
+    insertLocal("hand_approved", "county", { approvalStatus: "approved" });
+
+    const listed = await listAdminDataSources(testDb.db);
+
+    expect(listed.sources.find((item) => item.id === "hand_approved")).toMatchObject({
+      approvalStatus: "approved",
+      approvedForIngestion: true,
+      legalReviewStatus: "approved_public",
+    });
+  });
+
+  it("holds a local row that was explicitly moved to needs_review, whatever its other columns say", async () => {
+    insertLocal("held_county", "county", { approvalStatus: "needs_review" });
+
+    const listed = await listAdminDataSources(testDb.db);
+
+    expect(listed.sources.find((item) => item.id === "held_county")).toMatchObject({
+      approvalStatus: "needs_review",
+      approvedForIngestion: false,
+      legalReviewStatus: "not_reviewed",
+    });
+  });
+
+  it("keeps the default public-source approval for federal rows and for legacy rows without a level", async () => {
+    insertLocal("sam_gov", "federal", { issuerType: "federal", stateCode: "US" });
+    insertLocal("legacy_county", null);
+
+    const listed = await listAdminDataSources(testDb.db);
+
+    for (const id of ["sam_gov", "legacy_county"]) {
+      expect(listed.sources.find((item) => item.id === id)).toMatchObject({
+        approvalStatus: "approved",
+        approvedForIngestion: true,
+        legalReviewStatus: "approved_public",
+        approvalNotes: "Default public non-state source governance.",
+      });
+    }
+  });
+
+  it("logs the first approval of a registered local source as needs_review -> approved (SQLite)", async () => {
+    insertLocal("registered", "county");
+
+    await updateAdminDataSource(
+      testDb.db,
+      "registered",
+      { approvalStatus: "approved", approvedForIngestion: true, legalReviewStatus: "approved_public", approvalNotes: "ledger" },
+      { actorUserId: "admin_1" },
+    );
+
+    expect(testDb.db.select().from(sourceApprovalEvents).all()).toEqual([
+      expect.objectContaining({
+        sourceId: "registered",
+        action: "approved",
+        previousApprovalStatus: "needs_review",
+        nextApprovalStatus: "approved",
+        previousLegalReviewStatus: "not_reviewed",
+        nextLegalReviewStatus: "approved_public",
+        previousApprovedForIngestion: 0,
+        nextApprovedForIngestion: 1,
+      }),
+    ]);
+  });
+
+  it("applies the same defaults on the MySQL path, list and approval event", async () => {
+    const executed: Array<{ sql: string; values: unknown[] }> = [];
+    const row = {
+      id: "registered", label: "registered", issuerType: "county", stateCode: "MI", isEnabled: 1, cadence: "daily",
+      jurisdictionLevel: "county", providerFamily: "bidnet", requiresLogin: null, approvalStatus: null, legalReviewStatus: null,
+      approvedForIngestion: null, tosReviewed: null, complianceReviewer: null, legalOpinionReference: null,
+      consecutiveFailures: 0, createdAt: NOW, updatedAt: NOW,
+    };
+    const mysql = {
+      query: async (sql: string) => (sql.includes("FROM data_sources") ? [[row]] : [[]]),
+      execute: async (sql: string, values: unknown[] = []) => {
+        executed.push({ sql, values });
+        return [{ affectedRows: 1 }];
+      },
+    };
+
+    const listed = await listAdminDataSourcesFromMysql(mysql as never);
+    await updateAdminDataSourceFromMysql(mysql as never, "registered", { approvalStatus: "approved", approvedForIngestion: true, legalReviewStatus: "approved_public" });
+
+    expect(listed.sources[0]).toMatchObject({ approvalStatus: "needs_review", approvedForIngestion: false, legalReviewStatus: "not_reviewed" });
+    const event = executed.find((call) => call.sql.includes("INSERT INTO source_approval_events"));
+    // Values are (id, source_id, actor, action, previous_approval_status, next_approval_status, previous_legal_review_status,
+    // next_legal_review_status, previous_approved_for_ingestion, ...). The fake keeps returning the pre-update row, so only
+    // the "previous" side is meaningful here: it must be the held state, never the old "approved" default.
+    expect([event?.values[3], event?.values[4], event?.values[6], event?.values[8]]).toEqual(["approved", "needs_review", "not_reviewed", 0]);
+  });
+
+  it("names the levels the gate holds: any set level other than federal or state", () => {
+    expect(["county", "city", "township", "special_district", "school_board"].map(isGatedLocalJurisdictionLevel)).toEqual([true, true, true, true, true]);
+    expect(["federal", "state", "", null, undefined].map(isGatedLocalJurisdictionLevel)).toEqual([false, false, false, false, false]);
   });
 });
 

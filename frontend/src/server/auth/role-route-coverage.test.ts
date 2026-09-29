@@ -30,6 +30,7 @@ const operatorMutationRoutes = [
 const consoleReadRoutes = [
   "../../app/api/admin/bids/qa/route.ts",
   "../../app/api/admin/crawler-logs/route.ts",
+  "../../app/api/admin/data-sources/approval-readiness/route.ts",
   "../../app/api/admin/data-sources/route.ts",
   "../../app/api/admin/marketing/funnel/route.ts",
   "../../app/api/admin/marketing/leads/export/route.ts",

@@ -6,6 +6,12 @@ import type {
   UpdateAdminDataSourceInput,
 } from "@/server/admin/data-sources-repository";
 import type {
+  ApprovalReadinessBucket,
+  ApprovalReadinessEntry,
+  ApprovalReadinessSummary,
+  LedgeredApprovalReason,
+} from "@/server/admin/ledgered-approval";
+import type {
   CreatePlatformReviewInput,
   EffectivePlatformReview,
   PlatformReview,
@@ -170,10 +176,34 @@ export interface UpdateAdminDataSourceResponse {
   source: AdminDataSource;
 }
 
+/**
+ * Ledgered batch approval (spec 2026-09-24 §7.3): what happened to each requested source when the
+ * batch answered `action: "approve"`. `approved` rows are in `sources`; a `skipped` local source
+ * carries the reason that held it back and was not written to. Absent on `hold`.
+ */
+export type AdminLedgeredApprovalReason = LedgeredApprovalReason;
+
+export interface AdminLedgeredBatchOutcome {
+  sourceId: string;
+  outcome: "approved" | "skipped" | "not_found";
+  reason: AdminLedgeredApprovalReason | null;
+}
+
 export interface BatchUpdateAdminDataSourcesResponse {
   updatedCount: number;
+  skippedCount?: number;
+  outcomes?: AdminLedgeredBatchOutcome[];
   sources: AdminDataSource[];
 }
+
+/**
+ * `GET /api/admin/data-sources/approval-readiness`: every local source (optionally of one
+ * platform) placed in one console bucket, the count per bucket and, when a platform is named, its
+ * effective platform review.
+ */
+export type AdminApprovalReadinessBucket = ApprovalReadinessBucket;
+export type AdminApprovalReadinessEntry = ApprovalReadinessEntry;
+export type AdminApprovalReadinessSummary = ApprovalReadinessSummary;
 
 export interface AdminDataSourceHealthCheckResponse {
   report: {
@@ -505,6 +535,17 @@ export async function batchUpdateAdminDataSources(input: { sourceIds: string[]; 
   });
 
   return parseResponse<BatchUpdateAdminDataSourcesResponse>(response);
+}
+
+/**
+ * How ready the local sources are for ledgered batch approval, grouped by bucket. Pass a
+ * `providerFamily` (e.g. "bidnet") to scope it to one platform and get its effective review too.
+ * Read-only; any admin-console role.
+ */
+export async function getAdminApprovalReadiness(providerFamily?: string) {
+  const response = await fetch(`/api/admin/data-sources/approval-readiness${buildQueryString({ providerFamily })}`);
+
+  return parseResponse<AdminApprovalReadinessSummary>(response);
 }
 
 export async function checkAdminDataSourceHealth(id: string, input: { timeoutMs?: number } = {}) {
