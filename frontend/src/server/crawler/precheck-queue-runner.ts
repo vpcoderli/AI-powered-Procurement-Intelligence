@@ -103,10 +103,13 @@ function brief(message: string | null): string {
  * Only a FAILED dry run can be either: `wafChallenge` is derived from stderr text, so a run that
  * parsed rows must not read as a challenge because a detail page logged a 403.
  *
- * `crawl` is the raw result the crawler subprocess returned, when the caller observed it. It is
- * needed because `runCrawlTask` reports the exit code, "1", as `errorCode` for EVERY failure
- * document Python prints (fetch-task exits 1 after printing one), which the summary in `precheck`
- * cannot tell from a crash. Without it only codes that cannot be Python names count as process-level.
+ * `crawl` is the raw result the crawler subprocess returned, when the caller observed it. The summary
+ * in `precheck` keeps only the top-level `errorCode`. `runCrawlTask` reports a failure document's own
+ * error name there, and falls back to the exit status ("1") only when the child printed no usable
+ * error name: a crash without a result document, or a success document it rewrote because the child
+ * then exited non-zero. `crawl` shows that directly (`payload === null`, or a numeric code on the
+ * rewritten document). Without it only codes that cannot be Python names count as process-level, so a
+ * bare exit status is not read as a crash.
  */
 export function classifyPrecheck(precheck: SourcePrecheckResult, crawl: CrawlTaskResult | null = null): PrecheckDisposition {
   const fetched = precheck.fetch;

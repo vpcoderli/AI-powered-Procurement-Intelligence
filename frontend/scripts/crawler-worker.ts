@@ -254,8 +254,9 @@ async function main() {
   // Same lifetime for the retry state of challenged/errored prechecks: without it one broken source
   // would head the queue, and re-pause its platform, on every tick.
   const precheckRetries = new PrecheckRetryRegistry();
-  // The spacing waits between two requests of one platform (both steps) use the ref'd `sleep` above;
-  // the tracker's default timer is unref'd, which a SQLite-topology worker cannot survive.
+  // The spacing waits between two requests of one platform (both steps) reuse the ref'd `sleep` above, so the
+  // worker keeps one timer. The tracker's own default is ref'd as well now (an unref'd timer would let a
+  // SQLite-topology worker exit 0 in the middle of a wait); injecting this one keeps that from depending on it.
   const platformDeferral = { sleep };
 
   try {

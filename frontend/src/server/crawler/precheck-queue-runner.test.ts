@@ -494,7 +494,8 @@ describe("classifyPrecheck", () => {
     for (const errorCode of ["ENOENT", "EACCES", "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", "CrawlerTaskTimeoutError", "CrawlerOutputError", "CrawlerProcessError"]) {
       expect(classifyPrecheck(failed({ errorCode, errorMessage: "boom" })).kind).toBe("error");
     }
-    // "1" is the exit code runCrawlTask reports for EVERY failure document Python prints; alone it proves nothing.
+    // A bare exit status ("1") beside a parse message. runCrawlTask no longer reports it for a failure document (that
+    // reports its own error name), and without the raw crawl result a numeric code alone is not read as a crash.
     expect(classifyPrecheck(failed({ errorCode: "1", errorMessage: "HTML table was missing required headers" }))).toEqual({ kind: "completed" });
   });
 
@@ -506,8 +507,12 @@ describe("classifyPrecheck", () => {
 });
 
 describe("runQueuedPrechecksOnce with the real runSourcePrecheck", () => {
-  // Realistic runCrawlTask results (what state-runner.ts really returns for each failure mode,
-  // verified against Node's execFile), pushed through the real summary in source-precheck.ts.
+  // runCrawlTask results for each failure mode, pushed through the real summary in source-precheck.ts. A crash that
+  // printed no document has the exit status ("1") as its errorCode, exactly as Node's execFile reports it. The rows
+  // that carry a failure document show `errorCode: "1"` too: that is what runCrawlTask reported for them before a
+  // document's own error name was put ahead of the exit status. It now reports the name (e.g. "BidNetChallengeError"),
+  // but classifyPrecheck reads `payload.errorCode` whenever a document is present, so those rows classify the same
+  // under either top-level code (checked by running them with the names).
   let testDb: TestDatabase;
 
   beforeEach(async () => {
@@ -577,7 +582,8 @@ describe("runQueuedPrechecksOnce with the real runSourcePrecheck", () => {
   });
 
   it("a crashed crawler is the case only the raw crawl result can tell from an ordinary failure document", async () => {
-    // Same errorCode ("1") and same summary shape as the parse-failure case above; only the missing payload differs.
+    // The same summary the parse-failure row above gives (errorCode "1", no HTTP status, no challenge): on its own it
+    // reads as an ordinary failure, and only the missing payload marks this run as a crash.
     const crash = crawlFailure({ errorCode: "1", stderr: "Traceback" });
     const runCrawlTask = vi.fn(async () => crash);
     const seen: SourcePrecheckResult[] = [];

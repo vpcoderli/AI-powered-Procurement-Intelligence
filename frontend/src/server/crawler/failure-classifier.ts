@@ -36,9 +36,37 @@ const PARSE_ERROR_CODES = new Set([
 
 const EMPTY_ERROR_CODES = new Set(["EmptyCrawlerResultError"]);
 
-function isServerSideHttpError(code: string | null | undefined, message: string | null | undefined) {
-  if (code !== "HTTPError") return false;
-  return /\b(5\d{2}|429)\b/.test(message ?? "");
+/**
+ * `HtmlPageError` (crawler/apsi_crawler/html/public_page.py) is one class for very different failures, and only
+ * the wording tells them apart:
+ *
+ *   "HTML request failed: <requests error>"                    a transport failure, no response came back
+ *   "HTML request failed with status <code>: <response body>"  the portal answered with something other than 200
+ *   "HTML response content type was not HTML: ...", "HTML response was empty",
+ *   "HTML table was missing required headers: ..."             the page came back, but not as the parser expects
+ *
+ * The first two are matched at the START of the message only. A status message goes on to quote the response
+ * body, which can say anything (other status codes, even this wording), and the errorMessage handed in here
+ * carries the run's stderr after the failure's own message.
+ */
+const HTML_TRANSPORT_FAILURE = /^\s*HTML request failed:/i;
+const HTML_STATUS_FAILURE = /^\s*HTML request failed with status (\d{3})\b/i;
+/** Answers that say "try again later" rather than "the page changed": server errors, rate limits and a WAF's 403. */
+const TRANSIENT_HTML_STATUS = /^(?:5\d\d|429|403)$/;
+
+/**
+ * The portal, or the way to it, was unavailable or pushed back: worth a retry, and no reason to send an approved
+ * source to review at the first occurrence (it is degraded only after the default threshold of consecutive
+ * failures). Anything else an `HtmlPageError` says (a 404 or any other status, a non-HTML or empty body, missing
+ * table headers) means the page or tenant itself changed, and stays a parse failure.
+ */
+function isTransientHttpFailure(code: string | null | undefined, message: string | null | undefined) {
+  const text = message ?? "";
+  if (code === "HTTPError") return /\b(5\d{2}|429)\b/.test(text);
+  if (code !== "HtmlPageError") return false;
+  if (HTML_TRANSPORT_FAILURE.test(text)) return true;
+  const status = HTML_STATUS_FAILURE.exec(text)?.[1];
+  return status !== undefined && TRANSIENT_HTML_STATUS.test(status);
 }
 
 export function classifyCrawlerFailure(input: CrawlerFailureInput): CrawlerFailureKind {
@@ -46,7 +74,7 @@ export function classifyCrawlerFailure(input: CrawlerFailureInput): CrawlerFailu
 
   if (code && EMPTY_ERROR_CODES.has(code)) return "empty";
   if (code && NETWORK_ERROR_CODES.has(code)) return "network";
-  if (isServerSideHttpError(code, input.errorMessage)) return "network";
+  if (isTransientHttpFailure(code, input.errorMessage)) return "network";
   if (code && PARSE_ERROR_CODES.has(code)) return "parse";
   if (!code && (input.fetchedCount ?? null) === 0) return "empty";
 
