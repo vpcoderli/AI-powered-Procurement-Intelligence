@@ -12,6 +12,7 @@ const PAGES: Array<[file: string, section: string]> = [
   ["sources/[id]/page.tsx", "<SourceDetailView"],
   ["sources/onboarding/page.tsx", "<OnboardingSection />"],
   ["sources/runs/page.tsx", "<CrawlRunsSection />"],
+  ["sources/page.tsx", "<SourcesListView />"],
 ];
 
 describe("admin pages", () => {
@@ -25,5 +26,10 @@ describe("admin pages", () => {
     const page = readFileSync(new URL("sources/[id]/page.tsx", import.meta.url), "utf8");
     expect(page).toContain("useParams");
     expect(page).toContain("decodeURIComponent");
+  });
+
+  it("renders the source list inside Suspense because it reads useSearchParams", () => {
+    const page = readFileSync(new URL("sources/page.tsx", import.meta.url), "utf8");
+    expect(page).toContain("<Suspense");
   });
 });
