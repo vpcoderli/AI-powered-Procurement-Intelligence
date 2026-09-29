@@ -5,12 +5,13 @@ import { dataSources } from "@/server/db/schema";
 import type { CrawlTaskResult } from "@/server/crawler/state-runner";
 import type { SourceComplianceReport } from "@/server/source-validity/robots-compliance-scan";
 import { AdminDataSourceNotFoundError } from "./data-sources-repository";
-import { SourcePrecheckFailedError, runSourcePrecheck } from "./source-precheck";
+import { SourcePrecheckFailedError, precheckBaseUrlFromNotes, runSourcePrecheck } from "./source-precheck";
 
 type RunCrawlTask = (typeof import("@/server/crawler/state-runner"))["runCrawlTask"];
 
 const NOW = new Date("2026-09-16T10:00:00.000Z");
 const SOURCE_ID = "bidnet_ny_erie";
+const BASE_URL = "https://www.bidnetdirect.com/new-york/erie-county/solicitations/open-bids";
 
 function complianceReport(overrides: Partial<SourceComplianceReport["results"][number]> = {}): SourceComplianceReport {
   const result = {
@@ -84,7 +85,7 @@ describe("runSourcePrecheck", () => {
         label: "Erie County, NY (BidNet)",
         issuerType: "county",
         stateCode: "NY",
-        baseUrl: "https://www.bidnetdirect.com/new-york/erie-county/solicitations/open-bids",
+        baseUrl: BASE_URL,
         isEnabled: 1,
         cadence: "daily",
         providerFamily: "bidnet",
@@ -143,6 +144,26 @@ describe("runSourcePrecheck", () => {
     expect(JSON.parse(readSource()?.liveHealthNotes ?? "{}")).toMatchObject({
       precheck: { verdict: "ready", fetch: { items: 4 } },
     });
+  });
+
+  it("records the fetched base_url in the precheck notes", async () => {
+    await runSourcePrecheck({
+      database: testDb.db,
+      sourceId: SOURCE_ID,
+      now: NOW,
+      runCrawlTask: async () => successWithBids(2),
+      scanCompliance: async () => complianceReport(),
+    });
+
+    expect(precheckBaseUrlFromNotes(readSource()?.liveHealthNotes ?? null)).toBe(BASE_URL);
+  });
+
+  it("precheckBaseUrlFromNotes tolerates garbage", () => {
+    expect(precheckBaseUrlFromNotes(null)).toBeNull();
+    expect(precheckBaseUrlFromNotes("not json")).toBeNull();
+    expect(precheckBaseUrlFromNotes(JSON.stringify({ precheck: { verdict: "ready" } }))).toBeNull();
+    expect(precheckBaseUrlFromNotes(JSON.stringify({ precheck: { baseUrl: 42 } }))).toBeNull();
+    expect(precheckBaseUrlFromNotes(JSON.stringify(null))).toBeNull();
   });
 
   it("dry-runs with the requested limit, no persistence and no governance gate", async () => {

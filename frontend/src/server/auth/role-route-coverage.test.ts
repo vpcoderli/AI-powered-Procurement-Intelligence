@@ -22,6 +22,7 @@ const operatorMutationRoutes = [
   "../../app/api/admin/data-sources/[id]/route.ts",
   "../../app/api/admin/data-sources/[id]/health-check/route.ts",
   "../../app/api/admin/data-sources/[id]/precheck/route.ts",
+  "../../app/api/admin/data-sources/precheck-requests/route.ts",
   "../../app/api/admin/notifications/deliver/route.ts",
 ] as const;
 

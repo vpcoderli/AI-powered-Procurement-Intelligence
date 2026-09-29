@@ -21,6 +21,7 @@ import {
   checkAdminDataSourceHealth,
   precheckAdminDataSource,
   reconcileAdminSubscriptions,
+  requestAdminSourcePrechecks,
   updateAdminConfigEntry,
   updateAdminUserFeatureOverride,
   updateAdminDataSource,
@@ -422,6 +423,34 @@ describe("admin API client", () => {
     );
 
     await expect(precheckAdminDataSource("nope")).rejects.toBeInstanceOf(AdminApiError);
+  });
+
+  it("queues a platform's pending sources for the worker's precheck loop", async () => {
+    const body = { requestedCount: 2, sourceIds: ["bidnet_mi_a", "bidnet_mi_b"] };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body));
+
+    await expect(requestAdminSourcePrechecks({ providerFamily: "bidnet", pending: true })).resolves.toEqual(body);
+    expect(mockFetch).toHaveBeenCalledWith("/api/admin/data-sources/precheck-requests", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerFamily: "bidnet", pending: true }),
+    });
+  });
+
+  it("surfaces the precheck-requests route's INVALID_REQUEST message verbatim", async () => {
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse(
+        { error: { code: "INVALID_REQUEST", message: "pass sourceIds, or providerFamily together with pending: true" } },
+        { status: 400 },
+      ),
+    );
+
+    await expect(requestAdminSourcePrechecks({})).rejects.toMatchObject({
+      name: "AdminApiError",
+      status: 400,
+      code: "INVALID_REQUEST",
+      message: "pass sourceIds, or providerFamily together with pending: true",
+    });
   });
 
   it("batch updates admin data source approvals", async () => {

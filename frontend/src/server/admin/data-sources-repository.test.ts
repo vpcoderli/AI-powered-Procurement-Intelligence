@@ -255,6 +255,44 @@ describe("admin data sources repository", () => {
     });
   });
 
+  it("exposes the precheck queue flag on the admin DTO (SQLite)", async () => {
+    testDb.db
+      .insert(dataSources)
+      .values([
+        {
+          id: "queued_source",
+          label: "Queued source",
+          issuerType: "county",
+          stateCode: "MI",
+          isEnabled: 1,
+          cadence: "daily",
+          precheckRequestedAt: "2026-09-29T08:00:00.000Z",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          id: "idle_source",
+          label: "Idle source",
+          issuerType: "county",
+          stateCode: "MI",
+          isEnabled: 1,
+          cadence: "daily",
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ])
+      .run();
+
+    const listed = await listAdminDataSources(testDb.db);
+
+    expect(listed.sources.find((item) => item.id === "queued_source")?.precheckRequestedAt).toBe("2026-09-29T08:00:00.000Z");
+    expect(listed.sources.find((item) => item.id === "idle_source")?.precheckRequestedAt).toBeNull();
+    // A PATCH response carries the flag too, so the console never shows a stale queue state.
+    await expect(updateAdminDataSource(testDb.db, "queued_source", { isEnabled: false })).resolves.toMatchObject({
+      precheckRequestedAt: "2026-09-29T08:00:00.000Z",
+    });
+  });
+
   it("records live source health triage fields and redacts credential-like notes", async () => {
     testDb.db
       .insert(dataSources)
@@ -736,6 +774,28 @@ describe("admin data sources repository", () => {
       liveHealthNotes: "Checked manually with api_token=[REDACTED]",
       liveHealthReviewedAt: "2026-06-11T00:00:00.000Z",
     });
+  });
+
+  it("selects precheck_requested_at on every MySQL data source read and maps it onto the DTO", async () => {
+    const mysql = createFakeMysqlDataSourcesStore();
+    Object.assign(mysql.sources[0], { precheckRequestedAt: "2026-09-29T08:00:00.000Z" });
+    const selects: string[] = [];
+    const fakeQuery = mysql.query.bind(mysql);
+    mysql.query = async (sql: string, values: unknown[] = []) => {
+      if (sql.includes("FROM data_sources")) selects.push(sql);
+      return fakeQuery(sql, values);
+    };
+
+    const listed = await listAdminDataSourcesFromMysql(mysql as never);
+    await updateAdminDataSourceFromMysql(mysql as never, "sam_gov", { isEnabled: true });
+
+    expect(listed.sources.find((source) => source.id === "california_caleprocure")?.precheckRequestedAt).toBe(
+      "2026-09-29T08:00:00.000Z",
+    );
+    expect(listed.sources.find((source) => source.id === "sam_gov")?.precheckRequestedAt).toBeNull();
+    // The list read and both reads of the update path all go through the one select list.
+    expect(selects).toHaveLength(3);
+    for (const sql of selects) expect(sql).toContain("precheck_requested_at AS precheckRequestedAt");
   });
 
   it("exposes fetchConfig on admin sources and updates crawler config with an audit event (SQLite)", async () => {

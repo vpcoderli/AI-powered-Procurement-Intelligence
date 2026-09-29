@@ -243,6 +243,22 @@ export interface PrecheckAdminDataSourceOptions {
 }
 
 /**
+ * Body of `POST /api/admin/data-sources/precheck-requests`: name sources with `sourceIds`
+ * (at most 500), or every source of a platform still awaiting a precheck with
+ * `providerFamily` + `pending: true`.
+ */
+export interface RequestAdminSourcePrechecksInput {
+  sourceIds?: string[];
+  providerFamily?: string;
+  pending?: boolean;
+}
+
+export interface RequestAdminSourcePrechecksResponse {
+  requestedCount: number;
+  sourceIds: string[];
+}
+
+/**
  * The one PATCH body the "approve local source" dialog posts (contract C6). Every field is
  * already part of `UpdateAdminDataSourceInput`; this alias exists so the dialog cannot silently
  * drop one half of the compliance ledger write (approval columns without reviewer/ToS trail).
@@ -494,6 +510,20 @@ export async function precheckAdminDataSource(id: string, input: PrecheckAdminDa
   });
 
   return parseResponse<AdminSourcePrecheckResult>(response);
+}
+
+/**
+ * Queues sources for the crawler worker's precheck loop (admin or operator). The worker runs the
+ * precheck later within its platform budget; this only sets the request flag.
+ */
+export async function requestAdminSourcePrechecks(input: RequestAdminSourcePrechecksInput) {
+  const response = await fetch("/api/admin/data-sources/precheck-requests", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+
+  return parseResponse<RequestAdminSourcePrechecksResponse>(response);
 }
 
 export async function listAdminCrawlerLogs() {

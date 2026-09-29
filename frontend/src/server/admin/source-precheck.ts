@@ -221,6 +221,17 @@ function reasonsFor(
   return reasons;
 }
 
+/** The base_url a stored precheck actually fetched (spec §7.3 check 3); null for pre-phase-3 notes. */
+export function precheckBaseUrlFromNotes(notes: string | null): string | null {
+  if (!notes) return null;
+  try {
+    const parsed = JSON.parse(notes) as { precheck?: { baseUrl?: unknown } };
+    return typeof parsed?.precheck?.baseUrl === "string" ? parsed.precheck.baseUrl : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Runs the C5 pre-check for one source and writes its robots/live-health evidence back. */
 export async function runSourcePrecheck(options: RunSourcePrecheckOptions): Promise<SourcePrecheckResult> {
   const runCrawlTask = options.runCrawlTask ?? defaultRunCrawlTask;
@@ -314,6 +325,7 @@ export async function runSourcePrecheck(options: RunSourcePrecheckOptions): Prom
       disposition: verdict,
       notes: JSON.stringify({
         precheck: {
+          baseUrl: source.baseUrl,
           checkedAt,
           verdict,
           reasons: result.reasons,

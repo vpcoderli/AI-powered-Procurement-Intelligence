@@ -96,6 +96,7 @@ export interface AdminDataSource {
   liveHealthNextReviewAt: string | null;
   liveHealthNotes: string | null;
   liveHealthReviewedAt: string | null;
+  precheckRequestedAt: string | null;
   robotsTxtStatus: string | null;
   robotsTxtCheckedAt: string | null;
   robotsTxtHash: string | null;
@@ -701,6 +702,7 @@ function toAdminSource(
     liveHealthNextReviewAt: row.liveHealthNextReviewAt,
     liveHealthNotes: row.liveHealthNotes,
     liveHealthReviewedAt: row.liveHealthReviewedAt,
+    precheckRequestedAt: row.precheckRequestedAt ?? null,
     robotsTxtStatus: row.robotsTxtStatus,
     robotsTxtCheckedAt: row.robotsTxtCheckedAt,
     robotsTxtHash: row.robotsTxtHash,
@@ -760,6 +762,7 @@ function dataSourceSelectSql(where = "") {
       live_health_next_review_at AS liveHealthNextReviewAt,
       live_health_notes AS liveHealthNotes,
       live_health_reviewed_at AS liveHealthReviewedAt,
+      precheck_requested_at AS precheckRequestedAt,
       robots_txt_status AS robotsTxtStatus,
       robots_txt_checked_at AS robotsTxtCheckedAt,
       robots_txt_hash AS robotsTxtHash,
