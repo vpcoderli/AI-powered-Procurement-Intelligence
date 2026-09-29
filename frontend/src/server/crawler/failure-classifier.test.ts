@@ -53,9 +53,11 @@ describe("classifyCrawlerFailure", () => {
       { what: "a 503 answer", message: "HTML request failed with status 503: Service Unavailable", kind: "network" },
       { what: "a 429 answer", message: "HTML request failed with status 429: slow down", kind: "network" },
       { what: "a 403 answer", message: "HTML request failed with status 403: Forbidden", kind: "network" },
+      // A bare 202 is an AWS WAF challenge on a portal that is not BidNet (BidNet's own becomes BidNetChallengeError).
+      { what: "a 202 answer", message: "HTML request failed with status 202: ", kind: "network" },
       { what: "a 404 answer", message: "HTML request failed with status 404: Not Found", kind: "parse" },
       { what: "a 401 answer", message: "HTML request failed with status 401: Unauthorized", kind: "parse" },
-      { what: "a 202 answer", message: "HTML request failed with status 202: ", kind: "parse" },
+      { what: "a 410 answer", message: "HTML request failed with status 410: Gone", kind: "parse" },
       { what: "a non-HTML content type", message: "HTML response content type was not HTML: application/json", kind: "parse" },
       { what: "an empty body", message: "HTML response was empty", kind: "parse" },
       { what: "missing table headers", message: "HTML table was missing required headers: title, due date", kind: "parse" },

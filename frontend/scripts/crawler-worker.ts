@@ -96,7 +96,9 @@ function crawlerRetryMaxDelayMs() {
  * stuck lock or duplicate concurrent runs of the same source.
  *
  * Only structured network failures are retried; persistence, parsing, empty-result and
- * lease failures are terminal. Successful ingestion remains terminal if matching or notification fails; "locked" (another owner is already running it), "disabled", and
+ * lease failures are terminal, and so is a platform throttle signature (a challenge, or a
+ * 403/429/202 answer): the platform pause answers that, not another request. Successful
+ * ingestion remains terminal if matching or notification fails; "locked" (another owner is already running it), "disabled", and
  * "blocked" (governance/legal hold) are terminal for this tick and are returned as-is
  * without consuming a retry attempt, since retrying them cannot change the outcome.
  */

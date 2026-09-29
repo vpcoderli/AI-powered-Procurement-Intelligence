@@ -51,8 +51,12 @@ const EMPTY_ERROR_CODES = new Set(["EmptyCrawlerResultError"]);
  */
 const HTML_TRANSPORT_FAILURE = /^\s*HTML request failed:/i;
 const HTML_STATUS_FAILURE = /^\s*HTML request failed with status (\d{3})\b/i;
-/** Answers that say "try again later" rather than "the page changed": server errors, rate limits and a WAF's 403. */
-const TRANSIENT_HTML_STATUS = /^(?:5\d\d|429|403)$/;
+/**
+ * Answers that say "try again later" rather than "the page changed": server errors, rate limits, and a WAF's 403 or
+ * 202 challenge (BidNet's own 202 becomes `BidNetChallengeError` in the crawler; a bare 202 comes from other portals).
+ * platform-deferral.ts counts 403, 429 and 202 as throttle signatures too, so the two stay in step.
+ */
+const TRANSIENT_HTML_STATUS = /^(?:5\d\d|429|403|202)$/;
 
 /**
  * The portal, or the way to it, was unavailable or pushed back: worth a retry, and no reason to send an approved

@@ -128,6 +128,7 @@ describe("recordSourceHealthOutcome", () => {
       { what: "a 503 answer", message: "HTML request failed with status 503: Service Unavailable" },
       { what: "a 429 answer", message: "HTML request failed with status 429: slow down" },
       { what: "a 403 answer", message: "HTML request failed with status 403: Forbidden" },
+      { what: "a 202 challenge answer", message: "HTML request failed with status 202: " },
     ])("counts $what as an ordinary failure and keeps the source approved", async ({ message }) => {
       await recordSourceHealthOutcome({ database: testDb.db }, "bidnet_ny_erie", htmlPageFailure(message), LATER);
 
@@ -172,6 +173,7 @@ describe("recordSourceHealthOutcome on the MySQL path", () => {
   it("does not force a review for a transport failure or a throttling status", async () => {
     expect(await bindingsFor("HTML request failed: HTTPSConnectionPool(host='www.bidnetdirect.com', port=443): Read timed out.")).toEqual([LATER, 0, 5, LATER, "bidnet_ny_erie"]);
     expect(await bindingsFor("HTML request failed with status 429: slow down")).toEqual([LATER, 0, 5, LATER, "bidnet_ny_erie"]);
+    expect(await bindingsFor("HTML request failed with status 202: ")).toEqual([LATER, 0, 5, LATER, "bidnet_ny_erie"]);
   });
 
   it("forces a review at once when the page came back wrong", async () => {
