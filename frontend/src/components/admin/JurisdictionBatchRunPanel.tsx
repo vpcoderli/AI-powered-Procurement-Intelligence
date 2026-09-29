@@ -4,13 +4,15 @@ import { useMemo, useState } from "react";
 import { Play } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  runSamGovCrawlerNow,
-  runStateCrawlersNow,
-  type AdminDataSource,
-  type StateCrawlerRunResultEntry,
-} from "@/lib/api/admin";
+import { runSamGovCrawlerNow, runStateCrawlersNow, type StateCrawlerRunResultEntry } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import type { AdminDataSourceIndexItem } from "@/server/admin/data-source-list-contract";
+
+/** What the panel reads from a source — satisfied by both the index API's items and AdminDataSource. */
+export type BatchRunSource = Pick<
+  AdminDataSourceIndexItem,
+  "id" | "label" | "stateCode" | "issuerType" | "jurisdictionLevel" | "isEnabled" | "crawlerSourceId"
+>;
 
 /**
  * Jurisdiction batch run + date window panel (spec:
@@ -99,7 +101,7 @@ export function deferredThrottleSourceId(reason: string | undefined): string | n
   return match ? match[1] : null;
 }
 
-export function batchJurisdictionLevelOf(source: Pick<AdminDataSource, "jurisdictionLevel" | "issuerType">): BatchJurisdictionLevel {
+export function batchJurisdictionLevelOf(source: Pick<BatchRunSource, "jurisdictionLevel" | "issuerType">): BatchJurisdictionLevel {
   const level = source.jurisdictionLevel;
   if (level && (BATCH_JURISDICTION_LEVELS as readonly string[]).includes(level)) {
     return level as BatchJurisdictionLevel;
@@ -115,8 +117,8 @@ export function batchJurisdictionLevelOf(source: Pick<AdminDataSource, "jurisdic
  * rows are excluded from /api/crawler/state/run and run through /api/crawler/sam-gov/run instead).
  */
 export function buildBatchRunEntries(
-  sources: AdminDataSource[],
-  crawlerSourceIdFor: (source: AdminDataSource) => string | null,
+  sources: BatchRunSource[],
+  crawlerSourceIdFor: (source: BatchRunSource) => string | null,
 ): BatchRunEntry[] {
   const entries: BatchRunEntry[] = [
     { key: SAM_GOV_ENTRY_KEY, kind: "sam_gov", label: "SAM.gov", level: "federal", stateCode: null },
@@ -229,8 +231,8 @@ export function batchStatusFromRunResult(entry: StateCrawlerRunResultEntry): Bat
 }
 
 export interface JurisdictionBatchRunPanelProps {
-  sources: AdminDataSource[];
-  crawlerSourceIdFor: (source: AdminDataSource) => string | null;
+  sources: BatchRunSource[];
+  crawlerSourceIdFor: (source: BatchRunSource) => string | null;
   disabled?: boolean;
   onCompleted?: () => void;
 }

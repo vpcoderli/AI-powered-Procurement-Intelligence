@@ -10,6 +10,8 @@ const PAGES: Array<[file: string, section: string]> = [
   ["quality/page.tsx", "<RiskCheckSection />"],
   ["quality/bids/page.tsx", "<BidQaSection />"],
   ["sources/[id]/page.tsx", "<SourceDetailView"],
+  ["sources/onboarding/page.tsx", "<OnboardingSection />"],
+  ["sources/runs/page.tsx", "<CrawlRunsSection />"],
 ];
 
 describe("admin pages", () => {

@@ -29,11 +29,9 @@ import {
 import {
   batchUpdateAdminDataSources,
   checkAdminDataSourceHealth,
-  listAdminCrawlerLogs,
   listAdminDataSources,
   runStateCrawlersNow,
   updateAdminDataSource,
-  type AdminCrawlerLog,
   type AdminDataSource,
   type AdminDataSourcesResponse,
 } from "@/lib/api/admin";
@@ -46,14 +44,10 @@ import {
   statusTone,
 } from "@/components/admin/admin-format";
 import { AdminAccessState, AdminSectionStateCard, SummaryCard } from "@/components/admin/AdminStateCards";
-import { JurisdictionBatchRunPanel } from "@/components/admin/JurisdictionBatchRunPanel";
 import { CrawlerConfigPanel } from "@/components/admin/CrawlerConfigPanel";
 import { SourcePrecheckPanel } from "@/components/admin/SourcePrecheckPanel";
 import { isLocalJurisdictionSource } from "@/components/admin/ApproveLocalSourceDialog";
-import { LedgeredApprovalPanel, providerFamiliesOf } from "@/components/admin/LedgeredApprovalPanel";
-import { PlatformReviewsPanel } from "@/components/admin/PlatformReviewsPanel";
 import type { RecommendedActionFilter } from "@/components/admin/sections/RiskCheckSection";
-import { CrawlerLogRow } from "@/components/admin/sources/CrawlerLogList";
 import { crawlerRunIdFor } from "@/components/admin/sources/crawler-run-id";
 import { SourceComplianceCard } from "@/components/admin/sources/SourceComplianceCard";
 import { SourceLiveHealthCard } from "@/components/admin/sources/SourceLiveHealthCard";
@@ -92,12 +86,10 @@ export type AdminSectionState<T> = {
 
 export type AdminDashboardSections = {
   dataSources: AdminSectionState<AdminDataSourcesResponse | null>;
-  crawlerLogs: AdminSectionState<AdminCrawlerLog[]>;
 };
 
 export type AdminDashboardLoaders = {
   dataSources: () => Promise<AdminDataSourcesResponse>;
-  crawlerLogs: () => Promise<{ logs: AdminCrawlerLog[] }>;
 };
 
 export type SourceHealthTriageStatusFilter = "all" | SourceHealthTriageStatus;
@@ -144,14 +136,12 @@ function sectionError<T>(data: T): AdminSectionState<T> {
 export function createInitialAdminSectionState(): AdminDashboardSections {
   return {
     dataSources: sectionLoading(null),
-    crawlerLogs: sectionLoading([]),
   };
 }
 
 function createRefreshingAdminSectionState(current: AdminDashboardSections): AdminDashboardSections {
   return {
     dataSources: sectionLoading(current.dataSources.data),
-    crawlerLogs: sectionLoading(current.crawlerLogs.data),
   };
 }
 
@@ -171,17 +161,10 @@ export async function loadAdminDashboardSections(
   loaders: AdminDashboardLoaders,
   current: AdminDashboardSections,
 ): Promise<AdminDashboardSections> {
-  const [
-    dataSources,
-    crawlerLogs,
-  ] = await Promise.allSettled([
-    loaders.dataSources(),
-    loaders.crawlerLogs(),
-  ]);
+  const [dataSources] = await Promise.allSettled([loaders.dataSources()]);
 
   return {
     dataSources: sectionFromSettled(dataSources, current.dataSources.data, (value) => value),
-    crawlerLogs: sectionFromSettled(crawlerLogs, current.crawlerLogs.data, (value) => value.logs),
   };
 }
 
@@ -267,11 +250,8 @@ export default function AdminPage() {
   const [sourceHealthTriageFilter, setSourceHealthTriageFilter] = useState<SourceHealthTriageStatusFilter>("all");
   const [sourceHealthRecommendedActionFilter, setSourceHealthRecommendedActionFilter] =
     useState<RecommendedActionFilter>("all");
-  const [isRunning, setIsRunning] = useState(false);
   const [runningSourceId, setRunningSourceId] = useState<string | null>(null);
   const [runMessage, setRunMessage] = useState<string | null>(null);
-  // Bumped when a platform review is saved so the ledgered approval panel re-reads its readiness.
-  const [platformReviewRevision, setPlatformReviewRevision] = useState(0);
   const isAdmin = user?.role === "admin";
   const isOperator = user?.role === "operator";
   const canAccessAdminConsole = Boolean(user && ADMIN_CONSOLE_USER_ROLES.includes(user.role));
@@ -291,7 +271,6 @@ export default function AdminPage() {
     void loadAdminDashboardSections(
       {
         dataSources: listAdminDataSources,
-        crawlerLogs: listAdminCrawlerLogs,
       },
       current,
     ).then((sections) => {
@@ -327,7 +306,6 @@ export default function AdminPage() {
         ? state.dataSources.data?.summary ?? null
         : filteredDataSourcesSummary(sources)
       : null;
-  const logs = state.crawlerLogs.status === "ready" ? state.crawlerLogs.data : [];
   const visibleSelectedSourceIds = selectedSourceIds.filter((id) => sources.some((source) => source.id === id));
   const allVisibleSourcesSelected = sources.length > 0 && sources.every((source) => selectedSourceIds.includes(source.id));
 
@@ -397,29 +375,6 @@ export default function AdminPage() {
         setState((current) => ({
           ...current,
           dataSources: sectionError(current.dataSources.data),
-        }));
-        throw error;
-      });
-  };
-
-  const refreshCrawlerLogs = () => {
-    setState((current) => ({
-      ...current,
-      crawlerLogs: sectionLoading(current.crawlerLogs.data),
-    }));
-
-    return listAdminCrawlerLogs()
-      .then((response) => {
-        setState((current) => ({
-          ...current,
-          crawlerLogs: sectionReady(response.logs),
-        }));
-        return response;
-      })
-      .catch((error) => {
-        setState((current) => ({
-          ...current,
-          crawlerLogs: sectionError(current.crawlerLogs.data),
         }));
         throw error;
       });
@@ -536,22 +491,6 @@ export default function AdminPage() {
       });
   };
 
-  const runNow = () => {
-    setIsRunning(true);
-    setRunMessage(null);
-    runStateCrawlersNow()
-      .then(() => {
-        setRunMessage(t("admin.runQueued"));
-        load();
-      })
-      .catch(() => {
-        setRunMessage(t("admin.runFailed"));
-      })
-      .finally(() => {
-        setIsRunning(false);
-      });
-  };
-
   const updateSourceHealthTriage = (source: AdminDataSource, action: SourceHealthTriageAction) => {
     if (!user) return;
 
@@ -641,16 +580,6 @@ export default function AdminPage() {
             <RefreshCw size={16} />
             {t("admin.refresh")}
           </Button>
-          {canRunOperations && (
-            <Button
-              onClick={runNow}
-              disabled={isRunning || runningSourceId !== null}
-              className="h-10 rounded-lg bg-slate-900 text-white hover:bg-slate-800"
-            >
-              <Play size={16} />
-              {isRunning ? t("admin.running") : t("admin.runStateCrawlers")}
-            </Button>
-          )}
         </div>
       </div>
 
@@ -716,33 +645,6 @@ export default function AdminPage() {
               {t("admin.sources")}
             </div>
           </div>
-          {/* Platform review + ledgered batch approval (spec 2026-09-24 §7.1/§7.3). Like the batch
-              run panel below, neither reloads the dashboard sections on completion (that would
-              unmount them and wipe the result the admin is reading); the sources table refreshes
-              via the header Refresh button. */}
-          <PlatformReviewsPanel
-            canManage={isAdmin}
-            reviewerEmail={user?.email ?? null}
-            disabled={isRunning}
-            onSaved={() => setPlatformReviewRevision((revision) => revision + 1)}
-          />
-          <LedgeredApprovalPanel
-            providerFamilies={providerFamiliesOf(allSources)}
-            canApprove={isAdmin}
-            canRequestPrechecks={canRunOperations}
-            disabled={isRunning || runningSourceId !== null}
-            refreshKey={platformReviewRevision}
-          />
-          {/* No onCompleted → load(): a full section refresh flips dataSources to "loading",
-              unmounting this panel and wiping the per-source batch report the admin is reading.
-              The sources table refreshes via the header Refresh button instead. */}
-          {canRunOperations && (
-            <JurisdictionBatchRunPanel
-              sources={allSources}
-              crawlerSourceIdFor={crawlerRunIdFor}
-              disabled={isRunning || runningSourceId !== null}
-            />
-          )}
           <div className="border-b border-slate-100 px-4 py-3">
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-sm font-medium text-slate-600">{t("admin.sourceHealthClassificationFilter")}</span>
@@ -999,7 +901,7 @@ export default function AdminPage() {
                       <SourcePrecheckPanel
                         source={source}
                         reviewerEmail={user?.email ?? null}
-                        disabled={isRunning || runningSourceId !== null}
+                        disabled={runningSourceId !== null}
                         onSourceUpdated={replaceSource}
                       />
                     )}
@@ -1074,7 +976,7 @@ export default function AdminPage() {
                           variant="outline"
                           size="sm"
                           onClick={() => runSourceNow(source)}
-                          disabled={isRunning || runningSourceId !== null}
+                          disabled={runningSourceId !== null}
                           aria-label={t("admin.runSource").replace("{source}", source.label)}
                           className="h-8 rounded-lg border-slate-200 px-2"
                         >
@@ -1087,7 +989,7 @@ export default function AdminPage() {
                       <div className="mt-2 flex justify-end">
                         <CrawlerConfigPanel
                           source={source}
-                          disabled={isRunning || runningSourceId !== null}
+                          disabled={runningSourceId !== null}
                           onSaved={replaceSource}
                         />
                       </div>
@@ -1117,40 +1019,6 @@ export default function AdminPage() {
               ))}
             </TableBody>
           </Table>
-        </section>
-      )}
-
-      {!isFullyFailedDashboard && state.crawlerLogs.status === "error" && (
-        <AdminSectionStateCard
-          action={() => void refreshCrawlerLogs().catch(() => undefined)}
-          actionLabel={t("admin.refresh")}
-          code="error"
-          message={t("admin.errorDescription")}
-          title={t("admin.recentLogs")}
-        />
-      )}
-
-      {!isFullyFailedDashboard && state.crawlerLogs.status === "loading" && state.crawlerLogs.data.length === 0 && (
-        <AdminSectionStateCard
-          actionLabel={t("admin.refresh")}
-          code="loading"
-          message={t("admin.loading")}
-          title={t("admin.recentLogs")}
-        />
-      )}
-
-      {!isFullyFailedDashboard && state.crawlerLogs.status === "ready" && (
-        <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
-          <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3 font-semibold text-slate-950">
-            <Activity size={18} />
-            {t("admin.recentLogs")}
-          </div>
-          <div className="divide-y divide-slate-100">
-            {logs.length === 0 && <div className="px-4 py-5 text-sm text-slate-500">{t("admin.noLogs")}</div>}
-            {logs.map((log) => (
-              <CrawlerLogRow key={log.id} log={log} />
-            ))}
-          </div>
         </section>
       )}
     </main>

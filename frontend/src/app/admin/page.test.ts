@@ -58,16 +58,14 @@ describe("admin page", () => {
   it("renders the shared source cards and links each row to its detail page", () => {
     const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
 
-    // The live-health box, the compliance boxes and a crawler-log row moved to components/admin/sources and are
-    // imported here until the old table is retired; the row-cell helpers and the run-id resolver moved with them.
+    // The live-health box and the compliance boxes moved to components/admin/sources and are imported here until
+    // the old table is retired; the row-cell helpers and the run-id resolver moved with them.
     expect(page).toContain("<SourceLiveHealthCard");
     expect(page).toContain('pending={sourceHealthPendingId === source.id ? "recheck" : sourceTriagePendingId === source.id ? "triage" : null}');
     expect(page).toContain("onRecheck={() => recheckSourceHealth(source)}");
     expect(page).toContain("onTriage={(action) => updateSourceHealthTriage(source, action)}");
     expect(page).toContain("<SourceComplianceCard source={source} />");
-    expect(page).toContain("<CrawlerLogRow key={log.id} log={log} />");
     expect(page).toContain("crawlerRunIdFor(source)");
-    expect(page).toContain("crawlerSourceIdFor={crawlerRunIdFor}");
     expect(page).toContain("`/admin/sources/${encodeURIComponent(source.id)}`");
     expect(page).toContain('from "@/components/admin/sources/source-labels"');
     expect(page).toContain('from "@/components/admin/sources/crawler-run-id"');
@@ -85,48 +83,52 @@ describe("admin page", () => {
     }
   });
 
-  it("keeps successful admin sections ready when one admin API rejects", async () => {
-    const sections = await loadAdminDashboardSections(
+  it("keeps the last loaded sources when a refresh of the admin sources API rejects", async () => {
+    const loaded = await loadAdminDashboardSections(
       {
         dataSources: async () => ({
           summary: { totalSources: 1, enabledSources: 1, healthySources: 1, failingSources: 0 },
           sources: [],
         }),
-        crawlerLogs: async () => {
-          throw new Error("crawler logs failed");
-        },
       },
       createInitialAdminSectionState(),
     );
 
-    expect(sections.crawlerLogs.status).toBe("error");
-    expect(sections.dataSources.status).toBe("ready");
-    expect(isAdminDashboardFullyFailed(sections)).toBe(false);
+    expect(loaded.dataSources.status).toBe("ready");
+    expect(isAdminDashboardFullyFailed(loaded)).toBe(false);
+
+    const refreshed = await loadAdminDashboardSections(
+      {
+        dataSources: async () => {
+          throw new Error("data sources failed");
+        },
+      },
+      loaded,
+    );
+
+    expect(refreshed.dataSources.status).toBe("error");
+    expect(refreshed.dataSources.data).toBe(loaded.dataSources.data);
   });
 
   it("recognizes a fully failed admin load as an understandable whole-page state", async () => {
-    const fail = async () => {
-      throw new Error("admin API unavailable");
-    };
-
     const sections = await loadAdminDashboardSections(
       {
-        dataSources: fail,
-        crawlerLogs: fail,
+        dataSources: async () => {
+          throw new Error("admin API unavailable");
+        },
       },
       createInitialAdminSectionState(),
     );
 
     expect(isAdminDashboardFullyFailed(sections)).toBe(true);
     expect(sections.dataSources.status).toBe("error");
-    expect(sections.crawlerLogs.status).toBe("error");
   });
 
   it("no longer loads or renders the risk check and bid QA sections", async () => {
     const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
 
     // They live on /admin/quality and /admin/quality/bids now.
-    expect(Object.keys(createInitialAdminSectionState())).toEqual(["dataSources", "crawlerLogs"]);
+    expect(Object.keys(createInitialAdminSectionState())).toEqual(["dataSources"]);
     for (const moved of [
       "getAdminRiskChecklist",
       "listAdminBidQaItems",
@@ -141,6 +143,32 @@ describe("admin page", () => {
     }
     // The sources section still filters by recommended action, with the type now owned by the risk section.
     expect(page).toContain('import type { RecommendedActionFilter } from "@/components/admin/sections/RiskCheckSection"');
+  });
+
+  it("no longer mounts the onboarding panels, the batch run, the run-all button or the crawler log list", () => {
+    const page = readFileSync(new URL("page.tsx", import.meta.url), "utf8");
+
+    // They live on /admin/sources/onboarding and /admin/sources/runs now.
+    for (const moved of [
+      "PlatformReviewsPanel",
+      "LedgeredApprovalPanel",
+      "providerFamiliesOf",
+      "platformReviewRevision",
+      "JurisdictionBatchRunPanel",
+      "runNow",
+      "isRunning",
+      "admin.runStateCrawlers",
+      "AdminCrawlerLog",
+      "crawlerLogs",
+      "listAdminCrawlerLogs",
+      "refreshCrawlerLogs",
+      "CrawlerLogRow",
+      "admin.recentLogs",
+    ]) {
+      expect(page).not.toContain(moved);
+    }
+    // What is left of the old run state: one source's Run button locks the row-level panels while it runs.
+    expect(page).toContain("disabled={runningSourceId !== null}");
   });
 
   it("defines source health classification filter options", () => {

@@ -4,6 +4,7 @@ import type { AdminDataSource } from "@/lib/api/admin";
 import {
   BATCH_RUN_CHUNK_SIZE,
   SAM_GOV_ENTRY_KEY,
+  type BatchRunSource,
   batchJurisdictionLevelOf,
   batchStatusFromRunResult,
   batchSuccessKind,
@@ -36,7 +37,7 @@ function adminSource(overrides: Partial<AdminDataSource> = {}): AdminDataSource 
   } as AdminDataSource;
 }
 
-const crawlerSourceIdFor = (source: AdminDataSource) => source.crawlerSourceId ?? null;
+const crawlerSourceIdFor = (source: BatchRunSource) => source.crawlerSourceId ?? null;
 
 describe("batchJurisdictionLevelOf", () => {
   it("uses the row's jurisdiction level when it is a known value", () => {
@@ -340,14 +341,14 @@ describe("JurisdictionBatchRunPanel component wiring", () => {
     expect(component).toContain("disabled={disabled || isBatchRunning || selectedKeys.size === 0 || windowInvalid}");
   });
 
-  it("is mounted in the admin sources section with the page's crawler source id resolver", () => {
-    const page = readFileSync(new URL("../../app/admin/page.tsx", import.meta.url), "utf8");
+  it("is mounted on the crawl runs page with the crawler source id resolver", () => {
+    const section = readFileSync(new URL("./sections/CrawlRunsSection.tsx", import.meta.url), "utf8");
     const resolver = readFileSync(new URL("./sources/crawler-run-id.ts", import.meta.url), "utf8");
-    expect(page).toContain("JurisdictionBatchRunPanel");
-    expect(page).toContain("crawlerSourceIdFor={crawlerRunIdFor}");
-    // A full load() refresh would unmount the sources section (it only renders when status is
-    // "ready") and wipe the batch report, so the panel must NOT be wired to it.
-    expect(page).not.toContain("onCompleted={load}");
+    expect(section).toContain("JurisdictionBatchRunPanel");
+    expect(section).toContain("crawlerSourceIdFor={crawlerRunIdFor}");
+    // The per-source batch report lives in the panel's own state; the section leaves onCompleted unset so
+    // nothing re-reads or remounts around the report the admin is reading.
+    expect(section).not.toContain("onCompleted=");
     // County/city registry rows carry no legacy per-state crawler metadata; the resolver must
     // fall back to the data_sources row id so sub-state sources are runnable in the batch panel.
     expect(resolver).toContain("subStateSourceId");
