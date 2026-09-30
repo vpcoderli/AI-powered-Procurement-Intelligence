@@ -154,7 +154,15 @@ dynamic/defensive rather than a literal string bug — listed here so they aren'
   a "Config Registry" / "Marketing Content CMS" / state-data-quality-queue block (table headers,
   "No config registry entries found.", "State data quality action queue", etc.). Admin is
   operator-facing rather than one of the four named priority routes, so this pass didn't touch it,
-  but it's the largest remaining concentration of hardcoded strings in the app.
+  but it was the largest remaining concentration of hardcoded strings in the app.
+  **Update 2026-09-30 (admin console follow-ups): resolved.** The admin console has since moved out
+  of that file into `src/components/admin/**` (`src/app/admin/page.tsx` is now a seven-line
+  wrapper), and the copy listed here is in the dictionary: the Marketing Funnel section under
+  `admin.growth*`, the config registry and Marketing Content CMS under `admin.configRegistry*`, the
+  state-data-quality matrix under `admin.stateQuality*`. The scan now walks `src/components/admin`
+  too and reports **0** hardcoded strings there. Baseline of that run (`npm run i18n:check`,
+  dictionaries at 1773 keys each): (a) 8 untranslated identical values, (b) 81 hardcoded strings,
+  all under `src/app` and none under `src/components/admin`, (c) 0 unresolved placeholders.
 - `src/app/settings/page.tsx` — `FEATURE_ACCESS_ITEMS` (lines 82-95) is a 12-item array of
   hardcoded English feature labels ("Bid search", "Saved bids", "Pursue / No-Bid", etc.) rendered
   raw. Notably inconsistent with the near-identical `USAGE_FEATURE_LABEL_KEYS` map a few lines
@@ -199,8 +207,10 @@ three defect classes on every run:
    root (`src/app/...`, `src/components/admin/...`).
 3. For every dictionary key whose value contains a `{token}` placeholder, greps the same two trees
    for `t("that.key")` call sites and flags any without a nearby `.replace(`, `.split("{token}")`
-   (how a placeholder that stands for a JSX element is resolved) or `formatMessage(`. A key whose
-   braces are the content, such as `admin.crawlerConfigAttachmentTemplate`, is allowlisted.
+   (how a placeholder that stands for a JSX element is resolved; the split must be on one of that
+   key's own tokens, so an unrelated `.split("{other}")` next to the call does not count) or
+   `formatMessage(`. A key whose braces are the content, such as
+   `admin.crawlerConfigAttachmentTemplate`, is allowlisted.
 
 **Known limitation, stated in the script's own header and CLI help**: part 2 (hardcoded-string
 detection) is a regex heuristic over raw source text, not an AST/type-aware parse. It will produce
@@ -211,12 +221,20 @@ before reaching JSX). The JSX-text pattern only sees capitalised text on a singl
 (`>Text<`), so multi-line JSX text and lower-case labels (a bare `<option>high</option>`, a
 lower-case table header) are not detected. Treat its findings as leads to manually verify, the
 same way the findings in this report were manually verified before being fixed — this is why
-`--fail-on-findings` is opt-in rather than wired into `risk:check` or CI by default.
+`--fail-on-findings` is opt-in rather than wired into `risk:check` or CI by default. The header
+comment and `--help` also say that the attribute pattern only sees double-quoted literals, that a
+line calling `t(...)` is skipped as translated, and that a clean (b) means nothing was found, not
+that no hard-coded English is left.
 
 ## Outstanding / recommended follow-ups (honest gap list)
 
-1. **Admin (`/admin`) and Settings (`/settings`) hardcoded strings** — largest remaining volume,
-   documented above, not fixed (out of the four named priority routes for this task).
+1. **Settings (`/settings`) hardcoded strings** — `FEATURE_ACCESS_ITEMS` in
+   `src/app/settings/page.tsx` (a 12-item array of English feature labels, documented above, which
+   the scan's JSX patterns cannot see) is the clearest remaining case; not fixed (out of the four
+   named priority routes for this task). The admin half of this item is done as of 2026-09-30: the
+   admin console's copy is in the dictionary and `src/components/admin` scans to 0. Baseline of
+   that scan: (a) 8, (b) 81, all under `src/app` (chiefly `src/app/winbids-demo` 34,
+   `src/app/generative-art-static` 19 and the landing page `src/app/page.tsx` 17), (c) 0.
 2. **`admin.creditDryRun` / `admin.creditChargedAmount` / `admin.sourceEvidence_fixture_fallback`**
    — needs a product call on whether the admin AI-metadata/diagnostics panels should hold to the
    same full-translation bar as customer-facing surfaces, or whether a looser

@@ -1,9 +1,11 @@
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   SCAN_SOURCE_ROOTS,
+  formatI18nCoverageScanHelp,
   formatI18nCoverageScanResult,
   scanHardcodedStrings,
   scanUnresolvedPlaceholders,
@@ -191,6 +193,26 @@ describe("i18n coverage scan", () => {
       );
 
       expect(scanUnresolvedPlaceholders(root, enFlat)).toEqual([]);
+    });
+  });
+
+  // docs/qa/i18n-coverage-report.md says the script's own header and CLI help state what part (b) cannot see, so a clean
+  // (b) is not read as "no hard-coded English is left". Comment wrapping and line breaks are flattened before matching.
+  describe("what the hardcoded-string scan cannot see", () => {
+    const limits = ["capitalised", "one line", "lower-case", "double-quoted"];
+    const flatten = (text: string) => text.replace(/\n\s*\*\s?/g, " ").replace(/\s+/g, " ");
+
+    it("is stated in the CLI help", () => {
+      const help = flatten(formatI18nCoverageScanHelp());
+
+      for (const phrase of limits) expect(help, phrase).toContain(phrase);
+    });
+
+    it("is stated in the header comment", () => {
+      const source = readFileSync(new URL("./i18n-coverage-scan.ts", import.meta.url), "utf8");
+      const header = flatten(source.slice(0, source.indexOf("\nimport ")));
+
+      for (const phrase of limits) expect(header, phrase).toContain(phrase);
     });
   });
 

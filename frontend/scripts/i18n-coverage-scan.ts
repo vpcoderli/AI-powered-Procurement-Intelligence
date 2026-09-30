@@ -49,6 +49,14 @@
  * pass over the routes this task prioritized. Findings are reported as paths
  * relative to the frontend root (`src/app/...`, `src/components/admin/...`).
  *
+ * Part (b) has limits of its own. Its JSX-text pattern only sees capitalised
+ * text (letters, digits, spaces and basic punctuation) that opens and closes
+ * on one line (`>Text<`), so multi-line JSX text and lower-case labels (a bare
+ * `<option>high</option>`, a lower-case table header) are not detected. Its
+ * attribute pattern only sees double-quoted literals, and a line that already
+ * calls `t("...")` is skipped as translated. A clean (b) means the scan found
+ * nothing, not that no hard-coded English is left.
+ *
  * Usage:
  *   npx tsx scripts/i18n-coverage-scan.ts            # human-readable report
  *   npx tsx scripts/i18n-coverage-scan.ts --json      # machine-readable report
@@ -520,7 +528,7 @@ export function parseCliArgs(argv: string[], defaultRoot: string): CliOptions {
   return options;
 }
 
-function formatHelp(): string {
+export function formatI18nCoverageScanHelp(): string {
   return [
     "i18n Coverage Scan",
     "",
@@ -542,6 +550,12 @@ function formatHelp(): string {
     "byte-identical values between src/lib/i18n/dictionaries/en.ts and zh.ts,",
     `(b) hardcoded English strings in JSX under ${SCAN_SOURCE_ROOTS.join(" and ")} that bypass t(...), and`,
     "(c) dictionary values with unresolved {placeholder} tokens rendered bare in those trees.",
+    "",
+    "What (b) cannot see: its JSX-text pattern only matches capitalised text that opens and",
+    "closes on one line (>Text<), so multi-line JSX text and lower-case labels are not",
+    "detected; its attribute pattern only matches double-quoted literals; and a line that",
+    "calls t(...) is skipped. A clean (b) means nothing was found, not that no hard-coded",
+    "English is left.",
   ].join("\n");
 }
 
@@ -555,7 +569,7 @@ function defaultFrontendRoot(): string {
 async function main() {
   const options = parseCliArgs(process.argv.slice(2), defaultFrontendRoot());
   if (options.help) {
-    console.log(formatHelp());
+    console.log(formatI18nCoverageScanHelp());
     return;
   }
 
