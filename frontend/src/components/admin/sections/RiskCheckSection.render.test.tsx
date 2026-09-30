@@ -5,7 +5,7 @@ import type { StateDataQualityReport, StateDataQualityRiskLevel, StateDataQualit
 import { en } from "@/lib/i18n/dictionaries/en";
 import { zh } from "@/lib/i18n/dictionaries/zh";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
-import type { RiskChecklistReport } from "@/server/risk/checklist";
+import type { RiskChecklistCheck, RiskChecklistReport } from "@/server/risk/checklist";
 import type { RiskChecklistTrend } from "@/server/risk/snapshots";
 import type { StateDataQualityReason } from "@/server/source-validity/state-data-quality";
 import type { AdminResourceStatus, useAdminResource } from "../use-admin-resource";
@@ -97,8 +97,8 @@ function stateReport(overrides: Partial<StateDataQualityReport> = {}): StateData
   };
 }
 
-function load(matrix: StateDataQualityReport | null, ok = true) {
-  const report: RiskChecklistReport = { ok, checkedAt: CHECKED_AT, checks: [] };
+function load(matrix: StateDataQualityReport | null, ok = true, checks: RiskChecklistCheck[] = []) {
+  const report: RiskChecklistReport = { ok, checkedAt: CHECKED_AT, checks };
   const trend: RiskChecklistTrend = {
     snapshotCount: 0,
     globalUrlAllPassing: true,
@@ -256,5 +256,170 @@ describe("state portal quality matrix in English", () => {
     for (const header of ["state", "risk", "bids", "enabled source", "attachment real ratio", "reason code"]) expect(text).toContain(header);
     expect(text).toContain("PASS");
     expect(text).toContain("none");
+  });
+});
+
+// The server writes the titles of its checks and the fixes and owners of its actions in English. The section words
+// each by its code (a check's id, an action's reason code, an owner's slug) and prints the server's own text only for
+// a code the dictionary does not know: one from a newer build.
+type StateAction = StateDataQualityReport["actions"][number];
+
+function stateAction(reasonCode: string, recommendedAction: string, ownerHint: string, evidence: string): StateAction {
+  return {
+    id: `CA:ca_portal:${reasonCode}`,
+    priority: "P0",
+    stateCode: "CA",
+    sourceId: "ca_portal",
+    sourceLabel: "CA portal",
+    reasonCode: reasonCode as StateAction["reasonCode"],
+    title: `CA ${reasonCode}`,
+    recommendedAction,
+    ownerHint,
+    dueInHours: 24,
+    evidence,
+  };
+}
+
+/** The wording the server sends for the codes below, as the API answers it. */
+const SERVER_TEXT = {
+  coverageLabel: "50 state data coverage",
+  governanceLabel: "Source ingestion governance metadata",
+  missingBidFix: "Run or repair the state crawler, then verify at least one active state bid is imported.",
+  archiveFix: "Re-archive the failed attachment and verify the stored file and checksum.",
+} as const;
+
+const CHECKS: RiskChecklistCheck[] = [
+  {
+    id: "state-coverage",
+    label: SERVER_TEXT.coverageLabel,
+    ok: true,
+    summary: "50/50 required states have at least one active bid",
+  },
+  {
+    id: "source-ingestion-governance",
+    label: SERVER_TEXT.governanceLabel,
+    ok: false,
+    summary: "50 state crawler sources checked for approval metadata, restricted-source blocks, and local ingestion readiness",
+    details: ["CA ca_caleprocure is enabled but not approved for production ingestion"],
+  },
+  {
+    id: "check-from-a-newer-build",
+    label: "A check this build has no title for",
+    ok: false,
+    summary: "3 things checked",
+    details: ["thing 2 failed"],
+  },
+];
+
+const ACTIONS: StateAction[] = [
+  stateAction("missing_state_bid", SERVER_TEXT.missingBidFix, "data-ops", "CA has no active state bid rows."),
+  stateAction(
+    "attachment_archive_invalid",
+    SERVER_TEXT.archiveFix,
+    "archive-ops",
+    "bid_1/att_1 is marked archived but its file or checksum is not valid.",
+  ),
+  stateAction("reason_from_a_newer_build", "Do the newer thing first.", "team-from-a-newer-build", "Something new happened."),
+];
+
+describe.each<Language>(["en", "zh"])("server-written check titles and action text in %s", (language) => {
+  const t = admin(language);
+
+  it("titles each check by its id and prints its summary and details as the server stored them", () => {
+    load(stateReport(), false, CHECKS);
+    const text = textNodes(render(language));
+
+    expect(text).toContain(t.riskCheckLabel_state_coverage);
+    expect(text).toContain(t.riskCheckLabel_source_ingestion_governance);
+    expect(text).toContain("50/50 required states have at least one active bid");
+    expect(text).toContain(CHECKS[1].summary);
+    expect(text).toContain("CA ca_caleprocure is enabled but not approved for production ingestion");
+    expect(text).toContain("3 things checked");
+    expect(text).toContain("thing 2 failed");
+  });
+
+  it("prints the server's own title for a check the dictionary has no title for", () => {
+    load(stateReport(), false, CHECKS);
+
+    expect(textNodes(render(language))).toContain("A check this build has no title for");
+  });
+
+  it("words each action's fix and owner in the page's language and leaves the evidence as stored", () => {
+    load(stateReport({ actions: ACTIONS }));
+    const text = textNodes(render(language));
+
+    expect(text).toContain(t.stateQualityAction_missing_state_bid);
+    expect(text).toContain(t.stateQualityAction_attachment_archive_invalid);
+    expect(text).toContain(t.stateQualityOwner_data_ops);
+    expect(text).toContain(t.stateQualityOwner_archive_ops);
+    expect(text).toContain("CA has no active state bid rows.");
+    expect(text).toContain("bid_1/att_1 is marked archived but its file or checksum is not valid.");
+    // The reason code itself is a technical token and stays as it is.
+    expect(text.some((node) => node.includes("CA · missing_state_bid"))).toBe(true);
+  });
+
+  it("prints the server's own fix and owner for a reason and a team the dictionary does not know", () => {
+    load(stateReport({ actions: ACTIONS }));
+    const text = textNodes(render(language));
+
+    expect(text).toContain("Do the newer thing first.");
+    expect(text).toContain("team-from-a-newer-build");
+    expect(text).toContain("Something new happened.");
+  });
+
+  it("words the recommended-action filter in the page's language and filters on the server's text", () => {
+    load(stateReport({ actions: ACTIONS }));
+    const html = render(language);
+
+    expect(html).toContain(`<option value="${SERVER_TEXT.missingBidFix}">${t.stateQualityAction_missing_state_bid}</option>`);
+    expect(html).toContain(`<option value="${SERVER_TEXT.archiveFix}">${t.stateQualityAction_attachment_archive_invalid}</option>`);
+    expect(html).toContain('<option value="Do the newer thing first.">Do the newer thing first.</option>');
+  });
+
+  it("leaves no dictionary key or placeholder on the page", () => {
+    load(stateReport({ actions: ACTIONS }), false, CHECKS);
+    const html = render(language);
+
+    expect(html).not.toMatch(/admin\.[a-zA-Z]/);
+    expect(html).not.toMatch(/\{[a-zA-Z]+\}/);
+  });
+});
+
+describe("server-written check titles and action text in Chinese", () => {
+  it("prints none of the English the server writes for a check, a fix or a team it knows", () => {
+    load(stateReport({ actions: ACTIONS }), false, CHECKS);
+    const text = textNodes(render("zh"));
+
+    for (const english of [
+      SERVER_TEXT.coverageLabel,
+      SERVER_TEXT.governanceLabel,
+      SERVER_TEXT.missingBidFix,
+      SERVER_TEXT.archiveFix,
+      "data-ops",
+      "archive-ops",
+    ]) {
+      expect(
+        text.filter((node) => node.includes(english)),
+        english,
+      ).toEqual([]);
+    }
+  });
+});
+
+describe("server-written check titles and action text in English", () => {
+  it("prints the wording the server sends, as it always did", () => {
+    load(stateReport({ actions: ACTIONS }), false, CHECKS);
+    const text = textNodes(render("en"));
+
+    for (const serverText of [
+      SERVER_TEXT.coverageLabel,
+      SERVER_TEXT.governanceLabel,
+      SERVER_TEXT.missingBidFix,
+      SERVER_TEXT.archiveFix,
+      "data-ops",
+      "archive-ops",
+    ]) {
+      expect(text, serverText).toContain(serverText);
+    }
   });
 });

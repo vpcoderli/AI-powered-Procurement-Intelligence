@@ -1,10 +1,16 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
+import { en } from "@/lib/i18n/dictionaries/en";
 import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
 import { bidAttachments, bids, dataSources } from "@/server/db/schema";
 import type { AppDatabase } from "@/server/db/client";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { createRiskChecklistReport, createRiskChecklistReportFromMysql, formatRiskChecklistReport } from "./checklist";
+import {
+  createRiskChecklistReport,
+  createRiskChecklistReportFromMysql,
+  formatRiskChecklistReport,
+  RISK_CHECK_IDS,
+} from "./checklist";
 
 let testDb: TestDatabase | null = null;
 
@@ -90,6 +96,13 @@ describe("risk checklist", () => {
       "state-url-validity",
       "global-url-validity",
     ]);
+    // The admin console titles each check by an id from this list, so it has to be the ids the report is made of.
+    expect(report.checks.map((check) => check.id)).toEqual([...RISK_CHECK_IDS]);
+    // English prints the console's title for a check in place of the label sent here, so the two have to read alike.
+    const consoleTitles = en.admin as Record<string, string>;
+    for (const entry of report.checks) {
+      expect(consoleTitles[`riskCheckLabel_${entry.id.replace(/-/g, "_")}`], entry.id).toBe(entry.label);
+    }
     expect(formatRiskChecklistReport(report)).toContain("Risk checklist PASS");
   });
 
@@ -236,7 +249,12 @@ describe("risk checklist MySQL source governance query", () => {
       },
     };
 
-    await createRiskChecklistReportFromMysql(mysql as never, new Date("2026-05-31T00:00:00.000Z"));
+    const report = await createRiskChecklistReportFromMysql(mysql as never, new Date("2026-05-31T00:00:00.000Z"));
+
+    // The MySQL report is the same list less the state data quality gate, which only the SQLite report builds.
+    expect(report.checks.map((check) => check.id)).toEqual(
+      RISK_CHECK_IDS.filter((id) => id !== "state-data-quality-gate"),
+    );
 
     // Regression guard for the phase-1 dialect-parity gap: the row mapper has always read
     // these fields, but the SELECT never listed them, so MySQL silently returned null forever.

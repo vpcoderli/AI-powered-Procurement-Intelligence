@@ -12,6 +12,28 @@ import { validateBidSourceUrl, validateStateAttachmentUrl } from "@/server/sourc
 import { createStateDataQualityReport, stateDataQualityP0Details } from "@/server/source-validity/state-data-quality";
 import type { Pool } from "mysql2/promise";
 
+/**
+ * The ids of the checks a risk checklist is made of, in report order (the MySQL report leaves out
+ * `state-data-quality-gate`). The admin console titles each check by its id, `riskCheckLabel_state_coverage` in the
+ * dictionaries for `state-coverage`, and prints the `label` sent here only for an id it has no title for. So an id
+ * added here needs an entry in both dictionaries: RiskCheckSection.test.ts fails until it has one.
+ */
+export const RISK_CHECK_IDS = [
+  "state-coverage",
+  "state-content",
+  "bid-detail-routes",
+  "attachment-downloads",
+  "state-data-quality-gate",
+  "account-tier-separation",
+  "source-ingestion-governance",
+  "source-validity-metadata",
+  "state-url-validity",
+  "global-url-validity",
+] as const;
+
+export type RiskCheckId = (typeof RISK_CHECK_IDS)[number];
+
+// A stored snapshot can carry an id this build no longer builds, so the id stays a plain string on the wire.
 export interface RiskChecklistCheck {
   id: string;
   label: string;
@@ -32,7 +54,7 @@ export interface RiskChecklistOptions {
 
 type RiskDataSourceRow = typeof dataSources.$inferSelect;
 
-function check(id: string, label: string, ok: boolean, summary: string, details: string[] = []): RiskChecklistCheck {
+function check(id: RiskCheckId, label: string, ok: boolean, summary: string, details: string[] = []): RiskChecklistCheck {
   return {
     id,
     label,

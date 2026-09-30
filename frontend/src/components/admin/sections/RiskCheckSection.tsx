@@ -94,6 +94,60 @@ export function stateDataQualityP0BlockerNotice(
     .replace("{states}", blockerStates.join("/"));
 }
 
+type Translate = (key: string) => string;
+
+/**
+ * A code the server writes (a check id, a reason code, an owner slug) as the tail of a dictionary key: kebab-case
+ * becomes snake_case, like every other key.
+ */
+function keySegment(code: string) {
+  return code.replace(/-/g, "_");
+}
+
+/**
+ * The text a server-written code has in the dictionary, or the server's own text when the dictionary has none: a
+ * check, a reason or a team newer than this build, or a blank entry. `t` answers with the key itself for a key it lacks.
+ */
+function textForCode(t: Translate, key: string, serverText: string) {
+  const text = t(key);
+  return text && text !== key ? text : serverText;
+}
+
+/**
+ * A risk check's title in the language of `t`, by the check's id. Its summary and details carry counts and ids, so
+ * they print as stored.
+ */
+export function riskCheckLabel(check: { id: string; label: string }, t: Translate) {
+  return textForCode(t, `admin.riskCheckLabel_${keySegment(check.id)}`, check.label);
+}
+
+/** An action's recommended fix in the language of `t`, by the reason code it answers; its evidence prints as stored. */
+export function stateDataQualityActionText(action: { reasonCode: string; recommendedAction: string }, t: Translate) {
+  return textForCode(t, `admin.stateQualityAction_${keySegment(action.reasonCode)}`, action.recommendedAction);
+}
+
+/** The team an action is handed to, in the language of `t`, by its slug. */
+export function stateDataQualityOwnerLabel(ownerHint: string, t: Translate) {
+  return textForCode(t, `admin.stateQualityOwner_${keySegment(ownerHint)}`, ownerHint);
+}
+
+/**
+ * The labels of the recommended-action filter's options: one per distinct server text, which is what the filter
+ * matches on, worded through the first action that carries it.
+ */
+export function stateDataQualityRecommendedActionLabels(
+  actions: Array<{ reasonCode: string; recommendedAction: string }>,
+  t: Translate,
+) {
+  const labels = new Map<string, string>();
+  for (const action of actions) {
+    if (!labels.has(action.recommendedAction)) {
+      labels.set(action.recommendedAction, stateDataQualityActionText(action, t));
+    }
+  }
+  return labels;
+}
+
 function riskCheckTone(ok: boolean) {
   return ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700";
 }
@@ -159,6 +213,7 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
     useState<RecommendedActionFilter>("all");
   const reasonOptions = stateDataQualityReasonOptions(report.rows);
   const actionRecommendedOptions = stateDataQualityActionRecommendedActionOptions(report.actions);
+  const recommendedActionLabels = stateDataQualityRecommendedActionLabels(report.actions, t);
   const filteredRows = filterStateDataQualityRows(report.rows, {
     riskLevel: stateQualityRiskFilter,
     reasonCode: stateQualityReasonFilter,
@@ -222,7 +277,9 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
           >
             {actionRecommendedOptions.map((action) => (
               <option key={action} value={action}>
-                {action === "all" ? t("admin.stateQualityAllRecommendedActions") : action}
+                {action === "all"
+                  ? t("admin.stateQualityAllRecommendedActions")
+                  : (recommendedActionLabels.get(action) ?? action)}
               </option>
             ))}
           </select>
@@ -243,14 +300,14 @@ function StateDataQualityMatrix({ report }: { report: StateDataQualityReport }) 
                   <div className="font-bold text-slate-900">
                     {action.stateCode} · {action.reasonCode}
                   </div>
-                  <div className="mt-1 text-slate-600">{action.recommendedAction}</div>
+                  <div className="mt-1 text-slate-600">{stateDataQualityActionText(action, t)}</div>
                   <div className="mt-1 truncate text-slate-400" title={action.evidence}>
                     {action.evidence}
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1 md:justify-end">
                   <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
-                    {action.ownerHint}
+                    {stateDataQualityOwnerLabel(action.ownerHint, t)}
                   </Badge>
                   <Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-600">
                     {t("admin.stateQualityDueHours").replace("{hours}", String(action.dueInHours))}
@@ -481,7 +538,7 @@ function RiskCheck({
             <div key={check.id} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="break-words text-sm font-semibold text-slate-950">{check.label}</div>
+                  <div className="break-words text-sm font-semibold text-slate-950">{riskCheckLabel(check, t)}</div>
                   <div className="mt-1 text-xs leading-5 text-slate-600">{check.summary}</div>
                 </div>
                 <Badge variant="outline" className={riskCheckTone(check.ok)}>

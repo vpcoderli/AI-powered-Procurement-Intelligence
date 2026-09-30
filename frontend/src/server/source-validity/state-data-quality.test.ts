@@ -10,6 +10,11 @@ import {
   createStateDataQualityReport,
   createStateDataQualityReportFromMysql,
   formatStateDataQualityReport,
+  ownerHintForReason,
+  recommendedActionForReason,
+  STATE_DATA_QUALITY_OWNER_HINTS,
+  STATE_DATA_QUALITY_REASON_CODES,
+  STATE_DATA_QUALITY_REASON_SEVERITY,
 } from "./state-data-quality";
 
 const NOW = "2026-06-30T00:00:00.000Z";
@@ -605,5 +610,23 @@ describe("50-state data quality gate MySQL runtime", () => {
     expect(store.capturedSql.dataSources).toContain("jurisdiction_name AS jurisdictionName");
     expect(store.capturedSql.dataSources).toContain("fips_code AS fipsCode");
     expect(store.capturedSql.dataSources).toContain("fetch_config AS fetchConfig");
+  });
+});
+
+describe("50-state data quality reason codes", () => {
+  it("lists every reason code once, and the severity map answers for the same codes", () => {
+    expect(new Set(STATE_DATA_QUALITY_REASON_CODES).size).toBe(STATE_DATA_QUALITY_REASON_CODES.length);
+    expect([...STATE_DATA_QUALITY_REASON_CODES].sort()).toEqual(Object.keys(STATE_DATA_QUALITY_REASON_SEVERITY).sort());
+  });
+
+  it("words a fix for every reason code and hands it to a team from the list, every team getting one", () => {
+    for (const code of STATE_DATA_QUALITY_REASON_CODES) {
+      expect(recommendedActionForReason(code), code).toBeTruthy();
+      expect(STATE_DATA_QUALITY_OWNER_HINTS, code).toContain(ownerHintForReason(code));
+    }
+
+    // The admin console names each listed team in both languages, so none may be a name nobody is ever handed.
+    expect(new Set(STATE_DATA_QUALITY_REASON_CODES.map(ownerHintForReason))).toEqual(new Set(STATE_DATA_QUALITY_OWNER_HINTS));
+    expect(new Set(STATE_DATA_QUALITY_OWNER_HINTS).size).toBe(STATE_DATA_QUALITY_OWNER_HINTS.length);
   });
 });

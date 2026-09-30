@@ -2,12 +2,23 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { en } from "@/lib/i18n/dictionaries/en";
 import { zh } from "@/lib/i18n/dictionaries/zh";
+import { RISK_CHECK_IDS } from "@/server/risk/checklist";
+import {
+  ownerHintForReason,
+  recommendedActionForReason,
+  STATE_DATA_QUALITY_OWNER_HINTS,
+  STATE_DATA_QUALITY_REASON_CODES,
+} from "@/server/source-validity/state-data-quality";
 import {
   filterStateDataQualityActionsByRecommendedAction,
   filterStateDataQualityRows,
+  riskCheckLabel,
   STATE_DATA_QUALITY_RISK_FILTERS,
   stateAttachmentRealRatio,
+  stateDataQualityActionText,
+  stateDataQualityOwnerLabel,
   stateDataQualityP0BlockerNotice,
+  stateDataQualityRecommendedActionLabels,
   toRiskSectionData,
 } from "./RiskCheckSection";
 
@@ -285,5 +296,188 @@ describe("risk check section", () => {
   it("formats the real attachment ratio of a state row", () => {
     expect(stateAttachmentRealRatio({ attachmentSummary: { realFileOpenable: 3, total: 4 } } as never)).toBe("3/4 (75%)");
     expect(stateAttachmentRealRatio({ attachmentSummary: { realFileOpenable: 0, total: 0 } } as never)).toBe("0/0 (0%)");
+  });
+});
+
+/**
+ * The dictionary key a server-written code is looked up under: `<prefix>_<code>`, the kebab-case of a check id or an
+ * owner slug turned into snake_case like every other key. It is spelled out here, not imported, so the test pins the
+ * naming rule as well as the component following it.
+ */
+const keyFor = (prefix: string, code: string) => `${prefix}_${code.replace(/-/g, "_")}`;
+
+const checkTitleKeys = RISK_CHECK_IDS.map((id) => keyFor("riskCheckLabel", id));
+const reasonActionKeys = STATE_DATA_QUALITY_REASON_CODES.map((code) => keyFor("stateQualityAction", code));
+/** Every team the server can name: the exported list and whatever `ownerHintForReason` actually answers. */
+const ownerSlugs = [
+  ...new Set<string>([...STATE_DATA_QUALITY_OWNER_HINTS, ...STATE_DATA_QUALITY_REASON_CODES.map(ownerHintForReason)]),
+];
+const ownerKeys = ownerSlugs.map((slug) => keyFor("stateQualityOwner", slug));
+
+/** Every dictionary key that starts with `<prefix>_`, so a text left behind for a code the server dropped is found too. */
+const keysWithPrefix = (dictionary: Record<string, string>, prefix: string) =>
+  Object.keys(dictionary)
+    .filter((key) => key.startsWith(`${prefix}_`))
+    .sort();
+
+describe("server-written text the section translates by its code", () => {
+  // A new server check, reason or owner has no dictionary entry until someone writes one: these are the tests that
+  // notice. Their ids and codes are read from the server modules, not listed here.
+  it("titles every check the server builds, in English and in a different Chinese", () => {
+    expect(RISK_CHECK_IDS.length).toBeGreaterThan(0);
+    RISK_CHECK_IDS.forEach((id, index) => {
+      const key = checkTitleKeys[index];
+      expect(enAdmin[key], `en ${key}: the server builds the "${id}" check`).toBeTruthy();
+      expect(zhAdmin[key], `zh ${key}: the server builds the "${id}" check`).toBeTruthy();
+      expect(zhAdmin[key], `zh ${key} differs from en`).not.toBe(enAdmin[key]);
+      expect(placeholders(zhAdmin[key]), `${key} placeholders`).toEqual(placeholders(enAdmin[key]));
+    });
+  });
+
+  it("words the fix for every reason the server can raise, as the server does in English and differently in Chinese", () => {
+    expect(STATE_DATA_QUALITY_REASON_CODES.length).toBeGreaterThan(0);
+    for (const code of STATE_DATA_QUALITY_REASON_CODES) {
+      const key = keyFor("stateQualityAction", code);
+      expect(enAdmin[key], `en ${key}: the server raises "${code}"`).toBeTruthy();
+      expect(zhAdmin[key], `zh ${key}: the server raises "${code}"`).toBeTruthy();
+      expect(zhAdmin[key], `zh ${key} differs from en`).not.toBe(enAdmin[key]);
+      expect(placeholders(zhAdmin[key]), `${key} placeholders`).toEqual(placeholders(enAdmin[key]));
+      // English keeps printing exactly what the server writes, so a reworded server text has to reach the dictionary.
+      expect(enAdmin[key], `en ${key} is the server's own wording`).toBe(recommendedActionForReason(code));
+    }
+  });
+
+  it("names every team the server hands an action to, in English as the server does and differently in Chinese", () => {
+    expect(ownerSlugs.length).toBeGreaterThan(0);
+    for (const slug of ownerSlugs) {
+      const key = keyFor("stateQualityOwner", slug);
+      expect(enAdmin[key], `en ${key}: the server hands actions to "${slug}"`).toBeTruthy();
+      expect(zhAdmin[key], `zh ${key}: the server hands actions to "${slug}"`).toBeTruthy();
+      expect(zhAdmin[key], `zh ${key} differs from en`).not.toBe(enAdmin[key]);
+      expect(enAdmin[key], `en ${key} is the server's own slug`).toBe(slug);
+    }
+  });
+
+  it("keeps no text for a check, reason or owner the server no longer has", () => {
+    for (const dictionary of [enAdmin, zhAdmin]) {
+      expect(keysWithPrefix(dictionary, "riskCheckLabel")).toEqual([...checkTitleKeys].sort());
+      expect(keysWithPrefix(dictionary, "stateQualityAction")).toEqual([...reasonActionKeys].sort());
+      expect(keysWithPrefix(dictionary, "stateQualityOwner")).toEqual([...ownerKeys].sort());
+    }
+  });
+
+  it("gives no two codes the same key", () => {
+    for (const keys of [checkTitleKeys, reasonActionKeys, ownerKeys]) expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("prints the language's text for a code the dictionary knows, whatever wording the server sent", () => {
+    for (const dictionary of [enAdmin, zhAdmin]) {
+      const t = tIn(dictionary);
+
+      expect(riskCheckLabel({ id: "state-coverage", label: "server wording" }, t)).toBe(dictionary.riskCheckLabel_state_coverage);
+      expect(riskCheckLabel({ id: "source-ingestion-governance", label: "server wording" }, t)).toBe(
+        dictionary.riskCheckLabel_source_ingestion_governance,
+      );
+      expect(
+        stateDataQualityActionText({ reasonCode: "missing_state_bid", recommendedAction: "server wording" }, t),
+      ).toBe(dictionary.stateQualityAction_missing_state_bid);
+      expect(stateDataQualityOwnerLabel("data-ops", t)).toBe(dictionary.stateQualityOwner_data_ops);
+    }
+  });
+
+  it("prints the text the server sent for a check, reason or owner the dictionary does not know", () => {
+    for (const dictionary of [enAdmin, zhAdmin]) {
+      const t = tIn(dictionary);
+
+      expect(riskCheckLabel({ id: "check-from-a-newer-build", label: "A newer check" }, t)).toBe("A newer check");
+      expect(
+        stateDataQualityActionText({ reasonCode: "reason_from_a_newer_build", recommendedAction: "Do the newer thing." }, t),
+      ).toBe("Do the newer thing.");
+      expect(stateDataQualityOwnerLabel("team-from-a-newer-build", t)).toBe("team-from-a-newer-build");
+    }
+    // A blank entry is as good as none: the page never shows an empty title.
+    const blank = tIn({ ...zhAdmin, riskCheckLabel_state_coverage: "", stateQualityOwner_data_ops: "" });
+    expect(riskCheckLabel({ id: "state-coverage", label: "50 state data coverage" }, blank)).toBe("50 state data coverage");
+    expect(stateDataQualityOwnerLabel("data-ops", blank)).toBe("data-ops");
+  });
+
+  it("labels each recommended-action filter option by the action's code and keeps the server's text as its value", () => {
+    const missingBid = recommendedActionForReason("missing_state_bid");
+    const staleCrawler = recommendedActionForReason("crawler_stale_or_missing");
+    const actions = [
+      { reasonCode: "missing_state_bid", recommendedAction: missingBid },
+      { reasonCode: "crawler_stale_or_missing", recommendedAction: staleCrawler },
+      { reasonCode: "missing_state_bid", recommendedAction: missingBid },
+      { reasonCode: "reason_from_a_newer_build", recommendedAction: "Do the newer thing." },
+    ];
+    const labels = stateDataQualityRecommendedActionLabels(actions, tIn(zhAdmin));
+
+    // One label per distinct server text: the text is what the filter matches on.
+    expect([...labels.keys()].sort()).toEqual([missingBid, staleCrawler, "Do the newer thing."].sort());
+    expect(labels.get(missingBid)).toBe(zhAdmin.stateQualityAction_missing_state_bid);
+    expect(labels.get(staleCrawler)).toBe(zhAdmin.stateQualityAction_crawler_stale_or_missing);
+    expect(labels.get("Do the newer thing.")).toBe("Do the newer thing.");
+    expect(stateDataQualityRecommendedActionLabels([], tIn(zhAdmin)).size).toBe(0);
+  });
+
+  it("prints a check's title, an action's fix and its owner through those lookups, never the raw server text", () => {
+    const source = readFileSync(new URL("RiskCheckSection.tsx", import.meta.url), "utf8");
+
+    expect(source).toContain("riskCheckLabel(check, t)");
+    expect(source).toContain("stateDataQualityActionText(action, t)");
+    expect(source).toContain("stateDataQualityOwnerLabel(action.ownerHint, t)");
+    expect(source).toContain("stateDataQualityRecommendedActionLabels(report.actions, t)");
+    for (const raw of ["{check.label}", "{action.recommendedAction}", "{action.ownerHint}"]) {
+      expect(source, raw).not.toContain(raw);
+    }
+    // Summaries, details and evidence carry counts and ids, so they stay as the server stored them.
+    expect(source).toContain("{check.summary}");
+    expect(source).toContain("{action.evidence}");
+    // The lookups read the dictionary, not the server modules, which pull in node built-ins and the database.
+    expect(source).not.toMatch(/from "@\/server\//);
+  });
+
+  it("words the Chinese titles, fixes and teams in the console's vocabulary", () => {
+    const keys = [...checkTitleKeys, ...reasonActionKeys, ...ownerKeys];
+
+    for (const key of keys) {
+      // Real Chinese, in which only technical tokens keep their Latin letters.
+      expect(zhAdmin[key], key).toMatch(/[\u4e00-\u9fff]/);
+      const leftover = zhAdmin[key].replace(/\b(?:URL|ID|P0|QA|Beta|Live|Fixture)\b/g, "").match(/[A-Za-z]{2,}/g);
+      expect(leftover, `${key}: ${zhAdmin[key]}`).toBeNull();
+    }
+
+    // The console's own word for each thing the English text names.
+    const vocabulary: Array<[RegExp, string[]]> = [
+      [/crawler/i, ["爬虫"]],
+      [/attachment/i, ["附件"]],
+      [/\bbids?\b/i, ["招标"]],
+      [/\bsources?\b/i, ["数据源", "来源"]],
+      [/snapshot/i, ["快照"]],
+      [/checksum/i, ["校验和"]],
+      [/archiv/i, ["归档"]],
+      [/approval/i, ["审批"]],
+      [/risk checklist/i, ["风险巡检"]],
+      [/health/i, ["健康"]],
+    ];
+    for (const key of keys) {
+      for (const [english, terms] of vocabulary) {
+        if (!english.test(enAdmin[key])) continue;
+        expect(
+          terms.some((term) => zhAdmin[key].includes(term)),
+          `${key} names ${english} as ${terms.join(" / ")}: ${zhAdmin[key]}`,
+        ).toBe(true);
+      }
+    }
+
+    // 已启用 is a state and 停用 an act, as everywhere else in the console: "disable duplicate enabled sources" is both.
+    expect(zhAdmin.stateQualityAction_duplicate_canonical_enabled_source).toContain("已启用");
+    expect(zhAdmin.stateQualityAction_duplicate_canonical_enabled_source).toContain("停用");
+    expect(zhAdmin.stateQualityAction_duplicate_canonical_enabled_source).not.toContain("禁用");
+    // An active bid is the console's 启用招标, as the global URL health description already says.
+    expect(zhAdmin.riskCheckGlobalUrlDescription).toContain("启用招标");
+    expect(zhAdmin.riskCheckLabel_global_url_validity).toContain("启用招标");
+    // The risk checklist is the 风险巡检 the page title names.
+    expect(zhAdmin.stateQualityAction_risk_check_stale_or_missing).toContain(zhAdmin.riskCheck);
   });
 });

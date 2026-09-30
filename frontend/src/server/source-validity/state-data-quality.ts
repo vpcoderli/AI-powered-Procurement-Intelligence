@@ -14,24 +14,48 @@ export type StateDataQualitySeverity = "P0" | "P1" | "P2";
 export type StateDataQualityRiskLevel = "PASS" | StateDataQualitySeverity;
 export type StateAttachmentQualityStatus = "real_file_openable" | "download_note" | "missing_or_failed";
 
-export type StateDataQualityReasonCode =
-  | "missing_state_bid"
-  | "empty_core_field"
-  | "detail_route_invalid"
-  | "detail_archive_invalid"
-  | "attachment_archive_invalid"
-  | "attachment_missing_or_failed"
-  | "placeholder_or_unsafe_url"
-  | "missing_source_validity_metadata"
-  | "duplicate_canonical_enabled_source"
-  | "crawler_success_zero_rows"
-  | "fixture_fallback"
-  | "crawler_stale_or_missing"
-  | "risk_check_stale_or_missing"
-  | "source_health_stale_or_missing"
-  | "source_health_unhealthy"
-  | "needs_review_source"
-  | "attachment_download_note";
+/**
+ * Every reason a state row can carry. The admin console words each code's remediation in both languages
+ * (`stateQualityAction_missing_state_bid` in the dictionaries for `missing_state_bid`), so a code added here needs an
+ * entry in both: RiskCheckSection.test.ts fails until it has one. `STATE_DATA_QUALITY_REASON_SEVERITY` and
+ * `recommendedActionForReason` must cover it too, which the compiler enforces.
+ */
+export const STATE_DATA_QUALITY_REASON_CODES = [
+  "missing_state_bid",
+  "empty_core_field",
+  "detail_route_invalid",
+  "detail_archive_invalid",
+  "attachment_archive_invalid",
+  "attachment_missing_or_failed",
+  "placeholder_or_unsafe_url",
+  "missing_source_validity_metadata",
+  "duplicate_canonical_enabled_source",
+  "crawler_success_zero_rows",
+  "fixture_fallback",
+  "crawler_stale_or_missing",
+  "risk_check_stale_or_missing",
+  "source_health_stale_or_missing",
+  "source_health_unhealthy",
+  "needs_review_source",
+  "attachment_download_note",
+] as const;
+
+export type StateDataQualityReasonCode = (typeof STATE_DATA_QUALITY_REASON_CODES)[number];
+
+/**
+ * The teams a remediation action is handed to (`ownerHint`). The admin console names each in both languages
+ * (`stateQualityOwner_data_ops` in the dictionaries for `data-ops`); the action's own `ownerHint` stays a plain string
+ * on the wire.
+ */
+export const STATE_DATA_QUALITY_OWNER_HINTS = [
+  "data-ops",
+  "archive-ops",
+  "source-ops",
+  "release-ops",
+  "data-qa",
+] as const;
+
+export type StateDataQualityOwnerHint = (typeof STATE_DATA_QUALITY_OWNER_HINTS)[number];
 
 export interface StateDataQualityReason {
   code: StateDataQualityReasonCode;
@@ -532,7 +556,7 @@ export function stateDataQualityP0Details(report: StateDataQualityReport) {
   );
 }
 
-function recommendedActionForReason(code: StateDataQualityReasonCode) {
+export function recommendedActionForReason(code: StateDataQualityReasonCode) {
   const actions: Record<StateDataQualityReasonCode, string> = {
     missing_state_bid: "Run or repair the state crawler, then verify at least one active state bid is imported.",
     empty_core_field: "Review normalized bid rows and patch parser mappings for missing required fields.",
@@ -556,7 +580,7 @@ function recommendedActionForReason(code: StateDataQualityReasonCode) {
   return actions[code];
 }
 
-function ownerHintForReason(code: StateDataQualityReasonCode) {
+export function ownerHintForReason(code: StateDataQualityReasonCode): StateDataQualityOwnerHint {
   if (
     code === "missing_state_bid" ||
     code === "crawler_success_zero_rows" ||
