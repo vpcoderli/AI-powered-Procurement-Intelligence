@@ -107,7 +107,8 @@ describe("scripts that open the shared MySQL pool exit when MySQL refuses them",
   });
 
   const cases: Array<{ name: string; args: () => string[]; env?: Record<string, string> }> = [
-    // The startup migrations of the three workers run before their loop's try/finally.
+    // The startup migrations of the three workers are what open the pool, and they run inside the try/finally that
+    // closes it: a failed start (MySQL refusing them here) must end the process, not leave it hanging on the pool.
     { name: "event-worker", args: () => ["scripts/event-worker.ts"], env: { EVENT_WORKER_RUN_ONCE: "1" } },
     {
       name: "notification-worker",
@@ -150,5 +151,7 @@ describe("crawler-worker", () => {
     expect(outerTry).toBeGreaterThan(-1);
     expect(closesPool).toBeGreaterThan(outerTry);
     expect(main.slice(outerTry, closesPool)).toContain("resolveMysqlPool()");
+    // ...and nowhere earlier: a pool resolved ahead of the try is left open by anything that throws before it.
+    expect(main.slice(0, outerTry)).not.toContain("resolveMysqlPool(");
   });
 });
