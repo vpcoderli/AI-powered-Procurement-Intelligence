@@ -98,8 +98,9 @@ export interface SourcePrecheckPanelProps {
    * `onSourceUpdated` instead.
    *
    * It must not throw. It runs after runPrecheckRequest's try, so a throw makes that promise reject, and the button
-   * handler discards it (`void runPrecheckRequest(...).finally(...)`): the error escapes as an unhandled promise
-   * rejection, with nothing on the page saying so. Handle a failed refresh inside the callback; a parent that reloads
+   * handler discards it (the click runs the request inside trackBusy and ends with `.finally(...)`; trackBusy's own finally
+   * still releases the page lock): the error escapes as an unhandled promise rejection, with nothing on the page
+   * saying so. Handle a failed refresh inside the callback; a parent that reloads
    * passes something like `() => void resource.reload()`, and `reload` records its own failure instead of rejecting.
    */
   onPrecheckCompleted?: () => void;

@@ -105,9 +105,10 @@ export interface PanelWriteHandlers<T> {
 
 /**
  * One write a panel starts itself (a PATCH, say): sends it, routes the answer or the failure to the panel, and reports
- * the write busy while it runs. Never rejects: however it ends, the panel is told through `onWritten` or `onError`,
- * then `onSettled`, and only after that is the write idle. A `send` that throws before it returns a promise ends the
- * same way as one that rejects.
+ * the write busy while it runs. However the write ends, the panel is told through `onWritten` or `onError`, then
+ * `onSettled`, and only after that is the write idle; a `send` that throws before it returns a promise ends the same way
+ * as one that rejects. It rejects only if a busy handler itself throws when the write starts: then nothing is sent and
+ * `onSettled` does not run. The handlers today are React state setters, which do not throw.
  */
 export async function runPanelWrite<T>(
   tracker: Pick<BusyTracker, "begin">,

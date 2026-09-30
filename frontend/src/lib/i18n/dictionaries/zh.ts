@@ -1926,7 +1926,7 @@ export const zh: Dictionary = {
     stateQualityAction_crawler_stale_or_missing: "运行该州爬虫，并检查最新的爬虫日志。",
     stateQualityAction_risk_check_stale_or_missing: "运行风险巡检，并记录一份最新快照。",
     stateQualityAction_source_health_stale_or_missing: "运行来源健康检查，并记录一份最新的来源健康快照。",
-    stateQualityAction_source_health_unhealthy: "通过来源健康访问复核队列对问题分类，并安排后续跟进。",
+    stateQualityAction_source_health_unhealthy: "通过来源健康访问权限复查队列对问题分类，并安排后续跟进。",
     stateQualityAction_needs_review_source: "完成数据源审批复核，或指定负责人并将该数据源继续保持在 Beta 状态。",
     stateQualityAction_attachment_download_note: "将附件归档到本地，或保留下载说明并附上明确的风险提示文案。",
     stateQualityOwner_data_ops: "数据运营",

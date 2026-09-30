@@ -364,14 +364,15 @@ Do not put the RDS password in this repository.
 Every process opens one MySQL pool and may hold up to `MYSQL_CONNECTION_LIMIT` connections in it (default `10`; see `docs/transferability/environment-variables.md`): the web process shares one pool across all routes, and each worker, one-shot and migration/smoke command opens its own. Idle connections are released after 60 seconds (and above 4 free ones), so a quiet process holds few, but a burst can fill every pool at the same moment, and past `max_connections` RDS answers `Too many connections` and the query fails. Budget for the ceiling, not the average:
 
 ```text
-peak = (W + C + E + N + M) × MYSQL_CONNECTION_LIMIT
+peak = (W + C + A + E + N + M) × MYSQL_CONNECTION_LIMIT
 keep the peak at or below about 70% of max_connections
 ```
 
 | Term | Processes | In this runbook |
 |---|---|---|
 | `W` | Web processes at their maximum | Not fixed here: the App Runner auto scaling maximum size, or the ECS web service's task count. A rolling ECS deployment starts new tasks before stopping old ones, up to the service's `maximumPercent` of the desired count, so count the fleet at that size (twice the desired count at 200). |
-| `C` | Crawler worker service | 1 (`desiredCount = 1`, no autoscaling above it). |
+| `C` | Crawler worker service | 1 (`desiredCount = 1`, no autoscaling above it, deployed with `minimumHealthyPercent = 0` and `maximumPercent = 100` as step 2 of the ECS path says; at ECS's rolling default the old and new task overlap during every deploy, so count 2). |
+| `A` | Other long-running worker services | 0 in this runbook; add 1 per extra worker service you deploy, e.g. the attachment repair worker (`worker:attachments`, which `workers:check` also probes). |
 | `E` | Event outbox one-shots running at once | 1 (every 5-15 minutes; 2 while a slow run overlaps the next). |
 | `N` | Notification/dunning one-shots running at once | 1 (every 15 minutes). |
 | `M` | Migration and other one-shot processes | 1 for the deploy runner (`db:mysql:migrate`, then `db:mysql:smoke`, one after the other), plus 1 for an ad hoc script an operator runs against the database. |
@@ -383,7 +384,7 @@ SHOW GLOBAL VARIABLES LIKE 'max_connections';
 SHOW GLOBAL STATUS LIKE 'Max_used_connections';
 ```
 
-Worked example with the fixed counts above (`C = E = N = 1`) and AWS's own 8 GiB figure: 8,589,934,592 / 12,582,880 = 683 on the full memory, about 630 on the instance. With two web tasks doubled by a rolling deployment (`W = 4`), `M = 2` and the default limit, peak = (4 + 1 + 1 + 1 + 2) × 10 = 90, 14% of 630. The 70% ceiling is 441, which allows `W + C + E + N + M` up to 44 at this limit, so `W` up to 39. The smallest classes do not fit the default: AWS puts db.t3.micro at about 60, and one web process next to the crawler, event, notification and deploy-runner processes is already (1 + 1 + 1 + 1 + 1) × 10 = 50.
+Worked example with the fixed counts above (`C = E = N = 1`, `A = 0`) and AWS's own 8 GiB figure: 8,589,934,592 / 12,582,880 = 683 on the full memory, about 630 on the instance. With two web tasks doubled by a rolling deployment (`W = 4`), `M = 2` and the default limit, peak = (4 + 1 + 1 + 1 + 2) × 10 = 90, 14% of 630. The 70% ceiling is 441, which allows `W + C + A + E + N + M` up to 44 at this limit, so `W` up to 39. The smallest classes do not fit the default: AWS puts db.t3.micro at about 60, and one web process next to the crawler, event, notification and deploy-runner processes is already (1 + 1 + 1 + 1 + 1) × 10 = 50.
 
 If the budget does not fit, lower `MYSQL_CONNECTION_LIMIT` (queries beyond it wait in the pool's queue instead of failing, so this trades latency for connections), move to a larger class, or put RDS Proxy in front of the database (AWS recommends it for applications that open and close many connections). Do not raise `max_connections` past its default to make it fit: every connection costs memory, and AWS warns that too high a value can leave the instance in `incompatible-parameters`.
 
@@ -503,7 +504,7 @@ The runner starts `node server.js`; configure `PORT=8080` when required. The wor
 After building:
 
 1. Push both images to ECR. These are two distinct images, not one image with two commands: the runner carries only the pruned Next standalone output and has no `tsx`, so it cannot run any worker script.
-2. Create one task definition for the web image, and one for the worker image. Run the three workers as separate tasks off that single worker image using command overrides. Run the crawler worker as exactly one task/replica: an ECS service with `desiredCount = 1` and no autoscaling above it. The per-platform request budget (`CRAWLER_PLATFORM_BUDGETS`), the platform pauses and the precheck retry registry live in that one process's memory, and the precheck queue is drained without a per-source lease, so a second replica doubles BidNet traffic and prechecks every queued source twice. A scheduled `crawler:once` (below) running beside the service is a second crawler process too, with its own budget, so never run both. Once local sources are onboarded through the precheck queue (`docs/operations/local-source-approval.md` §8) the service is required: only `scripts/crawler-worker.ts` drains the queue — `crawler:once` runs the daily lists and never runs a queued precheck. Every task holds its own MySQL pool of up to `MYSQL_CONNECTION_LIMIT` connections, so recompute the Connection Budget (RDS MySQL Setup) before changing any task count.
+2. Create one task definition for the web image, and one for the worker image. Run the three workers as separate tasks off that single worker image using command overrides. Run the crawler worker as exactly one task/replica: an ECS service with `desiredCount = 1` and no autoscaling above it, deployed with `minimumHealthyPercent = 0` and `maximumPercent = 100` (ECS's rolling default of 100/200 starts the replacement before stopping the old task, which runs two crawlers for the length of every deploy). The per-platform request budget (`CRAWLER_PLATFORM_BUDGETS`), the platform pauses and the precheck retry registry live in that one process's memory, and the precheck queue is drained without a per-source lease, so a second replica doubles BidNet traffic and prechecks every queued source twice. A scheduled `crawler:once` (below) running beside the service is a second crawler process too, with its own budget, so never run both. Once local sources are onboarded through the precheck queue (`docs/operations/local-source-approval.md` §8) the service is required: only `scripts/crawler-worker.ts` drains the queue — `crawler:once` runs the daily lists and never runs a queued precheck. Every task holds its own MySQL pool of up to `MYSQL_CONNECTION_LIMIT` connections, so recompute the Connection Budget (RDS MySQL Setup) before changing any task count.
 3. Attach the same Secrets Manager / SSM values used by App Runner.
 4. Send logs to CloudWatch.
 5. Run worker preflight in ECS:

@@ -255,6 +255,11 @@ describe("risk checklist MySQL source governance query", () => {
     expect(report.checks.map((check) => check.id)).toEqual(
       RISK_CHECK_IDS.filter((id) => id !== "state-data-quality-gate"),
     );
+    // Production runs MySQL: its labels must read like the console's English titles too.
+    const mysqlConsoleTitles = en.admin as Record<string, string>;
+    for (const entry of report.checks) {
+      expect(mysqlConsoleTitles[`riskCheckLabel_${entry.id.replace(/-/g, "_")}`], entry.id).toBe(entry.label);
+    }
 
     // Regression guard for the phase-1 dialect-parity gap: the row mapper has always read
     // these fields, but the SELECT never listed them, so MySQL silently returned null forever.
