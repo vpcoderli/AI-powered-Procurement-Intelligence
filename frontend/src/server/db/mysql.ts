@@ -83,10 +83,25 @@ export function mysqlPoolSizing(env: Readonly<Record<string, string | undefined>
   return { connectionLimit, maxIdle, idleTimeout };
 }
 
+/**
+ * A pool sized by mysqlPoolSizing (one per process, see resolveMysqlPool).
+ *
+ * gracefulEnd makes mysql2's idle reaper close a connection the way pool.end() does, with a COM_QUIT. Without it
+ * the reaper only ends the socket, and MySQL counts every connection it reaps as an aborted client
+ * (`Aborted_clients`, plus one "Aborted connection ... (Got an error reading communication packets)" entry in the
+ * server log), so a healthy pool that merely sheds idle connections looked like a flaky network. Measured
+ * against MySQL 8.4 with a 3-connection pool (maxIdle 1, idleTimeout 2 s): each reaped connection counted
+ * without the option and none with it; queries, transactions, the pool queue and pool.end() behaved the same.
+ *
+ * The option has one other effect: end() on a pooled connection now really closes it and removes it from the
+ * pool, where without the option it is a deprecated alias of release(). Hand pooled connections back with
+ * release() (nothing here calls end() on one).
+ */
 export function createMysqlPool(databaseUrl = requireMysqlDatabaseUrl()): Pool {
   return mysql.createPool({
     uri: databaseUrl,
     ...mysqlPoolSizing(),
+    gracefulEnd: true,
     multipleStatements: false,
     namedPlaceholders: false,
   });

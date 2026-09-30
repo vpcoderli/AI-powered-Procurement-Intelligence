@@ -222,6 +222,30 @@ describe("MySQL pool sizing", () => {
       await pool.end();
     }
   });
+
+  // Without gracefulEnd mysql2's idle reaper only ends a free connection's socket, and MySQL counts every reaped
+  // connection as an aborted client (Aborted_clients, and an "Aborted connection" entry in its log). With it the
+  // reaper sends a proper quit first, as pool.end() always did. Checked against a real MySQL 8.4 on 2026-09-30.
+  it("has the idle reaper close connections with a proper quit, whatever the sizing", async () => {
+    const pools: Array<ReturnType<typeof createMysqlPool>> = [];
+
+    try {
+      vi.stubEnv("MYSQL_CONNECTION_LIMIT", "3");
+      vi.stubEnv("MYSQL_MAX_IDLE", "1");
+      vi.stubEnv("MYSQL_IDLE_TIMEOUT_MS", "2000");
+      pools.push(createMysqlPool(url));
+      vi.unstubAllEnvs();
+      pools.push(createMysqlPool(url));
+
+      for (const pool of pools) {
+        expect(pool.pool.config).toMatchObject({
+          connectionConfig: { gracefulEnd: true, multipleStatements: false, namedPlaceholders: false },
+        });
+      }
+    } finally {
+      await Promise.all(pools.map((pool) => pool.end()));
+    }
+  });
 });
 
 describe("mysql column migrations cover jurisdiction columns", () => {
