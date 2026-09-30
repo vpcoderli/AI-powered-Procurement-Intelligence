@@ -4,6 +4,7 @@ import type { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AdminApiError } from "@/lib/api/admin";
 import { en } from "@/lib/i18n/dictionaries/en";
+import { zh } from "@/lib/i18n/dictionaries/zh";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 import type { AdminDataSourceListItem, AdminDataSourceListResponse } from "@/server/admin/data-source-list-contract";
 import type { AdminConsoleRole } from "@/server/auth/entitlements";
@@ -14,12 +15,14 @@ import type { AdminResourceStatus, useAdminResource } from "../use-admin-resourc
 // The view reads the shell's session, the URL and one resource; the hooks are replaced with plain state so the
 // markup of each role, URL and load state can be rendered without a DOM. The stubs are typed against the real
 // hooks' return types, so a change to either shape fails type-checking of this file instead of going unnoticed.
+// English goes through the real LanguageProvider; Chinese cannot (a server render always resolves to English), so
+// `useLanguage` answers with the real Chinese dictionary and the same dot-path lookup when a test asks for it.
 type SessionStub = ReturnType<typeof useAdminSession>;
 type ResourceStub = ReturnType<typeof useAdminResource<AdminDataSourceListResponse>>;
 type RouterStub = ReturnType<typeof useRouter>;
 type PathnameStub = ReturnType<typeof usePathname>;
 type SearchParamsStub = ReturnType<typeof useSearchParams>;
-const stubs = vi.hoisted(() => ({ session: null as SessionStub | null, resource: null as ResourceStub | null, search: "" }));
+const stubs = vi.hoisted(() => ({ language: "en" as "en" | "zh", session: null as SessionStub | null, resource: null as ResourceStub | null, search: "" }));
 
 vi.mock("next/navigation", async (importOriginal) => {
   const { ReadonlyURLSearchParams } = await importOriginal<typeof import("next/navigation")>();
@@ -44,6 +47,17 @@ vi.mock("../use-admin-resource", () => ({
     return stubs.resource;
   },
 }));
+vi.mock("@/lib/i18n/LanguageContext", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/lib/i18n/LanguageContext")>();
+  const { zh: zhDictionary } = await import("@/lib/i18n/dictionaries/zh");
+  const lookup = (key: string): string => {
+    let value: unknown = zhDictionary;
+    for (const part of key.split(".")) value = (value as Record<string, unknown> | undefined)?.[part];
+    return typeof value === "string" ? value : key;
+  };
+  const zhLanguage: ReturnType<typeof original.useLanguage> = { language: "zh", setLanguage: () => undefined, t: lookup, dict: zhDictionary };
+  return { ...original, useLanguage: () => (stubs.language === "zh" ? zhLanguage : original.useLanguage()) };
+});
 
 import { SourcesListView } from "./SourcesListView";
 
@@ -103,6 +117,7 @@ const isDisabled = (tag: string) => tag.includes(' disabled=""');
 const count = (template: string, value: number) => template.replace("{count}", String(value));
 
 beforeEach(() => {
+  stubs.language = "en";
   signIn("admin");
   load({ status: "ready", data: listResponse() });
 });
@@ -152,7 +167,7 @@ describe("SourcesListView rows", () => {
     expect(html).toContain('href="/admin/sources/ca_caleprocure"');
     expect(html).toContain(">bidnet_co_denver<");
     for (const label of [
-      admin.source, admin.fieldLevel, admin.fieldState, admin.fieldPlatform, admin.fieldApproval, admin.fieldHealth, admin.lastRun, admin.fieldConsecutiveFailures, admin.enabled,
+      admin.source, admin.fieldLevel, admin.fieldState, admin.fieldPlatform, admin.fieldApproval, admin.fieldHealth, admin.lastRun, admin.fieldConsecutiveFailures, admin.enabledColumn,
     ]) {
       expect(html).toContain(`>${label}</th>`);
     }
@@ -184,6 +199,30 @@ describe("SourcesListView rows", () => {
     expect(html).toContain(admin.sourcesEmpty);
     expect(html).toContain("0–0 of 0");
     expect(html).not.toContain(">bidnet_co_denver<");
+  });
+});
+
+/** The text of every column header that is plain text (the select-all checkbox's header holds an input), in order. */
+const headers = (html: string) => [...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].map((match) => match[1]);
+
+// The last column's header was `admin.enabled`, whose Chinese text (启用) is the console's word for the action, not for a state;
+// the cells under it read 开 / 关. It has a header key of its own now, and `admin.enabled` is only the state word.
+describe("SourcesListView enabled column header", () => {
+  it("keeps the English header as it was", () => {
+    expect(headers(render()).slice(-1)).toEqual(["Enabled"]);
+  });
+
+  it("heads the column with a noun in Chinese, not with the action's word or a state word", () => {
+    const adminZh = zh.admin as Record<string, string>;
+    stubs.language = "zh";
+    const html = render();
+
+    expect(headers(html)).toEqual([
+      adminZh.source, adminZh.fieldLevel, adminZh.fieldState, adminZh.fieldPlatform, adminZh.fieldApproval, adminZh.fieldHealth,
+      adminZh.lastRun, adminZh.fieldConsecutiveFailures, "启用状态",
+    ]);
+    expect(html).toContain(`>${adminZh.on}</td>`);
+    expect(html).toContain(`>${adminZh.off}</td>`);
   });
 });
 

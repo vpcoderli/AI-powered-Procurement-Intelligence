@@ -1242,7 +1242,7 @@ export const zh: Dictionary = {
     batchRunBlockedApproval: "来源未获准入批准——修复访问方式后请在下方数据源表重新批准。",
     batchRunBlockedLegal: "该来源尚未通过法务审查。",
     batchRunStatus_locked: "已锁定",
-    batchRunStatus_disabled: "已禁用",
+    batchRunStatus_disabled: "已停用",
     batchRunStatus_deferred: "平台限流，本批推迟",
     batchRunStatus_unknown: "未知",
     batchRunDeferredHint: "同平台的 {source} 已触发挑战或限流，本轮跳过该源，请稍后单独重跑。",
@@ -1423,7 +1423,7 @@ export const zh: Dictionary = {
     feature_quote_workflow: "询价工作流",
     feature_deadline_notifications: "截止提醒",
     feature_knowledge_station: "知识库",
-    disabled: "已禁用",
+    disabled: "已停用",
     noUsers: "暂无注册用户",
     userAuditLogs: "用户权限审计",
     auditFilterTarget: "目标邮箱、姓名或用户 ID",
@@ -1661,7 +1661,7 @@ export const zh: Dictionary = {
     cadence: "频率",
     lastRun: "上次运行",
     status: "状态",
-    enabled: "启用",
+    enabled: "已启用",
     on: "开",
     off: "关",
     recentLogs: "最近爬虫日志",
@@ -1901,5 +1901,6 @@ export const zh: Dictionary = {
     stateQualityColumnReasonCode: "原因代码",
     stateQualityNoRows: "没有符合当前筛选条件的州级数据质量记录。",
     stateQualityReasonNone: "无",
+    enabledColumn: "启用状态",
   }
 };

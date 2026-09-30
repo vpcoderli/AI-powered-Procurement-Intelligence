@@ -1899,6 +1899,7 @@ export const en = {
     stateQualityColumnReasonCode: "reason code",
     stateQualityNoRows: "No state data quality rows match this filter.",
     stateQualityReasonNone: "none",
+    enabledColumn: "Enabled",
   }
 };
 

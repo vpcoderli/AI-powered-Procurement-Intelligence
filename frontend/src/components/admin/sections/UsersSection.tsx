@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useCallback, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, Search, UserCog } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -100,6 +100,14 @@ export function UsersSection() {
   const [isLoadingFeatureOverrides, setIsLoadingFeatureOverrides] = useState(false);
   const [isUpdatingFeatureOverride, setIsUpdatingFeatureOverride] = useState(false);
 
+  // The feature selected now, for a load or a save that comes back after the select may have moved on: the handler that started
+  // it still holds the feature it saw at the time, and refilling the form for that one would put its reason and expiry under the
+  // feature the select shows. Written in an effect, never during render, the way use-admin-resource keeps its loader.
+  const featureOverrideFeatureRef = useRef(featureOverrideFeature);
+  useEffect(() => {
+    featureOverrideFeatureRef.current = featureOverrideFeature;
+  }, [featureOverrideFeature]);
+
   const updateUserAccess = (user: AdminUser, input: UpdateAdminUserInput) => {
     setPendingUserId(user.id);
     updateAdminUserAccess(user.id, input)
@@ -141,7 +149,7 @@ export function UsersSection() {
     listAdminUserFeatureOverrides(targetUser.id)
       .then((response) => {
         setFeatureOverrideData(response);
-        syncFeatureOverrideForm(response, featureOverrideFeature);
+        syncFeatureOverrideForm(response, featureOverrideFeatureRef.current);
       })
       .catch(() => {
         setNotice(t("admin.featureOverrideLoadFailed"));
@@ -169,7 +177,7 @@ export function UsersSection() {
     })
       .then((response) => {
         setFeatureOverrideData(response);
-        syncFeatureOverrideForm(response, featureOverrideFeature);
+        syncFeatureOverrideForm(response, featureOverrideFeatureRef.current);
         setNotice(t("admin.featureOverrideUpdated"));
       })
       .catch(() => {
@@ -433,7 +441,7 @@ export function UsersSection() {
               <TableHead>{t("admin.tier")}</TableHead>
               <TableHead>{t("admin.lastLogin")}</TableHead>
               <TableHead>{t("admin.featureOverrides")}</TableHead>
-              <TableHead className="text-right">{t("admin.enabled")}</TableHead>
+              <TableHead className="text-right">{t("admin.enabledColumn")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -535,6 +543,7 @@ export function UsersSection() {
               {t("admin.feature")}
               <select
                 value={featureOverrideFeature}
+                disabled={isLoadingFeatureOverrides}
                 onChange={(event) => {
                   const feature = event.target.value as FeatureKey;
 

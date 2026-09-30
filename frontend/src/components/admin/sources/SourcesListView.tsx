@@ -435,7 +435,7 @@ export function SourcesListView() {
                 <TableHead>{t("admin.fieldHealth")}</TableHead>
                 <TableHead>{t("admin.lastRun")}</TableHead>
                 <TableHead>{t("admin.fieldConsecutiveFailures")}</TableHead>
-                <TableHead>{t("admin.enabled")}</TableHead>
+                <TableHead>{t("admin.enabledColumn")}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

@@ -16,7 +16,7 @@
 
 州级与联邦源沿用历史兼容规则（不需要逐个批准），县/市级批量注册源必须留痕——这是 2026-07-29 数据源注册表设计定下的规则，合规台账在 [`data-source-compliance-ledger.md`](./data-source-compliance-ledger.md)。2026-09-15 加固后手动入口与定时入口执行同一门禁，所以这些源在**任何入口**都显示治理拦截（此前手动入口曾绕过门禁）。
 
-另有 5 个 `is_enabled = 0` 的州级占位源（`cal_eprocure`、`illinois_procurement_bulletin`、`myfloridamarketplace`、`new_york_state_contract_reporter`、`texas_smartbuy`）显示"已禁用"，与治理无关：它们是与正式州源重复的早期占位行。处理方式是通过 `PATCH /api/admin/data-sources/[id]` 把 `approvalStatus` 标为 `blocked`、`approvalNotes` 写明 `duplicate placeholder`，保留行以免历史日志指向空 id；标记后它们不再出现在批量运行面板（`/admin/sources/runs`）的可运行条目里。**不要删除**，也不要为了"让面板干净"去批准它们。
+另有 5 个 `is_enabled = 0` 的州级占位源（`cal_eprocure`、`illinois_procurement_bulletin`、`myfloridamarketplace`、`new_york_state_contract_reporter`、`texas_smartbuy`）显示"已停用"，与治理无关：它们是与正式州源重复的早期占位行。处理方式是通过 `PATCH /api/admin/data-sources/[id]` 把 `approvalStatus` 标为 `blocked`、`approvalNotes` 写明 `duplicate placeholder`，保留行以免历史日志指向空 id；标记后它们不再出现在批量运行面板（`/admin/sources/runs`）的可运行条目里。**不要删除**，也不要为了"让面板干净"去批准它们。
 
 ## 2. 前置检查（Pre-check）
 
