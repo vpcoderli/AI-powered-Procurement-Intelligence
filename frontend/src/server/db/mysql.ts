@@ -55,14 +55,24 @@ function integerFromEnv(value: string | undefined, minimum: number) {
 }
 
 /**
- * Pool sizing from MYSQL_CONNECTION_LIMIT (default 10), MYSQL_MAX_IDLE (default 4, at most the limit) and
- * MYSQL_IDLE_TIMEOUT_MS (default 60 000). A connection idle for longer than the timeout is closed, as is any
- * idle connection beyond maxIdle, so a quiet process hands its connections back to the server.
+ * Pool sizing from MYSQL_CONNECTION_LIMIT, MYSQL_MAX_IDLE and MYSQL_IDLE_TIMEOUT_MS.
  *
- * mysql2 only starts that clean-up while maxIdle < connectionLimit, and its own default (maxIdle =
- * connectionLimit) never does: idle connections used to stay open for good. So the default maxIdle keeps one
- * connection of headroom below the limit (it only bites for a limit of 4 or less; a single-connection pool
- * has nothing to release). An explicit MYSQL_MAX_IDLE is honoured as given, capped at the limit.
+ * The limit (a whole number of at least 1, default 10; a blank, non-numeric, fractional, negative or 0 value reads
+ * as unset, so 0 does not mean unlimited here as it does to mysql2) sizes the ONE shared pool of a process
+ * (resolveMysqlPool): every route of the web process, or a worker's whole loop, draws on it. A query past the
+ * limit waits in mysql2's queue (queueLimit 0, no acquire timeout) instead of failing.
+ *
+ * maxIdle is a hard cap on free connections (default min(4, limit - 1), but at least 1; an explicit value is
+ * honoured as given, capped at the limit). mysql2 3.22.4's reaper (lib/base/pool.js, a timer that ticks once a
+ * second) closes the oldest free connection while more than maxIdle are free or the oldest has been idle for
+ * longer than idleTimeout (default 60 000 ms): after a burst of more than maxIdle concurrent queries the extras
+ * close within about a second, and a quiet process drops to none.
+ *
+ * mysql2 starts the reaper only when the pool is created with maxIdle < connectionLimit, and its own default
+ * (maxIdle = connectionLimit) never does: idle connections used to stay open for good. So the default keeps one
+ * connection of headroom below the limit (limit - 1 for a limit of 2 to 4, and 4 from 5 up). A limit of 1 has
+ * no such headroom: its maxIdle is 1, equal to the limit, so no reaper starts and the single connection stays
+ * open until the pool ends, as it does for any explicit MYSQL_MAX_IDLE at or above the limit.
  */
 export function mysqlPoolSizing(env: Readonly<Record<string, string | undefined>> = process.env): MysqlPoolSizing {
   const connectionLimit = integerFromEnv(env.MYSQL_CONNECTION_LIMIT, 1) ?? DEFAULT_CONNECTION_LIMIT;
