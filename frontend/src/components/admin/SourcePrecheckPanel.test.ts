@@ -185,16 +185,40 @@ describe("SourcePrecheckPanel wiring", () => {
   });
 
   it("routes the request through runPrecheckRequest and hands the parent's callback to it", () => {
-    expect(component).toContain("void runPrecheckRequest(() => precheckAdminDataSource(source.id, { limit: 5 }), {");
+    expect(component).toContain("runPrecheckRequest(() => precheckAdminDataSource(source.id, { limit: 5 }), {");
     expect(component).toContain("onResult: setResult,");
     expect(component).toContain("onError: setError,");
     expect(component).toContain("onCompleted: onPrecheckCompleted,");
     // The panel's own busy flag clears however the request ends.
-    expect(component).toContain(".finally(() => setRunning(false))");
-    // Both new props are optional, so a mount that passes neither keeps today's behaviour.
+    expect(component).toContain(").finally(() => setRunning(false));");
+    // The new props are optional, so a mount that passes none of them keeps today's behaviour.
     expect(component).toContain("canApprove?: boolean;");
     expect(component).toContain("onPrecheckCompleted?: () => void;");
+    expect(component).toContain("onBusyChange?: (busy: boolean) => void;");
     expect(component).toContain("canApprove = true,");
+  });
+
+  // The behaviour of the tracker and of runPanelWrite is in busy-reporting.test.ts and the precheck button's in the render
+  // test; the adoption is only reachable once a precheck result is on screen, so its wiring is pinned here.
+  it("puts each write of the card through one busy tracker, and lets the approval form report through it", () => {
+    expect(component).toContain("const busy = useBusyTracker(onBusyChange);");
+    // The precheck request and the base URL adoption are the two writes this card starts itself.
+    expect(component).toContain("void trackBusy(busy, () =>");
+    expect(component).toContain("void runPanelWrite(busy, () => updateAdminDataSource(source.id, { baseUrl: suggested }), {");
+    expect(component.match(/trackBusy\(busy, |runPanelWrite\(busy, /g)).toHaveLength(2);
+    // The form's own PATCH joins the same episode instead of reaching the page under a second, competing signal.
+    expect(component).toContain('const approvalBusyChange = useMemo(() => busy.forward("approval"), [busy]);');
+    expect(component).toContain("onBusyChange={approvalBusyChange}");
+    expect(component).not.toContain("onBusyChange={onBusyChange}");
+    // The tracker's methods are otherwise only reached through trackBusy / runPanelWrite, which the click handlers call.
+    expect(component.match(/\bbusy\./g)).toEqual(["busy."]);
+  });
+
+  it("hands the adoption's result and failure to the panel, and clears its own flag however the write ends", () => {
+    expect(component).toContain("onError: setError,");
+    expect(component).toContain("onSettled: () => setAdopting(false),");
+    // Nothing is reported for a suggestion that is missing or a confirmation the admin declined.
+    expect(component.indexOf("if (!confirmFn(")).toBeLessThan(component.indexOf("void runPanelWrite(busy,"));
   });
 
   it("only writes a suggested base URL behind an explicit confirmation", () => {

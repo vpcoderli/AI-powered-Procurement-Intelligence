@@ -4,11 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdminSourcePrecheckResult, precheckAdminDataSource as PrecheckApi } from "@/lib/api/admin";
 import { en } from "@/lib/i18n/dictionaries/en";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
+import type { ApproveLocalSourceDialogProps } from "./ApproveLocalSourceDialog";
 
 const mocks = vi.hoisted(() => ({
   precheck: vi.fn<typeof PrecheckApi>(),
   /** The onClick each rendered button was given, by its label. */
   clicks: new Map<string, () => void>(),
+  /** What the panel last handed the approval form (see the ApproveLocalSourceDialog mock below). */
+  dialogProps: null as ApproveLocalSourceDialogProps | null,
 }));
 
 vi.mock("@/lib/api/admin", async (importOriginal) => ({
@@ -24,6 +27,19 @@ vi.mock("@/components/ui/button", async (importOriginal) => {
     Button: (props: React.ComponentProps<typeof original.Button>) => {
       if (typeof props.children === "string") mocks.clicks.set(props.children, () => props.onClick?.(undefined as never));
       return <original.Button {...props} />;
+    },
+  };
+});
+
+// The real form, rendered as before; the wrapper only keeps the props the panel handed it, so a test can call the
+// callbacks the panel wired in (a server render cannot open the form and press its submit button).
+vi.mock("./ApproveLocalSourceDialog", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./ApproveLocalSourceDialog")>();
+  return {
+    ...original,
+    ApproveLocalSourceDialog: (props: ApproveLocalSourceDialogProps) => {
+      mocks.dialogProps = props;
+      return <original.ApproveLocalSourceDialog {...props} />;
     },
   };
 });
@@ -57,6 +73,7 @@ const precheckResult = (): AdminSourcePrecheckResult => ({
 beforeEach(() => {
   mocks.precheck.mockReset();
   mocks.clicks.clear();
+  mocks.dialogProps = null;
 });
 
 describe("SourcePrecheckPanel approve form (canApprove)", () => {
@@ -124,5 +141,141 @@ describe("SourcePrecheckPanel precheck button (onPrecheckCompleted)", () => {
     await pressPrecheck();
 
     expect(mocks.precheck).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SourcePrecheckPanel busy reporting (onBusyChange)", () => {
+  /** The values a `onBusyChange` spy was called with, in order. */
+  const reported = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.map(([busy]) => busy);
+  /** Lets every promise the press started settle. */
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  /** Renders the panel with a recording handler and presses Pre-check. Nothing is awaited: the request is in flight. */
+  function pressPrecheck(props: Partial<SourcePrecheckPanelProps> = {}) {
+    const onBusyChange = vi.fn<(busy: boolean) => void>();
+    render(undefined, { onBusyChange, ...props });
+    const press = mocks.clicks.get(admin.sourcePrecheckRun);
+    expect(press).toBeTypeOf("function");
+    press?.();
+    return onBusyChange;
+  }
+
+  it("reports nothing while it only renders: busy is reported by a write, never by a render", () => {
+    const onBusyChange = vi.fn<(busy: boolean) => void>();
+
+    render(undefined, { onBusyChange });
+    render(stateSource(), { onBusyChange });
+
+    expect(onBusyChange).not.toHaveBeenCalled();
+    expect(mocks.precheck).not.toHaveBeenCalled();
+  });
+
+  it("reports busy as soon as a precheck starts, stays busy while the request is in flight, and reports idle once it succeeded", async () => {
+    let respond!: (result: AdminSourcePrecheckResult) => void;
+    mocks.precheck.mockReturnValue(new Promise<AdminSourcePrecheckResult>((resolve) => (respond = resolve)));
+
+    const onBusyChange = pressPrecheck();
+    expect(reported(onBusyChange)).toEqual([true]);
+    await settle();
+    expect(reported(onBusyChange)).toEqual([true]);
+
+    respond(precheckResult());
+    await settle();
+    expect(reported(onBusyChange)).toEqual([true, false]);
+  });
+
+  it("reports idle after a failed request, once", async () => {
+    mocks.precheck.mockRejectedValue(new Error("Pre-check could not run the crawler for bidnet_co_denver"));
+
+    const onBusyChange = pressPrecheck();
+    expect(reported(onBusyChange)).toEqual([true]);
+    await settle();
+
+    expect(reported(onBusyChange)).toEqual([true, false]);
+  });
+
+  it("reports idle when the request throws before it returns a promise", async () => {
+    mocks.precheck.mockImplementation(() => {
+      throw new Error("offline");
+    });
+
+    const onBusyChange = pressPrecheck();
+    expect(reported(onBusyChange)).toEqual([true]);
+    await settle();
+
+    expect(reported(onBusyChange)).toEqual([true, false]);
+  });
+
+  it("reports idle after the parent's onPrecheckCompleted ran, so the page is locked until its refresh was started", async () => {
+    mocks.precheck.mockResolvedValue(precheckResult());
+    const order: string[] = [];
+    const onBusyChange = vi.fn((busy: boolean) => {
+      order.push(busy ? "busy" : "idle");
+    });
+
+    pressPrecheck({ onBusyChange, onPrecheckCompleted: () => order.push("completed") });
+    await settle();
+
+    expect(order).toEqual(["busy", "completed", "idle"]);
+  });
+
+  it("runs the precheck for a mount that passes no handler, and hands the approval form one that is safe to call", async () => {
+    mocks.precheck.mockResolvedValue(precheckResult());
+    render();
+
+    mocks.clicks.get(admin.sourcePrecheckRun)?.();
+    expect(mocks.dialogProps?.onBusyChange).toBeTypeOf("function");
+    expect(() => {
+      mocks.dialogProps?.onBusyChange?.(true);
+      mocks.dialogProps?.onBusyChange?.(false);
+    }).not.toThrow();
+    await settle();
+
+    expect(mocks.precheck).toHaveBeenCalledTimes(1);
+  });
+
+  describe("the approval form's own write", () => {
+    it("is the card's write: busy while the form says so, idle once it says it settled", () => {
+      const onBusyChange = vi.fn<(busy: boolean) => void>();
+      render(undefined, { onBusyChange });
+      const form = mocks.dialogProps;
+      expect(form).not.toBeNull();
+
+      form?.onBusyChange?.(true);
+      expect(reported(onBusyChange)).toEqual([true]);
+      form?.onBusyChange?.(false);
+      expect(reported(onBusyChange)).toEqual([true, false]);
+    });
+
+    it("keeps the card busy after a precheck that started under it has settled", async () => {
+      mocks.precheck.mockResolvedValue(precheckResult());
+      const onBusyChange = vi.fn<(busy: boolean) => void>();
+      render(undefined, { onBusyChange });
+
+      mocks.dialogProps?.onBusyChange?.(true);
+      mocks.clicks.get(admin.sourcePrecheckRun)?.();
+      await settle();
+      // One episode: no second busy for the precheck, and no idle while the form is still writing.
+      expect(reported(onBusyChange)).toEqual([true]);
+
+      mocks.dialogProps?.onBusyChange?.(false);
+      expect(reported(onBusyChange)).toEqual([true, false]);
+    });
+
+    it("keeps the card busy until a precheck that outlasts the form has settled", async () => {
+      let respond!: (result: AdminSourcePrecheckResult) => void;
+      mocks.precheck.mockReturnValue(new Promise<AdminSourcePrecheckResult>((resolve) => (respond = resolve)));
+      const onBusyChange = vi.fn<(busy: boolean) => void>();
+      render(undefined, { onBusyChange });
+
+      mocks.clicks.get(admin.sourcePrecheckRun)?.();
+      mocks.dialogProps?.onBusyChange?.(true);
+      mocks.dialogProps?.onBusyChange?.(false);
+      expect(reported(onBusyChange)).toEqual([true]);
+
+      respond(precheckResult());
+      await settle();
+      expect(reported(onBusyChange)).toEqual([true, false]);
+    });
   });
 });

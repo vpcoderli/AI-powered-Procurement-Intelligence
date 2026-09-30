@@ -355,6 +355,24 @@ describe("CrawlerConfigPanel wiring", () => {
     expect(component).toContain('t(`admin.crawlerConfigField_${field}`)');
   });
 
+  // The form is only reachable once the panel has been opened, which a server render cannot do, so the wiring is pinned
+  // here; the write's behaviour (busy then idle, on failure and on a synchronous throw too) is runPanelWrite's, tested in
+  // busy-reporting.test.ts.
+  it("sends its one write through runPanelWrite", () => {
+    expect(component).toContain("onBusyChange?: (busy: boolean) => void;");
+    expect(component).toContain("const busy = useBusyTracker(onBusyChange);");
+    expect(component).toContain(
+      "void runPanelWrite(busy, () => updateAdminDataSource(source.id, buildCrawlerConfigPatch(source, form)), {",
+    );
+    expect(component.match(/runPanelWrite\(busy, /g)).toHaveLength(1);
+  });
+
+  it("reports the save and the failure to the panel, and clears its saving flag however the write ends", () => {
+    expect(component).toMatch(/onWritten: \(\{ source: updated \}\) => \{\n\s*onSaved\(updated\);\n\s*setForm\(formFromSource\(updated\)\);/);
+    expect(component).toMatch(/onError: \(message\) => \{\n\s*setStatus\(\{ kind: "error", text: t\("admin\.crawlerConfigSaveFailed"\)/);
+    expect(component).toContain("onSettled: () => setSaving(false),");
+  });
+
   it("resolves both save-feedback placeholders instead of leaking them into the UI", () => {
     expect(component).toContain('.replace("{source}"');
     expect(component).toContain('.replace("{message}"');
@@ -421,5 +439,6 @@ describe("CrawlerConfigPanel wiring", () => {
   it("is mounted on the source detail page", () => {
     expect(detailView).toContain("CrawlerConfigPanel");
     expect(detailView).toContain("onSaved={replaceSource}");
+    expect(detailView).toContain("onBusyChange={onConfigBusyChange}");
   });
 });

@@ -9,6 +9,7 @@ import {
   type ApproveLocalSourceInput,
 } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import { runPanelWrite, useBusyTracker } from "./busy-reporting";
 
 /**
  * "Approve county/city source" form (contract C6 of
@@ -131,6 +132,12 @@ export interface ApproveLocalSourceDialogProps {
   precheck: AdminSourcePrecheckResult | null;
   disabled?: boolean;
   onApproved: (source: AdminDataSource) => void;
+  /**
+   * Called with `true` when the approval PATCH starts and with `false` once it settled, approved or refused, so a
+   * page can hold its other controls while the ledger is being written. Not called for a form the client-side
+   * validation rejected (nothing was sent). Optional: a mount that says nothing behaves as before.
+   */
+  onBusyChange?: (busy: boolean) => void;
 }
 
 const inputClass =
@@ -142,8 +149,10 @@ export function ApproveLocalSourceDialog({
   precheck,
   disabled = false,
   onApproved,
+  onBusyChange,
 }: ApproveLocalSourceDialogProps) {
   const { t } = useLanguage();
+  const busy = useBusyTracker(onBusyChange);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<ApproveLocalSourceForm>(() =>
     approveLocalSourceFormFromSource(source, reviewerEmail, new Date()),
@@ -175,18 +184,17 @@ export function ApproveLocalSourceDialog({
 
     setSaving(true);
     setError(null);
-    updateAdminDataSource(source.id, buildApproveLocalSourcePatch(form))
-      .then(({ source: updated }) => {
+    void runPanelWrite(busy, () => updateAdminDataSource(source.id, buildApproveLocalSourcePatch(form)), {
+      onWritten: ({ source: updated }) => {
         onApproved(updated);
         setOpen(false);
-      })
-      .catch((caught: unknown) => {
-        // Server rejections (missing reviewer on a requires_login row, invalid URL, …) are shown
-        // verbatim: the API message is the actionable part, and paraphrasing it hides which
-        // ledger field the server refused.
-        setError(caught instanceof Error ? caught.message : String(caught));
-      })
-      .finally(() => setSaving(false));
+      },
+      // Server rejections (missing reviewer on a requires_login row, invalid URL, …) are shown
+      // verbatim: the API message is the actionable part, and paraphrasing it hides which
+      // ledger field the server refused.
+      onError: setError,
+      onSettled: () => setSaving(false),
+    });
   };
 
   if (!open) {

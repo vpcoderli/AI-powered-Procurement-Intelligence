@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { ApproveLocalSourceDialog, isLocalJurisdictionSource } from "./ApproveLocalSourceDialog";
+import { runPanelWrite, trackBusy, useBusyTracker } from "./busy-reporting";
 
 /**
  * Per-source approval pre-check card (contract C5 of
@@ -102,6 +103,13 @@ export interface SourcePrecheckPanelProps {
    * passes something like `() => void resource.reload()`, and `reload` records its own failure instead of rejecting.
    */
   onPrecheckCompleted?: () => void;
+  /**
+   * Called with `true` when the card starts a write (a precheck request, the base URL adoption, or the approval form's
+   * PATCH) and with `false` once the last write in flight settled, success or failure, so a page can hold its other
+   * controls meanwhile. Overlapping writes are one busy episode. Unmounting while a write is in flight reports
+   * `false` too. Optional: a mount that says nothing behaves as before.
+   */
+  onBusyChange?: (busy: boolean) => void;
   /** Injectable for tests; defaults to the browser confirm dialog. */
   confirmAdopt?: (message: string) => boolean;
 }
@@ -113,9 +121,14 @@ export function SourcePrecheckPanel({
   canApprove = true,
   onSourceUpdated,
   onPrecheckCompleted,
+  onBusyChange,
   confirmAdopt,
 }: SourcePrecheckPanelProps) {
   const { t } = useLanguage();
+  const busy = useBusyTracker(onBusyChange);
+  // The approval form runs a write of its own. Its reports join this card's, so the page sees one busy signal for the
+  // whole card however its writes overlap.
+  const approvalBusyChange = useMemo(() => busy.forward("approval"), [busy]);
   const [result, setResult] = useState<AdminSourcePrecheckResult | null>(null);
   const [running, setRunning] = useState(false);
   const [adopting, setAdopting] = useState(false);
@@ -124,11 +137,13 @@ export function SourcePrecheckPanel({
   const runPrecheck = () => {
     setRunning(true);
     setError(null);
-    void runPrecheckRequest(() => precheckAdminDataSource(source.id, { limit: 5 }), {
-      onResult: setResult,
-      onError: setError,
-      onCompleted: onPrecheckCompleted,
-    }).finally(() => setRunning(false));
+    void trackBusy(busy, () =>
+      runPrecheckRequest(() => precheckAdminDataSource(source.id, { limit: 5 }), {
+        onResult: setResult,
+        onError: setError,
+        onCompleted: onPrecheckCompleted,
+      }),
+    ).finally(() => setRunning(false));
   };
 
   const adoptSuggestedBaseUrl = () => {
@@ -140,15 +155,14 @@ export function SourcePrecheckPanel({
 
     setAdopting(true);
     setError(null);
-    updateAdminDataSource(source.id, { baseUrl: suggested })
-      .then(({ source: updated }) => {
+    void runPanelWrite(busy, () => updateAdminDataSource(source.id, { baseUrl: suggested }), {
+      onWritten: ({ source: updated }) => {
         onSourceUpdated(updated);
         setResult((current) => (current ? { ...current, suggestedBaseUrl: null } : current));
-      })
-      .catch((caught: unknown) => {
-        setError(caught instanceof Error ? caught.message : String(caught));
-      })
-      .finally(() => setAdopting(false));
+      },
+      onError: setError,
+      onSettled: () => setAdopting(false),
+    });
   };
 
   return (
@@ -270,6 +284,7 @@ export function SourcePrecheckPanel({
           precheck={result}
           disabled={disabled}
           onApproved={onSourceUpdated}
+          onBusyChange={approvalBusyChange}
         />
       )}
     </div>

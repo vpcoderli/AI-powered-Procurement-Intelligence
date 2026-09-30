@@ -1,25 +1,33 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { CrawlerConfigPanel } from "@/components/admin/CrawlerConfigPanel";
 import type { SourcePrecheckPanelProps } from "@/components/admin/SourcePrecheckPanel";
 import { AdminApiError, type AdminDataSource, type AdminDataSourceDetail } from "@/lib/api/admin";
 import { en } from "@/lib/i18n/dictionaries/en";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 import type { AdminConsoleRole } from "@/server/auth/entitlements";
 import { adminRoleFlags, type useAdminSession } from "../admin-session";
+import type { useBusyIds } from "../busy-reporting";
 import type { AdminResourceStatus, useAdminResource } from "../use-admin-resource";
+import type { BusyPanel } from "./SourceDetailView";
 import { adminSourceDetailFixture, adminSourceFixture } from "./test-fixtures";
 
-// The view reads the shell's session and one resource; both hooks are replaced with plain state so the
-// markup of each role and load state can be rendered without a DOM. The stubs are typed against the real
-// hooks' return types, so a change to either shape fails type-checking of this file instead of going unnoticed.
+// The view reads the shell's session, one resource and the set of panels that are writing; the hooks are replaced with
+// plain state so the markup of each role, load state and busy state can be rendered without a DOM. The stubs are typed
+// against the real hooks' return types, so a change to any shape fails type-checking of this file instead of going
+// unnoticed.
 type SessionStub = ReturnType<typeof useAdminSession>;
 type ResourceStub = ReturnType<typeof useAdminResource<AdminDataSourceDetail>>;
+type BusyStub = ReturnType<typeof useBusyIds<BusyPanel>>;
+type ConfigPanelProps = React.ComponentProps<typeof CrawlerConfigPanel>;
 const stubs = vi.hoisted(() => ({
   session: null as SessionStub | null,
   resource: null as ResourceStub | null,
-  // What the view last handed the precheck card (see the SourcePrecheckPanel mock below).
+  busy: null as BusyStub | null,
+  // What the view last handed the precheck and config cards (see the panel mocks below).
   precheckProps: null as SourcePrecheckPanelProps | null,
+  configProps: null as ConfigPanelProps | null,
 }));
 
 vi.mock("../admin-session", async (importOriginal) => ({
@@ -35,8 +43,25 @@ vi.mock("../use-admin-resource", () => ({
     return stubs.resource;
   },
 }));
-// The real card, rendered as before; the wrapper only keeps the props the view passed it, so a test can read the
+vi.mock("../busy-reporting", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../busy-reporting")>()),
+  useBusyIds: (): BusyStub => {
+    if (!stubs.busy) throw new Error("busyPanels() was not called");
+    return stubs.busy;
+  },
+}));
+// The real cards, rendered as before; the wrappers only keep the props the view passed them, so a test can read the
 // flags and call the callbacks the view wired in without a DOM.
+vi.mock("@/components/admin/CrawlerConfigPanel", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/components/admin/CrawlerConfigPanel")>();
+  return {
+    ...original,
+    CrawlerConfigPanel: (props: ConfigPanelProps) => {
+      stubs.configProps = props;
+      return <original.CrawlerConfigPanel {...props} />;
+    },
+  };
+});
 vi.mock("@/components/admin/SourcePrecheckPanel", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/components/admin/SourcePrecheckPanel")>();
   return {
@@ -53,6 +78,8 @@ import { SourceDetailView } from "./SourceDetailView";
 // The writes the view can make to the resource, recorded so a test can tell a re-read from a row swap.
 const reload = vi.fn(async () => undefined);
 const setData = vi.fn();
+// The reports the view took from its panels, recorded with the id each came in under.
+const setBusy = vi.fn<BusyStub["setBusy"]>();
 
 const admin = en.admin as Record<string, string>;
 
@@ -62,6 +89,11 @@ function signIn(role: AdminConsoleRole) {
     ...adminRoleFlags(role),
   };
   stubs.session = session;
+}
+
+/** The panels that are writing right now, as the view's busy hook would answer. */
+function busyPanels(...ids: BusyPanel[]) {
+  stubs.busy = { busyIds: new Set(ids), setBusy };
 }
 
 function load(state: { status: AdminResourceStatus; data?: AdminDataSourceDetail | null; error?: unknown }) {
@@ -90,7 +122,10 @@ const stateDetail = (overrides: Partial<AdminDataSource> = {}) =>
 beforeEach(() => {
   reload.mockClear();
   setData.mockClear();
+  setBusy.mockClear();
   stubs.precheckProps = null;
+  stubs.configProps = null;
+  busyPanels();
   signIn("admin");
   load({ status: "ready", data: adminSourceDetailFixture() });
 });
@@ -348,5 +383,96 @@ describe("SourceDetailView precheck card wiring", () => {
     expect(reload).toHaveBeenCalledTimes(1);
     // Nothing is written into the loaded detail, so the card keeps its fresh result and the panels stay as they are.
     expect(setData).not.toHaveBeenCalled();
+  });
+});
+
+// A write a reused panel starts itself (a precheck, adopting the suggested base URL, the ledgered approval, the config
+// save) never passes through the page's own pending slot. The panels report it, and the page holds every control it
+// owns for as long as one of them is writing, exactly as it does while one of its own actions is pending.
+describe("SourceDetailView busy lock (writes the reused panels start themselves)", () => {
+  const disabled = (html: string, label: string) => buttonTag(html, label).includes(' disabled=""');
+  // An approved state row leaves Hold enabled; a held one leaves the (ledger-less) Approve enabled.
+  const approvedRow = () => load({ status: "ready", data: stateDetail() });
+  const heldRow = () => load({ status: "ready", data: stateDetail({ approvalStatus: "needs_review", approvedForIngestion: false }) });
+
+  it("leaves every control enabled while no panel is writing", () => {
+    approvedRow();
+    const html = render();
+
+    for (const label of [admin.sourceDetailRunNow, admin.sourceDetailDisable, admin.holdSource, admin.recheckSource, admin.sourceHealthTriageAssign]) {
+      expect(buttonTag(html, label)).not.toBe("");
+      expect(disabled(html, label)).toBe(false);
+    }
+    expect(stubs.precheckProps?.disabled).toBe(false);
+    expect(stubs.configProps?.disabled).toBe(false);
+
+    heldRow();
+    expect(disabled(render(), admin.approveSource)).toBe(false);
+  });
+
+  it.each<BusyPanel>(["precheck", "config"])("holds every control of the page while the %s panel is writing", (panel) => {
+    busyPanels(panel);
+
+    approvedRow();
+    const html = render();
+    for (const label of [admin.sourceDetailRunNow, admin.sourceDetailDisable, admin.holdSource, admin.recheckSource, admin.sourceHealthTriageAssign]) {
+      expect(buttonTag(html, label)).not.toBe("");
+      expect(disabled(html, label)).toBe(true);
+    }
+    // Both panels are held, the one that is writing and the one that is not.
+    expect(stubs.precheckProps?.disabled).toBe(true);
+    expect(stubs.configProps?.disabled).toBe(true);
+
+    heldRow();
+    expect(disabled(render(), admin.approveSource)).toBe(true);
+  });
+
+  it("stays locked as long as any one panel is still writing", () => {
+    busyPanels("precheck", "config");
+    approvedRow();
+    const html = render();
+
+    expect(disabled(html, admin.sourceDetailRunNow)).toBe(true);
+    expect(stubs.configProps?.disabled).toBe(true);
+  });
+
+  it("still applies each control's own status rule once the page is free", () => {
+    // An approved row can only be held; a held one can only be approved.
+    approvedRow();
+    const approved = render();
+    expect(disabled(approved, admin.approveSource)).toBe(true);
+    expect(disabled(approved, admin.holdSource)).toBe(false);
+
+    heldRow();
+    const held = render();
+    expect(disabled(held, admin.approveSource)).toBe(false);
+    expect(disabled(held, admin.holdSource)).toBe(true);
+  });
+
+  it("hears the writes of each panel under that panel's own id", () => {
+    render();
+    expect(stubs.precheckProps?.onBusyChange).toBeTypeOf("function");
+    expect(stubs.configProps?.onBusyChange).toBeTypeOf("function");
+
+    stubs.precheckProps?.onBusyChange?.(true);
+    stubs.configProps?.onBusyChange?.(true);
+    stubs.precheckProps?.onBusyChange?.(false);
+    stubs.configProps?.onBusyChange?.(false);
+
+    expect(setBusy.mock.calls).toEqual([["precheck", true], ["config", true], ["precheck", false], ["config", false]]);
+  });
+
+  it("takes no report from a page that is only rendered: a panel says nothing until it writes", () => {
+    render();
+
+    expect(setBusy).not.toHaveBeenCalled();
+  });
+
+  it("mounts neither panel for support, so nothing there can hold the page", () => {
+    signIn("support");
+    render();
+
+    expect(stubs.precheckProps).toBeNull();
+    expect(stubs.configProps).toBeNull();
   });
 });

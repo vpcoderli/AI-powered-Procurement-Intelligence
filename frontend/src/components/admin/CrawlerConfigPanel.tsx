@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { updateAdminDataSource, type AdminDataSource, type UpdateAdminDataSourceInput } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import { runPanelWrite, useBusyTracker } from "./busy-reporting";
 import {
   CADENCES,
   ENRICHMENT_FIELDS,
@@ -205,6 +206,11 @@ interface CrawlerConfigPanelProps {
   source: AdminDataSource;
   disabled?: boolean;
   onSaved: (source: AdminDataSource) => void;
+  /**
+   * Called with `true` when a save starts and with `false` once it settled, saved or failed, so a page can hold its
+   * other controls while the config is being written. Optional: a mount that says nothing behaves as before.
+   */
+  onBusyChange?: (busy: boolean) => void;
 }
 
 interface CrawlerConfigStatus {
@@ -215,8 +221,9 @@ interface CrawlerConfigStatus {
 const inputClass =
   "h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none";
 
-export function CrawlerConfigPanel({ source, disabled = false, onSaved }: CrawlerConfigPanelProps) {
+export function CrawlerConfigPanel({ source, disabled = false, onSaved, onBusyChange }: CrawlerConfigPanelProps) {
   const { t } = useLanguage();
+  const busy = useBusyTracker(onBusyChange);
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<CrawlerConfigForm>(() => formFromSource(source));
   const [saving, setSaving] = useState(false);
@@ -240,17 +247,17 @@ export function CrawlerConfigPanel({ source, disabled = false, onSaved }: Crawle
   const save = () => {
     setSaving(true);
     setStatus(null);
-    updateAdminDataSource(source.id, buildCrawlerConfigPatch(source, form))
-      .then(({ source: updated }) => {
+    void runPanelWrite(busy, () => updateAdminDataSource(source.id, buildCrawlerConfigPatch(source, form)), {
+      onWritten: ({ source: updated }) => {
         onSaved(updated);
         setForm(formFromSource(updated));
         setStatus({ kind: "success", text: t("admin.crawlerConfigSaved").replace("{source}", source.label) });
-      })
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
+      },
+      onError: (message) => {
         setStatus({ kind: "error", text: t("admin.crawlerConfigSaveFailed").replace("{message}", message) });
-      })
-      .finally(() => setSaving(false));
+      },
+      onSettled: () => setSaving(false),
+    });
   };
 
   if (!open) {

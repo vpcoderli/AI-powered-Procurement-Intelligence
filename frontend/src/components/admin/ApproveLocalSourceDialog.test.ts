@@ -199,8 +199,28 @@ describe("ApproveLocalSourceDialog wiring", () => {
     expect(component).not.toContain("runStateCrawlersNow");
   });
 
+  // The form is only reachable once it has been opened, which a server render cannot do, so the wiring is pinned here;
+  // the write's behaviour (busy then idle, on failure and on a synchronous throw too) is runPanelWrite's, tested in
+  // busy-reporting.test.ts.
+  it("sends its one write through runPanelWrite, and only once the form passed validation", () => {
+    expect(component).toContain("onBusyChange?: (busy: boolean) => void;");
+    expect(component).toContain("const busy = useBusyTracker(onBusyChange);");
+    expect(component).toContain(
+      "void runPanelWrite(busy, () => updateAdminDataSource(source.id, buildApproveLocalSourcePatch(form)), {",
+    );
+    expect(component.match(/runPanelWrite\(busy, /g)).toHaveLength(1);
+    // A form the client-side validation rejected sends nothing, so it reports nothing.
+    expect(component.indexOf("if (!validation.ok) {")).toBeLessThan(component.indexOf("void runPanelWrite(busy,"));
+  });
+
+  it("closes only for an approval that was written, and clears its saving flag however the write ends", () => {
+    expect(component).toMatch(/onWritten: \(\{ source: updated \}\) => \{\n\s*onApproved\(updated\);\n\s*setOpen\(false\);\n\s*\},/);
+    expect(component).toContain("onSettled: () => setSaving(false),");
+  });
+
   it("surfaces server rejections verbatim instead of a generic failure string", () => {
-    expect(component).toContain("caught instanceof Error ? caught.message : String(caught)");
+    // runPanelWrite hands the server's message over unchanged (tested there); the form shows it as it is.
+    expect(component).toContain("onError: setError,");
     expect(component).toContain('role="alert"');
   });
 

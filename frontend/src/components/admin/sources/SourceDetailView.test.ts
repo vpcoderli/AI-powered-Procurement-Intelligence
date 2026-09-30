@@ -35,14 +35,37 @@ describe("source detail view", () => {
   // Every write of the page goes through act(), which owns one pending slot. The live-health card used to lock only
   // its own two actions, so a recheck or triage could start while Run, Enable/Disable, Approve or Hold was in
   // flight, and whichever finished first cleared the slot and re-enabled every control under the other write.
-  it("locks every control of the page while any action is pending", () => {
+  // The reused panels start writes that never pass through act(); they report those through onBusyChange, and the
+  // page treats a busy panel exactly like a pending action (behaviour: SourceDetailView.render.test.tsx).
+  it("locks every control of the page while any action is pending or any panel is writing", () => {
     const view = read("SourceDetailView.tsx");
 
-    expect(view).toContain("busy={pending !== null}");
-    expect(view).toContain("disabled={pending !== null}");
-    expect(view).toContain("disabled={pending !== null || source.approvalStatus");
+    expect(view).toContain("const locked = pending !== null || busyPanels.size > 0;");
+    // Run and Enable/Disable, then the two panels.
+    expect(view.match(/disabled=\{locked\}/g)).toHaveLength(4);
+    // Approve and Hold, which also keep their own status rules.
+    expect(view).toContain('disabled={locked || source.approvalStatus === "approved"}');
+    expect(view).toContain("busy={locked}");
+    // The pending slot alone no longer gates a control: `locked` is the one place it is read.
+    expect(view.match(/pending !== null/g)).toHaveLength(1);
     expect(view).toContain("setPending((current) => settledPending(current, action))");
     expect(view).not.toContain("setPending(null)");
+  });
+
+  // Each panel reports under its own id, so one that says idle twice (its write settled, then it unmounted) cannot free
+  // a lock another panel still holds. The dialog inside the precheck card reports through that card.
+  it("hears about the writes of each reused panel under that panel's own id", () => {
+    const view = read("SourceDetailView.tsx");
+
+    expect(view).toContain("const { busyIds: busyPanels, setBusy: setPanelBusy } = useBusyIds<BusyPanel>();");
+    expect(view).toContain('useCallback((busy: boolean) => setPanelBusy("precheck", busy), [setPanelBusy])');
+    expect(view).toContain('useCallback((busy: boolean) => setPanelBusy("config", busy), [setPanelBusy])');
+    expect(view).toContain("onBusyChange={onPrecheckBusyChange}");
+    expect(view).toContain("onBusyChange={onConfigBusyChange}");
+    expect(view).not.toContain("<ApproveLocalSourceDialog");
+    // The hooks sit ahead of the early returns, and the state is only set from the callbacks the panels report through.
+    expect(view.indexOf("useBusyIds<BusyPanel>()")).toBeLessThan(view.indexOf("if (!detail) {"));
+    expect(view.match(/setBusyIds\(|setPanelBusy\(/g)).toHaveLength(2);
   });
 
   // Base UI's Tabs.Panel unmounts a hidden panel by default: a tab switch threw away an unsaved config edit and the
@@ -98,7 +121,7 @@ describe("source detail view", () => {
     expect(view).toContain("setNotice(singleRunReport(t, source.label, await runStateCrawlersNow([runId])))");
     expect(view).toContain("<AdminNotice message={notice?.message ?? null} tone={notice?.tone} />");
     // A blocked row is changed only through an explicit Approve or the ledgered form, never by Hold.
-    expect(view).toContain('disabled={pending !== null || source.approvalStatus === "needs_review" || source.approvalStatus === "blocked"}');
+    expect(view).toContain('disabled={locked || source.approvalStatus === "needs_review" || source.approvalStatus === "blocked"}');
   });
 
   it("clears the pending slot only for the action that is finishing", () => {

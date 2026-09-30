@@ -22,6 +22,7 @@ import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { formatDate } from "../admin-format";
 import { useAdminSession } from "../admin-session";
 import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
+import { useBusyIds } from "../busy-reporting";
 import { useAdminResource } from "../use-admin-resource";
 import { CrawlerLogList } from "./CrawlerLogList";
 import { crawlerRunIdFor } from "./crawler-run-id";
@@ -40,6 +41,9 @@ export function sourceDetailTabs(): SourceDetailTab[] {
 }
 
 export type PendingAction = "run" | "toggle" | "approve" | "hold" | "recheck" | "triage" | null;
+
+/** The reused panels that start writes of their own and report them through `onBusyChange`. */
+export type BusyPanel = "precheck" | "config";
 
 /**
  * The pending slot once `finished` settles: cleared only if it still names that action, so a write that ends late
@@ -70,6 +74,14 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
   const resource = useAdminResource(loadDetail);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [pending, setPending] = useState<PendingAction>(null);
+  // Writes the reused panels start themselves (a precheck, adopting the suggested base URL, the ledgered approval, the
+  // config save) never pass through act(), so each panel reports its own busy state instead.
+  const { busyIds: busyPanels, setBusy: setPanelBusy } = useBusyIds<BusyPanel>();
+  const onPrecheckBusyChange = useCallback((busy: boolean) => setPanelBusy("precheck", busy), [setPanelBusy]);
+  const onConfigBusyChange = useCallback((busy: boolean) => setPanelBusy("config", busy), [setPanelBusy]);
+  // One lock for every control the page owns: one of its own actions is in flight, or a panel is writing. Whichever
+  // write is running, no other one may start under it.
+  const locked = pending !== null || busyPanels.size > 0;
   const [tab, setTab] = useState<SourceDetailTab>("overview");
   // The config tab stays mounted (keepMounted) so an unsaved edit survives a tab switch, and its form is built from
   // the row once, when it mounts. A write from the approval tab that changes what the form was built from (the
@@ -228,13 +240,13 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
         </div>
         <div className="flex flex-wrap gap-2">
           {canRunOperations && runId && (
-            <Button type="button" onClick={() => void runNow()} disabled={pending !== null} className="h-9 rounded-lg bg-slate-900 text-white hover:bg-slate-800">
+            <Button type="button" onClick={() => void runNow()} disabled={locked} className="h-9 rounded-lg bg-slate-900 text-white hover:bg-slate-800">
               <Play size={16} />
               {t("admin.sourceDetailRunNow")}
             </Button>
           )}
           {canRunOperations && (
-            <Button type="button" variant="outline" onClick={() => void toggleEnabled()} disabled={pending !== null} className="h-9 rounded-lg border-slate-200">
+            <Button type="button" variant="outline" onClick={() => void toggleEnabled()} disabled={locked} className="h-9 rounded-lg border-slate-200">
               {source.isEnabled ? t("admin.sourceDetailDisable") : t("admin.sourceDetailEnable")}
             </Button>
           )}
@@ -249,7 +261,7 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
                   type="button"
                   variant="outline"
                   onClick={() => void updateApproval("approved")}
-                  disabled={pending !== null || source.approvalStatus === "approved"}
+                  disabled={locked || source.approvalStatus === "approved"}
                   className="h-9 rounded-lg border-emerald-200 text-emerald-700"
                 >
                   {t("admin.approveSource")}
@@ -259,7 +271,7 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
                 type="button"
                 variant="outline"
                 onClick={() => void updateApproval("needs_review")}
-                disabled={pending !== null || source.approvalStatus === "needs_review" || source.approvalStatus === "blocked"}
+                disabled={locked || source.approvalStatus === "needs_review" || source.approvalStatus === "blocked"}
                 className="h-9 rounded-lg border-amber-200 text-amber-700"
               >
                 {t("admin.holdSource")}
@@ -297,7 +309,7 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
             source={source}
             canRunOperations={canRunOperations}
             pending={pending === "recheck" || pending === "triage" ? pending : null}
-            busy={pending !== null}
+            busy={locked}
             onRecheck={() => void recheck()}
             onTriage={(action) => void triage(action)}
           />
@@ -306,7 +318,7 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
         {/* keepMounted: switching tabs must not throw away an unsaved config edit. */}
         <TabsContent value="config" keepMounted>
           {canRunOperations ? (
-            <CrawlerConfigPanel key={configFormRevision} source={source} disabled={pending !== null} onSaved={replaceSource} />
+            <CrawlerConfigPanel key={configFormRevision} source={source} disabled={locked} onSaved={replaceSource} onBusyChange={onConfigBusyChange} />
           ) : (
             <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-600 shadow-sm">
               <p>{t("admin.sourceDetailConfigReadOnly")}</p>
@@ -340,10 +352,11 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
             <SourcePrecheckPanel
               source={source}
               reviewerEmail={user.email}
-              disabled={pending !== null}
+              disabled={locked}
               canApprove={isAdmin}
               onSourceUpdated={replaceSourceFromApprovalTab}
               onPrecheckCompleted={refreshAfterPrecheck}
+              onBusyChange={onPrecheckBusyChange}
             />
           )}
           <SourceComplianceCard source={source} />
