@@ -59,6 +59,15 @@ export function parseStateDataQualityCheckArgs(argv: string[]): StateDataQuality
   return options;
 }
 
+/**
+ * The report this script prints. On the MySQL runtime it ENDS the process-wide shared pool when it is done, on every
+ * path (see the finally below): after it returns, that pool is gone and the next resolveMysqlPool() opens a new one.
+ *
+ * Call it only from this script's one-shot `main()`, which has nothing left to do with the pool afterwards. Do not
+ * call it from code that keeps using the pool (a server route, a worker loop, a test that shares the pool). And do
+ * not move the close out of here: the report is the script's only use of the pool, and an open pool's connections
+ * and idle-connection timer keep the process from exiting.
+ */
 export async function createStateDataQualityCheckReport(now = new Date(), env = process.env) {
   if (isMysqlDatabaseUrlConfigured(env)) {
     try {

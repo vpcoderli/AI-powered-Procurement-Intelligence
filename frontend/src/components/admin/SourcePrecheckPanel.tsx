@@ -95,6 +95,11 @@ export interface SourcePrecheckPanelProps {
    * written that result into the row's robots and live-health columns, so the parent's copy of the row is stale.
    * Not called when the request fails (nothing was written); the base URL adoption hands its row back through
    * `onSourceUpdated` instead.
+   *
+   * It must not throw. It runs after runPrecheckRequest's try, so a throw makes that promise reject, and the button
+   * handler discards it (`void runPrecheckRequest(...).finally(...)`): the error escapes as an unhandled promise
+   * rejection, with nothing on the page saying so. Handle a failed refresh inside the callback; a parent that reloads
+   * passes something like `() => void resource.reload()`, and `reload` records its own failure instead of rejecting.
    */
   onPrecheckCompleted?: () => void;
   /** Injectable for tests; defaults to the browser confirm dialog. */
