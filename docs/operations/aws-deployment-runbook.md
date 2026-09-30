@@ -372,7 +372,7 @@ keep the peak at or below about 70% of max_connections
 |---|---|---|
 | `W` | Web processes at their maximum | Not fixed here: the App Runner auto scaling maximum size, or the ECS web service's task count. A rolling ECS deployment starts new tasks before stopping old ones, up to the service's `maximumPercent` of the desired count, so count the fleet at that size (twice the desired count at 200). |
 | `C` | Crawler worker service | 1 (`desiredCount = 1`, no autoscaling above it, deployed with `minimumHealthyPercent = 0` and `maximumPercent = 100` as step 2 of the ECS path says; at ECS's rolling default the old and new task overlap during every deploy, so count 2). |
-| `A` | Other long-running worker services | 0 in this runbook; add 1 per extra worker service you deploy, e.g. the attachment repair worker (`worker:attachments`, which `workers:check` also probes). |
+| `A` | Other long-running worker services | 0 in this runbook; add 1 per extra worker service you deploy, e.g. the attachment repair worker (`worker:attachments`, which `workers:check` also probes). Count 2 for such a service while a default rolling deploy (100/200) overlaps its old and new task. |
 | `E` | Event outbox one-shots running at once | 1 (every 5-15 minutes; 2 while a slow run overlaps the next). |
 | `N` | Notification/dunning one-shots running at once | 1 (every 15 minutes). |
 | `M` | Migration and other one-shot processes | 1 for the deploy runner (`db:mysql:migrate`, then `db:mysql:smoke`, one after the other), plus 1 for an ad hoc script an operator runs against the database. |
