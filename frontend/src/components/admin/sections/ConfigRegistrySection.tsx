@@ -180,7 +180,7 @@ export function ConfigRegistrySection() {
               </div>
             </div>
             <div className="max-w-xl rounded-md border border-emerald-100 bg-white px-3 py-2 text-xs leading-5 text-slate-600">
-              <span className="mr-1 font-semibold text-emerald-700">{t("admin.configRegistrySafeValidationLabel")}</span>
+              <span className="font-semibold text-emerald-700">{t("admin.configRegistrySafeValidationLabel")}</span>{" "}
               {t("admin.configRegistrySafeValidationText")}
             </div>
           </div>

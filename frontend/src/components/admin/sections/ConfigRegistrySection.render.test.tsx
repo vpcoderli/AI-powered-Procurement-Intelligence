@@ -113,6 +113,15 @@ describe.each<Language>(["en", "zh"])("config registry section in %s", (language
     expect(textNodes(render(language))).toContain(t.configRegistryEmpty);
   });
 
+  // The label ends in its colon and the sentence follows it, two nodes with only the closing tag between them. The gap
+  // has to be a space of its own: a margin on the label looks the same on screen but reads, copies and searches as
+  // "validation:unsafe" (the pre-translation markup printed ": " after the label).
+  it("puts a real space between the safe-validation label and its sentence", () => {
+    const readingOrder = render(language).replace(/<[^>]*>/g, "");
+
+    expect(readingOrder).toContain(`${t.configRegistrySafeValidationLabel} ${t.configRegistrySafeValidationText}`);
+  });
+
   it("puts the CMS entry id in a code chip in the middle of the description", () => {
     const [before, after] = t.configRegistryCmsDescription.split("{key}");
 
@@ -166,6 +175,12 @@ describe.each<Language>(["en", "zh"])("config registry section in %s", (language
 });
 
 describe("config registry section in Chinese", () => {
+  it("renders the safe-validation label, a space and its sentence", () => {
+    expect(render("zh")).toContain(
+      ">安全校验：</span> 不安全声明拦截由营销内容解析器强制执行。涉及结果、合规或提交的不安全声明会在发布前被拒绝，站点将回退到默认营销文案。",
+    );
+  });
+
   it("prints none of the English copy the component used to hard-code", () => {
     const text = textNodes(render("zh"));
 
@@ -207,7 +222,7 @@ describe("config registry section in English", () => {
     expect(html).toContain(
       'Copy Library edits live in <code class="rounded bg-white px-1">ux_state.copy_library</code> and cover homepage/resources scope.',
     );
-    expect(html).toContain(">safe validation:</span>unsafe claim guard is enforced by the marketing content resolver. Unsafe outcome, compliance, or submission claims are rejected before publish and the site falls back to default marketing copy.");
+    expect(html).toContain(">safe validation:</span> unsafe claim guard is enforced by the marketing content resolver. Unsafe outcome, compliance, or submission claims are rejected before publish and the site falls back to default marketing copy.");
     expect(html).toContain(">Save config</button>");
     expect(html).toContain("Last: -");
     expect(html).toContain("Last: Raised the price to $&amp; 5");
