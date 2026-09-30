@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AdminBidQaResponse } from "@/lib/api/admin";
+import type { AdminBidQaItem, AdminBidQaResponse } from "@/lib/api/admin";
 import { en } from "@/lib/i18n/dictionaries/en";
 import { zh } from "@/lib/i18n/dictionaries/zh";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
@@ -104,5 +104,58 @@ describe("bid QA source confidence filter", () => {
 
       for (const word of ["high", "medium", "low"]) expect(labels, `${language} ${word}`).not.toContain(word);
     }
+  });
+});
+
+// The row's correction draft carries a flag for a date the browser holds only in part (badInput). A row nobody touched has
+// none: its date input shows the stored day, is not marked invalid, and Save corrections stays off until something changes.
+// (A server render never fires the input's events, so the flagged state is covered by the helpers' tests.)
+describe("bid QA deadline correction input", () => {
+  const ITEM: AdminBidQaItem = {
+    id: "bid-1",
+    title: "Roof replacement",
+    source: "co_bidnet",
+    sourceBidId: "B-100",
+    issuerName: "City of Aurora",
+    stateCode: "CO",
+    deadlineDate: "07/10/2026",
+    sourceConfidence: "high",
+    qualityFlags: [],
+    qualityScore: 90,
+    adminReviewStatus: "unreviewed",
+    adminReviewNote: null,
+    adminReviewedAt: null,
+    adminReviewedBy: null,
+    displayStatus: "published",
+    detailArchiveStatus: "archived",
+    detailArchiveError: null,
+    attachmentCount: 0,
+    archiveIssueCount: 0,
+    archiveFailedCount: 0,
+    archiveUnavailableCount: 0,
+    correctionCount: 0,
+    updatedAt: "2026-09-30T00:00:00.000Z",
+  };
+
+  function renderWithItem(language: Language) {
+    stubs.resource = {
+      ...stubs.resource!,
+      data: { summary: { total: 1, needsReview: 1, archiveIssues: 0, lowQuality: 0 }, items: [ITEM] },
+    };
+    return render(language);
+  }
+
+  it.each<Language>(["en", "zh"])("shows the stored day in an unflagged date input, with Save corrections off, in %s", (language) => {
+    const admin = dictionaries[language].admin as Record<string, string>;
+    const html = renderWithItem(language);
+    // The filter bar has two date inputs of its own; the row's is the one labelled for the correction.
+    const dateInputs = (html.match(/<input[^>]*\btype="date"[^>]*>/g) ?? []).filter((input) => input.includes(admin.saveCorrections));
+
+    // "07/10/2026" is the day the deadline column prints, and the input shows the same day.
+    expect(dateInputs).toHaveLength(1);
+    expect(dateInputs[0]).toContain('value="2026-07-10"');
+    // (The class list carries "aria-invalid:" variants; only the attribute counts.)
+    expect(dateInputs[0]).not.toMatch(/\saria-invalid=/);
+    expect(html).toMatch(new RegExp(`<button[^>]*\\bdisabled=""[^>]*>${admin.saveCorrections}</button>`));
   });
 });

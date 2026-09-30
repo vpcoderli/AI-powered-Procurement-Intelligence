@@ -103,13 +103,43 @@ export function endOfDayIsoFromDateInput(value: string) {
 }
 
 /**
- * True for a date `<input>` value that holds something endOfDayIsoFromDateInput cannot turn into a date. That answer is
- * null, the same as for an emptied input, so a caller that sends null to clear the date would clear it for this too.
- * The year of a date input in desktop Chrome can run to six digits ("20261-07-10", "275760-09-13"), and Date reads
- * neither. Such a value is a typing mistake, not a request to clear anything.
+ * True for a date `<input>` that holds something endOfDayIsoFromDateInput cannot turn into a date. That answer is null,
+ * the same as for an emptied input, so a caller that sends null to clear the date would clear it for this too. Two
+ * things fall under it, and neither is a request to clear anything, only a typing mistake:
+ *
+ * - A value Date cannot read. The year of a date input in desktop Chrome can run to six digits ("20261-07-10",
+ *   "275760-09-13"), and Date reads neither.
+ * - A date the input holds only in part (`badInput`, from readDateInput). Once the user has cleared one segment of a
+ *   date, or typed only some of one, the input reports value "" with `validity.badInput` set: the same "" as an input
+ *   that was emptied. The flag is taken as the input's word, whatever value it reads.
+ *
+ * `badInput` defaults to false, so a caller that has only the value keeps the first meaning.
  */
-export function isUnreadableDateInput(value: string): boolean {
-  return value !== "" && endOfDayIsoFromDateInput(value) === null;
+export function isUnreadableDateInput(value: string, badInput = false): boolean {
+  return badInput || (value !== "" && endOfDayIsoFromDateInput(value) === null);
+}
+
+/** What a date `<input>` reports at one moment: its value, and whether it holds a date typed only in part. */
+export interface DateInputReading {
+  value: string;
+  badInput: boolean;
+}
+
+/**
+ * Reads a date `<input>` (`event.currentTarget` of its change, key up or blur event) into a plain value. A caller keeps
+ * `badInput` in a flag of its own and never writes a marker into the controlled `value`, which React would write back
+ * into the field and so wipe what the user had half typed. The two values are copied out here because a state updater
+ * runs after the event, when a React event's currentTarget is already gone.
+ *
+ * Read the input on change, on key up and on blur, not on change alone. Checked 2026-09-30 in Chrome 152: input and
+ * change fire for the edit that empties a complete date (value "", badInput true), but clearing the segments that are
+ * left, or typing into an empty field, fires keyup alone, and badInput then goes back to false (nothing left typed) or
+ * turns true with no input event at all. Key up keeps the reading current while the field has focus: a disabled Save
+ * button does not take focus when it is clicked, so blur alone could never re-enable it for a field that was just emptied.
+ * Blur reports the field as it stands when the user leaves it, and comes before a click on any enabled button.
+ */
+export function readDateInput(input: { value: string; validity: { badInput: boolean } }): DateInputReading {
+  return { value: input.value, badInput: input.validity.badInput };
 }
 
 export function statusTone(status: string | null | undefined) {

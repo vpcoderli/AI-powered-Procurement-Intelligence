@@ -17,7 +17,16 @@ import {
   type AdminBidQaReviewStatus,
 } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
-import { compactErrorMessage, endOfDayIsoFromDateInput, formatBidDate, formatDate, formatDateInputValue, isUnreadableDateInput } from "../admin-format";
+import {
+  compactErrorMessage,
+  endOfDayIsoFromDateInput,
+  formatBidDate,
+  formatDate,
+  formatDateInputValue,
+  isUnreadableDateInput,
+  readDateInput,
+  type DateInputReading,
+} from "../admin-format";
 import { useAdminSession } from "../admin-session";
 import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
 import { useAdminResource } from "../use-admin-resource";
@@ -25,6 +34,11 @@ import { useAdminResource } from "../use-admin-resource";
 export type BidQaCorrectionDraft = {
   title: string;
   deadlineDate: string;
+  /**
+   * The date input holds a date typed only in part (`validity.badInput`). Its value then reads "", exactly like an input the
+   * admin emptied, so the flag is kept next to the value and never inside it (see readDateInput).
+   */
+  deadlineDateBadInput: boolean;
 };
 
 /** The request's `corrections`: the fields the admin changed, and only those. */
@@ -91,7 +105,25 @@ export function bidQaCorrectionDraftFor(item: Pick<AdminBidQaItem, "id" | "title
   return drafts[item.id] ?? {
     title: item.title,
     deadlineDate: formatDateInputValue(item.deadlineDate),
+    deadlineDateBadInput: false,
   };
+}
+
+/**
+ * The drafts after `item`'s deadline input reports `reading`: the value it holds and whether that is a date typed only in
+ * part. The section calls it on change, on key up and on blur (see readDateInput for why all three). A reading that
+ * changes nothing hands `drafts` back as it is, so passing through a field creates no draft for a row nobody edited, and
+ * the title the admin typed, and every other row's draft, are left alone.
+ */
+export function bidQaDraftsWithDeadlineInput(
+  item: Pick<AdminBidQaItem, "id" | "title" | "deadlineDate">,
+  drafts: Record<string, BidQaCorrectionDraft>,
+  reading: DateInputReading,
+): Record<string, BidQaCorrectionDraft> {
+  const draft = bidQaCorrectionDraftFor(item, drafts);
+  if (draft.deadlineDate === reading.value && draft.deadlineDateBadInput === reading.badInput) return drafts;
+
+  return { ...drafts, [item.id]: { ...draft, deadlineDate: reading.value, deadlineDateBadInput: reading.badInput } };
 }
 
 /**
@@ -104,13 +136,15 @@ export function bidQaCorrectionDraftFor(item: Pick<AdminBidQaItem, "id" | "title
  * draft never counts. The deadline is changed when the picked day differs from the day the input was prefilled with;
  * it is sent as the end of that day in UTC, and an emptied input as null, which clears the deadline as it always did.
  *
- * A date the input holds but that is no day the request can carry (desktop Chrome lets the year run to six digits,
- * which Date does not read) is not a correction: it would come out as null too and clear the deadline. It holds back
- * the whole draft, the title change included, so nothing is saved that the admin did not mean and no typed date is
- * quietly dropped; the date field is marked invalid and Save corrections stays off until it is a day again.
+ * A date the input holds but that is no day the request can carry is not a correction: it would come out as null too and
+ * clear the deadline. That is a year Date does not read (desktop Chrome lets it run to six digits) and a date typed only
+ * in part (`deadlineDateBadInput`: clearing one segment, or typing some of one, leaves value "", the same as an emptied
+ * input). It holds back the whole draft, the title change included, so nothing is saved that the admin did not mean and
+ * no typed date is quietly dropped; the date field is marked invalid and Save corrections stays off until it is a day
+ * again, or is emptied for real, which clears the deadline as it always did.
  */
 export function bidQaCorrectionsFor(item: Pick<AdminBidQaItem, "title" | "deadlineDate">, draft: BidQaCorrectionDraft): BidQaCorrections | null {
-  if (isUnreadableDateInput(draft.deadlineDate)) return null;
+  if (isUnreadableDateInput(draft.deadlineDate, draft.deadlineDateBadInput)) return null;
 
   const corrections: BidQaCorrections = {};
   const title = draft.title.trim();
@@ -185,6 +219,13 @@ export function BidQaSection() {
       .finally(() => {
         setPendingBidQaId(null);
       });
+  };
+
+  /** Reads the row's date input now (the updater below runs after the event, when currentTarget is gone) and records it. */
+  const recordDeadlineInput = (item: AdminBidQaItem, input: HTMLInputElement) => {
+    const reading = readDateInput(input);
+
+    setCorrectionDrafts((current) => bidQaDraftsWithDeadlineInput(item, current, reading));
   };
 
   const saveBidQaCorrections = (item: AdminBidQaItem) => {
@@ -518,16 +559,10 @@ export function BidQaSection() {
                           <Input
                             type="date"
                             value={correctionDraft.deadlineDate}
-                            onChange={(event) =>
-                              setCorrectionDrafts((current) => ({
-                                ...current,
-                                [item.id]: {
-                                  ...bidQaCorrectionDraftFor(item, current),
-                                  deadlineDate: event.target.value,
-                                },
-                              }))
-                            }
-                            aria-invalid={isUnreadableDateInput(correctionDraft.deadlineDate) || undefined}
+                            onChange={(event) => recordDeadlineInput(item, event.currentTarget)}
+                            onKeyUp={(event) => recordDeadlineInput(item, event.currentTarget)}
+                            onBlur={(event) => recordDeadlineInput(item, event.currentTarget)}
+                            aria-invalid={isUnreadableDateInput(correctionDraft.deadlineDate, correctionDraft.deadlineDateBadInput) || undefined}
                             aria-label={`${t("bid.deadline")} ${t("admin.saveCorrections")}`}
                             className="h-8 rounded-lg border-slate-200 bg-white text-xs"
                           />

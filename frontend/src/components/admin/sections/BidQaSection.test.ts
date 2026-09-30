@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { bidQaCorrectionDraftFor, bidQaCorrectionsFor, bidQaRequestFor, DEFAULT_BID_QA_FILTERS, type BidQaCorrectionDraft } from "./BidQaSection";
+import {
+  bidQaCorrectionDraftFor,
+  bidQaCorrectionsFor,
+  bidQaDraftsWithDeadlineInput,
+  bidQaRequestFor,
+  DEFAULT_BID_QA_FILTERS,
+  type BidQaCorrectionDraft,
+} from "./BidQaSection";
 
 describe("bid QA section", () => {
   it("builds the QA list request from the filters", () => {
@@ -79,9 +86,28 @@ describe("bid QA section", () => {
   it("marks an unreadable date invalid on the input and leaves Save corrections on the disabled path it already has", () => {
     const source = readFileSync(new URL("BidQaSection.tsx", import.meta.url), "utf8");
     expect(source).toMatch(/import \{[^}]*\bisUnreadableDateInput\b[^}]*\} from "\.\.\/admin-format";/);
-    expect(source).toContain("if (isUnreadableDateInput(draft.deadlineDate)) return null;");
-    expect(source).toContain("aria-invalid={isUnreadableDateInput(correctionDraft.deadlineDate) || undefined}");
+    expect(source).toContain("if (isUnreadableDateInput(draft.deadlineDate, draft.deadlineDateBadInput)) return null;");
+    expect(source).toContain(
+      "aria-invalid={isUnreadableDateInput(correctionDraft.deadlineDate, correctionDraft.deadlineDateBadInput) || undefined}",
+    );
     expect(source).toContain("disabled={isPending || correctionDraft.title.trim().length === 0 || corrections === null}");
+  });
+
+  // A date typed only in part reads "" (like an emptied input), and Chrome fires no input event for most edits of one, so the
+  // input is read on change, on key up and on blur (readDateInput). What is kept in the draft is the value as the browser
+  // reports it plus a flag of its own; nothing is written into the controlled value.
+  it("reads the date input on change, key up and blur into a flag apart from the controlled value", () => {
+    const source = readFileSync(new URL("BidQaSection.tsx", import.meta.url), "utf8");
+    expect(source).toMatch(/import \{[^}]*\breadDateInput\b[^}]*\} from "\.\.\/admin-format";/);
+    expect(source).toContain("onChange={(event) => recordDeadlineInput(item, event.currentTarget)}");
+    expect(source).toContain("onKeyUp={(event) => recordDeadlineInput(item, event.currentTarget)}");
+    expect(source).toContain("onBlur={(event) => recordDeadlineInput(item, event.currentTarget)}");
+    // The field is read before the updater runs: a React event's currentTarget is gone by then.
+    expect(source).toContain("const reading = readDateInput(input);");
+    expect(source).toContain("setCorrectionDrafts((current) => bidQaDraftsWithDeadlineInput(item, current, reading));");
+    expect(source).toContain("value={correctionDraft.deadlineDate}");
+    // The change handler used to write just the value, and read an emptied and a half-typed input alike.
+    expect(source).not.toContain("deadlineDate: event.target.value,");
   });
 
   // Moved from src/app/admin/page.test.ts ("renders user access controls alongside crawler operations").
@@ -245,6 +271,119 @@ describe("bid QA corrections", () => {
     expect(bidQaCorrectionsFor(item, edited(item, { deadlineDate: "" }))).toStrictEqual({ deadlineDate: null });
     expect(bidQaCorrectionsFor(item, edited(item, { deadlineDate: "9999-12-31" }))).toStrictEqual({ deadlineDate: "9999-12-31T23:59:59.000Z" });
     expect(bidQaCorrectionsFor(item, edited(item, { deadlineDate: "2026-07-11" }))).toStrictEqual({ deadlineDate: "2026-07-11T23:59:59.000Z" });
+  });
+
+  // In desktop Chrome, clearing one segment of a date <input>, or typing only some of one, gives value "" with
+  // validity.badInput: the same "" as an emptied input. The save read it as one, and sent { deadlineDate: null }, which clears
+  // the bid's deadline.
+  describe("a date the input holds only in part (badInput)", () => {
+    it("gives an untouched draft no flag", () => {
+      const item = bid("2026-07-10");
+
+      expect(bidQaCorrectionDraftFor(item, {})).toEqual({ title: "Roof replacement", deadlineDate: "2026-07-10", deadlineDateBadInput: false });
+    });
+
+    it("sends nothing while the input is half typed, so a cleared segment never clears the deadline", () => {
+      for (const deadlineDate of ["2026-07-10", "07/10/2026", "2026-07-10T23:59:59.000Z", "TBD", null]) {
+        const item = bid(deadlineDate);
+
+        expect(bidQaCorrectionsFor(item, edited(item, { deadlineDate: "", deadlineDateBadInput: true })), String(deadlineDate)).toBeNull();
+      }
+    });
+
+    it("holds back the whole draft, the title change included, and lets it through once the field is a day or truly empty", () => {
+      const item = bid("2026-07-10");
+      const title = "Roof replacement, phase 2";
+
+      expect(bidQaCorrectionsFor(item, edited(item, { title, deadlineDate: "", deadlineDateBadInput: true }))).toBeNull();
+      expect(bidQaCorrectionsFor(item, edited(item, { title, deadlineDate: "2026-07-11", deadlineDateBadInput: false }))).toStrictEqual({
+        title,
+        deadlineDate: "2026-07-11T23:59:59.000Z",
+      });
+      expect(bidQaCorrectionsFor(item, edited(item, { title, deadlineDate: "", deadlineDateBadInput: false }))).toStrictEqual({
+        title,
+        deadlineDate: null,
+      });
+    });
+
+    it("takes the flag as the word of the input, whatever value it reads", () => {
+      const item = bid("2026-07-10");
+
+      expect(bidQaCorrectionsFor(item, edited(item, { deadlineDate: "2026-07-11", deadlineDateBadInput: true }))).toBeNull();
+    });
+
+    it("still clears the deadline for an input that was emptied, and sends a day: only badInput holds a draft back", () => {
+      const item = bid("2026-07-10");
+
+      expect(bidQaCorrectionsFor(item, edited(item, { deadlineDate: "", deadlineDateBadInput: false }))).toStrictEqual({ deadlineDate: null });
+      expect(bidQaCorrectionsFor(item, edited(item, { deadlineDate: "2026-07-11", deadlineDateBadInput: false }))).toStrictEqual({
+        deadlineDate: "2026-07-11T23:59:59.000Z",
+      });
+    });
+  });
+
+  // The input is read on change, on key up and on blur. Chrome fires input/change for the edit that empties a complete date
+  // (value "", badInput true), but not for clearing the segments that are left (badInput back to false) or for typing into an
+  // empty field (badInput true, value still ""): those show on key up, and on the blur that precedes a click on Save corrections.
+  describe("recording what the date input reports", () => {
+    it("keeps a half-typed date in a flag of its own, with the value as the browser reports it", () => {
+      const item = bid("2026-07-10");
+      const drafts = bidQaDraftsWithDeadlineInput(item, {}, { value: "", badInput: true });
+
+      expect(drafts[item.id]).toEqual({ title: "Roof replacement", deadlineDate: "", deadlineDateBadInput: true });
+      expect(bidQaCorrectionsFor(item, bidQaCorrectionDraftFor(item, drafts))).toBeNull();
+    });
+
+    it("clears the flag when the input is a day again, and the day is sent", () => {
+      const item = bid("2026-07-10");
+      const half = bidQaDraftsWithDeadlineInput(item, {}, { value: "", badInput: true });
+      const fixed = bidQaDraftsWithDeadlineInput(item, half, { value: "2026-07-11", badInput: false });
+
+      expect(fixed[item.id].deadlineDateBadInput).toBe(false);
+      expect(bidQaCorrectionsFor(item, bidQaCorrectionDraftFor(item, fixed))).toStrictEqual({ deadlineDate: "2026-07-11T23:59:59.000Z" });
+    });
+
+    it("clears the flag when the last segment is cleared, and the emptied date then clears the deadline as it always did", () => {
+      const item = bid("2026-07-10");
+      const half = bidQaDraftsWithDeadlineInput(item, {}, { value: "", badInput: true });
+      const emptied = bidQaDraftsWithDeadlineInput(item, half, { value: "", badInput: false });
+
+      expect(emptied[item.id].deadlineDateBadInput).toBe(false);
+      expect(bidQaCorrectionsFor(item, bidQaCorrectionDraftFor(item, emptied))).toStrictEqual({ deadlineDate: null });
+    });
+
+    it("holds back a title change while a date typed into an empty field is unfinished", () => {
+      // The bid has no date, so the input starts empty and typing a month leaves value "" (the prefill): nothing but badInput tells.
+      const item = bid(null);
+      const half = bidQaDraftsWithDeadlineInput(item, {}, { value: "", badInput: true });
+      const titled = { ...half, [item.id]: { ...half[item.id], title: "Roof replacement, phase 2" } };
+
+      expect(bidQaCorrectionsFor(item, bidQaCorrectionDraftFor(item, titled))).toBeNull();
+    });
+
+    it("creates no draft for a reading that changes nothing, so passing through a field marks no row as edited", () => {
+      const item = bid("07/10/2026");
+      const none = {};
+
+      // The input shows 2026-07-10 for a stored 07/10/2026, and focusing then leaving it reports exactly that.
+      expect(bidQaDraftsWithDeadlineInput(item, none, { value: "2026-07-10", badInput: false })).toBe(none);
+      const half = bidQaDraftsWithDeadlineInput(item, none, { value: "", badInput: true });
+      expect(bidQaDraftsWithDeadlineInput(item, half, { value: "", badInput: true })).toBe(half);
+    });
+
+    it("keeps the title the admin typed, and the other rows' drafts, when a deadline reading comes in", () => {
+      const item = bid("2026-07-10");
+      const other: Bid = { id: "bid-2", title: "Fence repair", deadlineDate: null };
+      const before = {
+        [item.id]: edited(item, { title: "Roof replacement, phase 2" }),
+        [other.id]: edited(other, { title: "Fence repair, phase 2" }),
+      };
+
+      const after = bidQaDraftsWithDeadlineInput(item, before, { value: "", badInput: true });
+
+      expect(after[item.id]).toEqual({ title: "Roof replacement, phase 2", deadlineDate: "", deadlineDateBadInput: true });
+      expect(after[other.id]).toBe(before[other.id]);
+    });
   });
 
   it("counts the trimmed title: spaces alone are no change, and an untouched padded title is not trimmed behind the admin's back", () => {

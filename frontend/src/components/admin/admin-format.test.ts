@@ -7,6 +7,7 @@ import {
   formatDate,
   formatDateInputValue,
   isUnreadableDateInput,
+  readDateInput,
   statusTone,
   textPreview,
 } from "./admin-format";
@@ -259,6 +260,57 @@ describe("isUnreadableDateInput", () => {
     for (const value of ["", "2026-07-10", "9999-12-31", "20261-07-10", "275760-09-13", "2026-13-45", "abc"]) {
       expect(isUnreadableDateInput(value), value).toBe(value !== "" && endOfDayIsoFromDateInput(value) === null);
     }
+  });
+
+  // A date <input> that the user has cleared one segment of, or typed only some of, reports value "" with validity.badInput:
+  // the same "" as an emptied input, so a caller that sends null to clear the date would clear it for this too.
+  describe("with the input's badInput flag", () => {
+    it("is true for a partly typed date, whatever the value reads", () => {
+      for (const value of ["", "2026-07-10", "20261-07-10"]) expect(isUnreadableDateInput(value, true), value).toBe(true);
+    });
+
+    it("leaves an emptied input (no badInput) and a day as they were: not a mistake", () => {
+      for (const value of ["", "2026-07-10", "9999-12-31"]) {
+        expect(isUnreadableDateInput(value, false), value).toBe(false);
+        // No flag at all reads as no flag: a caller that only has the value keeps the old answer.
+        expect(isUnreadableDateInput(value), value).toBe(false);
+      }
+    });
+
+    it("still calls text that is no day unreadable when the flag is off", () => {
+      for (const value of ["20261-07-10", "275760-09-13", "abc"]) expect(isUnreadableDateInput(value, false), value).toBe(true);
+    });
+  });
+});
+
+// Chrome (checked 2026-09-30, Chrome 152) fires input and change only for the edit that empties a complete date: clearing the
+// first segment gives value "" with badInput true, but clearing the remaining segments, or typing into an empty field, fires
+// keyup alone, and badInput goes back to false (nothing left typed) or turns true with no input event at all. Key up keeps a
+// caller current while the field has focus, and blur reports the field as it is when the user leaves it, so a caller reads the
+// field on change, on key up and on blur.
+describe("readDateInput", () => {
+  it("reads the value and whether the browser holds a date typed only in part", () => {
+    expect(readDateInput({ value: "2026-07-10", validity: { badInput: false } })).toEqual({ value: "2026-07-10", badInput: false });
+    expect(readDateInput({ value: "", validity: { badInput: true } })).toEqual({ value: "", badInput: true });
+    expect(readDateInput({ value: "", validity: { badInput: false } })).toEqual({ value: "", badInput: false });
+  });
+
+  it("hands back the two values it read, not the element, so a state updater that runs later cannot see a changed field", () => {
+    const input = { value: "", validity: { badInput: true } };
+    const reading = readDateInput(input);
+
+    input.value = "2026-07-10";
+    input.validity.badInput = false;
+
+    expect(reading).toEqual({ value: "", badInput: true });
+  });
+
+  it("gives what isUnreadableDateInput needs: a half-typed date is unreadable, an emptied one is not", () => {
+    const half = readDateInput({ value: "", validity: { badInput: true } });
+    const emptied = readDateInput({ value: "", validity: { badInput: false } });
+
+    expect(isUnreadableDateInput(half.value, half.badInput)).toBe(true);
+    expect(isUnreadableDateInput(emptied.value, emptied.badInput)).toBe(false);
   });
 });
 
