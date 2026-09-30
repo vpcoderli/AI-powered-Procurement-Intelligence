@@ -86,6 +86,7 @@ describe("i18n coverage scan", () => {
     const enFlat = new Map<string, string>([
       ["admin.rows", "{count} rows"],
       ["admin.lead", "Lives in {key} and more"],
+      ["admin.pair", "From {first} to {second}"],
       ["admin.crawlerConfigAttachmentTemplate", "Attachment URL template (optional, {id} / {source_bid_id})"],
       ["admin.plain", "No placeholder here"],
     ]);
@@ -125,6 +126,62 @@ describe("i18n coverage scan", () => {
       );
 
       expect(scanUnresolvedPlaceholders(root, enFlat)).toEqual([]);
+    });
+
+    // The scan reads a window of a few lines around each call, so every case sits in a file of its own: a neighbouring
+    // line must not be what resolves (or reports) the one under test.
+    it("accepts a split on the key's own token whatever the quotes, and on any one token of a key with several", async () => {
+      const resolved: Record<string, string> = {
+        doubleQuotes: 'const [a, b = ""] = t("admin.lead").split("{key}");',
+        singleQuotes: "const [a, b = ''] = t('admin.lead').split('{key}');",
+        backticks: 'const [a, b = ""] = t("admin.lead").split(`{key}`);',
+        spaced: 'const [a, b = ""] = t("admin.lead").split( "{key}" );',
+        withLimit: 'const [a] = t("admin.lead").split("{key}", 2);',
+        secondOfTwoTokens: 'const [a] = t("admin.pair").split("{second}");',
+      };
+      for (const [name, line] of Object.entries(resolved)) {
+        await writeSourceFile(`src/components/admin/${name}.tsx`, `${line}\n`);
+      }
+
+      expect(scanUnresolvedPlaceholders(root, enFlat)).toEqual([]);
+    });
+
+    // `.split("{` used to resolve any key near it. The split has to be on one of the key's own tokens: a bare key with an
+    // unrelated split beside it (a token of another key, or of the caller's own template) is still leaking its braces.
+    it("reports a bare placeholder key beside a split on some other token", async () => {
+      await writeSourceFile(
+        "src/components/admin/Panel.tsx",
+        [
+          "export function A() {",
+          '  const rows = t("admin.rows");',
+          '  const [head] = template.split("{other}");',
+          '  const [before] = t("admin.lead").split("{key}");',
+          "  return <p>{rows}{head}{before}</p>;",
+          "}",
+          "",
+        ].join("\n"),
+      );
+
+      const findings = scanUnresolvedPlaceholders(root, enFlat);
+
+      // {other} belongs to no key, and {key} belongs to admin.lead, not to admin.rows ({count}).
+      expect(findings.map((finding) => [finding.file, finding.line, finding.keyPath, finding.placeholderTokens])).toEqual([
+        ["src/components/admin/Panel.tsx", 2, "admin.rows", ["count"]],
+      ]);
+    });
+
+    it("reports a key split on a token it does not have, and a split that is no placeholder at all", async () => {
+      await writeSourceFile("src/components/admin/A.tsx", 'const [x] = t("admin.lead").split("{count}");\n');
+      await writeSourceFile("src/components/admin/B.tsx", 'const [x] = t("admin.pair").split("{key}");\n');
+      await writeSourceFile("src/components/admin/C.tsx", 'const words = t("admin.rows").split(" ");\n');
+
+      const findings = scanUnresolvedPlaceholders(root, enFlat);
+
+      expect(findings.map((finding) => [finding.file, finding.keyPath]).sort()).toEqual([
+        ["src/components/admin/A.tsx", "admin.lead"],
+        ["src/components/admin/B.tsx", "admin.pair"],
+        ["src/components/admin/C.tsx", "admin.rows"],
+      ]);
     });
 
     it("skips a key whose braces are the content, such as the attachment URL template label", async () => {

@@ -36,7 +36,9 @@
  *       the same source trees as (b) for call sites of that key and flags any
  *       call site with no `.replace(`/`.split("{token}")`/`formatMessage(` in
  *       the surrounding statement. (`.split` is how a placeholder that stands
- *       for a JSX element, such as an inline <code> chip, is resolved.)
+ *       for a JSX element, such as an inline <code> chip, is resolved. Only a
+ *       split on one of that key's own tokens counts: a `.split("{other}")`
+ *       near the call resolves nothing for it.)
  *
  * This script is a best-effort static scanner, not a type checker: part (c)
  * in particular relies on proximity heuristics (does `.replace(` or
@@ -340,16 +342,31 @@ function extractPlaceholderTokens(value: string): string[] {
   return tokens;
 }
 
+function escapeForRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * The call site that resolves a key whose placeholder stands for a JSX element (an inline <code> chip, say):
+ * `.split("{token}")` on one of the key's OWN tokens, in either quote style or a template literal, with or without a
+ * limit argument. A split on any other `{...}` near the call is somebody else's (another key's token, a template of
+ * the caller's) and resolves nothing for this key.
+ */
+function ownTokenSplitPattern(tokens: readonly string[]): RegExp {
+  const alternatives = tokens.map(escapeForRegExp).join("|");
+  return new RegExp(`\\.split\\(\\s*(["'\`])\\{(?:${alternatives})\\}\\1\\s*[,)]`);
+}
+
 export function scanUnresolvedPlaceholders(
   frontendRoot: string,
   enFlat: Map<string, string>,
   roots: readonly string[] = SCAN_SOURCE_ROOTS,
 ): UnresolvedPlaceholderFinding[] {
-  const placeholderKeys = new Map<string, string[]>();
+  const placeholderKeys = new Map<string, { tokens: string[]; ownTokenSplit: RegExp }>();
   for (const [key, value] of enFlat) {
     if (LITERAL_PLACEHOLDER_ALLOWLIST.has(key)) continue;
     const tokens = extractPlaceholderTokens(value);
-    if (tokens.length > 0) placeholderKeys.set(key, tokens);
+    if (tokens.length > 0) placeholderKeys.set(key, { tokens, ownTokenSplit: ownTokenSplitPattern(tokens) });
   }
 
   if (placeholderKeys.size === 0) return [];
@@ -368,7 +385,7 @@ export function scanUnresolvedPlaceholders(
     const relativePath = reportedPath(frontendRoot, filePath);
     const lines = contents.split(/\r?\n/);
 
-    for (const [keyPath, tokens] of placeholderKeys) {
+    for (const [keyPath, { tokens, ownTokenSplit }] of placeholderKeys) {
       const needle = `"${keyPath}"`;
       const needleSingle = `'${keyPath}'`;
 
@@ -384,7 +401,7 @@ export function scanUnresolvedPlaceholders(
         const window = lines.slice(windowStart, windowEnd).join("\n");
 
         const isResolved =
-          /\.replace\(/.test(window) || /\.split\(\s*["'`]\{/.test(window) || /formatMessage\(/.test(window);
+          /\.replace\(/.test(window) || ownTokenSplit.test(window) || /formatMessage\(/.test(window);
         if (isResolved) return;
 
         findings.push({
