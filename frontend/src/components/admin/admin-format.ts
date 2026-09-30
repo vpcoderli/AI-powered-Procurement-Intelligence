@@ -77,16 +77,19 @@ export function formatBidDate(value: string | null) {
  * What a date `<input>` takes for a stored date (a bid's deadline, an override's expiry). A calendar day (`YYYY-MM-DD`,
  * or the US portals' `M/D/YYYY`) is exactly that day, never moved by the viewer's time zone. An ISO timestamp is its
  * UTC date, which for a corrected deadline or an expiry (saved as 23:59:59 UTC) is the day that was picked. Anything
- * else, the portals' own text included, gives "" rather than a guess.
+ * else, the portals' own text included, gives "" rather than a guess, and so does a day outside the years 0001-9999 a
+ * date input can hold.
  */
 export function formatDateInputValue(value: string | null) {
   const text = value?.trim();
   if (!text) return "";
 
-  const day = calendarDay(text);
-  if (day) return day.toISOString().slice(0, 10);
+  const day = calendarDay(text) ?? isoTimestamp(text);
+  if (!day) return "";
 
-  return isoTimestamp(text)?.toISOString().slice(0, 10) ?? "";
+  // A date <input> holds only years 0001-9999; anything else would show as empty and then read back as a clear.
+  const inputDay = day.toISOString().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(inputDay) && !inputDay.startsWith("0000") ? inputDay : "";
 }
 
 /**

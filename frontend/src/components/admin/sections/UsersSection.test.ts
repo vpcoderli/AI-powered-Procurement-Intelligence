@@ -146,7 +146,7 @@ describe("feature override expiry, half typed", () => {
 
   it("resets the flag and the field together whenever the form is filled from stored data", () => {
     const source = readFileSync(new URL("UsersSection.tsx", import.meta.url), "utf8");
-    const sync = source.slice(source.indexOf("const syncFeatureOverrideForm"), source.indexOf("const openFeatureOverrides"));
+    const sync = source.slice(source.indexOf("const syncFeatureOverrideForm"), source.indexOf("const recordExpiresAtInput"));
 
     expect(sync).toContain("setFeatureOverrideExpiresAt(form.expiresAt);");
     expect(sync).toContain("setFeatureOverrideExpiresAtBadInput(false);");

@@ -235,7 +235,7 @@ that no hard-coded English is left.
    admin console's copy is in the dictionary and `src/components/admin` scans to 0. Baseline of
    that scan: (a) 8, (b) 81, all under `src/app` (chiefly `src/app/winbids-demo` 34,
    `src/app/generative-art-static` 19 and the landing page `src/app/page.tsx` 17), (c) 0.
-2. **`admin.creditDryRun` / `admin.creditChargedAmount` / `admin.sourceEvidence_fixture_fallback`**
+2. **`intentsPage.creditDryRun` / `intentsPage.creditChargedAmount`** (the keys' current names; `admin.sourceEvidence_fixture_fallback` was translated on 2026-09-30)
    — needs a product call on whether the admin AI-metadata/diagnostics panels should hold to the
    same full-translation bar as customer-facing surfaces, or whether a looser
    semi-technical-jargon convention there is intentional.

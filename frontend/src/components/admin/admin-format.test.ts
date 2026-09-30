@@ -341,3 +341,12 @@ describe("admin formatters", () => {
     expect(fallbackMessage({ fallbackSource: null, fallbackReason: "ignored" } as never)).toBeNull();
   });
 });
+
+describe("formatDateInputValue outside a date input's range", () => {
+  it("gives an empty value, not a day the input would show as empty and read back as a clear", () => {
+    expect(formatDateInputValue("0000-01-01T00:00:00Z")).toBe("");
+    expect(formatDateInputValue("9999-12-31T23:30:00-01:00")).toBe("");
+    expect(formatDateInputValue("1900-01-01")).toBe("1900-01-01");
+    expect(formatDateInputValue("9999-12-31")).toBe("9999-12-31");
+  });
+});
