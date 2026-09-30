@@ -211,6 +211,9 @@ describe("risk check section", () => {
         expect(dictionary.stateQualitySummary, key).toContain(dictionary[key]);
       }
     }
+    // Containment alone cannot tell 招标数 from the bare 招标, which is a substring of the summary too: the column
+    // counts bids, so it is named exactly as the summary sentence names it.
+    expect(zhAdmin.stateQualityColumnBids).toBe("招标数");
     // A table row is a 记录 in the empty-state message, and the notice uses the console's own "Live 来源健康" term.
     expect(zhAdmin.stateQualityNoRows).toContain("数据质量记录");
     expect(zhAdmin.stateQualityP0Notice).toContain(zhAdmin.liveSourceHealth);
