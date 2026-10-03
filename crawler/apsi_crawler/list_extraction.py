@@ -350,6 +350,46 @@ def _list_date(record, list_kind):
         return None
 
 
+def _bare_host(url):
+    """A URL's host as "same site" compares it: lower-case, one leading `www.` removed."""
+    host = _host(url)
+    return host[4:] if host.startswith("www.") else host
+
+
+def _links_off_site(url, page_url):
+    """Whether `url` leads to a different site than the page `page_url` it was found on.
+
+    Hosts only, no public-suffix list: the same site means equal hosts (lower-cased, one leading
+    `www.` removed) or either host a subdomain of the other (`app.example.com` and `example.com`).
+    A URL, or a page, with no parseable host -- empty, relative, `mailto:`, malformed -- is never
+    "off site": when in doubt the row stays, exactly as it did before this check existed.
+    """
+    host, page_host = _bare_host(url), _bare_host(page_url)
+    if not host or not page_host:
+        return False
+    return not (host == page_host or host.endswith("." + page_host) or page_host.endswith("." + host))
+
+
+def _discard_offsite_rows(page_bids, reader_records, page_url):
+    """`(kept rows, number discarded)` for one page of a paged walk.
+
+    A sidecar row goes only when BOTH hold: the page's own reader never read it (its
+    `source_bid_id` is not among those of `reader_records`), and it links to a different site than
+    the page itself. That is an agency announcement or ad link the sidecar's item selector swept up,
+    not a listing row -- and, with no `source_bid_id` of its own, its URL doubles as its bid id, so
+    the id can run to hundreds of characters. A row the reader read stays wherever it links; a
+    sidecar-only row on the portal's own site stays too (it still keeps the walk from `complete`).
+    """
+    read_ids = {record["source_bid_id"] for record in reader_records}
+    kept = [
+        bid
+        for bid in page_bids
+        if (bid.get("source_bid_id") and bid["source_bid_id"] in read_ids)
+        or not _links_off_site(bid.get("source_url"), page_url)
+    ]
+    return kept, len(page_bids) - len(kept)
+
+
 def resolve_pagination_request(payload):
     """`list_kind` / `start_page` / `max_pages` / `stop_before` from a fetch-task payload.
 
@@ -531,6 +571,15 @@ def run_paginated_list_extraction(
       * it started at page 1 -- a walk starting later never saw the earlier pages;
       * every page's row ids exactly match what the page's own reader saw there (not just a
         superset: a sidecar-only row the reader never corroborated is as suspect as a dropped one);
+      * "rows" above never include off-site links: a sidecar row that the page's own reader never
+        read AND that links to a different site than the page itself (an agency announcement, e.g.
+        an Outlook safelinks URL, whose URL then doubled as a ~500-character bid id) is not a
+        listing row. It is discarded right after the page is read -- before the empty-first-page
+        check and every comparison here -- and counted in `stats["discarded_offsite_rows"]`. That
+        cannot hide a real listing row the reader missed: the unique-count check against page 1's
+        printed total (below) and the empty-first-page rules (a positive printed total is never an
+        empty list; an empty list needs the visible "no open bids" copy and the tenant confirmed)
+        still guard `complete` and the empty state;
       * no page the reader could not read at all was treated as the end of the list -- the walk
         stops there immediately instead (`stopped_reason == "unreadable_page"`) and never follows
         that page's next link, keeping any sidecar rows already found there without ever letting
@@ -556,6 +605,7 @@ def run_paginated_list_extraction(
     covered, pages_fetched = True, 0
     stopped_reason, next_page = "exhausted", None
     expected_total, totals_match, tenant_ok, truncated = None, True, False, False
+    discarded_offsite_rows = 0
 
     while True:
         if url in fetched_urls:
@@ -569,8 +619,14 @@ def run_paginated_list_extraction(
         pages_fetched += 1
         reading = list_adapter.page_reader(source, html, list_kind)
         page_bids, method, page_diagnostics, reason = _page_bids(source, config, extractor, html, final_url, reading, list_kind)
+        page_bids, discarded = _discard_offsite_rows(page_bids, reading.records, final_url)
+        discarded_offsite_rows += discarded
         if pages_fetched == 1 and not page_bids and not reading.records:
-            _raise_empty_first_page(source, list_adapter, html, config, request, reading.title, reading.total)
+            try:
+                _raise_empty_first_page(source, list_adapter, html, config, request, reading.title, reading.total)
+            except VerifiedEmptyListError as error:
+                error.discarded_offsite_rows = discarded_offsite_rows
+                raise
 
         methods.append(method)
         diagnostics = page_diagnostics if diagnostics is None else diagnostics
@@ -648,6 +704,8 @@ def run_paginated_list_extraction(
         extractor_url if config["mode"] == "scrapling" else None,
         fallback_reason,
     )
+    if discarded_offsite_rows:
+        stats["discarded_offsite_rows"] = discarded_offsite_rows
     pagination = {
         "list_kind": list_kind,
         "start_page": request["start_page"],

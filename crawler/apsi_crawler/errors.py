@@ -14,7 +14,9 @@ class VerifiedEmptyListError(Exception):
     failure, otherwise a genuinely broken source would quietly look healthy forever.
     """
 
-    def __init__(self, marker, tenant_confirmed, method="adapter", message=None, pagination=None):
+    def __init__(
+        self, marker, tenant_confirmed, method="adapter", message=None, pagination=None, discarded_offsite_rows=0
+    ):
         super().__init__(
             message
             or "list page reports an empty result ({0}; tenant_confirmed={1})".format(marker, tenant_confirmed)
@@ -24,6 +26,10 @@ class VerifiedEmptyListError(Exception):
         self.method = method
         # Set by the paged list stage: an empty first page is a complete, one-page walk.
         self.pagination = pagination
+        # Set by the paged list stage: sidecar rows it discarded because the page's own reader never
+        # read them and they link off the portal's site. Reported in `metadata.listExtraction`, not
+        # in `emptyState` (`as_metadata` is the C1 contract and stays as it was).
+        self.discarded_offsite_rows = discarded_offsite_rows
 
     def as_metadata(self):
         """The `metadata.emptyState` object from contract C1."""

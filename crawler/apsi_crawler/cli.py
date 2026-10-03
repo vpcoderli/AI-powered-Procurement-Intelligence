@@ -389,6 +389,8 @@ def fetch_task(payload):
                 "method": error.method, "items": 0, "diagnostics": {}, "rendered": False,
                 "extractor": None, "fallback_reason": None,
             }
+            if error.discarded_offsite_rows:
+                metadata["listExtraction"]["discarded_offsite_rows"] = error.discarded_offsite_rows
             if error.pagination is not None:
                 metadata["pagination"] = dict(error.pagination)
             finished_at = now_iso()
