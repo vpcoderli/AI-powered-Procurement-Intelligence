@@ -36,7 +36,7 @@ Scrapling 仍是列表解析的主路径：抓到的每一页 HTML 交给抽取 
 | `max_pages` | 达到 `max_pages` 上限而停止 |
 | `window` | 命中 `stop_before` 历史回补日期窗口——整页招标都早于该日期 |
 | `limit` | 收集到的招标数达到了调用方指定的 `limit` |
-| `unreadable_page` | 某一页的页面读取器一行都没读出来（可能是页面结构变了，也可能抓到了中间的空白页）。该页 Scrapling 自己解析出的行仍会保留，但翻页立即停止，这次运行永远不算 `complete`。读取器没读过、又链到本站以外的行（例如机构公告里指向 Outlook safelinks 的链接，它的 URL 会被当成超长的招标 id）不算招标行，会在这项判断之前被丢弃，条数记在 `metadata.listExtraction.discarded_offsite_rows`（没有丢弃时没有这个键）；第 1 页因此一行不剩时，按下文的空态判定处理 |
+| `unreadable_page` | 某一页的页面读取器一行都没读出来（可能是页面结构变了，也可能抓到了中间的空白页）。该页 Scrapling 自己解析出的行仍会保留，但翻页立即停止，这次运行永远不算 `complete`。读取器没读过、又链到本站以外的行（例如机构公告里指向 Outlook safelinks 的链接，它的 URL 会被当成超长的招标 id）不算招标行，会在这项判断之前被丢弃，条数记在 `metadata.listExtraction.discarded_offsite_rows`（没有丢弃时没有这个键）；某页 Scrapling 的行因此被丢光、而读取器读到了行时，该页改用读取器的行（`metadata.listExtraction.method` 记为 `adapter_fallback`）；第 1 页因此一行不剩、读取器也没读到行时，按下文的空态判定处理 |
 | `repeated_page` | "下一页"链接指回了已经抓过的页面，防止死循环 |
 
 只有翻页**自然走到底**（`stopped_reason = "exhausted"`）、从第 1 页开始、每一页 Scrapling 解析出的招标 id 与该页读取器看到的 id 完全一致、没有被 `limit` / `query` 截断、第 1 页打印的总数（例如页面上的"97 Open Solicitations"）每一页都一致且等于收集到的不重复招标数、第 1 页 `<title>` 确实是本租户名字（源 label 去掉"(Platform)"后缀和结尾", XX"州码后逐字比较）——这些条件同时满足时 `metadata.pagination.complete` 才是 `true`。第 1 节的下架动作只在 `complete = true` 时触发。

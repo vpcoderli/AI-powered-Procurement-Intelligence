@@ -575,11 +575,15 @@ def run_paginated_list_extraction(
         read AND that links to a different site than the page itself (an agency announcement, e.g.
         an Outlook safelinks URL, whose URL then doubled as a ~500-character bid id) is not a
         listing row. It is discarded right after the page is read -- before the empty-first-page
-        check and every comparison here -- and counted in `stats["discarded_offsite_rows"]`. That
-        cannot hide a real listing row the reader missed: the unique-count check against page 1's
-        printed total (below) and the empty-first-page rules (a positive printed total is never an
-        empty list; an empty list needs the visible "no open bids" copy and the tenant confirmed)
-        still guard `complete` and the empty state;
+        check and every comparison here -- and counted in `stats["discarded_offsite_rows"]` (when
+        page 1 instead resolves as a verified empty list, the count rides on the raised
+        `VerifiedEmptyListError` and `fetch_task` copies it into `metadata.listExtraction`). A page
+        the reader did read whose sidecar rows were ALL discarded falls back to the reader's rows
+        (`adapter_fallback`), exactly as when the sidecar returns nothing usable. Discarding cannot
+        hide a real listing row the reader missed: the unique-count check against page 1's printed
+        total (below) and the empty-first-page rules (a positive printed total is never an empty
+        list; an empty list needs the visible "no open bids" copy and the tenant confirmed) still
+        guard `complete` and the empty state;
       * no page the reader could not read at all was treated as the end of the list -- the walk
         stops there immediately instead (`stopped_reason == "unreadable_page"`) and never follows
         that page's next link, keeping any sidecar rows already found there without ever letting
@@ -621,6 +625,16 @@ def run_paginated_list_extraction(
         page_bids, method, page_diagnostics, reason = _page_bids(source, config, extractor, html, final_url, reading, list_kind)
         page_bids, discarded = _discard_offsite_rows(page_bids, reading.records, final_url)
         discarded_offsite_rows += discarded
+        if discarded and not page_bids and reading.records:
+            # The sidecar returned nothing but off-site links for a page the reader DID read: fall
+            # back to the reader's rows, as when the sidecar returns nothing usable. Through
+            # `_page_bids` in adapter mode rather than `normalize_state_opportunity` directly, so
+            # this path and an ordinary adapter-mode page always normalize the same way (a change
+            # to that adapter branch's normalizer then applies to both).
+            page_bids, _, page_diagnostics, _ = _page_bids(
+                source, {**config, "mode": "adapter"}, extractor, html, final_url, reading, list_kind
+            )
+            method, reason = "adapter_fallback", "no_items: extractor returned only off-site rows"
         if pages_fetched == 1 and not page_bids and not reading.records:
             try:
                 _raise_empty_first_page(source, list_adapter, html, config, request, reading.title, reading.total)

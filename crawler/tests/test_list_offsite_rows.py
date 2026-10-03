@@ -103,6 +103,10 @@ def _scrapling_config():
     return resolve_list_extraction_config({}, "http://extractor.test", True)
 
 
+def _adapter_config():
+    return resolve_list_extraction_config({}, "", True)
+
+
 def _request(**overrides):
     request = {"list_kind": "closed", "start_page": 1, "max_pages": 4, "stop_before": None}
     request.update(overrides)
@@ -205,6 +209,8 @@ def test_an_off_site_row_beside_real_rows_is_discarded_and_the_walk_stays_comple
     assert all("safelinks" not in bid["source_url"] for bid in bids)
     assert all(len(bid["id"]) <= 191 for bid in bids)
     assert stats["discarded_offsite_rows"] == 1
+    assert stats["method"] == "scrapling"  # the page still had sidecar rows: no fallback to the reader
+    assert stats["fallback_reason"] is None
     assert pagination["complete"] is True
 
 
@@ -229,10 +235,8 @@ def test_a_walk_with_nothing_to_discard_reports_no_discard_key():
     )
 
     assert len(bids) == 31
-    assert stats == {
-        "method": "scrapling", "items": 31, "diagnostics": {"title": "heuristic"}, "rendered": False,
-        "extractor": "http://extractor.test", "fallback_reason": None,
-    }
+    assert stats["method"] == "scrapling"  # the sidecar path ran, so "no key" is not just adapter mode
+    assert "discarded_offsite_rows" not in stats
     assert pagination["complete"] is True
 
 
@@ -263,6 +267,57 @@ def test_an_unreadable_page_keeps_its_on_site_sidecar_row_while_the_off_site_lin
     )
 
     assert [bid["source_bid_id"] for bid in bids] == ["9999999"]
+    assert stats["discarded_offsite_rows"] == 1
+    assert pagination["stopped_reason"] == "unreadable_page"
+    assert pagination["complete"] is False
+
+
+# --- the discard empties a page the reader did read ----------------------------------------
+
+
+def test_a_page_the_discard_leaves_empty_falls_back_to_the_rows_the_reader_read():
+    # Page 1's sidecar returns nothing but the announcement link, yet the reader read all 25 rows
+    # there. Discarding the link must not cost the page its rows: it falls back to the reader's, as
+    # it does when the sidecar returns nothing usable at all.
+    fetcher = _closed_two_pages(total=31)
+    page_one = fetcher.pages[PAGE_ONE]
+
+    def items_for(html):
+        return [_offsite_item()] if html == page_one else _sidecar_items(html)
+
+    bids, stats, pagination = run_paginated_list_extraction(
+        _source(), fetcher.adapter(), _scrapling_config(), _request(), extractor=Extractor(items_for)
+    )
+
+    adapter_bids, _stats, _pagination = run_paginated_list_extraction(
+        _source(), _closed_two_pages(total=31).adapter(), _adapter_config(), _request()
+    )
+    assert [bid["source_bid_id"] for bid in bids] == [bid["source_bid_id"] for bid in adapter_bids]
+    assert len(bids) == 31
+    assert SAFELINKS_URL not in [bid["source_bid_id"] for bid in bids]
+    first = next(bid for bid in bids if bid["source_bid_id"] == "0000436158")  # a page-1 row, from the reader
+    assert (first["solicitation_number"], first["lifecycle_status"]) == ("0147A_2026", "closed")
+    assert stats["method"] == "adapter_fallback"
+    assert "off-site" in stats["fallback_reason"]
+    assert stats["discarded_offsite_rows"] == 1  # the discarded link still counts
+    assert pagination["complete"] is True  # the same rules as any adapter-fallback page
+
+
+def test_a_page_the_reader_read_nothing_on_has_no_rows_to_fall_back_to():
+    # Page 2 is one the reader cannot read, and the sidecar returns only the announcement link
+    # there: nothing to fall back to, so the page contributes nothing and the walk stops as before.
+    fetcher = PagedFetcher({PAGE_ONE: _with_total(CLOSED, 25), PAGE_TWO: NO_ROWS_FOR_THE_READER})
+
+    def items_for(html):
+        return [_offsite_item()] if html == NO_ROWS_FOR_THE_READER else _sidecar_items(html)
+
+    bids, stats, pagination = run_paginated_list_extraction(
+        _source(), fetcher.adapter(), _scrapling_config(), _request(), extractor=Extractor(items_for)
+    )
+
+    assert len(bids) == 25
+    assert stats["method"] == "scrapling"
+    assert stats["fallback_reason"] is None
     assert stats["discarded_offsite_rows"] == 1
     assert pagination["stopped_reason"] == "unreadable_page"
     assert pagination["complete"] is False
@@ -344,9 +399,22 @@ def test_links_to_a_different_site_are_off_site(url):
     assert list_extraction._links_off_site(url, PAGE) is True
 
 
-def test_the_page_side_of_the_comparison_ignores_www_and_may_be_the_subdomain():
-    assert list_extraction._links_off_site(BIDNET + "/x", "https://bidnetdirect.com/page") is False
-    assert list_extraction._links_off_site("https://bidnetdirect.com/x", "https://app.bidnetdirect.com/page") is False
+def test_a_www_prefix_on_the_row_alone_is_ignored():
+    # `www.bidnetdirect.com` and `app.bidnetdirect.com` are siblings: neither is a subdomain of the
+    # other, so they are one site only because the ROW's own `www.` is stripped before comparing.
+    assert list_extraction._links_off_site(BIDNET + "/x", "https://app.bidnetdirect.com/page") is False
+    assert list_extraction._links_off_site("https://www.example.invalid/x", "https://app.bidnetdirect.com/page") is True
+
+
+def test_a_www_prefix_on_the_page_alone_is_ignored():
+    # The mirror image: here only the PAGE's `www.` makes the two hosts siblings.
+    assert list_extraction._links_off_site("https://app.bidnetdirect.com/x", BIDNET + "/page") is False
+    assert list_extraction._links_off_site("https://example.invalid/x", BIDNET + "/page") is True
+
+
+def test_the_subdomain_relation_holds_in_both_directions():
+    assert list_extraction._links_off_site("https://bidnetdirect.com/x", "https://app.bidnetdirect.com/page") is False  # the page is the subdomain
+    assert list_extraction._links_off_site("https://app.bidnetdirect.com/x", "https://bidnetdirect.com/page") is False  # the row is the subdomain
     assert list_extraction._links_off_site("https://example.invalid/x", "https://app.bidnetdirect.com/page") is True
 
 
@@ -439,6 +507,22 @@ def test_fetch_task_reports_the_discard_beside_real_bids(monkeypatch, capsys):
     assert result["metadata"]["pagination"]["complete"] is True
 
 
+def test_fetch_task_falls_back_to_the_reader_rows_when_the_sidecar_returns_only_off_site_links(monkeypatch, capsys):
+    _stub_bidnet_list_html(monkeypatch, OPEN)
+    _stub_sidecar(monkeypatch, lambda html: [_offsite_item()])
+
+    exit_code, result = _run(DENVER_TASK, monkeypatch, capsys)
+
+    assert exit_code == 0
+    assert result["status"] == "success"
+    assert len(result["bids"]) == 6  # the six rows the reader read, not the one link the sidecar saw
+    assert all(len(bid["id"]) <= 191 for bid in result["bids"])
+    assert result["metadata"]["listExtraction"]["method"] == "adapter_fallback"
+    assert "off-site" in result["metadata"]["listExtraction"]["fallback_reason"]
+    assert result["metadata"]["listExtraction"]["discarded_offsite_rows"] == 1
+    assert result["metadata"]["pagination"]["complete"] is True
+
+
 def test_fetch_task_leaves_the_discard_key_out_of_a_verified_empty_page_that_discarded_nothing(monkeypatch, capsys):
     monkeypatch.delenv("SCRAPLING_EXTRACTOR_URL", raising=False)
     _stub_bidnet_list_html(monkeypatch, ERIE)
@@ -446,7 +530,6 @@ def test_fetch_task_leaves_the_discard_key_out_of_a_verified_empty_page_that_dis
     exit_code, result = _run(ERIE_TASK, monkeypatch, capsys)
 
     assert exit_code == 0
-    assert result["metadata"]["listExtraction"] == {
-        "method": "adapter", "items": 0, "diagnostics": {}, "rendered": False,
-        "extractor": None, "fallback_reason": None,
-    }
+    assert result["metadata"]["emptyState"]["verified"] is True
+    assert result["metadata"]["listExtraction"]["method"] == "adapter"
+    assert "discarded_offsite_rows" not in result["metadata"]["listExtraction"]
