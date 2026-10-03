@@ -60,7 +60,7 @@
 县市门户经常**确实没有**在招项目。以前这会被当成解析失败（`CoBidnetError: page did not contain open solicitations`），连续失败还会拉低源健康度。现在只有同时满足三条才判为已验证空态：
 
 1. 页面 HTTP 200 且不是 WAF 挑战页；
-2. **可见**文案中命中明确的空态短语（`no open bids` / `no open solicitations` / `no solicitations (are )?(currently )?available` / `no results found` / `there are currently no`），`aria-hidden="true"`、`hidden`、`display:none` 的隐藏元素不算——BidNet 模板在 16 条真实行上方常驻一段隐藏的"There are no open bids"（Aurora 实测），空态判定放在解析之后：sidecar 与适配器都解析出 0 行才会去看文案；
+2. **可见**文案中命中明确的空态短语（`no open bids` / `no open solicitations` / `no solicitations (are )?(currently )?available` / `no results found` / `there are currently no`），`aria-hidden="true"`、`hidden`、`display:none` 的隐藏元素不算——BidNet 模板在 16 条真实行上方常驻一段隐藏的"There are no open bids"（Aurora 实测），空态判定放在解析之后：sidecar 与适配器都解析出 0 行才会去看文案（分页的 BidNet 遍历在此之前先丢弃本页读取器没读到、又链接到门户站外或这个源自己列表页——"Open / Closed / Awarded Solicitations" 页签——的 sidecar 行，丢掉的不算解析出的行，分别计入 `metadata.listExtraction.discarded_offsite_rows` / `discarded_navigation_rows`；第 1 页丢完一行不剩、又没有可见空态文案时，照旧按解析失败处理）；
 3. **租户确认**：源标签里的特征词（如 Erie、Boulder）出现在页面标题或正文中。
 
 三条齐全 → `status = "success"`、`bids = []`、`metadata.emptyState = {verified, marker, tenant_confirmed, method}`，Node 侧 `validateCrawlerImport` 接受这种零条成功，健康度按成功回写。**缺第 3 条**（拿到的是通用错误页、跳转页或别的租户页）仍然按 `EmptyCrawlerResultError` 失败处理——否则一个拿错页面的源会永远"成功"。
@@ -109,7 +109,7 @@ BidNet Direct 在 AWS WAF 后面，同平台密集请求会集中吃 403（2026-
 | `max_items` | 1..500，默认 200 | 每页最多解析行数 |
 | `selectors` | 六个字段的 CSS/XPath | 留空则回退到启发式（锚文本作标题、锚 href 作链接、日期型单元格、路径里的数字段作门户编号） |
 
-**回退是自动的**：sidecar 不可达、返回不合法、或解析出 0 条且不是已验证空态时，爬虫改用适配器解析，并在 `metadata.listExtraction` 记 `method: "adapter_fallback"` 与 `fallback_reason`。整个过程**不会多发一次列表请求**——两条路径共用同一份已抓取的 HTTP 响应，礼貌策略不变。
+**回退是自动的**：sidecar 不可达、返回不合法、或解析出 0 条且不是已验证空态时，爬虫改用适配器解析，并在 `metadata.listExtraction` 记 `method: "adapter_fallback"` 与 `fallback_reason`。分页的 BidNet 遍历还有一种回退：丢弃上述站外行、页签行之后某页一行不剩、而本页读取器读到了行时，这一页改用读取器的行（`fallback_reason` 为 `no_items: extractor returned only off-site or navigation rows`）。整个过程**不会多发一次列表请求**——两条路径共用同一份已抓取的 HTTP 响应，礼貌策略不变。
 
 `metadata.listExtraction.method` 也显示在前置检查结果卡的"列表解析器"一行，用来判断某个源今天是走主路径还是在回退。
 
@@ -473,19 +473,21 @@ SELECT robots_txt_status, COUNT(*) FROM data_sources
 
 ## 阶段 3 首轮实测（2026-09-29 – 2026-10-03）
 
-前提：本机 MySQL `winbids`。crawler worker（`npm run worker:crawler`，默认预算 `bidnet=60`、平台暂停 30 分钟）从一个独立 worktree 后台运行（阶段 3 提交 `95078d9`，其 `crawler/` 与 `services/scrapling-extractor/` 与当前 `main` 相同），自 2026-09-29T10:53Z 起没有重启过；Scrapling sidecar 为宿主机 `run-local.sh`。原始证据在 `ops-evidence/phase3-*`（worker 日志、每轮批准记录、验收脚本输出，不入库）。
+前提：本机 MySQL `winbids`。crawler worker（`npm run worker:crawler`，默认预算 `bidnet=60`、平台暂停 30 分钟）从一个独立 worktree 后台运行（阶段 3 提交 `95078d9`；它的 `crawler/`、`services/scrapling-extractor/` 两个目录和当前 `main` 完全相同），自 2026-09-29T10:53Z 起没有重启过；Scrapling sidecar 为宿主机 `run-local.sh`。原始证据在 `ops-evidence/phase3-*`（worker 日志、每轮批准记录、验收脚本输出，不入库）。
 
 ### 平台审查、预检与批量批准
 
 - 平台审查 `prv_00a41cf3-…`（bidnet）：ToS `https://www.bidnetdirect.com/tsandcs`，robots 摘要取自 `fetch-robots`，审查人为管理员，`next_review_at = 2027-09-29`。
-- 预检队列由 worker 消化：299 个 tick 共完成 953 次预检，953 个源各一次——`ready` 378、`empty` 575、`needs_fix` 0，`abandoned` 0；每个 tick 的 robots.txt 抓取不超过 1 次。前三个 tick：读取 500 行，完成 5 / 7 / 7 个，其余因预算跳过（495 / 493 / 493）。
-- 批量批准自 2026-09-29T22:18Z 起每小时一轮（每次 ≤ 100 个 id）：70 轮有批准，队列清空后（2026-10-03T03:21Z）再手动一轮，共批准 953 个，跳过 0 个。
-- 结果（2026-10-03T03:22Z）：本地 BidNet 源 `approved` 961 个（县 264、市 553、镇/乡 144；其中 953 个经平台审查批量批准，8 个此前经第 3 节单源表单批准），`blocked` 3 个（`bidnet_oh_city_columbus`、`bidnet_oh_cuyahoga`、`bidnet_oh_franklin`，见"待确认"），待预检 0，`needs_fix` 0。
+- 预检队列由 worker 消化：298 个 tick 共完成 953 次预检（第 299 个 tick 时队列已空），953 个源各一次——`ready` 378、`empty` 575、`needs_fix` 0，`abandoned` 0；每个 tick 的 robots.txt 抓取不超过 1 次。前三个 tick：读取 500 行，完成 5 / 7 / 7 个，其余因预算跳过（495 / 493 / 493）。
+- 批量批准自 2026-09-29T22:18Z 起每小时一轮（每次 ≤ 100 个 id）：69 轮有批准（另有 1 轮紧跟首轮运行，没有可批准的源），队列清空后（2026-10-03T03:21Z）再手动一轮，共批准 953 个，跳过 0 个。
+- 结果（2026-10-03T03:22Z）：本地 BidNet 源 `approved` 961 个（县 264、市 553、镇/乡 144；其中 953 个经平台审查批量批准，8 个此前经第 3 节单源表单批准——包括 2026-09-28 改指新租户后批准的 `bidnet_wy_laramie`，所以上文"待确认"列的四个源里只剩下面三个仍被拦截），`blocked` 3 个（`bidnet_oh_city_columbus`、`bidnet_oh_cuyahoga`、`bidnet_oh_franklin`），待预检 0，`needs_fix` 0。
 - 抽查 3 个批量批准的源：`approved` / `approved_public`，入库批准与启用均为 1；审查人、ToS、`compliance_review_due_at = 2027-09-29` 都复制自平台审查；`approval_notes` 为 `依据平台审查 #prv_…；预检 empty @…`。953 个批量批准的源都有 `source_approval_events` 记录。
 
 ### 验收（spec §12.2 阶段 3）
 
-只读脚本 `ops-evidence/phase3-acceptance.sh` 于 2026-10-03T03:22Z 运行，统计"批准后成功运行"的源（`last_success_at >= last_approval_reviewed_at`）：
+spec 的标准是 ≥ 95% 的租户在批准后 48 小时内至少成功运行一次。按 worker 日志逐源计算（批准时间取 `last_approval_reviewed_at`）：953 个批量批准的源中 950 个（99.7%）在批准后 48 小时内首次成功运行；从批准到首次成功，中位数 16 分钟，95 分位 4.8 小时，最长 7.2 小时（`bidnet_fl_north_miami_beach`，见下文"租约丢失"）。没有成功运行过的 3 个源就是下文第一个缺陷涉及的三个。
+
+只读脚本 `ops-evidence/phase3-acceptance.sh` 于 2026-10-03T03:22Z 按另一个口径统计——`last_success_at >= last_approval_reviewed_at`，即批准之后成功运行过，不限 48 小时，并且把此前单源批准、之后运行过的源也算在内：
 
 | 口径 | 已批准 | 批准后成功运行 | 批准后失败 | 尚未运行 | 比例 |
 | --- | --- | --- | --- | --- | --- |
@@ -493,20 +495,25 @@ SELECT robots_txt_status, COUNT(*) FROM data_sources
 | 批准满 48 小时（2026-10-01T03:22Z 前批准） | 493 | 492 | 1 | 0 | 0.9980 |
 | 全部 | 961 | 955 | 3 | 3 | 0.9938 |
 
-门槛为 ≥ 0.95，三种口径都通过。"尚未运行"的 3 个源是最后几轮刚批准的，03:32Z 时已经成功运行（961 个源中 958 个有成功记录）；"批准后失败"的 3 个见下文的缺陷。
+"尚未运行"的 3 个源是最后几轮刚批准的，03:32Z 时已经成功运行（961 个源中 958 个有成功记录）；"批准后失败"的 3 个见下文第一个缺陷。单源批准的 `bidnet_co_city_aurora` 的 `cadence` 是 `weekly`，最近一次成功在 09-28（下次 10-05 到期），本次 worker 窗口内没有运行，它是凭 09-28 那次成功计入上表的。
 
-- **开放标讯占比（spec §14 风险 2）**：批准后成功运行的 955 个源中，368 个（38.5%）在库有开放标讯，共 1,188 条；其余 587 个是已验证空态。这是"首次运行就看到开放标讯"的近似值：数的是统计时在库的 `open` 行，不是首次运行的快照。03:32Z 时这批源在库共有 `open` 1,190 条（369 个源）、`closed` 131 条（78 个源）。
-- **限流（spec §14 风险 1）**：`bidnet=60/小时` 下全程只有 1 次 WAF 挑战，出现在预检而不是列表抓取：2026-10-01T13:43Z，`bidnet_nj_leonia` 的预检遇到挑战，worker 暂停 bidnet 平台（同一 tick 有 10 个源因此跳过），30 分钟后恢复——14:16Z 的 tick 重新完成了预检，之后没有再出现挑战。列表抓取全程没有收到 challenge、403、429 或 202。
-- **其他失败**（都按设计处理，不影响验收）：
+- **有开放招标的租户占比（spec §14 风险 2）**：03:22Z 时，批准后成功运行过的 955 个源中有 368 个在库有 `open` 行，共 1,188 行。其中 5 个源的 11 行其实是导航链接（见下文第二个缺陷），这 5 个源没有真实的开放招标；扣掉之后，是 363 个源（38.0%）、1,177 行真实的开放招标（含 Aurora 09-28 抓到的 16 行）。其余 587 个源最近一次成功是已验证空态。
+- **限流（spec §14 风险 1）**：`bidnet=60/小时` 下全程只有 1 次 WAF 挑战，出现在预检而不是列表抓取：2026-10-01T13:43Z，`bidnet_nj_leonia` 的预检遇到挑战，worker 当即暂停 bidnet 平台，这个 tick 里剩下的 321 个排队预检跳过；下一个 tick（约 13:59Z）有 10 个到期的列表源和 322 个排队预检因暂停跳过；30 分钟后恢复——14:16Z 的 tick 重新完成了预检，之后没有再出现挑战。列表抓取全程没有收到 challenge、403、429 或 202。
+- **其他失败与事件**（都按设计处理，不影响验收）：
   - 1 次预检网络超时（2026-09-29T12:34Z，`bidnet_az_maricopa_county_sheriff`，read timeout）：当前 tick 停止 bidnet 预检，之后重试成功。
   - 2 次租约丢失（2026-09-30T10:38Z，`bidnet_fl_mary_esther`、`bidnet_fl_north_miami_beach`，`CrawlerLeaseLostError`）：发生在本机休眠唤醒之后，入库按设计取消，下一次运行成功。
+  - sidecar 中断（2026-09-30 03:24–04:12Z，Claude 应用重启带走了宿主机上的 sidecar）：这段时间的 17 次列表运行按设计回退到适配器解析（`adapter_fallback`，原因 `extractor_unreachable`），sidecar 重启后恢复。`bidnet_co_victor` 的预检恰好落在这段时间，所以读作 `empty`；下文同类的另外两个源读到了那条站外行，读作 `ready`。
   - SAM.gov 1 次：本机没有配置 `SAM_API_KEY`，与本阶段无关。
 - **本机休眠**：worker 日志里有 4 段超过 25 分钟的空白（09-29 13:06–15:31Z；09-30 05:46–09:49Z、09:49–10:38Z、10:38–12:52Z，合计约 9.5 小时）。`caffeinate -i` 只阻止空闲休眠，合盖仍会休眠；Node 定时器只计清醒时间，唤醒后下一个 tick 照常进行。生产环境（常驻服务）不受此影响。
 
-### 发现并修复的缺陷：站外链接被当成列表行
+### 发现并修复的缺陷：sidecar 把非招标链接当成列表行
 
-- **现象**：`bidnet_co_victor`（2 次）、`bidnet_ny_milton_town`、`bidnet_nc_spruce_pine` 每次运行都失败，错误为 `CrawlerPersistenceError: Data too long for column 'id' at row 1`；同时 `listExtraction.method = scrapling`、`items = 1`、`pagination.stopped_reason = unreadable_page`。
-- **原因**：这些租户的页面上有机构公告，公告里有一个标题为 "How to use Bidnet Direct" 的链接，指向约 500 字符的 Outlook safelinks 地址。Scrapling 的条目选择器把它当成一行；这行没有编号，于是用 URL 充当 `source_bid_id`，拼出的 `id` 超过 MySQL 的 `VARCHAR(191)`，整次导入回滚。页面读取器在该页一行也没读到，所以遍历走了 `unreadable_page` 分支，而这个分支会保留 sidecar 行。
-- **修复**（提交 `e06d5ad`、`47ecdcb`）：分页遍历先丢弃这样的 sidecar 行——本页读取器没有读到，而且链接到门户以外的站点（只比主机名：去掉一个前导 `www.` 后相同，或一方是另一方的子域，就算同站）。丢弃的行数记在 `metadata.listExtraction.discarded_offsite_rows`（没有丢弃时不出现这个键）。丢弃后第 1 页没有行、读取器也没读到行时，照原有规则判定已验证空态，计数随 `VerifiedEmptyListError` 带进 `fetch-task` 的元数据；丢弃后某页没有行、但读取器读到了行时，这一页回退到读取器的行（`adapter_fallback`）。读取器读到的行不论链接到哪里都保留；门户站内、读取器没读到的行照旧保留，并照旧让这次遍历不算 `complete`。
-- **复核**：用修复后的 CLI 对三个源各实抓一次（不入库）：都是 `status = success`、零条、已验证空态（可见文案 "There are no open bids at this time."，租户确认）、`discarded_offsite_rows = 1`、`pagination.complete = true`，各 1 次请求。crawler 全量测试 890 通过；`npm run test:crawler-integration`（SQLite 与一个临时 MySQL 8 容器）10 通过；把数据可用性分支尚未提交的改动套到修复之上没有冲突，合起来 crawler 全量 981 通过。本次运行的 worker 仍是修复前的代码，这三个源要等 worker 换到新 `main` 之后的下一次运行才会转为成功。
-- **遗留**：单条超长 `id` 仍会让整次 MySQL 导入失败。导入端应把这种行隔离，而不是让整个事务失败；这项留给数据可用性那批改动（分支 `codex/data-usability-20261001`，尚未提交）的语义门禁一并处理。
+两种情况都是：页面读取器在该页一行也没读到（这些租户其实没有在招项目），遍历走 `unreadable_page` 分支，而这个分支会保留 sidecar 行。
+
+1. **站外链接**。`bidnet_co_victor`（2 次）、`bidnet_ny_milton_town`、`bidnet_nc_spruce_pine` 每次运行都失败，错误为 `CrawlerPersistenceError: Data too long for column 'id' at row 1`，同时 `listExtraction.method = scrapling`、`items = 1`、`pagination.stopped_reason = unreadable_page`。这些租户页面上的机构公告里有一个标题为 "How to use Bidnet Direct" 的链接，指向约 500 字符的 Outlook safelinks 地址。sidecar 的条目选择器把它当成一行；这行没有编号，于是用 URL 充当 `source_bid_id`，拼出的 `id` 超过 MySQL 的 `VARCHAR(191)`，整次导入回滚。
+2. **租户自己的列表页签**。`bidnet_fl_bay`、`bidnet_mi_brighton`、`bidnet_mi_genesee_county_9_1_1`、`bidnet_mi_rochester`、`bidnet_mi_taylor` 的运行"成功"了，但存进去的 11 条 `open` 行是页面上的 "Open / Closed / Awarded Solicitations" 页签（链接就是租户自己的 `…/solicitations/{open,closed,awarded}-bids` 列表页）。这样的遍历永远不算 `complete`，这些行也就永远不会被下架；这几个源的预检也是凭这些行读作 `ready` 的。
+
+- **修复**（提交 `e06d5ad`、`47ecdcb`、`964a4fb`、`2620160`）：分页遍历先丢弃本页读取器没有读到、而且满足下面任一条件的 sidecar 行——链接到门户以外的站点（只比主机名：去掉一个前导 `www.` 后相同，或一方是另一方的子域，就算同站）；或者链接到这个源自己的某个列表页（与 `open` / `closed` / `awarded` 第 1 页或本次抓取页的路径相同，不计大小写、末尾的 `/`、查询串和锚点；BidNet 同一租户既有 `/<分组>/<slug>/…` 也有根别名 `/<slug>/…`，所以一方路径以另一方结尾也算）。两类分别记在 `metadata.listExtraction.discarded_offsite_rows` 和 `discarded_navigation_rows`（没有丢弃时不出现这两个键）。丢弃后第 1 页没有行、读取器也没读到行时，照原有规则判定已验证空态（计数随 `VerifiedEmptyListError` 带进 `fetch-task` 的元数据）；丢弃后某页没有行、但读取器读到了行时，这一页回退到读取器的行（`adapter_fallback`）。读取器读到的行不论链接到哪里都保留；门户站内、读取器没读到、又不是列表页的行照旧保留，并照旧让这次遍历不算 `complete`。
+- **复核**：用提交 `964a4fb` 的 CLI 对上面 8 个源各实抓一次（不入库，各 1 次请求）：全部 `status = success`、`pagination.complete = true`。三个站外链接源和 Bay、Genesee County 9-1-1、Taylor 是已验证空态（可见文案 "There are no open bids at this time."，租户确认），分别丢弃 1 条站外行、2–3 条页签行；Brighton 和 Rochester 这次各有 1 条真实的开放招标（"WWTP Sump Pump Refurbishment"、"City of Rochester - Columbarium Systems"）——sidecar 只返回了页签，这一页回退到读取器的行（`adapter_fallback`），而修复前会存下页签、丢掉这条真实招标。之后的最终提交 `2620160` 只让没有自带链接的行不再被当成页签行，不影响这 8 个源。在 `2620160` 上：crawler 全量测试 937 通过；`npm run test:crawler-integration`（SQLite 与一个临时 MySQL 8 容器）10 通过；把数据可用性分支尚未提交的改动套上去没有冲突，合起来 crawler 全量测试 1,033 通过。
+- **清理**（2026-10-03T05:14Z 停掉 worker 之后）：在修复后的代码（`2620160`）上，通过与管理端相同的入口（`/api/crawler/state/run` 的处理函数）重跑上面 8 个源：全部成功，`pagination.complete = true`。三个站外链接源转为已验证空态，`consecutive_failures` 归零；5 个页签源的 11 条页签行被正常下架（`closed`，`raw_payload.lifecycle.closed_reason = delisted`），Brighton、Rochester 各存下 1 条真实的开放招标。随后通过预检入口（`/api/admin/data-sources/[id]/precheck` 的处理函数）为其中 7 个源重跑预检，替换掉旧的预检记录——`bidnet_nc_spruce_pine`、`bidnet_ny_milton_town` 的旧样本里存着那个 safelinks 地址，它的 `data=` 参数里有第三方的邮箱；Bay 等 5 个源原先是凭页签读作 `ready` 的。结果：5 个 `empty`，Brighton、Rochester `ready`（各 1 条）。之后在整库所有文本列里都查不到这个 safelinks 地址，也没有任何仍为 `open` 的页签行；本地 BidNet 源仍是 `approved` 961、`blocked` 3。11 条页签行以 `closed` 状态留在库里，没有删除。前后快照：`ops-evidence/phase3-cleanup-{before,after}.txt`。
+- **遗留**：单条超长 `id` 仍会让整次 MySQL 导入失败。导入端应把这种行隔离，而不是让整个事务失败；这项留给数据可用性那批改动（分支 `codex/data-usability-20261001`，尚未提交）的语义门禁一并处理。门户站内、既不是列表页也没被读取器读到的其他导航链接，目前仍会被保留（遍历不算 `complete`，不会误下架），本次运行中没有见到。
