@@ -143,6 +143,13 @@ def _ghost_item(url="https://www.bidnetdirect.com/colorado/9999999?x"):
             "source_bid_id": "9999999", "issuer_name": None}
 
 
+def _linkless_item(source_bid_id="7654321"):
+    """A sidecar row with an id but no link of its own (a custom item selector can yield one).
+    `_record_from_item` gives such a row the source's base URL as its `source_url`."""
+    return {"title": "No link of its own", "url": None, "published_date": None, "deadline_date": None,
+            "source_bid_id": source_bid_id, "issuer_name": None}
+
+
 def _tab_items(root):
     """BidNet's own list tabs as the sidecar returned them live (2026-10-03, bay-county1 and
     city-of-taylor1): no `source_bid_id`, so each tab's URL is its only identity."""
@@ -449,6 +456,119 @@ def test_a_page_whose_sidecar_rows_are_all_tabs_falls_back_to_the_rows_the_reade
     assert stats["fallback_reason"] == "no_items: extractor returned only off-site or navigation rows"
     assert stats["discarded_navigation_rows"] == 3
     assert pagination["complete"] is True
+
+
+def test_discarded_navigation_rows_add_up_across_pages():
+    fetcher = _closed_two_pages(total=31)
+    page_one = fetcher.pages[PAGE_ONE]
+
+    def items_for(html):
+        tabs = _tab_items(DENVER)
+        return _sidecar_items(html) + (tabs if html == page_one else tabs[:2])  # 3 tabs on page 1, 2 on page 2
+
+    bids, stats, pagination = run_paginated_list_extraction(
+        _source(), fetcher.adapter(), _scrapling_config(), _request(), extractor=Extractor(items_for)
+    )
+
+    assert len(bids) == 31
+    assert stats["discarded_navigation_rows"] == 5
+    assert "discarded_offsite_rows" not in stats
+    assert pagination["pages_fetched"] == 2
+    assert pagination["complete"] is True
+
+
+def test_a_later_page_whose_sidecar_rows_are_all_tabs_falls_back_to_that_pages_reader_rows():
+    fetcher = _closed_two_pages(total=31)
+    page_two = fetcher.pages[PAGE_TWO]
+
+    def items_for(html):
+        return _tab_items(DENVER) if html == page_two else _sidecar_items(html)
+
+    bids, stats, pagination = run_paginated_list_extraction(
+        _source(), fetcher.adapter(), _scrapling_config(), _request(), extractor=Extractor(items_for)
+    )
+
+    adapter_bids, _stats, _pagination = run_paginated_list_extraction(
+        _source(), _closed_two_pages(total=31).adapter(), _adapter_config(), _request()
+    )
+    assert [bid["source_bid_id"] for bid in bids] == [bid["source_bid_id"] for bid in adapter_bids]
+    assert len(bids) == 31  # page 1's 25 sidecar rows and page 2's 6 reader rows
+    assert stats["method"] == "adapter_fallback"
+    assert stats["fallback_reason"] == "no_items: extractor returned only off-site or navigation rows"
+    assert stats["discarded_navigation_rows"] == 3
+    assert pagination["pages_fetched"] == 2
+    assert pagination["complete"] is True
+
+
+# --- a row with no link of its own is never a navigation row --------------------------------
+#
+# `_record_from_item` gives a sidecar row that has an id but no URL the source's base URL as its
+# `source_url`, and the base URL is a list path. That synthetic URL is not a link the page carries.
+
+
+def test_a_row_with_an_id_and_no_link_of_its_own_is_not_a_navigation_row():
+    # The reader reads nothing on this Erie-style page 1, so the walk keeps the sidecar's row and
+    # stops `unreadable_page`, as it did before navigation rows were discarded; it must not raise.
+    bids, stats, pagination = _run_erie(ERIE_GROUP_ROOT, [_linkless_item()])
+
+    assert [bid["source_bid_id"] for bid in bids] == ["7654321"]
+    assert bids[0]["source_url"] == ERIE_URL  # the base-URL fallback
+    assert "discarded_navigation_rows" not in stats
+    assert pagination["stopped_reason"] == "unreadable_page"
+    assert pagination["complete"] is False
+
+
+def test_a_row_with_no_link_of_its_own_keeps_an_unreadable_page_from_becoming_a_parse_failure():
+    # Without the "no open bids" copy, a page 1 left with no rows at all is a parse failure
+    # (`CoBidnetError`) and demotes an approved source; the linkless row keeps the partial success.
+    fetcher = PagedFetcher({DENVER + "/solicitations/open-bids": NO_ROWS_FOR_THE_READER})
+
+    bids, stats, pagination = run_paginated_list_extraction(
+        _source(), fetcher.adapter(), _scrapling_config(), _request(list_kind="open"),
+        extractor=Extractor(lambda html: [_linkless_item()]),
+    )
+
+    assert [bid["source_bid_id"] for bid in bids] == ["7654321"]
+    assert pagination["stopped_reason"] == "unreadable_page"
+    assert pagination["complete"] is False
+
+
+def test_the_base_url_fallback_is_recognised_even_when_the_stored_base_url_has_stray_whitespace():
+    # The normalizer strips the fallback URL it stores, so the comparison must strip the base URL too.
+    source = TaskSource(
+        id="bidnet_ny_erie", name=ERIE_LABEL, source_label=ERIE_LABEL, jurisdiction="county",
+        state_code="NY", base_url=ERIE_URL + "  ", fetch_config={"base_url": ERIE_URL},
+    )
+
+    bids, stats, pagination = run_paginated_list_extraction(
+        source, PagedFetcher({ERIE_URL: ERIE}).adapter(), _scrapling_config(), _request(list_kind="open"),
+        extractor=Extractor(lambda html: [_linkless_item()]),
+    )
+
+    assert [bid["source_bid_id"] for bid in bids] == ["7654321"]
+    assert "discarded_navigation_rows" not in stats
+    assert pagination["stopped_reason"] == "unreadable_page"
+
+
+def test_a_tab_whose_href_is_the_stored_base_url_and_that_has_no_id_is_still_navigation():
+    # No id of its own: its URL is its id, so `source_bid_id == source_url` and it is not a linkless row.
+    open_tab_at_the_base_url = dict(_tab_items(ERIE_GROUP_ROOT)[0], url=ERIE_URL)
+
+    with pytest.raises(VerifiedEmptyListError) as error:
+        _run_erie(ERIE_GROUP_ROOT, [open_tab_at_the_base_url])
+
+    assert error.value.discarded_navigation_rows == 1
+
+
+def test_an_id_of_its_own_does_not_exempt_a_row_that_really_links_to_another_list_page():
+    # The exemption is for the synthetic base-URL fallback only: a row whose own link is the
+    # closed list (not the base URL) is still a link to a list page.
+    closed_tab_with_an_id = dict(_tab_items(ERIE_GROUP_ROOT)[1], source_bid_id="7654321")
+
+    with pytest.raises(VerifiedEmptyListError) as error:
+        _run_erie(ERIE_GROUP_ROOT, [closed_tab_with_an_id])
+
+    assert error.value.discarded_navigation_rows == 1
 
 
 # --- rows that must be kept -----------------------------------------------------------------
@@ -801,6 +921,22 @@ def test_fetch_task_reports_the_tenants_own_list_tabs_it_discarded_on_a_verified
     assert result["status"] == "success"
     assert result["bids"] == []
     assert result["metadata"]["emptyState"]["verified"] is True
+    assert result["metadata"]["listExtraction"]["method"] == "scrapling"
+    assert result["metadata"]["listExtraction"]["discarded_navigation_rows"] == 3
+    assert "discarded_offsite_rows" not in result["metadata"]["listExtraction"]
+    assert result["metadata"]["pagination"]["complete"] is True
+
+
+def test_fetch_task_reports_the_tabs_it_discarded_beside_real_bids(monkeypatch, capsys):
+    _stub_bidnet_list_html(monkeypatch, OPEN)
+    _stub_sidecar(monkeypatch, lambda html: _sidecar_items(html) + _tab_items(DENVER))
+
+    exit_code, result = _run(DENVER_TASK, monkeypatch, capsys)
+
+    assert exit_code == 0
+    assert result["status"] == "success"
+    assert len(result["bids"]) == 6
+    assert all(len(bid["id"]) <= 191 for bid in result["bids"])
     assert result["metadata"]["listExtraction"]["method"] == "scrapling"
     assert result["metadata"]["listExtraction"]["discarded_navigation_rows"] == 3
     assert "discarded_offsite_rows" not in result["metadata"]["listExtraction"]

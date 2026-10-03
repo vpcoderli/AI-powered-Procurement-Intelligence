@@ -11,10 +11,10 @@ Two invariants this module exists to keep:
      sidecar; the fallback re-parses that same string. Routing a source through Scrapling must
      never change how often we touch a portal.
   2. **Empty state is decided after extraction, from visible copy only.** Hidden template rows
-     (aria-hidden / display:none) never count, and a page with parsed rows is never "empty" --
-     "rows" being listing rows: the paged walk first discards the sidecar links that are none
-     (they lead off the portal's site, or are the tenant's own list tabs), and those do not
-     count either (see `run_paginated_list_extraction`).
+     (aria-hidden / display:none) never count, and a page with parsed rows is never "empty".
+     The paged walk first discards the sidecar rows its page reader never read that are no
+     listing rows (links off the portal's site, the tenant's own list tabs); those do not count
+     as parsed rows either (see `run_paginated_list_extraction`).
 """
 
 import os
@@ -415,7 +415,7 @@ def _links_to_list_page(url, list_paths):
     return bool(path) and any(_same_path(path, list_path) for list_path in list_paths)
 
 
-def _discard_non_listing_rows(page_bids, reader_records, page_url, list_paths):
+def _discard_non_listing_rows(page_bids, reader_records, page_url, list_paths, base_url):
     """`(kept rows, off-site count, navigation count)` for one page of a paged walk.
 
     A sidecar row the page's own reader never read (its `source_bid_id` is not among those of
@@ -426,17 +426,23 @@ def _discard_non_listing_rows(page_bids, reader_records, page_url, list_paths):
     announcement's can run to hundreds of characters), and stored it would be an `open` bid no walk
     can ever delist. A row that is both counts as off-site. A row the reader read stays wherever it
     links; any other sidecar-only row on the portal's own site stays too (it still keeps the walk
-    from `complete`).
+    from `complete`), including a row with an id but no link of its own (its `source_url` is only
+    the source's `base_url` fallback), which is never judged a navigation row.
     """
     read_ids = {record["source_bid_id"] for record in reader_records}
+    base_url = (base_url or "").strip()
     kept, offsite, navigation = [], 0, 0
     for bid in page_bids:
-        url = bid.get("source_url")
-        if bid.get("source_bid_id") and bid["source_bid_id"] in read_ids:
+        url, bid_id = bid.get("source_url"), bid.get("source_bid_id")
+        # `_record_from_item` gives a row with an id but no link of its own the source's base URL (a
+        # list path) as `source_url`, which is no link the page carries, so it must never make the
+        # row a navigation row; a tab whose href merely equals the base URL has its URL as its id.
+        has_own_link = not (url == base_url and bid_id != url)
+        if bid_id and bid_id in read_ids:
             kept.append(bid)
         elif _links_off_site(url, page_url):
             offsite += 1
-        elif _links_to_list_page(url, list_paths):
+        elif has_own_link and _links_to_list_page(url, list_paths):
             navigation += 1
         else:
             kept.append(bid)
@@ -682,7 +688,7 @@ def run_paginated_list_extraction(
         reading = list_adapter.page_reader(source, html, list_kind)
         page_bids, method, page_diagnostics, reason = _page_bids(source, config, extractor, html, final_url, reading, list_kind)
         page_bids, offsite, navigation = _discard_non_listing_rows(
-            page_bids, reading.records, final_url, _own_list_paths(source, list_adapter, final_url)
+            page_bids, reading.records, final_url, _own_list_paths(source, list_adapter, final_url), source.base_url
         )
         discarded_offsite_rows += offsite
         discarded_navigation_rows += navigation
