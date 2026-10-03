@@ -11,7 +11,10 @@ Two invariants this module exists to keep:
      sidecar; the fallback re-parses that same string. Routing a source through Scrapling must
      never change how often we touch a portal.
   2. **Empty state is decided after extraction, from visible copy only.** Hidden template rows
-     (aria-hidden / display:none) never count, and a page with parsed rows is never "empty".
+     (aria-hidden / display:none) never count, and a page with parsed rows is never "empty" --
+     "rows" being listing rows: the paged walk first discards the sidecar links that are none
+     (they lead off the portal's site, or are the tenant's own list tabs), and those do not
+     count either (see `run_paginated_list_extraction`).
 """
 
 import os
@@ -370,24 +373,74 @@ def _links_off_site(url, page_url):
     return not (host == page_host or host.endswith("." + page_host) or page_host.endswith("." + host))
 
 
-def _discard_offsite_rows(page_bids, reader_records, page_url):
-    """`(kept rows, number discarded)` for one page of a paged walk.
+def _url_path(url):
+    """A URL's path as list pages are compared: lower-case, no trailing `/`, and none of the query
+    or fragment. Only an absolute path (one that starts with `/`) counts; a URL without one -- the
+    site root, a relative path, empty or malformed -- has path "", so two paths can only ever meet
+    at a segment boundary."""
+    try:
+        path = urlparse(url or "").path
+    except ValueError:
+        return ""
+    path = path.lower().rstrip("/")
+    return path if path.startswith("/") else ""
 
-    A sidecar row goes only when BOTH hold: the page's own reader never read it (its
-    `source_bid_id` is not among those of `reader_records`), and it links to a different site than
-    the page itself. That is an agency announcement or ad link the sidecar's item selector swept up,
-    not a listing row -- and, with no `source_bid_id` of its own, its URL doubles as its bid id, so
-    the id can run to hundreds of characters. A row the reader read stays wherever it links; a
-    sidecar-only row on the portal's own site stays too (it still keeps the walk from `complete`).
+
+def _same_path(path, other):
+    """Whether two `_url_path`s name the same page: equal, or one is the other's tail. A tail starts
+    at a `/`, so it falls on a segment boundary (`/x-open-bids` is not `/open-bids`) -- BidNet serves
+    one tenant at `/<group>/<slug>/...` and again at the root alias `/<slug>/...`."""
+    if not (path.startswith("/") and other.startswith("/")):
+        return False
+    return path == other or path.endswith(other) or other.endswith(path)
+
+
+def _own_list_paths(source, list_adapter, page_url):
+    """The `_url_path`s of this source's own list pages: page 1 of every list kind, and the page
+    that was fetched (it can sit elsewhere, e.g. after a redirect). A kind the adapter cannot build
+    a URL for (`ValueError`) is skipped."""
+    urls = [page_url]
+    for list_kind in LIST_KINDS:
+        try:
+            urls.append(list_adapter.page_url(source, list_kind, 1))
+        except ValueError:
+            continue
+    return {path for path in map(_url_path, urls) if path}
+
+
+def _links_to_list_page(url, list_paths):
+    """Whether `url` is a link to one of the source's own list pages (`list_paths`). A detail link
+    below a list path (`.../open-bids/<title>/<id>`) is not."""
+    path = _url_path(url)
+    return bool(path) and any(_same_path(path, list_path) for list_path in list_paths)
+
+
+def _discard_non_listing_rows(page_bids, reader_records, page_url, list_paths):
+    """`(kept rows, off-site count, navigation count)` for one page of a paged walk.
+
+    A sidecar row the page's own reader never read (its `source_bid_id` is not among those of
+    `reader_records`) is no listing row when it is either a link to a different site than the page
+    itself -- an agency announcement or ad the sidecar's item selector swept up -- or a link to one
+    of the source's own list pages (`list_paths`): BidNet's "Open / Closed / Awarded Solicitations"
+    tabs. With no `source_bid_id` of its own such a row's URL doubles as its bid id (an
+    announcement's can run to hundreds of characters), and stored it would be an `open` bid no walk
+    can ever delist. A row that is both counts as off-site. A row the reader read stays wherever it
+    links; any other sidecar-only row on the portal's own site stays too (it still keeps the walk
+    from `complete`).
     """
     read_ids = {record["source_bid_id"] for record in reader_records}
-    kept = [
-        bid
-        for bid in page_bids
-        if (bid.get("source_bid_id") and bid["source_bid_id"] in read_ids)
-        or not _links_off_site(bid.get("source_url"), page_url)
-    ]
-    return kept, len(page_bids) - len(kept)
+    kept, offsite, navigation = [], 0, 0
+    for bid in page_bids:
+        url = bid.get("source_url")
+        if bid.get("source_bid_id") and bid["source_bid_id"] in read_ids:
+            kept.append(bid)
+        elif _links_off_site(url, page_url):
+            offsite += 1
+        elif _links_to_list_page(url, list_paths):
+            navigation += 1
+        else:
+            kept.append(bid)
+    return kept, offsite, navigation
 
 
 def resolve_pagination_request(payload):
@@ -571,19 +624,23 @@ def run_paginated_list_extraction(
       * it started at page 1 -- a walk starting later never saw the earlier pages;
       * every page's row ids exactly match what the page's own reader saw there (not just a
         superset: a sidecar-only row the reader never corroborated is as suspect as a dropped one);
-      * "rows" above never include off-site links: a sidecar row that the page's own reader never
-        read AND that links to a different site than the page itself (an agency announcement, e.g.
-        an Outlook safelinks URL, whose URL then doubled as a ~500-character bid id) is not a
-        listing row. It is discarded right after the page is read -- before the empty-first-page
-        check and every comparison here -- and counted in `stats["discarded_offsite_rows"]` (when
-        page 1 instead resolves as a verified empty list, the count rides on the raised
-        `VerifiedEmptyListError` and `fetch_task` copies it into `metadata.listExtraction`). A page
-        the reader did read whose sidecar rows were ALL discarded falls back to the reader's rows
-        (`adapter_fallback`), exactly as when the sidecar returns nothing usable. Discarding cannot
-        hide a real listing row the reader missed: the unique-count check against page 1's printed
-        total (below) and the empty-first-page rules (a positive printed total is never an empty
-        list; an empty list needs the visible "no open bids" copy and the tenant confirmed) still
-        guard `complete` and the empty state;
+      * "rows" above never include links that are no listing row. A sidecar row the page's own
+        reader never read is discarded when it links to a different site than the page itself (an
+        agency announcement, e.g. an Outlook safelinks URL, whose URL then doubled as a
+        ~500-character bid id), counted in `stats["discarded_offsite_rows"]`, or when it is a link
+        to one of this source's own list pages (BidNet's "Open / Closed / Awarded Solicitations"
+        tabs, which the sidecar can return as rows; stored, they would be `open` bids no walk can
+        ever delist), counted in `stats["discarded_navigation_rows"]`. A row that is both counts as
+        off-site; a detail link below a list path is no list page. The discard happens right after
+        the page is read -- before the empty-first-page check and every comparison here. (When
+        page 1 instead resolves as a verified empty list, the counts ride on the raised
+        `VerifiedEmptyListError` and `fetch_task` copies them into `metadata.listExtraction`.) A
+        page the reader did read whose sidecar rows were ALL discarded falls back to the reader's
+        rows (`adapter_fallback`), exactly as when the sidecar returns nothing usable. Discarding
+        cannot hide a real listing row the reader missed: the unique-count check against page 1's
+        printed total (below) and the empty-first-page rules (a positive printed total is never an
+        empty list; an empty list needs the visible "no open bids" copy and the tenant confirmed)
+        still guard `complete` and the empty state;
       * no page the reader could not read at all was treated as the end of the list -- the walk
         stops there immediately instead (`stopped_reason == "unreadable_page"`) and never follows
         that page's next link, keeping any sidecar rows already found there without ever letting
@@ -610,6 +667,7 @@ def run_paginated_list_extraction(
     stopped_reason, next_page = "exhausted", None
     expected_total, totals_match, tenant_ok, truncated = None, True, False, False
     discarded_offsite_rows = 0
+    discarded_navigation_rows = 0
 
     while True:
         if url in fetched_urls:
@@ -623,23 +681,27 @@ def run_paginated_list_extraction(
         pages_fetched += 1
         reading = list_adapter.page_reader(source, html, list_kind)
         page_bids, method, page_diagnostics, reason = _page_bids(source, config, extractor, html, final_url, reading, list_kind)
-        page_bids, discarded = _discard_offsite_rows(page_bids, reading.records, final_url)
-        discarded_offsite_rows += discarded
-        if discarded and not page_bids and reading.records:
-            # The sidecar returned nothing but off-site links for a page the reader DID read: fall
-            # back to the reader's rows, as when the sidecar returns nothing usable. Through
-            # `_page_bids` in adapter mode rather than `normalize_state_opportunity` directly, so
-            # this path and an ordinary adapter-mode page always normalize the same way (a change
-            # to that adapter branch's normalizer then applies to both).
+        page_bids, offsite, navigation = _discard_non_listing_rows(
+            page_bids, reading.records, final_url, _own_list_paths(source, list_adapter, final_url)
+        )
+        discarded_offsite_rows += offsite
+        discarded_navigation_rows += navigation
+        if (offsite or navigation) and not page_bids and reading.records:
+            # The sidecar returned nothing but off-site or navigation links for a page the reader
+            # DID read: fall back to the reader's rows, as when the sidecar returns nothing usable.
+            # Through `_page_bids` in adapter mode rather than `normalize_state_opportunity`
+            # directly, so this path and an ordinary adapter-mode page always normalize the same
+            # way (a change to that adapter branch's normalizer then applies to both).
             page_bids, _, page_diagnostics, _ = _page_bids(
                 source, {**config, "mode": "adapter"}, extractor, html, final_url, reading, list_kind
             )
-            method, reason = "adapter_fallback", "no_items: extractor returned only off-site rows"
+            method, reason = "adapter_fallback", "no_items: extractor returned only off-site or navigation rows"
         if pages_fetched == 1 and not page_bids and not reading.records:
             try:
                 _raise_empty_first_page(source, list_adapter, html, config, request, reading.title, reading.total)
             except VerifiedEmptyListError as error:
                 error.discarded_offsite_rows = discarded_offsite_rows
+                error.discarded_navigation_rows = discarded_navigation_rows
                 raise
 
         methods.append(method)
@@ -720,6 +782,8 @@ def run_paginated_list_extraction(
     )
     if discarded_offsite_rows:
         stats["discarded_offsite_rows"] = discarded_offsite_rows
+    if discarded_navigation_rows:
+        stats["discarded_navigation_rows"] = discarded_navigation_rows
     pagination = {
         "list_kind": list_kind,
         "start_page": request["start_page"],

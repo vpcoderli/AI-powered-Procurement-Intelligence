@@ -15,7 +15,14 @@ class VerifiedEmptyListError(Exception):
     """
 
     def __init__(
-        self, marker, tenant_confirmed, method="adapter", message=None, pagination=None, discarded_offsite_rows=0
+        self,
+        marker,
+        tenant_confirmed,
+        method="adapter",
+        message=None,
+        pagination=None,
+        discarded_offsite_rows=0,
+        discarded_navigation_rows=0,
     ):
         super().__init__(
             message
@@ -27,9 +34,11 @@ class VerifiedEmptyListError(Exception):
         # Set by the paged list stage: an empty first page is a complete, one-page walk.
         self.pagination = pagination
         # Set by the paged list stage: sidecar rows it discarded because the page's own reader never
-        # read them and they link off the portal's site. Reported in `metadata.listExtraction`, not
-        # in `emptyState` (`as_metadata` is the C1 contract and stays as it was).
+        # read them and they link off the portal's site (`discarded_offsite_rows`) or are links to the
+        # source's own list pages (`discarded_navigation_rows`). Reported in `metadata.listExtraction`,
+        # not in `emptyState` (`as_metadata` is the C1 contract and stays as it was).
         self.discarded_offsite_rows = discarded_offsite_rows
+        self.discarded_navigation_rows = discarded_navigation_rows
 
     def as_metadata(self):
         """The `metadata.emptyState` object from contract C1."""

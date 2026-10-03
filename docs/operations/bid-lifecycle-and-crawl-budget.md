@@ -36,10 +36,10 @@ Scrapling 仍是列表解析的主路径：抓到的每一页 HTML 交给抽取 
 | `max_pages` | 达到 `max_pages` 上限而停止 |
 | `window` | 命中 `stop_before` 历史回补日期窗口——整页招标都早于该日期 |
 | `limit` | 收集到的招标数达到了调用方指定的 `limit` |
-| `unreadable_page` | 某一页的页面读取器一行都没读出来（可能是页面结构变了，也可能抓到了中间的空白页）。该页 Scrapling 自己解析出的行仍会保留，但翻页立即停止，这次运行永远不算 `complete`。读取器没读过、又链到本站以外的行（例如机构公告里指向 Outlook safelinks 的链接，它的 URL 会被当成超长的招标 id）不算招标行，会在这项判断之前被丢弃，条数记在 `metadata.listExtraction.discarded_offsite_rows`（没有丢弃时没有这个键）；某页 Scrapling 的行因此被丢光、而读取器读到了行时，该页改用读取器的行（`metadata.listExtraction.method` 记为 `adapter_fallback`）；第 1 页因此一行不剩、读取器也没读到行时，按下文的空态判定处理 |
+| `unreadable_page` | 某一页的页面读取器一行都没读出来（可能是页面结构变了，也可能抓到了中间的空白页）。该页 Scrapling 自己解析出的行仍会保留，但翻页立即停止，这次运行永远不算 `complete`。读取器没读过、又链到本站以外的行（例如机构公告里指向 Outlook safelinks 的链接，它的 URL 会被当成超长的招标 id）不算招标行，会在这项判断之前被丢弃，条数记在 `metadata.listExtraction.discarded_offsite_rows`（没有丢弃时没有这个键）；读取器没读过、又是本租户自己列表页链接的行（BidNet 的 Open / Closed / Awarded Solicitations 页签；`/<group>/<slug>/…` 和根别名 `/<slug>/…` 两种写法都算，路径比较忽略大小写、末尾 `/`、查询串和锚点，列表页路径下面的招标详情链接不算；不丢弃的话它们会作为永远无法下架的 `open` 招标入库）同样会被丢弃，条数记在 `metadata.listExtraction.discarded_navigation_rows`（同样没有丢弃时没有这个键；既在站外又是列表页路径的行算站外）；某页 Scrapling 的行因此被丢光、而读取器读到了行时，该页改用读取器的行（`metadata.listExtraction.method` 记为 `adapter_fallback`）；第 1 页因此一行不剩、读取器也没读到行时，按下文的空态判定处理 |
 | `repeated_page` | "下一页"链接指回了已经抓过的页面，防止死循环 |
 
-只有翻页**自然走到底**（`stopped_reason = "exhausted"`）、从第 1 页开始、每一页 Scrapling 解析出的招标 id 与该页读取器看到的 id 完全一致、没有被 `limit` / `query` 截断、第 1 页打印的总数（例如页面上的"97 Open Solicitations"）每一页都一致且等于收集到的不重复招标数、第 1 页 `<title>` 确实是本租户名字（源 label 去掉"(Platform)"后缀和结尾", XX"州码后逐字比较）——这些条件同时满足时 `metadata.pagination.complete` 才是 `true`。第 1 节的下架动作只在 `complete = true` 时触发。
+只有翻页**自然走到底**（`stopped_reason = "exhausted"`）、从第 1 页开始、每一页 Scrapling 解析出的招标 id 与该页读取器看到的 id 完全一致（读取器没读过、又链到本站以外或是本租户自己列表页链接的行会先被丢弃，不参与这项比较）、没有被 `limit` / `query` 截断、第 1 页打印的总数（例如页面上的"97 Open Solicitations"）每一页都一致且等于收集到的不重复招标数、第 1 页 `<title>` 确实是本租户名字（源 label 去掉"(Platform)"后缀和结尾", XX"州码后逐字比较）——这些条件同时满足时 `metadata.pagination.complete` 才是 `true`。第 1 节的下架动作只在 `complete = true` 时触发。
 
 第 1 页本身一行都读不出来是单独一种情形（`crawler/apsi_crawler/list_extraction.py` 的 `_raise_empty_first_page()`），不算上面的翻页流程：只有当适配器自己的解析器也确认这是"已验证空态"（`VerifiedEmptyListError`：租户确认 + 命中窄集合空态文案）、第 1 页 `<title>` 确认了租户身份、且从第 1 页开始时，才按 `complete = true` 的零条成功处理（`stopped_reason` 固定为 `exhausted`）。第 1 页如果打印着一个大于 0 的总数，却一行都读不出来（Scrapling 和适配器都读不出），这不算空态，是页面结构出了问题：直接抛出 `ListPageReadError`，让整次运行以 `status: "failure"` 收场，而不会被安静地当成"这源确实没有招标"去清空原有的 open 招标。
 
