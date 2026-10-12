@@ -39,13 +39,16 @@ _IGNORED_CHUNKS = frozenset(("Log in or sign up to view this opportunity",))
 # must never be appended to whichever field precedes it.
 _SUBCONTRACT_MARKERS = ("this is a subcontracting opportunity",)
 _SUBCONTRACTING_FLAG = "__subcontracting__"
-# Defensive splits for text the page may glue together: the marker sentence onto the title's own
-# text node, and the company onto the CR# value ("2138289 Company: E.W. Howell Co., LLC.").
-_SUBCONTRACT_TITLE_SUFFIX = re.compile(
-    r"\s+(?:" + "|".join(re.escape(marker) for marker in _SUBCONTRACT_MARKERS) + r")\.?\s*$",
-    re.IGNORECASE,
-)
-_CR_NUMBER_WITH_COMPANY = re.compile(r"^(\S+)\s+Company:\s*(.+)$")
+# Only "." / "!" / whitespace may follow the sentence, in any case; a longer sentence, other
+# punctuation or any other phrase is ordinary content. One tail serves both checks below.
+_MARKER_SENTENCE = "(?:" + "|".join(re.escape(marker) for marker in _SUBCONTRACT_MARKERS) + ")"
+_MARKER_TAIL = r"[.!\s]*$"
+# The marker as an element of its own, and glued onto the end of the title's own text node.
+_SUBCONTRACT_MARKER_CHUNK = re.compile("^" + _MARKER_SENTENCE + _MARKER_TAIL, re.IGNORECASE)
+_SUBCONTRACT_TITLE_SUFFIX = re.compile(r"\s+" + _MARKER_SENTENCE + _MARKER_TAIL, re.IGNORECASE)
+# The company folded into the CR# value ("2138289 Company: E.W. Howell Co., LLC."), possibly with
+# no company after the label at all.
+_CR_NUMBER_WITH_COMPANY = re.compile(r"^(\S+)\s+Company:\s*(.*)$")
 
 
 class NyContractReporterError(Exception):
@@ -97,7 +100,7 @@ class _NyAdsSearchParser(HTMLParser):
 
 
 def _is_subcontract_marker(chunk):
-    return chunk.lower().rstrip(".") in _SUBCONTRACT_MARKERS
+    return _SUBCONTRACT_MARKER_CHUNK.match(chunk) is not None
 
 
 def _fields_from_chunks(chunks):
@@ -129,12 +132,14 @@ def _record_from_item(item):
     title = fields.get("Title:")
     subcontracting = bool(fields.get(_SUBCONTRACTING_FLAG))
 
-    # A real Company: field always wins; only a company folded into the CR# text is split off.
-    if cr_number and not company:
+    # Whatever was folded into the CR# text is always peeled off, so the id stays clean. It only
+    # names the contractor when the page has no real Company: row, which otherwise wins.
+    if cr_number:
         glued = _CR_NUMBER_WITH_COMPANY.match(cr_number)
         if glued:
             cr_number = glued.group(1)
-            company = glued.group(2).strip() or None
+            if not company:
+                company = glued.group(2).strip() or None
 
     if title:
         bare_title = _SUBCONTRACT_TITLE_SUFFIX.sub("", title, count=1)

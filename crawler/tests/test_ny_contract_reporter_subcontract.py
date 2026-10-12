@@ -82,6 +82,12 @@ def without_clock(bid):
     return {key: value for key, value in bid.items() if key not in CLOCK_FIELDS}
 
 
+def assert_company_without_marker(bid, company):
+    """The pinned rule: a Company: row with no marker sentence names the contractor, nothing more."""
+    assert bid["raw_payload"]["contractor_company"] == company
+    assert bid["raw_payload"]["subcontracting"] is False
+
+
 # --- the two subcontracting cards of the fixture ---------------------------------------------
 
 
@@ -232,7 +238,7 @@ def test_company_never_stays_in_the_cr_number_however_the_markup_splits_the_text
     assert bid["id"] == "ny_contract_reporter:2138289"
     assert bid["source_bid_id"] == "2138289"
     assert bid["issuer_name"] == HOWELL
-    assert bid["raw_payload"]["contractor_company"] == HOWELL
+    assert_company_without_marker(bid, HOWELL)
     assert bid["published_date"] == "8/20/2026"
 
 
@@ -241,6 +247,7 @@ def test_glued_company_is_split_before_the_url_falls_back_to_the_cr_number():
 
     assert bid["id"] == "ny_contract_reporter:2138289"
     assert bid["source_url"] == "https://www.nyscr.ny.gov/Ads/Details/2138289"
+    assert_company_without_marker(bid, HOWELL)
 
 
 def test_cr_number_is_the_preferred_id_and_the_ad_id_the_fallback():
@@ -251,15 +258,43 @@ def test_cr_number_is_the_preferred_id_and_the_ad_id_the_fallback():
     assert with_cr_number["source_url"].endswith("/Ads/Details/9001")
     assert without_cr_number["id"] == "ny_contract_reporter:9001"
     assert without_cr_number["issuer_name"] == PIKE
+    assert_company_without_marker(with_cr_number, PIKE)
+    assert_company_without_marker(without_cr_number, PIKE)
 
 
-def test_a_separate_company_field_is_never_overwritten_by_a_glued_one():
-    # Only the company is the contract here: the glued split applies solely when no real
-    # Company: field exists, so the CR# text is deliberately left as the page wrote it.
+def test_a_separate_company_field_wins_over_a_glued_one_and_the_id_is_still_clean():
+    # Both a company folded into the CR# text and a real Company: row: the real row names the
+    # contractor, but the id must lose the folded-in text either way.
     bid = fetch_card("2138289", "Title:", "Roof repair", "CR#:", "2138289 Company: Glued Co", "Company:", HOWELL)
 
-    assert bid["raw_payload"]["contractor_company"] == HOWELL
+    assert bid["id"] == "ny_contract_reporter:2138289"
+    assert bid["source_bid_id"] == "2138289"
     assert bid["issuer_name"] == HOWELL
+    assert_company_without_marker(bid, HOWELL)
+
+
+@pytest.mark.parametrize(
+    ("agency", "issuer"),
+    [
+        (None, "Unknown state agency"),
+        ("Office of General Services, NYS", "Office of General Services, NYS"),
+    ],
+    ids=["no-agency-falls-back-to-the-default", "agency-is-the-issuer"],
+)
+def test_a_glued_company_label_naming_nobody_still_leaves_a_clean_id(agency, issuer):
+    # "2138289 Company:" in one text node, with no company after it. The id must not keep the
+    # label, and the issuer is whatever the existing rules give: the Agency, else the default.
+    texts = ["Title:", "Roof repair", "CR#:", "2138289 Company:"]
+    if agency:
+        texts += ["Agency:", agency]
+
+    bid = fetch_card("2138289", *texts)
+
+    assert bid["id"] == "ny_contract_reporter:2138289"
+    assert bid["source_bid_id"] == "2138289"
+    assert bid["issuer_name"] == issuer
+    assert bid["raw_payload"]["contractor_company"] is None
+    assert bid["raw_payload"]["subcontracting"] is False
 
 
 def test_agency_stays_the_issuer_when_the_card_also_names_a_company():
@@ -269,7 +304,7 @@ def test_agency_stays_the_issuer_when_the_card_also_names_a_company():
     )
 
     assert bid["issuer_name"] == "Office of General Services, NYS"
-    assert bid["raw_payload"]["contractor_company"] == PIKE
+    assert_company_without_marker(bid, PIKE)
 
 
 def test_card_naming_neither_agency_nor_company_keeps_the_unknown_issuer_default():
@@ -285,8 +320,36 @@ def test_card_naming_neither_agency_nor_company_keeps_the_unknown_issuer_default
 
 # --- the unlabelled marker sentence ----------------------------------------------------------
 
-MARKER_VARIANTS = [MARKER, f"{MARKER}.", MARKER.upper(), f"{MARKER.lower()}."]
-MARKER_VARIANT_IDS = ["as-written", "trailing-period", "upper-case", "lower-case-trailing-period"]
+# The sentence may be followed by any mix of "." / "!" / whitespace and be in any case. The same
+# list drives the standalone-element test and the glued-onto-the-title test, so both checks must
+# accept exactly the same spellings.
+MARKER_VARIANTS = [
+    MARKER,
+    f"{MARKER}.",
+    f"{MARKER}!",
+    f"{MARKER}..",
+    f"{MARKER} . !",
+    MARKER.upper(),
+    f"{MARKER.lower()}.",
+]
+MARKER_VARIANT_IDS = [
+    "as-written",
+    "period",
+    "exclamation",
+    "double-period",
+    "mixed-punctuation",
+    "upper-case",
+    "lower-case-period",
+]
+
+# Not markers: a longer sentence, a second sentence, other punctuation, another phrase.
+NOT_MARKERS = [
+    f"{MARKER} for plumbing and electrical trades",
+    f"{MARKER}. See the agency website.",
+    f"{MARKER}?",
+    "This is a subcontract opportunity",
+]
+NOT_MARKER_IDS = ["longer-sentence", "second-sentence", "other-punctuation", "other-phrase"]
 
 
 @pytest.mark.parametrize("sentence", MARKER_VARIANTS, ids=MARKER_VARIANT_IDS)
@@ -325,6 +388,18 @@ def test_marker_sentence_glued_to_the_title_is_stripped_and_flags_the_record(sen
     assert bid["description"] == "PIKE CS - Plan"
     assert bid["raw_payload"]["title"] == "PIKE CS - Plan"
     assert bid["raw_payload"]["subcontracting"] is True
+
+
+@pytest.mark.parametrize("text", NOT_MARKERS, ids=NOT_MARKER_IDS)
+def test_only_the_marker_sentence_itself_is_a_marker(text):
+    # Such text is ordinary title content: as an element of its own it is appended to the title,
+    # and glued onto the title it stays there. Neither strips it nor flags the record.
+    own_element = fetch_card("2138281", "Title:", "PIKE CS - Plan", text, "CR#:", "2138281", "Company:", PIKE)
+    glued = fetch_card("2138281", "Title:", f"PIKE CS - Plan {text}", "CR#:", "2138281", "Company:", PIKE)
+
+    for bid in (own_element, glued):
+        assert bid["title"] == f"PIKE CS - Plan {text}"
+        assert bid["raw_payload"]["subcontracting"] is False
 
 
 def test_a_note_that_merely_contains_the_sentence_is_kept_verbatim():
