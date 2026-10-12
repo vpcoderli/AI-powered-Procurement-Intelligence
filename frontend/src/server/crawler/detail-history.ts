@@ -35,7 +35,23 @@ function jsonValue(value: unknown, fallback: unknown): unknown {
   }
 }
 
+/** The crawler compares page URLs without trailing slashes (enrichment.py `_needs_enrichment`). */
+const withoutTrailingSlash = (url: string) => url.replace(/\/+$/, "");
+
+/**
+ * Pages that are no bid's detail page: the list the crawler reads (`fetch_config.base_url`, else
+ * `base_url`, as `buildCrawlTaskPayload` sends it), which it stamps on URL-less rows and never fetches,
+ * and the registry's portal page. A backfill candidate pointing at one would hold a slot it never uses.
+ */
+function pageUrls(source: CrawlableSource): Set<string> {
+  return new Set([source.fetchConfig?.base_url, source.baseUrl]
+    .filter((url): url is string => typeof url === "string")
+    .map(withoutTrailingSlash)
+    .filter(Boolean));
+}
+
 function normalizedRows(rows: DetailHistoryRecord[], sourceId: string, source?: CrawlableSource): DetailHistoryRecord[] {
+  const pages = source ? pageUrls(source) : new Set<string>();
   return rows.filter((row) => isCanonicalSourceBid({ id: row.id, sourceBidId: row.source_bid_id }, sourceId))
     .map((row): DetailHistoryRecord => ({
       ...row,
@@ -48,7 +64,7 @@ function normalizedRows(rows: DetailHistoryRecord[], sourceId: string, source?: 
       const level = source?.jurisdictionLevel ?? source?.issuerType;
       const expected = source ? { state_code: source.stateCode, issuer_type: level, jurisdiction_level: level, fips_code: source.fipsCode }
         : sourceId === "sam_gov" ? { state_code: "US", issuer_type: "federal", jurisdiction_level: "federal" } : {};
-      return existingIdentityIssues(row, expected).length === 0 && (!source?.baseUrl || row.source_url !== source.baseUrl);
+      return existingIdentityIssues(row, expected).length === 0 && !pages.has(withoutTrailingSlash(String(row.source_url ?? "")));
     });
 }
 
@@ -115,13 +131,14 @@ export async function loadDetailHistory(store: DetailHistoryStore, sourceId: str
   const [newest] = await selectRows(store, `SELECT MAX(last_seen_at) AS latest FROM bids WHERE ${scope}`, scopeValues);
   const latest = typeof newest?.latest === "string" ? Date.parse(newest.latest) : Number.NaN;
   const since = Number.isFinite(latest) ? new Date(latest - DETAIL_HISTORY_LIST_WINDOW_DAYS * DAY_MS).toISOString() : "";
+  // One row past the cap tells a truncated window from one that holds exactly the cap.
   const rows = await selectRows(store,
     `SELECT * FROM bids WHERE ${scope} AND last_seen_at >= ? ORDER BY last_seen_at DESC, id LIMIT ?`,
-    [...scopeValues, since, DETAIL_HISTORY_LIST_LIMIT]);
-  if (rows.length >= DETAIL_HISTORY_LIST_LIMIT) {
+    [...scopeValues, since, DETAIL_HISTORY_LIST_LIMIT + 1]);
+  if (rows.length > DETAIL_HISTORY_LIST_LIMIT) {
     console.warn(JSON.stringify({ event: "crawler_detail_history_truncated", source: sourceId, limit: DETAIL_HISTORY_LIST_LIMIT }));
   }
-  return normalizedRows(rows, sourceId, source);
+  return normalizedRows(rows.slice(0, DETAIL_HISTORY_LIST_LIMIT), sourceId, source);
 }
 
 function outcomeText(dialect: Dialect, field: "attempted_at" | "next_retry_at"): string {

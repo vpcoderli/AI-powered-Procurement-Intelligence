@@ -42,7 +42,7 @@ describe("detail history identity admission", () => {
     if (dialect === "mysql") expect(calls).toEqual([
       { sql: "SELECT MAX(last_seen_at) AS latest FROM bids WHERE id LIKE ? ESCAPE '!'", values: ["city!_portal:%"] },
       { sql: "SELECT * FROM bids WHERE id LIKE ? ESCAPE '!' AND last_seen_at >= ? ORDER BY last_seen_at DESC, id LIMIT ?",
-        values: ["city!_portal:%", "2026-09-08T00:00:00.000Z", 5000] },
+        values: ["city!_portal:%", "2026-09-08T00:00:00.000Z", 5001] },
     ]);
   });
 
@@ -90,16 +90,26 @@ describe("bounded list history", () => {
     expect(plan.map((step) => step.detail).join("\n")).toMatch(/SEARCH bids USING .*\(id>\? AND id<\?\)/);
   });
 
-  it("caps one list run's history and reports the truncation", async () => {
+  it.each(["sqlite", "mysql"])("caps one list run's history and reports a truncation only when a row is left out in %s", async (dialect) => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const mysql = {
-      query: async (sql: string): Promise<[unknown[], unknown?]> => sql.startsWith("SELECT MAX")
-        ? [[{ latest: NOW }]]
-        : [Array.from({ length: DETAIL_HISTORY_LIST_LIMIT }, (_, index) => ({ id: `city_portal:${index}`, source_bid_id: String(index) }))],
-    };
-    await loadDetailHistory({ mysql }, source.id, source);
-    expect(warn).toHaveBeenCalledWith(JSON.stringify({ event: "crawler_detail_history_truncated", source: "city_portal", limit: 5000 }));
-    warn.mockRestore();
+    try {
+      database = await createTestDatabase({ seed: false });
+      const rows = Array.from({ length: DETAIL_HISTORY_LIST_LIMIT }, (_, index) => bid(`b${String(index).padStart(4, "0")}`));
+      for (let start = 0; start < rows.length; start += 500) database.db.insert(bids).values(rows.slice(start, start + 500)).run();
+      const mysql = { query: async (sql: string, values: unknown[] = []): Promise<[unknown[], unknown?]> => [database!.db.$client.prepare(sql).all(...values)] };
+      const store = dialect === "sqlite" ? { database: database.db } : { mysql };
+
+      expect(await loadDetailHistory(store, source.id, source)).toHaveLength(DETAIL_HISTORY_LIST_LIMIT);
+      expect(warn).not.toHaveBeenCalled();
+
+      database.db.insert(bids).values(bid("oldest", { lastSeenAt: "2026-10-01T00:00:00.000Z" })).run();
+      const capped = await loadDetailHistory(store, source.id, source);
+      expect(capped).toHaveLength(DETAIL_HISTORY_LIST_LIMIT);
+      expect(capped.map((row) => row.id)).not.toContain("city_portal:oldest");
+      expect(warn).toHaveBeenCalledWith(JSON.stringify({ event: "crawler_detail_history_truncated", source: "city_portal", limit: 5000 }));
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
@@ -115,6 +125,9 @@ describe("detail backfill candidates", () => {
       bid("retried", { description: "", firstSeenAt: "2026-08-01T00:00:00.000Z", rawPayload: outcome("2026-09-15T00:00:00+00:00", "2026-09-15T01:00:00+00:00") }),
       bid("echo", { description: "Road repairs", firstSeenAt: "2026-09-20T00:00:00.000Z" }),
       bid("cooling", { description: "", rawPayload: outcome("2026-10-07T23:00:00+00:00", "2026-10-08T23:00:00+00:00") }),
+      // The crawler's backfill cooldown for a row it could not attempt: never attempted, not due.
+      bid("unattempted", { description: "", firstSeenAt: "2026-07-01T00:00:00.000Z", rawPayload: JSON.stringify({ enrichment: { outcome: {
+        status: "not_needed", reason: "missing_detail_url", attempted: false, attempted_at: null, next_retry_at: "2026-10-08T12:00:00+00:00" } } }) }),
       bid("complete"),
       bid("foreign", { description: "", stateCode: "IL", firstSeenAt: "2026-01-01T00:00:00.000Z" }),
     ]).run();
@@ -130,6 +143,23 @@ describe("detail backfill candidates", () => {
     database.db.insert(bids).values(bid("valid", { description: "" })).run();
     const rows = await loadDetailBackfillCandidates({ database: database.db }, source.id, source, { limit: 1, now });
     expect(rows.map((row) => row.id)).toEqual(["city_portal:valid"]);
+  });
+
+  it("never spends a slot on a row that points at the list page the crawler reads or the registry's portal page", async () => {
+    database = await createTestDatabase({ seed: false });
+    // BidNet-fallback shape: the crawler lists fetch_config.base_url and stamps it on URL-less rows; base_url is the portal.
+    const listPage = "https://www.bidnetdirect.com/colorado/solicitations/open-bids";
+    const older = { description: "", firstSeenAt: "2026-09-01T00:00:00.000Z" };
+    database.db.insert(bids).values([
+      bid("list", { ...older, sourceUrl: listPage }),
+      bid("listslash", { ...older, sourceUrl: `${listPage}/` }),
+      bid("portal", { ...older, sourceUrl: source.baseUrl! }),
+      bid("portalslash", { ...older, sourceUrl: `${source.baseUrl}/` }),
+      bid("detail", { description: "", firstSeenAt: "2026-09-20T00:00:00.000Z" }),
+    ]).run();
+    const bidnetFallback = { ...source, fetchConfig: { base_url: listPage } };
+    const rows = await loadDetailBackfillCandidates({ database: database.db }, source.id, bidnetFallback, { limit: 1, now });
+    expect(rows.map((row) => row.id)).toEqual(["city_portal:detail"]);
   });
 
   it("treats a bare SAM description link as a missing body", async () => {
