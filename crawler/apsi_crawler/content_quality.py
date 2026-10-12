@@ -13,7 +13,9 @@ _EDGE_PUNCTUATION = " \t\r\n.,:;!?-–—_*/'\"()[]{}。，、：；！？"
 
 
 def comparable_text(value):
-    return " ".join(value.split()).casefold() if isinstance(value, str) else ""
+    # str.split() whitespace plus U+FEFF, which JavaScript's \s also matches: the same set as
+    # frontend/src/lib/bid-description.ts `comparable`.
+    return " ".join(value.replace("\ufeff", " ").split()).casefold() if isinstance(value, str) else ""
 
 
 def echo_key(value):
@@ -346,11 +348,12 @@ _RESTRICTED_BODY_RES = tuple(re.compile(pattern, re.ASCII) for pattern in (
     r"(?:please\s+)?(?:log\s*in|sign\s*in)(?:(?:\s+(?:to|with|on|at)\s+(?:the\s+)?[\w.]+(?:\s+[\w.]+){0,3})?\s+(?:or\s+register\s+)?to\s+(?:view|see|access|download|continue)\b|\s+to\s+(?:your|my)\s+account\b|\s+with\s+your\b|(?:\s+(?:(?:or|and)\s+)?|\s*/\s*)(?:register|sign\s*up)\s*[.!…]*$|\s+(?:is\s+)?required\b|\s*[.!…]*$)",
     r"you\s+(?:must|need\s+to)\s+(?:be\s+)?(?:log(?:ged)?\s*in|sign(?:ed)?\s*in)(?:\s+(?:or\s+register\s+)?(?:to|in\s+order\s+to)\s+(?:view|see|access|download|continue)\b|\s+to\s+(?:your|my)\s+account\b|\s*[.!…]*$)",
     r"(?:please\s+)?(?:register|create\s+an\s+account)(?:(?:\s+(?:with|on|at)\s+(?:the\s+)?[\w.]+(?:\s+[\w.]+){0,3})?\s+(?:or\s+(?:log\s*in|sign\s*in)\s+)?to\s+(?:view|see|access|download|continue)\b|(?:\s+(?:(?:or|and)\s+)?|\s*/\s*)(?:log\s*in|sign\s*in)\s*[.!…]*$|\s*[.!…]*$)",
-    r"(?:access\s+denied|forbidden|unauthorized(?:\s+access)?|error\s+(?:401|403|404|500|502|503)(?:\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable))?|(?:401|403|404|500|502|503)\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable)|page\s+not\s+found)(?:\s*[.!:;,|(\-–—]|\s+you\s+(?:do\s+not|don't|don’t)\s+have\s+permission\b|$)",
-    r"(?:checking\s+your\s+browser\b|just\s+a\s+moment(?:\s*(?:\.\.\.|…|[.!,])|$)|(?:please\s+)?enable\s+javascript(?:\s+(?:to|and)\b|\s+in\s+your\s+browser\b|\s*[.!]?$)|verify\s+(?:you\s+are|that\s+you\s+are|you're)\s+(?:a\s+)?human\b|attention\s+required!)",
+    r"(?:access\s+denied|error\s+(?:401|403|404|500|502|503)(?:\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable))?|(?:401|403|404|500|502|503)\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable)|page\s+not\s+found)(?:\s*[.!:;,|(\-–—]|\s+you\s+(?:do\s+not|don't|don’t)\s+have\s+permission\b|$)",
+    r"(?:forbidden|unauthorized(?:\s+access)?)(?:\s*[.!:\-–—]|\s*\(\d{3}\)|\s+you\s+(?:do\s+not|don't|don’t)\s+have\s+permission\b|$)",
+    r"(?:checking\s+your\s+browser\b|just\s+a\s+moment(?:\s*(?:\.\.\.|…|[.!,])|$)|(?:please\s+)?enable\s+javascript(?:\s+(?:to|and)\b|\s+in\s+your\s+browser\b|\s*[.!]?$)|verify\s+(?:you\s+are|that\s+you\s+are|you're)\s+(?:a\s+)?human\b|attention\s+required!\s*(?:\||$))",
 ))
-_METADATA_BODY_RE = re.compile(r"(?:purchase method|type code|bid type|informal bid flag|allow electronic quote)\s*(?::|：|$)", re.ASCII)
-_NAVIGATION_PART_RE = re.compile(r"(?:home|about(?: us)?|contact(?: us)?|privacy(?: policy)?|terms(?: of (?:use|service))?|copyright.*|all rights reserved|log\s*in|sign\s*in|sign\s*up|register)", re.ASCII)
+_METADATA_BODY_RE = re.compile(r"(?:purchase method|type code|bid type|informal bid flag|allow electronic quote)\s*(?:[:：]\s*(?:\d+\s*-\s*[\w&/()-]+(?:\s+[\w&/()-]+){0,5}|[\w&/()-]+(?:\s+[\w&/()-]+){0,3})?)?", re.ASCII)
+_NAVIGATION_PART_RE = re.compile(r"(?:home|about(?: us)?|contact(?: us)?|privacy(?: policy)?|terms(?: of (?:use|service))?|copyright\s*(?:©|\(c\)|\d{4}\b).*|copyright\b.*\ball rights reserved\.?|all rights reserved|log\s*in|sign\s*in|sign\s*up|register)", re.ASCII)
 _ADDRESS_BODY_RE = re.compile(r"\d+[a-z]?\s+(?:[\w.'-]+\s+){0,5}(?:street|st|road|rd|avenue|ave|boulevard|blvd|lane|ln|drive|dr)\.?(?:\s*,?\s*(?:(?:suite|ste|unit|room|rm|floor|fl|building|bldg|apartment|apt)\.?\s*#?|#\s*)[\w-]+)?\s*,\s*[a-z][a-z .'-]*,?\s+[a-z]{2}\s+\d{5}(?:-\d{4})?\.?", re.ASCII)
 
 
@@ -370,7 +373,7 @@ def body_issue(value, title):
         return "placeholder_body"
     if any(pattern.match(text) for pattern in _RESTRICTED_BODY_RES):
         return "restricted_or_error_body"
-    if _METADATA_BODY_RE.match(text):
+    if _METADATA_BODY_RE.fullmatch(text):
         return "metadata_body"
     # An empty list counts as navigation, exactly like JavaScript's [].every(...).
     parts = [part for part in (comparable_text(piece) for piece in re.split(r"[|\n·]", value.strip())) if part]

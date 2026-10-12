@@ -67,3 +67,17 @@
 - **附件修复 worker 先不要在生产开启。** 它目前全局只取 5,000 条候选（按 `bids.source` 排序）再按来源限量，每次 SAM 运行又会把失败、不可用的附件重置为 `not_archived`。开启后 SAM 链接可能挤占排在它后面的来源，SAM 的失败也永远稳定不下来。改好候选选取和状态重置之前保持关闭。
 - **行为变化：** `fetch_config.enrichment.fields` 不含 `attachments` 的来源，复用历史时如果只有列表摘要，会触发详情复查（受 7 天冷却和每轮预算约束）。
 - **回滚：** 回滚到数据可用性改动之前的版本前，要先把地方招标的 `issuer_type` 改回 `'state'`，因为旧代码只认 `federal` / `state`。
+
+## 正文判定后续收紧（2026-10-12）
+
+P0-5 终审列出的剩余误杀在 `classifier-followup` 分支（基于 `fix/data-usability-p0`）上修复。每条规则都先改共享契约 `crawler/tests/fixtures/description_quality_contract.json`，再改 TypeScript `getBidDescriptionIssue` 和 Python `body_issue`：
+
+- **版权行：** `copyright` 后面要紧跟 ©、(c) 或四位年份，或者整段以 "all rights reserved" 结尾。"Copyright clearance services…" 是采购内容。
+- **字段标签：** 整段只是"标签：短值"才算。短值最多四个词，或数字代码加最多六个词（BidBuy 的 "Type Code: 55 - Amendment/Change Order (Increase or No Dollar)"），不带句子标点。"Bid Type: Construction of a new fire station, …" 保留为正文。
+- **单独的 forbidden / unauthorized：** 后面只能是 `.`、`!`、`:`、破折号、"(NNN)" 状态码、"you don't have permission" 或结尾。逗号、分号、竖线和括号只跟在 access denied、error NNN、NNN 原因、page not found 后面才算。
+- **Attention Required!：** 后面必须是 `|` 或结尾（Cloudflare 的标题）。
+- **空白字符：** 两边都把 U+FEFF、U+0085、U+001C–U+001F 当空白，在全部 Unicode 码位上两边的空白集合一致（Node 24、Python 3.12、3.9）。TypeScript 去首尾标点改为线性扫描，8 万个点从约 2.7 秒降到 2 毫秒以内。
+
+契约从 80 例增加到 255 例，原有 80 例不变。逐一删掉规则里的任一分支、字符类成员或可选部分，只有 "just a moment" 后面的 `...` 分支测不出来，它和 `[.!,]` 等价。`npm run test:crawler-integration` 新增 TS/Python 差分：用契约词汇随机拼出 6 万条描述，两边结果必须完全一致；只在一边改动任一规则的一处，387 种改法里它能发现 386 种。
+
+尚未统一：Python 用 `casefold()`，TypeScript 用 `toLowerCase()`，含 ß、ſ、ﬁ 等字符的文本两边结果仍可能不同。

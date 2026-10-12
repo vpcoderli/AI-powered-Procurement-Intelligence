@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { getBidDescription } from "./bid-description";
+import { getBidDescription, getBidDescriptionIssue } from "./bid-description";
 
 describe("getBidDescription", () => {
   it.each([undefined, null, "", "   ", "  ROAD\n REPAIR "])("shows useful short content when full description is %s", (fullDescription) => {
@@ -67,6 +67,17 @@ describe("getBidDescription", () => {
       expect(getBidDescription({ title: "Public works procurement", description: body })).toBe(body);
     },
   );
+});
+
+describe("getBidDescriptionIssue", () => {
+  it("trims edge punctuation in linear time on the description and the title", () => {
+    const run = ".".repeat(100_000);
+    const started = performance.now();
+    expect(getBidDescriptionIssue(`Repair${run}pumps`, "Road repair")).toBeNull();
+    expect(getBidDescriptionIssue("Repair pumps", `Road${run}repair`)).toBeNull();
+    // A regex trim retried from every dot of the run: about 4 s per call at this length.
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
 });
 
 /**
