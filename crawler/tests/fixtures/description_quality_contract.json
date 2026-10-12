@@ -248,6 +248,13 @@
     {"name": "forbidden you do not have permission", "text": "Forbidden\nYou do not have permission to view this page.", "issue": "restricted_or_error_body"},
     {"name": "unauthorized curly apostrophe", "text": "Unauthorized\nYou don’t have permission to view this directory or page.", "issue": "restricted_or_error_body"},
     {"name": "attention required notice in scope", "text": "Attention required! All bidders must attend the mandatory pre-bid meeting on March 3.", "issue": null},
-    {"name": "attention required alone", "text": "Attention Required!", "issue": "restricted_or_error_body"}
+    {"name": "attention required alone", "text": "Attention Required!", "issue": "restricted_or_error_body"},
+    {"name": "byte order mark before log in", "text": "\ufeffLog in", "issue": "restricted_or_error_body"},
+    {"name": "byte order mark alone", "text": "\ufeff", "issue": "missing_body"},
+    {"name": "next line inside log in", "text": "Log\u0085in", "issue": "restricted_or_error_body"},
+    {"name": "file separator after access denied", "text": "Access denied\u001c", "issue": "restricted_or_error_body"},
+    {"name": "group and record separators around a notice type", "text": "\u001dSolicitation\u001e", "issue": "placeholder_body"},
+    {"name": "unit separator after a title echo", "text": "Road repair\u001f", "issue": "title_echo"},
+    {"name": "group separator inside an address", "text": "123 Main Street,\u001dSpringfield, IL 62701", "issue": "address_body"}
   ]
 }
