@@ -532,6 +532,13 @@ export const MYSQL_LEGACY_FIPS_DRIFT_CONDITION = " WHERE bids.issuer_type = 'sta
   + " AND bids.fips_code COLLATE utf8mb4_bin <> data_sources.fips_code COLLATE utf8mb4_bin";
 
 /**
+ * Whether raw_payload is a JSON object. A CASE, not `JSON_VALID(x) AND JSON_TYPE(x) = 'OBJECT'`: MySQL promises no order
+ * of evaluation for the operands of an AND, and JSON_TYPE raises an error on text that is not JSON, whereas a CASE
+ * reaches JSON_TYPE only after JSON_VALID has said yes.
+ */
+const MYSQL_PAYLOAD_IS_OBJECT = "CASE WHEN JSON_VALID(bids.raw_payload) THEN JSON_TYPE(bids.raw_payload) END = 'OBJECT'";
+
+/**
  * Step one of the FIPS-drift correction: keep the stale FIPS under raw_payload.legacy_fips_code (only where raw_payload
  * is a JSON object; any other payload is left as it is). It runs before the retype because a multi-table UPDATE gives
  * no guarantee about the order of its assignments, so one statement could not both read and overwrite bids.fips_code.
@@ -540,7 +547,7 @@ export const MYSQL_LEGACY_FIPS_DRIFT_CONDITION = " WHERE bids.issuer_type = 'sta
  */
 export const MYSQL_LEGACY_FIPS_DRIFT_STAMP = "UPDATE bids JOIN data_sources ON data_sources.id = SUBSTRING_INDEX(bids.id, ':', 1)"
   + " SET bids.raw_payload = JSON_SET(bids.raw_payload, '$.legacy_fips_code', bids.fips_code)"
-  + MYSQL_LEGACY_FIPS_DRIFT_CONDITION + " AND JSON_VALID(bids.raw_payload) AND JSON_TYPE(bids.raw_payload) = 'OBJECT'";
+  + MYSQL_LEGACY_FIPS_DRIFT_CONDITION + ` AND ${MYSQL_PAYLOAD_IS_OBJECT}`;
 
 /** Step two: the row takes its source's level and FIPS, which also takes it out of the condition above. */
 export const MYSQL_LEGACY_FIPS_DRIFT_RETYPE = "UPDATE bids JOIN data_sources ON data_sources.id = SUBSTRING_INDEX(bids.id, ':', 1)"
@@ -564,28 +571,59 @@ const MYSQL_NY_SUBCONTRACT_SHAPE = "bids.id LIKE 'ny!_contract!_reporter:% Compa
   + " AND LOCATE(' Company: ', bids.source_bid_id COLLATE utf8mb4_bin) > 1"
   + " AND bids.id COLLATE utf8mb4_bin = CONCAT('ny_contract_reporter:', bids.source_bid_id)";
 const MYSQL_NY_CLEAN_TWIN = `(SELECT 1 FROM (SELECT id FROM bids) AS existing WHERE existing.id = ${MYSQL_NY_CLEAN_ID})`;
+
+// The marker sentence, lower case with its leading space, compared with the lower-cased title.
 const NY_SUBCONTRACT_SUFFIX = " this is a subcontracting opportunity";
+const NY_COMPANY_MARKER_LENGTH = " Company: ".length;
+// The company: everything after the FIRST marker (SUBSTRING_INDEX(..., -1) would take what follows the LAST one, which
+// differs for a company name that itself contains the marker), trimmed like the spider does.
+const MYSQL_NY_COMPANY = `TRIM(SUBSTRING(bids.source_bid_id, LOCATE(' Company: ', bids.source_bid_id COLLATE utf8mb4_bin) + ${NY_COMPANY_MARKER_LENGTH}))`;
+// What follows the LAST marker sentence in the lower-cased title (the whole title when there is none).
+const MYSQL_NY_TITLE_TAIL = `SUBSTRING_INDEX(LOWER(bids.title), '${NY_SUBCONTRACT_SUFFIX}', -1)`;
+// The title ends with the marker sentence followed by nothing but ".", "!" and spaces. The tail is judged by its length,
+// not by comparing text: under the column collation ignorable characters compare equal to ''.
+const MYSQL_NY_TITLE_HAS_MARKER = `LOCATE('${NY_SUBCONTRACT_SUFFIX}', LOWER(bids.title) COLLATE utf8mb4_bin) > 0`
+  + ` AND CHAR_LENGTH(REPLACE(REPLACE(REPLACE(${MYSQL_NY_TITLE_TAIL}, '.', ''), '!', ''), ' ', '')) = 0`;
+// A body is a copy of the old title when the two match ignoring case and edge spaces (compared exactly, not with the
+// accent- and ignorable-insensitive column collation).
+const MYSQL_NY_OLD_TITLE_KEY = "LOWER(TRIM(bids.title)) COLLATE utf8mb4_bin";
 
 /**
- * Re-keys a malformed row that has no clean twin and no children: id and dedupe_key become the clean id, source_bid_id
- * the CR#, issuer_name the company when it is blank or a placeholder ("Unknown..."), and the title loses its trailing
- * marker sentence (case-insensitively, then trimmed). UPDATE IGNORE skips a row whose clean key another row already holds
- * (the dedupe key or (source, source_bid_id) unique index, or a sibling malformed row of the same CR# that was re-keyed
- * first) instead of failing the migration. A skipped sibling then has a clean twin, so the delete below removes it; a
- * row blocked by an unrelated row stays as it is.
+ * Re-keys a malformed row that has no clean twin and no children:
+ * - id and dedupe_key become the clean id, source_bid_id the CR#;
+ * - issuer_name becomes the company when it is blank or a placeholder ("Unknown...");
+ * - a description or full description that is a copy of the OLD title is cleared (the spider copied the title into the
+ *   description of a card without a Note:). Once the title is cleaned such a copy would no longer read as a title echo,
+ *   would be shown as the body, and would be kept as "meaningful" by every later import;
+ * - the title loses its trailing marker sentence (case-insensitively, then trimmed);
+ * - when raw_payload is a JSON object, the stored data_quality verdict (computed while the placeholder issuer made the
+ *   row core-invalid, and honoured by the publication gate) is removed so the row is judged by its fields again,
+ *   contractor_company is set, and subcontracting is set to true if the old title carried the marker.
  *
- * Assignment order: MySQL evaluates a single-table UPDATE's assignments left to right, each seeing the values assigned
- * before it, but a statement with EXISTS / NOT EXISTS subqueries like this one can be executed as a multi-table
- * (anti-join) update, which evaluates them from the original row (observed on MySQL 8.4). Either way the result is the
- * same only because source_bid_id, which every other assignment parses, is assigned last.
+ * UPDATE IGNORE skips a row whose clean key another row already holds (the dedupe key or (source, source_bid_id) unique
+ * index, or a sibling malformed row of the same CR# that was re-keyed first) instead of failing the migration. A skipped
+ * sibling then has a clean twin, so the delete below removes it; a row blocked by an unrelated row stays as it is.
+ *
+ * Assignment order: MySQL documents that a single-table UPDATE evaluates its assignments left to right, each seeing the
+ * values assigned before it, and that is what a plain WHERE does on MySQL 8.4. A WHERE with subqueries, like this one
+ * (the twin check and the child checks), evaluated every assignment from the original row instead (observed on 8.4: a
+ * derived-table subquery and a correlated one each do it, and turning semijoin off does not undo it). The result is the
+ * same either way only because the assignments that read the old title or parse source_bid_id (the issuer, both bodies, the payload) come
+ * before the title, and source_bid_id, which every other assignment parses, is assigned last.
  */
 export const MYSQL_NY_SUBCONTRACT_REKEY = "UPDATE IGNORE bids SET"
   + ` bids.id = ${MYSQL_NY_CLEAN_ID},`
   + ` bids.dedupe_key = ${MYSQL_NY_CLEAN_ID},`
   + " bids.issuer_name = CASE WHEN bids.issuer_name IS NULL OR bids.issuer_name = '' OR bids.issuer_name LIKE 'Unknown%'"
-  + " THEN SUBSTRING_INDEX(bids.source_bid_id, ' Company: ', -1) ELSE bids.issuer_name END,"
-  + ` bids.title = CASE WHEN LOWER(RTRIM(bids.title)) LIKE '%${NY_SUBCONTRACT_SUFFIX}'`
-  + ` THEN TRIM(LEFT(RTRIM(bids.title), CHAR_LENGTH(RTRIM(bids.title)) - ${NY_SUBCONTRACT_SUFFIX.length})) ELSE bids.title END,`
+  + ` THEN ${MYSQL_NY_COMPANY} ELSE bids.issuer_name END,`
+  + ` bids.description = CASE WHEN LOWER(TRIM(bids.description)) COLLATE utf8mb4_bin = ${MYSQL_NY_OLD_TITLE_KEY} THEN '' ELSE bids.description END,`
+  + ` bids.full_description = CASE WHEN LOWER(TRIM(bids.full_description)) COLLATE utf8mb4_bin = ${MYSQL_NY_OLD_TITLE_KEY} THEN NULL ELSE bids.full_description END,`
+  + ` bids.raw_payload = CASE WHEN ${MYSQL_PAYLOAD_IS_OBJECT} THEN CASE WHEN ${MYSQL_NY_TITLE_HAS_MARKER}`
+  + ` THEN JSON_SET(JSON_REMOVE(bids.raw_payload, '$.data_quality'), '$.contractor_company', ${MYSQL_NY_COMPANY}, '$.subcontracting', CAST('true' AS JSON))`
+  + ` ELSE JSON_SET(JSON_REMOVE(bids.raw_payload, '$.data_quality'), '$.contractor_company', ${MYSQL_NY_COMPANY}) END`
+  + " ELSE bids.raw_payload END,"
+  + ` bids.title = CASE WHEN ${MYSQL_NY_TITLE_HAS_MARKER}`
+  + ` THEN TRIM(LEFT(bids.title, CHAR_LENGTH(bids.title) - ${NY_SUBCONTRACT_SUFFIX.length} - CHAR_LENGTH(${MYSQL_NY_TITLE_TAIL}))) ELSE bids.title END,`
   + " bids.source_bid_id = SUBSTRING_INDEX(bids.source_bid_id, ' Company: ', 1)"
   + ` WHERE ${MYSQL_NY_SUBCONTRACT_SHAPE} AND NOT EXISTS ${MYSQL_NY_CLEAN_TWIN} AND ${noBidChildRowsSql("bids.id")}`;
 

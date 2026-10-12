@@ -11,9 +11,16 @@ import { noBidChildRowsSql } from "./bid-child-references";
 // bids(id) (ON DELETE CASCADE, no ON UPDATE action), so touching a row that has children would cascade away user data
 // on a delete and abort the whole migration on a re-key. noBidChildRowsSql lists every table that points at a bid.
 const NY_COMPANY_MARKER = " Company: ";
+// The marker sentence, lower case with its leading space, compared with the lower-cased title.
 const NY_SUBCONTRACT_SUFFIX = " this is a subcontracting opportunity";
 const NY_CLEAN_CR = `substr(bids.source_bid_id, 1, instr(bids.source_bid_id, '${NY_COMPANY_MARKER}') - 1)`;
 const NY_CLEAN_ID = `'ny_contract_reporter:' || ${NY_CLEAN_CR}`;
+// The company: everything after the first marker, trimmed like the spider does.
+const NY_COMPANY = `trim(substr(bids.source_bid_id, instr(bids.source_bid_id, '${NY_COMPANY_MARKER}') + ${NY_COMPANY_MARKER.length}))`;
+// The title without a tail of ".", "!" and spaces (rtrim with a character set), so the marker sentence may be followed by
+// any mix of those and nothing else, like the spider's rule. The sentence ends in a letter, so only the tail goes.
+const NY_TITLE_STEM = "rtrim(bids.title, '.! ')";
+const NY_TITLE_HAS_MARKER = `lower(${NY_TITLE_STEM}) LIKE '%${NY_SUBCONTRACT_SUFFIX}'`;
 // The "_" in the id prefix is a LIKE wildcard, so it is escaped with "!". LIKE ignores ASCII case and instr does not,
 // which is why both are checked; the id must also be exactly the prefix plus source_bid_id.
 const NY_SUBCONTRACT_SHAPE = `bids.id LIKE 'ny!_contract!_reporter:%${NY_COMPANY_MARKER}%' ESCAPE '!'
@@ -21,22 +28,37 @@ const NY_SUBCONTRACT_SHAPE = `bids.id LIKE 'ny!_contract!_reporter:%${NY_COMPANY
       AND bids.id = 'ny_contract_reporter:' || bids.source_bid_id`;
 const NY_CLEAN_TWIN = `(SELECT 1 FROM bids AS clean WHERE clean.id = ${NY_CLEAN_ID})`;
 
-// Re-keys a malformed row that has no clean twin and no children: id and dedupe_key become the clean id, source_bid_id
-// the CR#, issuer_name the company when it is blank or a placeholder ("Unknown..."), and the title loses its trailing
-// marker sentence (case-insensitively, then trimmed). UPDATE OR IGNORE skips a row whose clean key another row already
-// holds (the dedupe_key or (source, source_bid_id) unique index, or a sibling malformed row of the same CR# that was
-// re-keyed first) instead of failing the migration. A skipped sibling then has a clean twin, so the delete below removes
-// it; a row blocked by an unrelated row stays as it is. Every SET expression reads the pre-update row, so source_bid_id
-// may be reassigned in the same statement.
+// Re-keys a malformed row that has no clean twin and no children:
+// - id and dedupe_key become the clean id, source_bid_id the CR#;
+// - issuer_name becomes the company when it is blank or a placeholder ("Unknown...");
+// - a description or full description that is a copy of the OLD title is cleared (the spider copied the title into the
+//   description of a card without a Note:). Once the title is cleaned such a copy would no longer read as a title echo,
+//   would be shown as the body, and would be kept as "meaningful" by every later import;
+// - the title loses its trailing marker sentence (case-insensitively, then trimmed);
+// - when raw_payload is a JSON object, the stored data_quality verdict (computed while the placeholder issuer made the
+//   row core-invalid, and honoured by the publication gate) is removed so the row is judged by its fields again,
+//   contractor_company is set, and subcontracting is set to true if the old title carried the marker.
+// UPDATE OR IGNORE skips a row whose clean key another row already holds (the dedupe_key or (source, source_bid_id) unique
+// index, or a sibling malformed row of the same CR# that was re-keyed first) instead of failing the migration. A skipped
+// sibling then has a clean twin, so the delete below removes it; a row blocked by an unrelated row stays as it is.
+// Every SET expression reads the pre-update row, so source_bid_id may be reassigned in the same statement.
 const NY_SUBCONTRACT_REKEY_SQL = `
   UPDATE OR IGNORE bids SET
     id = ${NY_CLEAN_ID},
     dedupe_key = ${NY_CLEAN_ID},
     issuer_name = CASE WHEN bids.issuer_name IS NULL OR bids.issuer_name = '' OR bids.issuer_name LIKE 'Unknown%'
-      THEN substr(bids.source_bid_id, instr(bids.source_bid_id, '${NY_COMPANY_MARKER}') + ${NY_COMPANY_MARKER.length})
-      ELSE bids.issuer_name END,
-    title = CASE WHEN lower(rtrim(bids.title)) LIKE '%${NY_SUBCONTRACT_SUFFIX}'
-      THEN trim(substr(rtrim(bids.title), 1, length(rtrim(bids.title)) - ${NY_SUBCONTRACT_SUFFIX.length}))
+      THEN ${NY_COMPANY} ELSE bids.issuer_name END,
+    description = CASE WHEN lower(trim(bids.description)) = lower(trim(bids.title)) THEN '' ELSE bids.description END,
+    full_description = CASE WHEN lower(trim(bids.full_description)) = lower(trim(bids.title)) THEN NULL ELSE bids.full_description END,
+    raw_payload = CASE WHEN json_valid(bids.raw_payload) THEN
+      CASE WHEN json_type(bids.raw_payload) = 'object' THEN
+        CASE WHEN ${NY_TITLE_HAS_MARKER}
+          THEN json_set(json_remove(bids.raw_payload, '$.data_quality'), '$.contractor_company', ${NY_COMPANY}, '$.subcontracting', json('true'))
+          ELSE json_set(json_remove(bids.raw_payload, '$.data_quality'), '$.contractor_company', ${NY_COMPANY}) END
+      ELSE bids.raw_payload END
+    ELSE bids.raw_payload END,
+    title = CASE WHEN ${NY_TITLE_HAS_MARKER}
+      THEN trim(substr(${NY_TITLE_STEM}, 1, length(${NY_TITLE_STEM}) - ${NY_SUBCONTRACT_SUFFIX.length}))
       ELSE bids.title END,
     source_bid_id = ${NY_CLEAN_CR}
   WHERE ${NY_SUBCONTRACT_SHAPE}
@@ -1191,9 +1213,10 @@ export function runMigrations(db: AppDatabase) {
   addBidColumn("lifecycle_status", "TEXT NOT NULL DEFAULT 'open'");
   addBidColumn("awarded_date", "TEXT");
   addBidColumn("solicitation_number", "TEXT");
-  // Part of the original CREATE TABLE, so only a hand-built legacy table lacks it; the FIPS-drift correction at the
-  // end of this function reads and rewrites it.
+  // Both are part of the original CREATE TABLE, so only a hand-built legacy table lacks them; the FIPS-drift correction
+  // and the NY re-key at the end of this function read and rewrite them.
   addBidColumn("raw_payload", "TEXT");
+  addBidColumn("full_description", "TEXT");
   // Rows written before lifecycle tracking: an inactive bid is not open. Idempotent, so it runs
   // on every migration (spec 2026-09-24 §5.1).
   sqlite.exec("UPDATE bids SET lifecycle_status = 'closed' WHERE is_active = 0 AND lifecycle_status = 'open'");

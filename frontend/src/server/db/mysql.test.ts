@@ -375,7 +375,7 @@ describe("mysql migrations cover the bid lifecycle columns (2026-09-24 phase 1)"
     // Multi-table UPDATE assignment order is not guaranteed, so the stamp (which reads bids.fips_code) is its own statement.
     expect(MYSQL_LEGACY_FIPS_DRIFT_STAMP).toBe(
       `${join} SET bids.raw_payload = JSON_SET(bids.raw_payload, '$.legacy_fips_code', bids.fips_code)`
-      + `${MYSQL_LEGACY_FIPS_DRIFT_CONDITION} AND JSON_VALID(bids.raw_payload) AND JSON_TYPE(bids.raw_payload) = 'OBJECT'`,
+      + `${MYSQL_LEGACY_FIPS_DRIFT_CONDITION} AND CASE WHEN JSON_VALID(bids.raw_payload) THEN JSON_TYPE(bids.raw_payload) END = 'OBJECT'`,
     );
     expect(MYSQL_LEGACY_FIPS_DRIFT_RETYPE).toBe(
       `${join} SET bids.issuer_type = data_sources.jurisdiction_level, bids.fips_code = data_sources.fips_code${MYSQL_LEGACY_FIPS_DRIFT_CONDITION}`,
@@ -397,12 +397,50 @@ describe("mysql NY subcontract re-key statements", () => {
     expect(MYSQL_NY_SUBCONTRACT_DUPLICATE_DELETE).toMatch(/^DELETE FROM bids WHERE /);
   });
 
-  it("assigns source_bid_id last, so the result does not depend on the order MySQL evaluates the assignments in", () => {
-    // Left to right, each assignment sees the ones before it; run as an anti-join multi-table update, each sees the original row.
+  it("orders the assignments so the result does not depend on the order MySQL evaluates them in", () => {
+    // Left to right (a plain WHERE), each assignment sees the ones before it; with subqueries in the WHERE (this statement), each sees the original row.
+    // So no assignment may read a column that an earlier one rewrites: everything that parses source_bid_id or reads the old
+    // title comes before the title and source_bid_id assignments, and source_bid_id, which every other one parses, is last.
     const assignments = MYSQL_NY_SUBCONTRACT_REKEY.slice(MYSQL_NY_SUBCONTRACT_REKEY.indexOf(" SET "), MYSQL_NY_SUBCONTRACT_REKEY.indexOf(" WHERE "));
+    const order = ["id", "dedupe_key", "issuer_name", "description", "full_description", "raw_payload", "title", "source_bid_id"];
+    const positions = order.map((column) => assignments.indexOf(` bids.${column} = `));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
     expect(assignments.endsWith(", bids.source_bid_id = SUBSTRING_INDEX(bids.source_bid_id, ' Company: ', 1)")).toBe(true);
-    // Every other assignment parses the marker out of the still-intact source_bid_id.
     expect(assignments.indexOf("bids.source_bid_id = ")).toBe(assignments.lastIndexOf("bids.source_bid_id = "));
+    expect(assignments.indexOf("bids.title = ")).toBe(assignments.lastIndexOf("bids.title = "));
+  });
+
+  it("guards JSON functions with an order-proof CASE, never an AND that relies on short-circuiting", () => {
+    const guard = "CASE WHEN JSON_VALID(bids.raw_payload) THEN JSON_TYPE(bids.raw_payload) END = 'OBJECT'";
+    expect(MYSQL_LEGACY_FIPS_DRIFT_STAMP).toContain(guard);
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain(guard);
+    for (const statement of mysqlDataMigrationStatements()) {
+      expect(statement).not.toMatch(/JSON_VALID\([^)]*\)\s+AND\b/i);
+    }
+  });
+
+  it("reads the company after the first marker and trims it, like SQLite and the spider", () => {
+    const company = "TRIM(SUBSTRING(bids.source_bid_id, LOCATE(' Company: ', bids.source_bid_id COLLATE utf8mb4_bin) + 10))";
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain(`THEN ${company} ELSE bids.issuer_name END`);
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain(`'$.contractor_company', ${company}`);
+    // SUBSTRING_INDEX(..., -1) would take the text after the LAST marker.
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).not.toContain("SUBSTRING_INDEX(bids.source_bid_id, ' Company: ', -1)");
+  });
+
+  it("clears title-echo bodies with an exact comparison and refreshes the stored evidence of an object payload", () => {
+    const oldTitle = "LOWER(TRIM(bids.title)) COLLATE utf8mb4_bin";
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain(`bids.description = CASE WHEN LOWER(TRIM(bids.description)) COLLATE utf8mb4_bin = ${oldTitle} THEN '' ELSE bids.description END`);
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain(`bids.full_description = CASE WHEN LOWER(TRIM(bids.full_description)) COLLATE utf8mb4_bin = ${oldTitle} THEN NULL ELSE bids.full_description END`);
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain("JSON_REMOVE(bids.raw_payload, '$.data_quality')");
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain("'$.subcontracting', CAST('true' AS JSON)");
+  });
+
+  it("strips the marker only when nothing but '.', '!' and spaces follow it, comparing lengths rather than collated text", () => {
+    const tail = "SUBSTRING_INDEX(LOWER(bids.title), ' this is a subcontracting opportunity', -1)";
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain("LOCATE(' this is a subcontracting opportunity', LOWER(bids.title) COLLATE utf8mb4_bin) > 0");
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain(`CHAR_LENGTH(REPLACE(REPLACE(REPLACE(${tail}, '.', ''), '!', ''), ' ', '')) = 0`);
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain(`TRIM(LEFT(bids.title, CHAR_LENGTH(bids.title) - 37 - CHAR_LENGTH(${tail})))`);
   });
 
   it("matches only the exact legacy shape and only rows nothing points at", () => {

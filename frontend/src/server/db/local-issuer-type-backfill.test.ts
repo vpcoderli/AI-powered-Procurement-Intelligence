@@ -224,10 +224,10 @@ describe("FIPS drift correction on a hand-built legacy bids table", () => {
     if (directory) await rm(directory, { recursive: true, force: true });
   });
 
-  it("adds the raw_payload column the correction rewrites, then corrects the row", async () => {
+  it("adds the raw_payload and full_description columns the corrections rewrite, then corrects the row", async () => {
     directory = await mkdtemp(path.join(os.tmpdir(), "apsi-db-"));
     db = createDatabase(path.join(directory, "apsi.sqlite"));
-    // The smallest bids table the migrations are expected to bring forward: no raw_payload, FIPS or jurisdiction columns.
+    // The smallest bids table the migrations are expected to bring forward: no raw_payload, full_description, FIPS or jurisdiction columns.
     db.$client.exec(`
       CREATE TABLE bids (
         id TEXT PRIMARY KEY, source TEXT NOT NULL, source_bid_id TEXT, dedupe_key TEXT NOT NULL, title TEXT NOT NULL,
@@ -243,7 +243,7 @@ describe("FIPS drift correction on a hand-built legacy bids table", () => {
 
     expect(() => runMigrations(db!)).not.toThrow();
     const columns = (db.$client.prepare("PRAGMA table_info(bids)").all() as Array<{ name: string }>).map((column) => column.name);
-    expect(columns).toEqual(expect.arrayContaining(["raw_payload", "fips_code", "jurisdiction_level"]));
+    expect(columns).toEqual(expect.arrayContaining(["raw_payload", "full_description", "fips_code", "jurisdiction_level"]));
 
     db.$client.exec("UPDATE bids SET fips_code = '08014', jurisdiction_level = 'county'");
     db.insert(dataSources).values(sources[0]).run();

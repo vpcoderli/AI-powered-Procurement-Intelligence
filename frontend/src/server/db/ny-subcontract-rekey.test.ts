@@ -11,6 +11,14 @@ const SOURCE = "New York State Contract Reporter";
 const MARKER = "This is a subcontracting opportunity";
 type BidInsert = typeof bids.$inferInsert;
 
+/** What the importer stamped on a malformed row while its placeholder issuer made it core-invalid. */
+const STALE_DATA_QUALITY = {
+  schemaVersion: 1, checkedAt: NOW, coreValid: false, coreIssues: ["invalid_issuer"], warnings: ["missing_valid_body"],
+  capabilities: { discovery: false, analysis: false, attachments: false },
+  body: { valid: false, reason: "missing_or_invalid", verifiedAt: null, reused: false },
+  attachments: { discovered: 0, archived: 0, verified: 0 },
+};
+
 /**
  * A subcontracting card as the spider stored it before it learned the "Company:" label: the company text
  * was glued onto the CR# value, so the id, dedupe key and source bid id all carry it, the card has no
@@ -64,17 +72,98 @@ describe("NY Contract Reporter subcontracting re-key on SQLite", () => {
   afterEach(async () => { await testDb.cleanup(); });
 
   it("re-keys a malformed row that has no clean twin and no children, field by field", () => {
-    const row = malformedBid("2138281", "Pike Construction Services, Inc.", { title: `PIKE CS - NYS OGS Empire State Plaza Decarb Plan ${MARKER}` });
+    const oldTitle = `PIKE CS - NYS OGS Empire State Plaza Decarb Plan ${MARKER}`;
+    const row = malformedBid("2138281", "Pike Construction Services, Inc.", {
+      title: oldTitle,
+      // The spider copied the title into the description (the card has no Note:), so both bodies echo the OLD title.
+      description: oldTitle, fullDescription: oldTitle,
+      rawPayload: JSON.stringify({ source_bid_id: "2138281 Company: Pike Construction Services, Inc.", title: oldTitle, data_quality: STALE_DATA_QUALITY, enrichment: { applied_fields: [] } }),
+    });
     testDb.db.insert(bids).values(row).run();
     const before = rowOf(row.id);
 
     runMigrations(testDb.db);
 
-    expect(allBids()).toEqual([{
+    const rows = allBids();
+    expect(rows).toEqual([{
       ...before,
       id: "ny_contract_reporter:2138281", dedupeKey: "ny_contract_reporter:2138281", sourceBidId: "2138281",
       issuerName: "Pike Construction Services, Inc.", title: "PIKE CS - NYS OGS Empire State Plaza Decarb Plan",
+      // Once the title is cleaned a copy of the old title would no longer read as a title echo and would be shown as a body.
+      description: "", fullDescription: null,
+      rawPayload: rows[0].rawPayload,
     }]);
+    // The stale quality verdict (the invalid placeholder issuer) is gone, so the row is judged by its fields again; the rest stays.
+    expect(JSON.parse(rows[0].rawPayload!)).toEqual({
+      source_bid_id: "2138281 Company: Pike Construction Services, Inc.", title: oldTitle, enrichment: { applied_fields: [] },
+      contractor_company: "Pike Construction Services, Inc.", subcontracting: true,
+    });
+  });
+
+  it("clears a body that echoes the old title, however it is cased or padded, and keeps a real one", () => {
+    const title = `Razran Hall Renovation ${MARKER}`;
+    const real = "Furnish and install new HVAC equipment at Razran Hall, including commissioning and training.";
+    const cases: Array<[string, Partial<BidInsert>, { description: string; fullDescription: string | null }]> = [
+      ["2200001", { description: real, fullDescription: `${real} Quotes are due 9/8/2026.` }, { description: real, fullDescription: `${real} Quotes are due 9/8/2026.` }],
+      // A body that merely contains the title but says more is a real body.
+      ["2200002", { description: `${title}. Furnish and install new HVAC equipment.`, fullDescription: null }, { description: `${title}. Furnish and install new HVAC equipment.`, fullDescription: null }],
+      // Only one of the two bodies echoes the title.
+      ["2200003", { description: title, fullDescription: real }, { description: "", fullDescription: real }],
+      ["2200004", { description: real, fullDescription: title }, { description: real, fullDescription: null }],
+      // Case and edge padding do not make it a real body.
+      ["2200005", { description: `  ${title.toUpperCase()}  `, fullDescription: ` ${title.toLowerCase()} ` }, { description: "", fullDescription: null }],
+      // Nothing to clear.
+      ["2200006", { description: "", fullDescription: null }, { description: "", fullDescription: null }],
+    ];
+    testDb.db.insert(bids).values(cases.map(([cr, bodies]) => malformedBid(cr, "Acme Builders, LLC", { title, ...bodies }))).run();
+
+    runMigrations(testDb.db);
+
+    for (const [cr, , expected] of cases) {
+      expect(rowOf(`ny_contract_reporter:${cr}`), cr).toMatchObject({ title: "Razran Hall Renovation", ...expected });
+    }
+  });
+
+  it("reads the company after the first ' Company: ' and trims it", () => {
+    testDb.db.insert(bids).values([malformedBid("2138500", "Acme Company: Holdings, LLC"), malformedBid("2138501", "  Padded Co  ")]).run();
+
+    runMigrations(testDb.db);
+
+    expect(rowOf("ny_contract_reporter:2138500")).toMatchObject({ sourceBidId: "2138500", issuerName: "Acme Company: Holdings, LLC" });
+    expect(JSON.parse(rowOf("ny_contract_reporter:2138500").rawPayload!).contractor_company).toBe("Acme Company: Holdings, LLC");
+    expect(rowOf("ny_contract_reporter:2138501")).toMatchObject({ sourceBidId: "2138501", issuerName: "Padded Co" });
+    expect(JSON.parse(rowOf("ny_contract_reporter:2138501").rawPayload!).contractor_company).toBe("Padded Co");
+  });
+
+  it("refreshes the stored evidence of a re-keyed row only when raw_payload is a JSON object", () => {
+    const objects: Array<[string, string, Record<string, unknown>, Record<string, unknown>]> = [
+      // [cr, title, payload before, payload after]
+      ["2300001", `X ${MARKER}`, { data_quality: STALE_DATA_QUALITY, keep: 1 }, { keep: 1, contractor_company: "Acme Builders, LLC", subcontracting: true }],
+      ["2300002", `X ${MARKER}`, { keep: 1 }, { keep: 1, contractor_company: "Acme Builders, LLC", subcontracting: true }],
+      // The marker was not on the title: the flag is not added, and one that is there is left as it is.
+      ["2300003", "X", { keep: 1, data_quality: STALE_DATA_QUALITY }, { keep: 1, contractor_company: "Acme Builders, LLC" }],
+      ["2300004", "X", { subcontracting: false }, { subcontracting: false, contractor_company: "Acme Builders, LLC" }],
+      ["2300005", `X ${MARKER}`, { subcontracting: false }, { subcontracting: true, contractor_company: "Acme Builders, LLC" }],
+      // Only the top-level verdict goes.
+      ["2300006", `X ${MARKER}`, { nested: { data_quality: 1 } }, { nested: { data_quality: 1 }, contractor_company: "Acme Builders, LLC", subcontracting: true }],
+    ];
+    const notObjects: Array<[string, string | null]> = [
+      ["2300007", "not json {"], ["2300008", "[1,2,3]"], ["2300009", "42"], ["2300010", "\"just text\""], ["2300011", ""], ["2300012", null],
+    ];
+    testDb.db.insert(bids).values([
+      ...objects.map(([cr, title, before]) => malformedBid(cr, "Acme Builders, LLC", { title, rawPayload: JSON.stringify(before) })),
+      ...notObjects.map(([cr, rawPayload]) => malformedBid(cr, "Acme Builders, LLC", { rawPayload })),
+    ]).run();
+
+    runMigrations(testDb.db);
+
+    for (const [cr, , , after] of objects) {
+      expect(JSON.parse(rowOf(`ny_contract_reporter:${cr}`).rawPayload!), cr).toEqual(after);
+    }
+    for (const [cr, rawPayload] of notObjects) {
+      // Still re-keyed; only the payload is left alone.
+      expect(rowOf(`ny_contract_reporter:${cr}`), cr).toMatchObject({ sourceBidId: cr, rawPayload });
+    }
   });
 
   it("names the contractor as issuer only where the issuer is blank or a placeholder", () => {
@@ -102,6 +191,17 @@ describe("NY Contract Reporter subcontracting re-key on SQLite", () => {
       // Only a trailing sentence goes: the same words elsewhere in the title stay.
       ["2100005", `${MARKER} for Razran Hall Renovation`, `${MARKER} for Razran Hall Renovation`],
       ["2100006", `Razran Hall ${MARKER} Renovation`, `Razran Hall ${MARKER} Renovation`],
+      // Like the spider, the sentence may be followed by any mix of ".", "!" and spaces, and nothing else.
+      ["2100007", `Razran Hall Renovation ${MARKER}..`, "Razran Hall Renovation"],
+      ["2100008", `Razran Hall Renovation ${MARKER.toUpperCase()}!`, "Razran Hall Renovation"],
+      ["2100009", `Razran Hall Renovation ${MARKER} . ! .  `, "Razran Hall Renovation"],
+      ["2100010", `Razran Hall Renovation   ${MARKER}..!`, "Razran Hall Renovation"],
+      ["2100011", `Razran Hall Renovation ${MARKER}.y`, `Razran Hall Renovation ${MARKER}.y`],
+      ["2100012", `Razran Hall Renovation ${MARKER}, thanks`, `Razran Hall Renovation ${MARKER}, thanks`],
+      // The last sentence is the one that goes.
+      ["2100013", `A ${MARKER}. B ${MARKER}!`, `A ${MARKER}. B`],
+      // The sentence needs something before it; it alone is not a suffix.
+      ["2100014", `${MARKER}.`, `${MARKER}.`],
     ];
     testDb.db.insert(bids).values(cases.map(([cr, title]) => malformedBid(cr, "Acme Builders, LLC", { title }))).run();
 
