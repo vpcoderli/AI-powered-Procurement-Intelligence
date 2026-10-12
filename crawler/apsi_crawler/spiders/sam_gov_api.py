@@ -177,7 +177,7 @@ def fetch_sam_gov_opportunities(
 
 
 def enrich_sam_gov_bids(bids, api_key, *, session=None, timeout=30, max_descriptions=25,
-                        min_interval_seconds=3, now=now_iso):
+                        min_interval_seconds=3, now=now_iso, backfill=False):
     """Fetch eligible persisted/current SAM bodies under one fair, rate-limited budget."""
     if not api_key:
         timestamp = now()
@@ -219,7 +219,7 @@ def enrich_sam_gov_bids(bids, api_key, *, session=None, timeout=30, max_descript
                 attempted = True
                 description_text, description_error, description_throttled = _fetch_description(client, description_url, api_key, timeout)
         else:
-            record_outcome(bid, "not_configured", "description_endpoint_missing", timestamp)
+            record_outcome(bid, "not_configured", "description_endpoint_missing", timestamp, backfill=backfill)
             continue
         previous_enrichment = raw.get("enrichment") or {}
         if description_text is not None:
@@ -241,5 +241,5 @@ def enrich_sam_gov_bids(bids, api_key, *, session=None, timeout=30, max_descript
         bid["raw_payload"] = raw
         obtained = description_text is not None and valid_body(bid)
         status = "success" if obtained else "budget" if description_error == "budget_exhausted" else "restricted" if description_error in ("untrusted_description_url", "login_wall", "http_403") else "deferred" if description_error == "rate_limited" else "failure"
-        record_outcome(bid, status, description_error or (None if obtained else "body_not_obtained"), timestamp, attempted=attempted, obtained_body=obtained)
+        record_outcome(bid, status, description_error or (None if obtained else "body_not_obtained"), timestamp, attempted=attempted, obtained_body=obtained, backfill=backfill)
     return bids
