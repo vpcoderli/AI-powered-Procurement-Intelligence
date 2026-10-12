@@ -210,6 +210,17 @@
     {"name": "copyright (c) line", "text": "Copyright (c) 2024 Springfield County", "issue": "navigation_body"},
     {"name": "copyright year line", "text": "Copyright 2024 City of Springfield", "issue": "navigation_body"},
     {"name": "copyright all rights reserved line", "text": "Copyright City of Springfield. All rights reserved.", "issue": "navigation_body"},
-    {"name": "navigation with a copyright line", "text": "Privacy Policy | Copyright Springfield County, all rights reserved", "issue": "navigation_body"}
+    {"name": "navigation with a copyright line", "text": "Privacy Policy | Copyright Springfield County, all rights reserved", "issue": "navigation_body"},
+    {"name": "bid type sentence", "text": "Bid Type: Construction of a new fire station, including site work and utility connections.", "issue": null},
+    {"name": "bid type long value", "text": "Bid Type: Construction of a new fire station at the corner of 5th and Main", "issue": null},
+    {"name": "bid type five-word value", "text": "Bid Type: Construction of a fire station", "issue": null},
+    {"name": "type code sentence", "text": "Type Code: 55 - Amendment to extend the janitorial contract through June 2027.", "issue": null},
+    {"name": "type code with a coded value", "text": "Type Code: 55 - Amendment/Change Order (Increase or No Dollar)", "issue": "metadata_body"},
+    {"name": "bid type four-word value", "text": "Bid Type: Request for Proposal (RFP)", "issue": "metadata_body"},
+    {"name": "bid type label alone", "text": "Bid Type:", "issue": "metadata_body"},
+    {"name": "purchase method label without colon", "text": "Purchase Method", "issue": "metadata_body"},
+    {"name": "informal bid flag full-width colon", "text": "Informal Bid Flag：Yes", "issue": "metadata_body"},
+    {"name": "purchase method with ampersand", "text": "Purchase Method: Professional & Technical Services", "issue": "metadata_body"},
+    {"name": "purchase method hyphenated value", "text": "Purchase Method: Sole-Source", "issue": "metadata_body"}
   ]
 }
