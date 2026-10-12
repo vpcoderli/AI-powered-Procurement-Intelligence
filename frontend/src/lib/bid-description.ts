@@ -30,7 +30,9 @@ const RESTRICTED_BODIES = [
   /^(?:checking\s+your\s+browser\b|just\s+a\s+moment(?:\s*(?:\.\.\.|…|[.!,])|$)|(?:please\s+)?enable\s+javascript(?:\s+(?:to|and)\b|\s+in\s+your\s+browser\b|\s*[.!]?$)|verify\s+(?:you\s+are|that\s+you\s+are|you're)\s+(?:a\s+)?human\b|attention\s+required!)/i,
 ];
 const METADATA_BODY = /^(?:purchase method|type code|bid type|informal bid flag|allow electronic quote)\s*(?::|：|$)/i;
-const NAVIGATION_PART = /^(?:home|about(?: us)?|contact(?: us)?|privacy(?: policy)?|terms(?: of (?:use|service))?|copyright.*|all rights reserved|log\s*in|sign\s*in|sign\s*up|register)$/i;
+// A copyright footer carries ©, (c) or a year right after the word, or ends in "all rights
+// reserved"; "Copyright clearance services…" is procurement scope.
+const NAVIGATION_PART = /^(?:home|about(?: us)?|contact(?: us)?|privacy(?: policy)?|terms(?: of (?:use|service))?|copyright\s*(?:©|\(c\)|\d{4}\b).*|copyright\b.*\ball rights reserved\.?|all rights reserved|log\s*in|sign\s*in|sign\s*up|register)$/i;
 // Only a text that is one street address and nothing else.
 const ADDRESS_BODY = /^\d+[a-z]?\s+(?:[\w.'-]+\s+){0,5}(?:street|st|road|rd|avenue|ave|boulevard|blvd|lane|ln|drive|dr)\.?(?:\s*,?\s*(?:(?:suite|ste|unit|room|rm|floor|fl|building|bldg|apartment|apt)\.?\s*#?|#\s*)[\w-]+)?\s*,\s*[a-z][a-z .'-]*,?\s+[a-z]{2}\s+\d{5}(?:-\d{4})?\.?$/i;
 
