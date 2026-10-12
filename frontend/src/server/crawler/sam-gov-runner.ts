@@ -87,7 +87,10 @@ function buildArgs(options: SamGovCrawlerRunOptions) {
     args.push("--max-descriptions", String(options.maxDescriptions));
   }
 
-  if (options.archiveDocuments !== false) {
+  // Inline archiving would download every resourceLink of every bid in the window, one after
+  // another, inside the run's time budget. Managed runs record the links; the attachment-repair
+  // worker archives them under the source's own limits. Only an explicit caller archives here.
+  if (options.archiveDocuments === true) {
     args.push("--archive-documents", "--archive-dir", options.archiveDir ?? defaultArchiveDir());
   }
 

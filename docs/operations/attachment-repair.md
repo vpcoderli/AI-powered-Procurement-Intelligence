@@ -69,6 +69,10 @@
 - `archive: false` 的源不下载，候选直接记 `unavailable`。
 - 面板范围与服务端校验一致：`max_per_run` 1–200、`min_interval_seconds` 0–60、`timeout_seconds` 5–120、大小上限 1–200 MB（面板按 MB 编辑，落库是字节）。越界由 `validateAttachmentPolicyInput` 拒绝，面板原样显示服务端的报错。
 
+## SAM.gov 附件
+
+SAM.gov 运行把每条机会的 `resourceLinks` 记为附件链接（`archive_status = not_archived`），抓取进程内不下载。归档由本 worker 完成，按 `sam_gov` 源的 `fetch_config.attachments` 策略（默认 `archive: true`、`max_per_run` 50）限速、限量。只有调用方显式传 `archiveDocuments: true` 时，`runSamGovCrawler` 才在运行内下载，仅用于手工排查。如果某类 SAM 链接必须带 API key 才能下载，下载失败由本 worker 的失败分类和退避处理，不影响抓取运行。
+
 ## 运行
 
 ```bash

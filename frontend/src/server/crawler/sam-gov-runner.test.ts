@@ -196,9 +196,6 @@ describe("SAM.gov crawler runner", () => {
         "75",
         "--max-descriptions",
         "12",
-        "--archive-documents",
-        "--archive-dir",
-        path.resolve(process.cwd(), "data", "attachments"),
       ],
       expect.objectContaining({
         cwd: path.resolve(process.cwd(), "..", "crawler"),
@@ -224,23 +221,20 @@ describe("SAM.gov crawler runner", () => {
     expect(result.stderr).toBe("trace");
   });
 
-  it("passes archive document options by default", async () => {
-    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
-      callback(null, mysqlJsonPayload, "");
-      return {} as ReturnType<typeof execFile>;
-    }) as typeof execFile);
+  it("archives documents inside the run only when a caller asks for it", async () => {
+    for (let call = 0; call < 2; call += 1) {
+      mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+        callback(null, mysqlJsonPayload, "");
+        return {} as ReturnType<typeof execFile>;
+      }) as typeof execFile);
+    }
 
-    await runSamGovCrawler({
-      postedFrom: "05/01/2026",
-      postedTo: "05/19/2026",
-      databasePath: "/tmp/apsi.sqlite",
-      archiveDir: "/tmp/attachments",
-      outputJson: true,
-    });
+    await runSamGovCrawler({ postedFrom: "05/01/2026", postedTo: "05/19/2026", databasePath: "/tmp/apsi.sqlite", archiveDir: "/tmp/attachments", outputJson: true });
+    await runSamGovCrawler({ postedFrom: "05/01/2026", postedTo: "05/19/2026", databasePath: "/tmp/apsi.sqlite", archiveDir: "/tmp/attachments", outputJson: true, archiveDocuments: true });
 
-    expect(mockedExecFile.mock.calls[0][1]).toEqual(
-      expect.arrayContaining(["--archive-documents", "--archive-dir", "/tmp/attachments"]),
-    );
+    expect(mockedExecFile.mock.calls[0][1]).not.toContain("--archive-documents");
+    expect(mockedExecFile.mock.calls[0][1]).not.toContain("--archive-dir");
+    expect(mockedExecFile.mock.calls[1][1]).toEqual(expect.arrayContaining(["--archive-documents", "--archive-dir", "/tmp/attachments"]));
   });
 
   it("runs the Python crawler in JSON mode and imports directly into MySQL when MySQL is configured", async () => {
