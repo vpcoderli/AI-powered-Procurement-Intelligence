@@ -64,6 +64,19 @@ describe("mergeLifecycleFields with a clock (deadline-passed rule)", () => {
     expect(mergeLifecycleFields(row, {}, { now: NOW })).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
   });
 
+  it("holds a bid whose time has no AM/PM open until its PM reading", () => {
+    // 02:00 on the 13th in UTC-10 is 12:00Z; read as a PM hour it runs to 00:00Z on the 14th.
+    const row = { lifecycle_status: "open", deadline_date: "10/13/2026 2:00" };
+    expect(mergeLifecycleFields(row, {}, { now: "2026-10-13T12:00:00.000Z" })).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+    expect(mergeLifecycleFields(row, {}, { now: "2026-10-13T23:59:59.999Z" })).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+    expect(mergeLifecycleFields(row, {}, { now: "2026-10-14T00:00:00.000Z" })).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
+    expect(resolveLifecycle(row, {}, { now: "2026-10-13T12:00:00.000Z" }).closedByDeadline).toBeNull();
+    expect(resolveLifecycle(row, {}, { now: "2026-10-14T00:00:00.000Z" }).closedByDeadline).toBe("10/13/2026 2:00");
+    // With the AM given, or an hour that cannot be PM, nothing is held back.
+    expect(mergeLifecycleFields({ ...row, deadline_date: "10/13/2026 2:00 AM" }, {}, { now: "2026-10-13T12:00:00.000Z" })).toMatchObject({ lifecycle_status: "closed" });
+    expect(mergeLifecycleFields({ ...row, deadline_date: "10/13/2026 0:30" }, {}, { now: "2026-10-13T12:00:00.000Z" })).toMatchObject({ lifecycle_status: "closed" });
+  });
+
   it("changes nothing without a clock", () => {
     const row = { lifecycle_status: "open", deadline_date: PASSED };
     expect(mergeLifecycleFields(row)).toMatchObject({ lifecycle_status: "open", is_active: 1 });
