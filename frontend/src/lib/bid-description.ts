@@ -20,13 +20,16 @@ const PLACEHOLDER_BODIES = [
 // A notice counts only as the whole notice: "log in" / "sign in" / "register" must lead to
 // "to view|see|access|download|continue", "to your account", "required", a register/log-in
 // pair or the end, and an error phrase must end at punctuation, the end, or "you don't have
-// permission". "Signing and striping…", "Login.gov integration…", "Register of Deeds…" and
-// "Unauthorized vehicle towing…" are procurement scope.
+// permission". A bare "forbidden" / "unauthorized" takes no list punctuation (",", ";", "|",
+// "(") other than a "(403)" code. "Signing and striping…", "Login.gov integration…",
+// "Register of Deeds…", "Unauthorized vehicle towing…" and "Unauthorized, abandoned and junk
+// vehicle removal…" are procurement scope.
 const RESTRICTED_BODIES = [
   /^(?:please\s+)?(?:log\s*in|sign\s*in)(?:(?:\s+(?:to|with|on|at)\s+(?:the\s+)?[\w.]+(?:\s+[\w.]+){0,3})?\s+(?:or\s+register\s+)?to\s+(?:view|see|access|download|continue)\b|\s+to\s+(?:your|my)\s+account\b|\s+with\s+your\b|(?:\s+(?:(?:or|and)\s+)?|\s*\/\s*)(?:register|sign\s*up)\s*[.!…]*$|\s+(?:is\s+)?required\b|\s*[.!…]*$)/i,
   /^you\s+(?:must|need\s+to)\s+(?:be\s+)?(?:log(?:ged)?\s*in|sign(?:ed)?\s*in)(?:\s+(?:or\s+register\s+)?(?:to|in\s+order\s+to)\s+(?:view|see|access|download|continue)\b|\s+to\s+(?:your|my)\s+account\b|\s*[.!…]*$)/i,
   /^(?:please\s+)?(?:register|create\s+an\s+account)(?:(?:\s+(?:with|on|at)\s+(?:the\s+)?[\w.]+(?:\s+[\w.]+){0,3})?\s+(?:or\s+(?:log\s*in|sign\s*in)\s+)?to\s+(?:view|see|access|download|continue)\b|(?:\s+(?:(?:or|and)\s+)?|\s*\/\s*)(?:log\s*in|sign\s*in)\s*[.!…]*$|\s*[.!…]*$)/i,
-  /^(?:access\s+denied|forbidden|unauthorized(?:\s+access)?|error\s+(?:401|403|404|500|502|503)(?:\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable))?|(?:401|403|404|500|502|503)\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable)|page\s+not\s+found)(?:\s*[.!:;,|(\-–—]|\s+you\s+(?:do\s+not|don't|don’t)\s+have\s+permission\b|$)/i,
+  /^(?:access\s+denied|error\s+(?:401|403|404|500|502|503)(?:\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable))?|(?:401|403|404|500|502|503)\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable)|page\s+not\s+found)(?:\s*[.!:;,|(\-–—]|\s+you\s+(?:do\s+not|don't|don’t)\s+have\s+permission\b|$)/i,
+  /^(?:forbidden|unauthorized(?:\s+access)?)(?:\s*[.!:\-–—]|\s*\(\d{3}\)|\s+you\s+(?:do\s+not|don't|don’t)\s+have\s+permission\b|$)/i,
   /^(?:checking\s+your\s+browser\b|just\s+a\s+moment(?:\s*(?:\.\.\.|…|[.!,])|$)|(?:please\s+)?enable\s+javascript(?:\s+(?:to|and)\b|\s+in\s+your\s+browser\b|\s*[.!]?$)|verify\s+(?:you\s+are|that\s+you\s+are|you're)\s+(?:a\s+)?human\b|attention\s+required!)/i,
 ];
 // Only a whole label/value cell: the value is up to four words, or a numeric code and up to six
