@@ -56,7 +56,7 @@
 1. **旧地方招标被隐藏。** 旧的县、市、镇招标存成 `issuer_type = 'state'`，被新门禁隐藏（本地 7,230 条中 1,355 条）。迁移按已登记地方源的级别回填 `issuer_type`，两种数据库各一条幂等语句。FIPS 与登记不一致的旧行保持原样：改了类型它就变成核心有效，之后每次修正过的重抓都会被身份校验隔离，保持原样则下次重抓会自愈。**部署顺序：先跑 `npm run db:mysql:migrate`，再让新代码接流量**，否则回填之前这些招标不可见。
 2. **抓取失败抹掉正文。** 补采复用历史时不再带上一轮的 `applied_fields`，详情抓取失败不会再抹掉已验证的正文。
 3. **SAM 附件内联下载。** SAM.gov 运行只记录附件链接，归档交给附件修复 worker（默认不随 compose 启动，见附件修复运维）。
-4. **详情历史无上限。** 列表运行读最近 30 天、最多 5,000 行；补采只读本轮预算内的到期候选，扫描到上限时记 `crawler_detail_backfill_scan_capped`。
+4. **详情历史无上限。** 列表运行读本源最近一次出现之前 30 天内、最多 5,000 行；补采只读本轮预算内的到期候选，扫描到上限时记 `crawler_detail_backfill_scan_capped`。
 5. **正文判定误杀且两边不一致。** TypeScript 和 Python 两边统一为同一套规则，共享契约是 `crawler/tests/fixtures/description_quality_contract.json`（80 例）。访问提示和报错页只有整句出现才算：登录/注册后面必须跟"查看/访问/下载/继续"等去向、"required"，或者就此结束；报错短语后面必须是标点、句末或 "you don't have permission"。整段只是一个地址才算地址。
 
 回填后仍不可见、留待后续处理的有 37 条：22 条 `ny_contract_reporter` 的发布方为"Unknown state agency"；11 条已关闭的 `bidnet_co_city_aurora` 带旧 FIPS `0803455`，回填有意不改它们（审查 P1-8）；另有 4 条演示数据。
