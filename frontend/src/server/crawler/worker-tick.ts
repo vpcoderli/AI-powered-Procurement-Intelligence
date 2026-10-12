@@ -1,14 +1,17 @@
 import { emitWorkerFailureAlert } from "@/lib/resilience/failure-alerts";
-import { sweepExpiredBids as defaultSweepExpiredBids, type LifecycleSweepResult } from "@/server/bids/lifecycle-sweep";
+import { sweepExpiredBids as defaultSweepExpiredBids, type LifecycleSweepResult, type MysqlSweepStore } from "@/server/bids/lifecycle-sweep";
 import { runConfiguredCrawlerSourcesOnce, type RunConfiguredCrawlerSourcesOnceOptions } from "./configured-runner";
 import type { RunCrawlerSourceOnceResult } from "./orchestrator";
 import { DEFAULT_TICK_MS, PlatformPauseRegistry, PlatformTickBudget, platformBudgetsFromEnv } from "./platform-budget";
 import { PlatformDeferralTracker } from "./platform-deferral";
 import { PrecheckRetryRegistry, runQueuedPrechecksOnce, type RunQueuedPrechecksOnceOptions, type RunQueuedPrechecksOnceResult } from "./precheck-queue-runner";
 
-type WorkerTickOptions = Pick<RunConfiguredCrawlerSourcesOnceOptions,
+type WorkerTickOptions = Omit<Pick<RunConfiguredCrawlerSourcesOnceOptions,
   "database" | "mysql" | "owner" | "stateRunnerOptions" | "matcher" | "notifier" | "tickMs" | "isStopping"
->;
+>, "mysql"> & {
+  /** A MySQL pool: besides what the lists and prechecks use, the deadline sweep holds its transactions on connections from it. */
+  mysql?: NonNullable<RunConfiguredCrawlerSourcesOnceOptions["mysql"]> & MysqlSweepStore;
+};
 
 /** Work and clock adapters at the tick seam; production uses the existing runner implementations. */
 type WorkerTickAdapters = Pick<RunConfiguredCrawlerSourcesOnceOptions, "runCrawlerSourceOnce" | "platformBudgets"> &

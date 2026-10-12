@@ -42,6 +42,10 @@ const SEEDS: Seed[] = [
   { id: "odd:not-available", deadline: "Not Available" },
   { id: "odd:tbd", deadline: "TBD" },
   { id: "odd:impossible-date", deadline: "02/30/2026" },
+  // Open, with a placeholder no portal means as a deadline (outside the years 2000-2100): unreadable too, and never closed.
+  { id: "odd:min-date", deadline: "0001-01-01" },
+  { id: "odd:epoch-zero", deadline: "01/01/1970" },
+  { id: "odd:dotnet-min", deadline: "/Date(-62135596800000)/" },
   // Open, with no deadline at all: not unparseable, just undated.
   { id: "none:null", deadline: null },
   { id: "none:blank", deadline: "  " },
@@ -51,7 +55,8 @@ const SEEDS: Seed[] = [
 ];
 const OPEN_ROWS = SEEDS.filter((seed) => !seed.lifecycleStatus).length;
 const EXPIRED = SEEDS.filter((seed) => seed.expired).map((seed) => seed.id).sort();
-const EXPECTED = { scanned: OPEN_ROWS, closed: EXPIRED.length, unparseable: 3, closedByIssuerType: { state: 4, county: 2, city: 1 } };
+const UNREADABLE = SEEDS.filter((seed) => seed.id.startsWith("odd:")).map((seed) => seed.id);
+const EXPECTED = { scanned: OPEN_ROWS, closed: EXPIRED.length, unparseable: UNREADABLE.length, closedByIssuerType: { state: 4, county: 2, city: 1 } };
 
 describe("sweepExpiredBids on SQLite", () => {
   let testDb: TestDatabase;
@@ -128,9 +133,10 @@ describe("sweepExpiredBids on SQLite", () => {
     seed();
     const result = await sweep();
 
-    expect(result.unparseable).toBe(3);
-    for (const id of ["odd:not-available", "odd:tbd", "odd:impossible-date", "none:null", "none:blank"]) {
-      expect(read(id)).toMatchObject({ lifecycleStatus: "open", isActive: 1 });
+    expect(result.unparseable).toBe(6);
+    expect(UNREADABLE).toHaveLength(6);
+    for (const id of [...UNREADABLE, "none:null", "none:blank"]) {
+      expect(read(id)).toMatchObject({ lifecycleStatus: "open", isActive: 1, updatedAt: SEEDED_AT });
     }
   });
 
@@ -154,7 +160,7 @@ describe("sweepExpiredBids on SQLite", () => {
     const afterFirst = snapshot();
     const second = await sweep();
 
-    expect(second).toEqual({ scanned: OPEN_ROWS - EXPIRED.length, closed: 0, unparseable: 3, closedByIssuerType: {}, dryRun: false });
+    expect(second).toEqual({ scanned: OPEN_ROWS - EXPIRED.length, closed: 0, unparseable: UNREADABLE.length, closedByIssuerType: {}, dryRun: false });
     expect(snapshot()).toEqual(afterFirst);
   });
 
@@ -199,7 +205,7 @@ describe("sweepExpiredBids on SQLite", () => {
     for (const batchSize of [1, 2, 3, OPEN_ROWS - 1, OPEN_ROWS, OPEN_ROWS + 1, 500]) {
       pages = 0;
       const result = await sweep({ batchSize, dryRun: true });
-      expect(result).toMatchObject({ scanned: OPEN_ROWS, closed: EXPIRED.length, unparseable: 3 });
+      expect(result).toMatchObject({ scanned: OPEN_ROWS, closed: EXPIRED.length, unparseable: UNREADABLE.length });
       // A full page says there may be more, so the sweep asks once more; a short page ends it.
       expect(pages).toBe(Math.floor(OPEN_ROWS / batchSize) + 1);
     }
@@ -219,6 +225,28 @@ describe("sweepExpiredBids on SQLite", () => {
     expect(result).toMatchObject({ scanned: 1_250, closed: 625, unparseable: 0 });
     expect(result.closedByIssuerType.county! + result.closedByIssuerType.state!).toBe(625);
     expect(testDb.db.select().from(bids).all().filter((row) => row.lifecycleStatus === "open")).toHaveLength(625);
+  });
+
+  it("prepares the closing UPDATE once per page of closures, not once per bid", async () => {
+    const rows: Seed[] = Array.from({ length: 12 }, (_, index) => ({ id: `many:${String(index).padStart(2, "0")}`, deadline: "10/12/2026" }));
+    seed(rows);
+    const client = testDb.db.$client;
+    const prepare = client.prepare.bind(client);
+    const updates: string[] = [];
+    vi.spyOn(client, "prepare").mockImplementation(((sql: string) => {
+      if (/^\s*UPDATE bids SET lifecycle_status = 'closed'/i.test(sql)) updates.push(sql);
+      return prepare(sql);
+    }) as typeof client.prepare);
+
+    expect(await sweep()).toMatchObject({ scanned: 12, closed: 12 });
+    // One page: at most the two shapes of the statement (with and without a payload to rewrite), however many bids it closes.
+    expect(updates.length).toBeLessThanOrEqual(2);
+
+    updates.length = 0;
+    seed([{ id: "more:1", deadline: "10/12/2026" }, { id: "more:2", deadline: "10/12/2026" }, { id: "more:3", deadline: "10/12/2026" }, { id: "more:4", deadline: "10/12/2026" }]);
+    expect(await sweep({ batchSize: 2 })).toMatchObject({ scanned: 4, closed: 4 });
+    // Two pages of closures: at most two statements each.
+    expect(updates.length).toBeLessThanOrEqual(4);
   });
 
   it("ignores a batch size that is not a positive whole number", async () => {

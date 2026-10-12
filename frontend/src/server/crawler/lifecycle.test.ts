@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   closedPayload,
   closedRawPayload,
-  deadlineClosureOf,
   delistedRawPayload,
   delistingApplies,
   mergeLifecycleFields,
   readListPagination,
+  resolveLifecycle,
   sourceBidIdLikePattern,
   withLifecycleMetadata,
 } from "./lifecycle";
@@ -132,20 +132,35 @@ describe("mergeLifecycleFields with a clock (deadline-passed rule)", () => {
   });
 });
 
-describe("deadlineClosureOf", () => {
+describe("resolveLifecycle", () => {
   const NOW = "2026-10-13T12:00:00.000Z";
 
-  it("names the deadline that closed an otherwise open bid", () => {
-    expect(deadlineClosureOf({ lifecycle_status: "open", deadline_date: " 10/12/2026 " }, {}, { now: NOW })).toBe("10/12/2026");
-    expect(deadlineClosureOf({ lifecycle_status: "open" }, { deadline_date: "10/12/2026" }, { now: NOW })).toBe("10/12/2026");
+  it("returns the merged fields together with the deadline that closed an otherwise open bid", () => {
+    expect(resolveLifecycle({ lifecycle_status: "open", deadline_date: " 10/12/2026 " }, {}, { now: NOW })).toEqual({
+      fields: { lifecycle_status: "closed", is_active: 0, awarded_date: null, deadline_date: "10/12/2026", solicitation_number: null },
+      closedByDeadline: "10/12/2026",
+    });
+    expect(resolveLifecycle({ lifecycle_status: "open" }, { deadline_date: "10/12/2026" }, { now: NOW }).closedByDeadline).toBe("10/12/2026");
   });
 
-  it("is null whenever the rule did not close the bid", () => {
-    expect(deadlineClosureOf({ lifecycle_status: "open", deadline_date: "10/12/2026" }, {}, {})).toBeNull();
-    expect(deadlineClosureOf({ lifecycle_status: "open", deadline_date: "10/14/2026" }, {}, { now: NOW })).toBeNull();
-    expect(deadlineClosureOf({ lifecycle_status: "closed", deadline_date: "10/12/2026" }, {}, { now: NOW })).toBeNull();
-    expect(deadlineClosureOf({ lifecycle_status: "open", deadline_date: "10/12/2026" }, { lifecycle_status: "awarded" }, { now: NOW })).toBeNull();
-    expect(deadlineClosureOf({ lifecycle_status: "open", deadline_date: "TBD" }, {}, { now: NOW })).toBeNull();
+  it("names no deadline whenever the rule did not close the bid", () => {
+    expect(resolveLifecycle({ lifecycle_status: "open", deadline_date: "10/12/2026" }).closedByDeadline).toBeNull();
+    expect(resolveLifecycle({ lifecycle_status: "open", deadline_date: "10/12/2026" }, {}, {}).closedByDeadline).toBeNull();
+    expect(resolveLifecycle({ lifecycle_status: "open", deadline_date: "10/14/2026" }, {}, { now: NOW }).closedByDeadline).toBeNull();
+    expect(resolveLifecycle({ lifecycle_status: "closed", deadline_date: "10/12/2026" }, {}, { now: NOW }).closedByDeadline).toBeNull();
+    expect(resolveLifecycle({ lifecycle_status: "open", deadline_date: "10/12/2026" }, { lifecycle_status: "awarded" }, { now: NOW }).closedByDeadline).toBeNull();
+    expect(resolveLifecycle({ lifecycle_status: "open", deadline_date: "TBD" }, {}, { now: NOW }).closedByDeadline).toBeNull();
+    expect(resolveLifecycle({ lifecycle_status: "open", deadline_date: "01/01/1970" }, {}, { now: NOW }).closedByDeadline).toBeNull();
+  });
+
+  it("has exactly the fields mergeLifecycleFields returns", () => {
+    const cases: Array<[Record<string, unknown>, Record<string, unknown>, { now?: string }]> = [
+      [{ lifecycle_status: "open", deadline_date: "10/12/2026" }, {}, { now: NOW }],
+      [{ lifecycle_status: "closed" }, { lifecycle_status: "awarded", awarded_date: "07/09/2026" }, { now: NOW }],
+      [{ is_active: 0, solicitation_number: "N-1" }, { deadline_date: "10/20/2026" }, {}],
+      [{}, {}, {}],
+    ];
+    for (const [incoming, existing, options] of cases) expect(resolveLifecycle(incoming, existing, options).fields).toEqual(mergeLifecycleFields(incoming, existing, options));
   });
 });
 

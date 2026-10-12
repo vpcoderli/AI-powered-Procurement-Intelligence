@@ -1,5 +1,5 @@
 import { getBidDescriptionIssue } from "@/lib/bid-description";
-import { closedPayload, deadlineClosureOf, mergeLifecycleFields, type LifecycleMergeOptions } from "./lifecycle";
+import { closedPayload, resolveLifecycle, type LifecycleMergeOptions } from "./lifecycle";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -106,11 +106,13 @@ export function mergePersistedBid(incoming: JsonRecord, existing: JsonRecord = {
       },
     };
   }
-  Object.assign(merged, mergeLifecycleFields(incoming, existing, options));
-  const deadline = deadlineClosureOf(incoming, existing, options);
-  if (deadline !== null && options.now !== undefined) {
+  const lifecycle = resolveLifecycle(incoming, existing, options);
+  Object.assign(merged, lifecycle.fields);
+  if (lifecycle.closedByDeadline !== null && options.now !== undefined) {
+    // The reason goes only on a payload that is a JSON object (or text that parses to one). Any other payload, or none,
+    // is stored exactly as the import would have stored it: the bid still closes, but a payload is never rewritten for it.
     // The incoming payload replaces the stored one, so a bid that is open again carries no stale reason.
-    const closed = closedPayload(record(merged.raw_payload), "deadline_passed", options.now, { deadline });
+    const closed = closedPayload(merged.raw_payload, "deadline_passed", options.now, { deadline: lifecycle.closedByDeadline });
     if (closed) merged.raw_payload = closed;
   }
   return merged;

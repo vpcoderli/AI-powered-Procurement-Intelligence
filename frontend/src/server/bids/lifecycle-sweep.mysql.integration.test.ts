@@ -38,6 +38,9 @@ const SEEDS: Seed[] = [
   { id: "odd:not-available", deadline: "Not Available" },
   { id: "odd:tbd", deadline: "TBD" },
   { id: "odd:impossible-date", deadline: "02/30/2026" },
+  { id: "odd:min-date", deadline: "0001-01-01" },
+  { id: "odd:epoch-zero", deadline: "01/01/1970" },
+  { id: "odd:dotnet-min", deadline: "/Date(-62135596800000)/" },
   { id: "none:null", deadline: null },
   { id: "none:blank", deadline: "  " },
   { id: "done:awarded", deadline: "10/01/2026", lifecycleStatus: "awarded" },
@@ -45,7 +48,8 @@ const SEEDS: Seed[] = [
 ];
 const OPEN_ROWS = SEEDS.filter((seed) => !seed.lifecycleStatus).length;
 const EXPIRED = SEEDS.filter((seed) => seed.expired).map((seed) => seed.id).sort();
-const EXPECTED = { scanned: OPEN_ROWS, closed: EXPIRED.length, unparseable: 3, closedByIssuerType: { state: 4, county: 2, city: 1 } };
+const UNREADABLE = SEEDS.filter((seed) => seed.id.startsWith("odd:")).map((seed) => seed.id);
+const EXPECTED = { scanned: OPEN_ROWS, closed: EXPIRED.length, unparseable: UNREADABLE.length, closedByIssuerType: { state: 4, county: 2, city: 1 } };
 
 const COLUMNS = ["id", "source", "source_bid_id", "dedupe_key", "title", "description", "deadline_date", "issuer_name", "issuer_type", "state_code",
   "source_url", "is_active", "lifecycle_status", "raw_payload", "first_seen_at", "last_seen_at", "created_at", "updated_at"];
@@ -148,15 +152,15 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("deadline swe
     await sweep();
     const after = await all();
 
-    for (const id of ["done:awarded", "done:closed", "odd:not-available", "odd:tbd", "odd:impossible-date", "none:null", "none:blank"]) {
+    for (const id of ["done:awarded", "done:closed", ...UNREADABLE, "none:null", "none:blank"]) {
       expect(after.find((row) => row.id === id)).toEqual(before.find((row) => row.id === id));
     }
   });
 
-  it("writes nothing on a dry run, even through a store that cannot hold a transaction", async () => {
+  it("writes nothing on a dry run", async () => {
     await seed();
     const before = await all();
-    const result = await sweepExpiredBids({ mysql: { query: mysql.query.bind(mysql) } }, { now: NOW, dryRun: true });
+    const result = await sweep({ dryRun: true });
 
     expect(result).toEqual({ ...EXPECTED, dryRun: true });
     expect(await all()).toEqual(before);
@@ -168,7 +172,7 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("deadline swe
     const afterFirst = await all();
     const second = await sweep();
 
-    expect(second).toEqual({ scanned: OPEN_ROWS - EXPIRED.length, closed: 0, unparseable: 3, closedByIssuerType: {}, dryRun: false });
+    expect(second).toEqual({ scanned: OPEN_ROWS - EXPIRED.length, closed: 0, unparseable: UNREADABLE.length, closedByIssuerType: {}, dryRun: false });
     expect(await all()).toEqual(afterFirst);
   });
 
@@ -236,27 +240,55 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("deadline swe
     expect(await read("race:expired")).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
   });
 
-  it("waits for an import that holds a bid's lock, then judges it on what the import wrote", async () => {
+  /** Rejects when `promise` has not settled within `ms`; the sweep must not wait on a row another connection holds. */
+  async function settlesWithin<T>(promise: Promise<T>, ms: number): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`the sweep was still waiting after ${ms} ms`)), ms); });
+    try { return await Promise.race([promise, timeout]); } finally { clearTimeout(timer); }
+  }
+
+  it("skips a bid another connection has locked, without waiting, and closes it on a later pass once the lock is released", async () => {
     await seed([{ id: "lock:held", deadline: "10/12/2026" }, { id: "lock:free", deadline: "10/12/2026" }]);
     const holder = await importer.getConnection();
     await holder.beginTransaction();
     await holder.query("SELECT id FROM bids WHERE id = ? FOR UPDATE", ["lock:held"]);
     try {
-      let settled = false;
-      const sweeping = sweep().finally(() => { settled = true; });
-      await new Promise((resolve) => setTimeout(resolve, 600));
-      expect(settled).toBe(false);
+      const during = await settlesWithin(sweep(), 5_000);
 
-      await holder.query("UPDATE bids SET deadline_date = ?, raw_payload = ? WHERE id = ?", ["12/31/2026", '{"imported":"later"}', "lock:held"]);
-      await holder.commit();
-      const result = await sweeping;
-
-      expect(result).toMatchObject({ scanned: 2, closed: 1 });
-      expect(await read("lock:held")).toMatchObject({ lifecycle_status: "open", deadline_date: "12/31/2026", raw_payload: '{"imported":"later"}' });
-      expect(await read("lock:free")).toMatchObject({ lifecycle_status: "closed" });
+      expect(during).toMatchObject({ scanned: 2, closed: 1, closedByIssuerType: { state: 1 } });
+      expect(await read("lock:held")).toMatchObject({ lifecycle_status: "open", is_active: 1, updated_at: SEEDED_AT });
+      expect(await read("lock:held")).toEqual(expect.objectContaining({ raw_payload: payloadOf({ id: "lock:held", deadline: "10/12/2026" }) }));
+      expect(await read("lock:free")).toMatchObject({ lifecycle_status: "closed", is_active: 0, updated_at: NOW_ISO });
     } finally {
+      await holder.rollback();
       holder.release();
     }
+
+    const later = await sweep();
+
+    expect(later).toMatchObject({ scanned: 1, closed: 1, closedByIssuerType: { state: 1 } });
+    expect(await read("lock:held")).toMatchObject({ lifecycle_status: "closed", is_active: 0, updated_at: NOW_ISO });
+    expect(JSON.parse((await read("lock:held")).raw_payload!).lifecycle).toMatchObject({ closed_reason: "deadline_passed", deadline: "10/12/2026" });
+  }, 30_000);
+
+  it("leaves a locked bid open on the later pass too when the import that held the lock moved its deadline ahead", async () => {
+    await seed([{ id: "lock:held", deadline: "10/12/2026" }, { id: "lock:free", deadline: "10/12/2026" }]);
+    const holder = await importer.getConnection();
+    await holder.beginTransaction();
+    await holder.query("SELECT id FROM bids WHERE id = ? FOR UPDATE", ["lock:held"]);
+    try {
+      expect(await settlesWithin(sweep(), 5_000)).toMatchObject({ scanned: 2, closed: 1 });
+      await holder.query("UPDATE bids SET deadline_date = ?, raw_payload = ? WHERE id = ?", ["12/31/2026", '{"imported":"later"}', "lock:held"]);
+      await holder.commit();
+    } finally {
+      await holder.rollback(); // no-op after the commit; releases the lock if an assertion above failed first
+      holder.release();
+    }
+
+    const later = await sweep();
+
+    expect(later).toMatchObject({ scanned: 1, closed: 0, unparseable: 0 });
+    expect(await read("lock:held")).toMatchObject({ lifecycle_status: "open", is_active: 1, deadline_date: "12/31/2026", raw_payload: '{"imported":"later"}' });
   }, 30_000);
 
   it("rolls the whole page back when one of its writes fails, and surfaces the error", async () => {
@@ -281,14 +313,6 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("deadline swe
     expect((await all()).map((row) => row.lifecycle_status)).toEqual(["open", "open", "open"]);
     // The single pooled connection was handed back: the pool still answers.
     expect(await sweep({ dryRun: true })).toMatchObject({ scanned: 3, closed: 3 });
-  });
-
-  it("refuses to close bids through a store that cannot hold a transaction", async () => {
-    await seed([{ id: "plain:1", deadline: "10/12/2026" }]);
-
-    await expect(sweepExpiredBids({ mysql: { query: mysql.query.bind(mysql) } }, { now: NOW })).rejects.toThrow(/transaction/i);
-
-    expect(await read("plain:1")).toMatchObject({ lifecycle_status: "open" });
   });
 
   it("returns an empty result when there is nothing open", async () => {

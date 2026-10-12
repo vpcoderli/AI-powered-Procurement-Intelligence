@@ -66,6 +66,28 @@ function decideLifecycle(incoming: JsonRecord, existing: JsonRecord, now: string
     : { status: "closed", deadline, closedByDeadline: true };
 }
 
+export interface LifecycleResolution {
+  /** The lifecycle columns of the merged bid. */
+  fields: JsonRecord;
+  /** The deadline that made the deadline-passed rule close an otherwise open bid; null when the rule did not close it. */
+  closedByDeadline: string | null;
+}
+
+/** `mergeLifecycleFields`, plus the deadline that closed the bid, from one decision. */
+export function resolveLifecycle(incoming: JsonRecord, existing: JsonRecord = {}, options: LifecycleMergeOptions = {}): LifecycleResolution {
+  const { status, deadline, closedByDeadline } = decideLifecycle(incoming, existing, options.now);
+  return {
+    fields: {
+      lifecycle_status: status,
+      is_active: status === "open" ? 1 : 0,
+      awarded_date: text(incoming.awarded_date) || text(existing.awarded_date) || null,
+      deadline_date: deadline || null,
+      solicitation_number: text(incoming.solicitation_number) || text(existing.solicitation_number) || null,
+    },
+    closedByDeadline: closedByDeadline ? deadline : null,
+  };
+}
+
 /**
  * Lifecycle status, activity and the three lifecycle columns of a merged bid (spec 2026-09-24
  * §5.1). `is_active` always equals an open lifecycle; an awarded bid is never downgraded to
@@ -77,20 +99,7 @@ function decideLifecycle(incoming: JsonRecord, existing: JsonRecord, now: string
  * import states. An unreadable or missing deadline never closes a bid.
  */
 export function mergeLifecycleFields(incoming: JsonRecord, existing: JsonRecord = {}, options: LifecycleMergeOptions = {}): JsonRecord {
-  const { status, deadline } = decideLifecycle(incoming, existing, options.now);
-  return {
-    lifecycle_status: status,
-    is_active: status === "open" ? 1 : 0,
-    awarded_date: text(incoming.awarded_date) || text(existing.awarded_date) || null,
-    deadline_date: deadline || null,
-    solicitation_number: text(incoming.solicitation_number) || text(existing.solicitation_number) || null,
-  };
-}
-
-/** The deadline that made the deadline-passed rule close this bid at `options.now`, or null when it did not. */
-export function deadlineClosureOf(incoming: JsonRecord, existing: JsonRecord = {}, options: LifecycleMergeOptions = {}): string | null {
-  const { closedByDeadline, deadline } = decideLifecycle(incoming, existing, options.now);
-  return closedByDeadline ? deadline : null;
+  return resolveLifecycle(incoming, existing, options).fields;
 }
 
 export function readListPagination(metadata: unknown): { listKind: string | null; complete: boolean; requestsMade: number | null } | null {

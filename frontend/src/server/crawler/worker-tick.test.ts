@@ -273,11 +273,21 @@ describe("complete crawler worker tick", () => {
     });
 
     it("sweeps the MySQL store when the worker has one", async () => {
-      const mysql = { query: async () => [[], undefined] as [unknown[], unknown], execute: async () => [{ affectedRows: 0 }, undefined] as [unknown, unknown] };
+      const mysql = {
+        query: async () => [[], undefined] as [unknown[], unknown],
+        execute: async () => [{ affectedRows: 0 }, undefined] as [unknown, unknown],
+        getConnection: async (): Promise<never> => { throw new Error("nothing is closed here, so no transaction is opened"); },
+      };
       let target: unknown;
       await tick({ sweepExpiredBids: async (received) => { target = received; return { scanned: 0, closed: 0, unparseable: 0, closedByIssuerType: {}, dryRun: false }; } }, 10, { mysql })();
 
       expect(target).toEqual({ mysql });
+    });
+
+    it("does not accept a MySQL store that cannot hold a transaction: that is a type error, not a failure on every tick", () => {
+      const narrow = { query: async () => [[], undefined] as [unknown[], unknown], execute: async () => [{ affectedRows: 0 }, undefined] as [unknown, unknown] };
+      // @ts-expect-error the sweep opens a transaction per page of closures, so the worker's mysql must have getConnection
+      createCrawlerWorkerTick({ database: testDb.db, mysql: narrow, owner: "test-worker", matcher: async () => matching, notifier: async () => notification });
     });
 
     it("turns a sweep failure into lifecycleSweepError without failing the tick or the other stages", async () => {

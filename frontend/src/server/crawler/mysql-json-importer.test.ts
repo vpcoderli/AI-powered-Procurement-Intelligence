@@ -383,7 +383,8 @@ describe("bid lifecycle in the MySQL importer (2026-09-24 phase 1)", () => {
 
   it("closes an open bid whose deadline has passed and reopens it, with no stale reason, when the deadline moves", async () => {
     const mysql = createFakeMysql();
-    await importCrawlerJsonRunIntoMysql(mysql, run([{ ...bid("1"), deadline_date: "09/20/2026" }, { ...bid("2"), deadline_date: "10/20/2026" }], false, T0));
+    const crawled = (id: string, deadline: string) => ({ ...bid(id), raw_payload: { portal_id: id }, deadline_date: deadline });
+    await importCrawlerJsonRunIntoMysql(mysql, run([crawled("1", "09/20/2026"), crawled("2", "10/20/2026")], false, T0));
 
     expect(mysql.bids.get("bidnet_co_denver:1")).toMatchObject({ lifecycle_status: "closed", is_active: 0, deadline_date: "09/20/2026" });
     expect(JSON.parse(String(mysql.bids.get("bidnet_co_denver:1")!.raw_payload)).lifecycle)
@@ -391,7 +392,7 @@ describe("bid lifecycle in the MySQL importer (2026-09-24 phase 1)", () => {
     expect(mysql.bids.get("bidnet_co_denver:2")).toMatchObject({ lifecycle_status: "open", is_active: 1 });
     expect(String(mysql.bids.get("bidnet_co_denver:2")!.raw_payload)).not.toContain("closed_reason");
 
-    await importCrawlerJsonRunIntoMysql(mysql, run([{ ...bid("1"), deadline_date: "10/20/2026" }], false, T1));
+    await importCrawlerJsonRunIntoMysql(mysql, run([crawled("1", "10/20/2026")], false, T1));
 
     expect(mysql.bids.get("bidnet_co_denver:1")).toMatchObject({ lifecycle_status: "open", is_active: 1, deadline_date: "10/20/2026" });
     expect(String(mysql.bids.get("bidnet_co_denver:1")!.raw_payload)).not.toContain("closed_reason");

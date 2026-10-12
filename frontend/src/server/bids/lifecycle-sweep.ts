@@ -38,12 +38,12 @@ interface MysqlSweepConnection {
 }
 
 /**
- * A MySQL pool. Pages are read through `query`; a page of closures needs `getConnection` to hold its
- * transaction, so a store without one can only dry-run.
+ * A MySQL pool. Pages are read through `query`; every page of closures holds its transaction on a connection
+ * from `getConnection`, so a narrower store (one with only `query` and `execute`) is not accepted.
  */
 export interface MysqlSweepStore {
   query: (sql: string, values?: unknown[]) => Promise<[unknown[], unknown?]>;
-  getConnection?: () => Promise<MysqlSweepConnection>;
+  getConnection: () => Promise<MysqlSweepConnection>;
 }
 
 export type LifecycleSweepTarget = { database: AppDatabase } | { mysql: MysqlSweepStore };
@@ -96,13 +96,15 @@ function sqliteSweepStore(database: AppDatabase): SweepStore {
       // IMMEDIATE takes the write lock first, so the payloads read below cannot change before they are replaced.
       const closeAll = client.transaction((): OpenBid[] => {
         const ids = expired.map((bid) => bid.id);
+        const closeWithPayload = client.prepare(closeSql(true));
+        const closeWithoutPayload = client.prepare(closeSql(false));
         const closed: OpenBid[] = [];
         for (const bid of client.prepare(lockedReadSql(ids.length, "")).all(...ids) as LockedBid[]) {
           const closure = closureOf(bid, nowMs, nowIso);
           if (!closure) continue;
           const written = closure.rawPayload === null
-            ? client.prepare(closeSql(false)).run(nowIso, bid.id)
-            : client.prepare(closeSql(true)).run(closure.rawPayload, nowIso, bid.id);
+            ? closeWithoutPayload.run(nowIso, bid.id)
+            : closeWithPayload.run(closure.rawPayload, nowIso, bid.id);
           if (written.changes === 1) closed.push(bid);
         }
         return closed;
@@ -115,13 +117,13 @@ function sqliteSweepStore(database: AppDatabase): SweepStore {
 function mysqlSweepStore(mysql: MysqlSweepStore): SweepStore {
   return {
     readPage: (afterId, limit) => mysqlSelectMany<OpenBid>(mysql, PAGE_SQL, [afterId, limit]),
-    async closePage(expired, nowMs, nowIso) {
-      const getConnection = mysql.getConnection?.bind(mysql);
-      if (!getConnection) throw new Error("The bid lifecycle sweep needs a MySQL pool that can hold a transaction to close bids.");
-      return mysqlTransaction({ getConnection }, async (connection) => {
+    closePage: (expired, nowMs, nowIso) =>
+      // SKIP LOCKED: a bid another transaction holds (an import in flight) is left for a later pass instead of waited for,
+      // so the sweep never blocks an import or deadlocks with one; that import applies the deadline rule to the bid itself.
+      mysqlTransaction(mysql, async (connection) => {
         const ids = expired.map((bid) => bid.id);
         const closed: OpenBid[] = [];
-        for (const bid of await mysqlSelectMany<LockedBid>(connection, lockedReadSql(ids.length, " FOR UPDATE"), ids)) {
+        for (const bid of await mysqlSelectMany<LockedBid>(connection, lockedReadSql(ids.length, " FOR UPDATE SKIP LOCKED"), ids)) {
           const closure = closureOf(bid, nowMs, nowIso);
           if (!closure) continue;
           const written = closure.rawPayload === null
@@ -130,8 +132,7 @@ function mysqlSweepStore(mysql: MysqlSweepStore): SweepStore {
           if (written.affectedRows === 1) closed.push(bid);
         }
         return closed;
-      });
-    },
+      }),
   };
 }
 
@@ -150,7 +151,9 @@ function pageSize(batchSize: number | undefined): number {
  * re-read under the write lock and judged once more, so a bid an import has just refreshed is never closed on
  * a stale deadline and no payload is overwritten with an older copy; each is closed (`lifecycle_status`,
  * `is_active`, `updated_at`) with the reason recorded in `raw_payload.lifecycle`, all of a page in one
- * transaction. A deadline that cannot be read never closes a bid. Only open bids are touched, so a second run
+ * transaction. On MySQL the re-read is `FOR UPDATE SKIP LOCKED`: a bid an import holds is skipped, not waited
+ * for, and is closed on a later pass if it is still past its deadline (the import applies the same rule to it
+ * itself). A deadline that cannot be read never closes a bid. Only open bids are touched, so a second run
  * finds nothing left to close.
  */
 export async function sweepExpiredBids(target: LifecycleSweepTarget, options: LifecycleSweepOptions): Promise<LifecycleSweepResult> {

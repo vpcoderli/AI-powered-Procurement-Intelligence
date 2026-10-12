@@ -6,7 +6,9 @@
  * on one clock, UTC-10 (Hawaii, the last end of day among the US states): a bid is never closed before
  * its own deadline in any US zone, and a date-only deadline is good through the end of that day.
  * A deadline with an explicit `Z` or offset is exact. Text that is not a plausible date reads as
- * `null`, and a deadline we cannot read never expires a bid.
+ * `null`, and a deadline we cannot read never expires a bid. That includes every instant outside the
+ * years 2000 to 2100: the dates portals print for "no date" (0001-01-01, 1970-01-01, .NET's
+ * /Date(-62135596800000)/) are placeholders, and closing a bid on one would hide a bid that may be open.
  *
  * Pure: no clock, no string-to-Date parsing, no dependence on the server's time zone.
  */
@@ -24,11 +26,9 @@ const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
 /** Longest text a deadline can be; it bounds the work the patterns below can be made to do. */
 const MAX_DEADLINE_TEXT_LENGTH = 64;
-/** The range of instants a Date can hold. */
-const MAX_DATE_MS = 8.64e15;
-/** A bare epoch number is a deadline only when it lands in these years (inclusive). */
-const MIN_EPOCH_YEAR = 2000;
-const MAX_EPOCH_YEAR = 2100;
+/** A deadline lies in these years (the UTC year of its instant, inclusive); a date outside them is a placeholder or a typo. */
+const MIN_DEADLINE_YEAR = 2000;
+const MAX_DEADLINE_YEAR = 2100;
 const MONTH_PREFIXES = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
 const DOT_NET_DATE = /^\/Date\((-?\d+)\)\/$/;
@@ -36,8 +36,11 @@ const EPOCH_MILLISECONDS = /^\d{13}$/;
 const EPOCH_SECONDS = /^\d{10}$/;
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const ISO_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?\s*(Z|[+-]\d{2}:?\d{2})?$/;
-const US_NUMERIC = /^(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?)?(?:\s+[A-Za-z]{1,5})?$/;
-const MONTH_NAME = /^(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2}),?\s+(\d{4})(?:\s*@?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([ap]m)?)?(?:\s+[a-z]{1,5})?$/i;
+// In both patterns below the AM/PM is matched first, and a zone abbreviation may follow it directly ("2:00 PMCST");
+// a zone set off by a space must not itself start with AM or PM, or "2:00 PMCST" could be read as 02:00 plus a zone "PMCST".
+// US numeric: the time may be introduced by "at" or "@" ("7/7/2026 at 1:30PM").
+const US_NUMERIC = /^(\d{1,2})\/(\d{1,2})\/(\d{4}|\d{2})(?:\s+(?:[Aa][Tt]\s+|@\s*)?(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(?:([AaPp][Mm])(?:(?![AaPp][Mm])[A-Za-z]{1,5})?)?)?(?:\s+(?![AaPp][Mm])[A-Za-z]{1,5})?$/;
+const MONTH_NAME = /^(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2}),?\s+(\d{4})(?:\s*@?\s*(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(?:([ap]m)(?:(?![ap]m)[a-z]{1,5})?)?)?(?:\s+(?![ap]m)[a-z]{1,5})?$/i;
 
 interface Clock {
   hour: number;
@@ -75,20 +78,11 @@ function fromCalendar(year: number, month: number, day: number, clock: Clock | n
   return { instantMs: utcMs(year, month, day, clock) - zoneOffsetMinutes * MINUTE_MS, dateOnly: clock === null };
 }
 
-function fromEpoch(instantMs: number, plausibleYearsOnly: boolean): ParsedBidDeadline | null {
-  if (!Number.isFinite(instantMs) || Math.abs(instantMs) > MAX_DATE_MS) return null;
-  if (plausibleYearsOnly) {
-    const year = new Date(instantMs).getUTCFullYear();
-    if (year < MIN_EPOCH_YEAR || year > MAX_EPOCH_YEAR) return null;
-  }
-  return { instantMs, dateOnly: false };
-}
-
 function parseEpoch(value: string): ParsedBidDeadline | null {
   const dotNet = DOT_NET_DATE.exec(value);
-  if (dotNet) return fromEpoch(Number(dotNet[1]), false);
-  if (EPOCH_MILLISECONDS.test(value)) return fromEpoch(Number(value), true);
-  if (EPOCH_SECONDS.test(value)) return fromEpoch(Number(value) * 1000, true);
+  if (dotNet) return { instantMs: Number(dotNet[1]), dateOnly: false };
+  if (EPOCH_MILLISECONDS.test(value)) return { instantMs: Number(value), dateOnly: false };
+  if (EPOCH_SECONDS.test(value)) return { instantMs: Number(value) * 1000, dateOnly: false };
   return null;
 }
 
@@ -131,12 +125,22 @@ function parseMonthName(value: string): ParsedBidDeadline | null {
   return fromCalendar(Number(match[3]), month, Number(match[2]), clock, DEADLINE_ZONE_OFFSET_MINUTES);
 }
 
-/** The instant a deadline text names, or null when it is blank or not a date this module can read. */
+/** True when the instant's UTC year is one a deadline can be in. An instant no Date can hold has no year, so it is not. */
+function inDeadlineYears(instantMs: number): boolean {
+  const year = new Date(instantMs).getUTCFullYear();
+  return year >= MIN_DEADLINE_YEAR && year <= MAX_DEADLINE_YEAR;
+}
+
+/**
+ * The instant a deadline text names, or null when it is blank, not a date this module can read, or a date outside
+ * the years 2000 to 2100 (whatever form it is written in).
+ */
 export function parseBidDeadline(text: string | null | undefined): ParsedBidDeadline | null {
   if (typeof text !== "string") return null;
   const value = text.trim();
   if (!value || value.length > MAX_DEADLINE_TEXT_LENGTH) return null;
-  return parseEpoch(value) ?? parseIso(value) ?? parseUsNumeric(value) ?? parseMonthName(value);
+  const parsed = parseEpoch(value) ?? parseIso(value) ?? parseUsNumeric(value) ?? parseMonthName(value);
+  return parsed !== null && inDeadlineYears(parsed.instantMs) ? parsed : null;
 }
 
 /** Instant (ms) from which the bid counts as expired; null when unparseable. A date-only deadline is good through its whole day. */

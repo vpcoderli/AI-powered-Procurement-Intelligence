@@ -93,9 +93,9 @@ describe("parseBidDeadline", () => {
   });
 
   describe("epoch forms", () => {
-    it("reads /Date(ms)/ as an exact instant, negative values included", () => {
+    it("reads /Date(ms)/ as an exact instant", () => {
       expect(parseBidDeadline("/Date(1893456000000)/")).toEqual({ instantMs: 1_893_456_000_000, dateOnly: false });
-      expect(parseBidDeadline("/Date(-86400000)/")).toEqual({ instantMs: -86_400_000, dateOnly: false });
+      expect(parseBidDeadline("/Date(946684800000)/")).toEqual({ instantMs: Date.UTC(2000, 0, 1), dateOnly: false });
     });
 
     it("reads a 13-digit number as epoch milliseconds and a 10-digit one as epoch seconds", () => {
@@ -235,6 +235,94 @@ describe("parseBidDeadline", () => {
         "Octember 5, 2026", "Oct 5", "5 Oct 2026", "Tuesday, October 13, 2026",
       ]) expect(parseBidDeadline(text)).toBeNull();
     });
+  });
+});
+
+describe("a zone abbreviation next to the AM/PM", () => {
+  const twoPm = Date.UTC(2026, 9, 14, 0); // 2:00 PM on 13 October in UTC-10
+
+  it("keeps the PM when a zone abbreviation is written right after it", () => {
+    for (const text of ["10/13/2026 2:00 PMCST", "10/13/2026 2:00 PM CST", "10/13/2026 2:00PMCST", "10/13/2026 2:00 pmcst", "10/13/2026 2:00 PM"]) {
+      expect(parseBidDeadline(text), text).toEqual({ instantMs: twoPm, dateOnly: false });
+      // 2:00 PM is still ahead of NOW; read as 02:00 AM it would already have passed.
+      expect(bidDeadlinePassed(text, NOW), text).toBe(false);
+    }
+  });
+
+  it("keeps the AM the same way, in the numeric and the month-name forms", () => {
+    expect(parseBidDeadline("10/13/2026 2:00 AMEST")?.instantMs).toBe(NOW);
+    expect(parseBidDeadline("Dec 1, 2026 @ 10:00 AMEST")).toEqual({ instantMs: Date.UTC(2026, 11, 1, 20), dateOnly: false });
+    expect(parseBidDeadline("Dec 1, 2026 @ 10:00 AM EST")).toEqual({ instantMs: Date.UTC(2026, 11, 1, 20), dateOnly: false });
+    expect(parseBidDeadline("Aug 21, 2026 2:00 PMPDT")?.instantMs).toBe(Date.UTC(2026, 7, 22, 0));
+  });
+
+  it("never reads the AM/PM itself as the zone abbreviation", () => {
+    for (const text of ["10/13/2026 2:00 PMPM", "10/13/2026 2:00 PM PM", "10/13/2026 2:00 AM PM", "Aug 21, 2026 2:00 PM AM", "10/13/2026 PMT"]) {
+      expect(parseBidDeadline(text), text).toBeNull();
+    }
+  });
+
+  it("still ignores a zone abbreviation after a 24-hour time, but needs a space there", () => {
+    expect(parseBidDeadline("10/13/2026 14:00 CST")).toEqual({ instantMs: twoPm, dateOnly: false });
+    expect(parseBidDeadline("10/13/2026 14:00CST")).toBeNull();
+  });
+});
+
+describe("an 'at' or '@' between the date and the time", () => {
+  it("reads the real portal values 7/7/2026 at 1:30PM and 8/26/2026 at 1:30PM", () => {
+    // 1:30 PM in UTC-10 is 23:30Z the same day.
+    expect(parseBidDeadline("7/7/2026 at 1:30PM")).toEqual({ instantMs: Date.UTC(2026, 6, 7, 23, 30), dateOnly: false });
+    expect(parseBidDeadline("8/26/2026 at 1:30PM")).toEqual({ instantMs: Date.UTC(2026, 7, 26, 23, 30), dateOnly: false });
+    expect(bidDeadlinePassed("7/7/2026 at 1:30PM", NOW)).toBe(true);
+    expect(bidDeadlinePassed("8/26/2026 at 1:30PM", NOW)).toBe(true);
+  });
+
+  it("reads it with a space before the AM/PM, in any case, with seconds, with @, and with a zone", () => {
+    const expected = { instantMs: Date.UTC(2026, 6, 7, 23, 30), dateOnly: false };
+    for (const text of ["7/7/2026 at 1:30 PM", "7/7/2026 AT 1:30PM", "7/7/2026 At 13:30", "7/7/2026 @ 1:30 PM", "7/7/2026 @1:30PM", "7/7/2026 at  1:30PM CST", "7/7/2026 at 1:30PMCST"]) {
+      expect(parseBidDeadline(text), text).toEqual(expected);
+    }
+    expect(parseBidDeadline("7/7/2026 at 1:30:15PM")?.instantMs).toBe(Date.UTC(2026, 6, 7, 23, 30, 15));
+  });
+
+  it("does not take a longer word, or an impossible time, for it", () => {
+    for (const text of ["7/7/2026 att 1:30PM", "7/7/2026 atl 1:30PM", "7/7/2026 at 25:30", "7/7/2026 at 13:30 PM", "7/7/2026 at at 1:30PM"]) {
+      expect(parseBidDeadline(text), text).toBeNull();
+    }
+  });
+});
+
+describe("the plausible years, 2000 to 2100, for every form", () => {
+  it("reads no placeholder or typo date: /Date()/, ISO, US and month-name forms outside the window are null", () => {
+    for (const text of [
+      "0001-01-01", "1970-01-01", "/Date(-62135596800000)/", "12/31/1899", "2101-01-01",
+      "/Date(0)/", "/Date(-86400000)/", "/Date(4133980800000)/", "1999-12-31", "01/01/1970", "12/31/1999", "01/01/0001", "1/1/2101",
+      "1999-12-31T23:59:59Z", "2101-01-01T00:00:00Z", "1970-01-01 00:00", "Dec 31, 1999", "Jan 1, 2101", "Jan 1, 1970 @ 12:00 AM",
+      "12/31/2100 8:00 PM", // 2101-01-01T06:00Z
+    ]) {
+      expect(parseBidDeadline(text), text).toBeNull();
+      expect(bidDeadlineExpiresAtMs(text), text).toBeNull();
+      expect(bidDeadlinePassed(text, NOW), text).toBe(false);
+    }
+  });
+
+  it("reads the years at the edges of the window, by the UTC year of the instant", () => {
+    expect(parseBidDeadline("2000-01-01")?.instantMs).toBe(Date.UTC(2000, 0, 1, 10));
+    expect(parseBidDeadline("01/01/2000")?.instantMs).toBe(Date.UTC(2000, 0, 1, 10));
+    expect(parseBidDeadline("2100-12-31")?.instantMs).toBe(Date.UTC(2100, 11, 31, 10));
+    expect(parseBidDeadline("12/31/2100")?.instantMs).toBe(Date.UTC(2100, 11, 31, 10));
+    expect(parseBidDeadline("Jan 1, 2000")?.instantMs).toBe(Date.UTC(2000, 0, 1, 10));
+    expect(parseBidDeadline("Dec 31, 2100")?.instantMs).toBe(Date.UTC(2100, 11, 31, 10));
+    expect(parseBidDeadline("2000-01-01T00:00:00Z")?.instantMs).toBe(Date.UTC(2000, 0, 1));
+    expect(parseBidDeadline("2100-12-31T23:59:59Z")?.instantMs).toBe(Date.UTC(2100, 11, 31, 23, 59, 59));
+    expect(parseBidDeadline("12/31/2099 8:00 PM")?.instantMs).toBe(Date.UTC(2100, 0, 1, 6)); // still 2100 in UTC
+    expect(parseBidDeadline("/Date(946684800000)/")?.instantMs).toBe(Date.UTC(2000, 0, 1));
+    expect(parseBidDeadline("/Date(4133980799999)/")?.instantMs).toBe(Date.UTC(2100, 11, 31, 23, 59, 59, 999));
+  });
+
+  it("still reads a deadline of this year as passed or not, as before", () => {
+    expect(bidDeadlinePassed("10/12/2026", NOW)).toBe(true);
+    expect(bidDeadlinePassed("10/14/2026", NOW)).toBe(false);
   });
 });
 

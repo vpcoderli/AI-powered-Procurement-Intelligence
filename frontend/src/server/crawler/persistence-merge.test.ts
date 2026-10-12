@@ -89,15 +89,41 @@ describe("deadline-passed close at import", () => {
     });
   });
 
-  it("starts a payload when the incoming row has none, and reads a payload sent as JSON text", () => {
-    expect(mergePersistedBid({ ...base, deadline_date: "10/12/2026" }, undefined, { now: NOW }).raw_payload)
-      .toEqual({ lifecycle: { closed_reason: "deadline_passed", closed_observed_at: NOW, deadline: "10/12/2026" } });
+  it("reads a payload sent as JSON text and stamps it as an object", () => {
     expect(mergePersistedBid({ ...base, deadline_date: "10/12/2026", raw_payload: JSON.stringify({ a: 1 }) }, undefined, { now: NOW }).raw_payload)
       .toEqual({ a: 1, lifecycle: { closed_reason: "deadline_passed", closed_observed_at: NOW, deadline: "10/12/2026" } });
+    expect(mergePersistedBid({ ...base, deadline_date: "10/12/2026", raw_payload: "{}" }, undefined, { now: NOW }).raw_payload)
+      .toEqual({ lifecycle: { closed_reason: "deadline_passed", closed_observed_at: NOW, deadline: "10/12/2026" } });
+  });
+
+  it("invents no payload when the incoming row has none, but still closes the bid", () => {
+    const merged = mergePersistedBid({ ...base, deadline_date: "10/12/2026" }, undefined, { now: NOW });
+    expect(merged).toMatchObject({ lifecycle_status: "closed", is_active: 0, deadline_date: "10/12/2026" });
+    expect(merged).not.toHaveProperty("raw_payload");
+  });
+
+  it.each([
+    ["text that is not JSON", "not json"],
+    ["an empty string", ""],
+    ["a JSON array", [1, 2]],
+    ["JSON text of an array", "[1,2]"],
+    ["JSON text of a string", '"text"'],
+    ["a number", 42],
+    ["null", null],
+  ])("closes the bid but leaves a payload that is %s exactly as it came", (_label, payload) => {
+    const merged = mergePersistedBid({ ...base, deadline_date: "10/12/2026", raw_payload: payload }, undefined, { now: NOW });
+    expect(merged).toMatchObject({ lifecycle_status: "closed", is_active: 0, deadline_date: "10/12/2026" });
+    expect(merged.raw_payload).toBe(payload);
+  });
+
+  it("leaves a non-object incoming payload alone even when the stored payload is an object", () => {
+    const merged = mergePersistedBid({ ...base, deadline_date: "10/12/2026", raw_payload: "not json" }, { title: "Road repairs", raw_payload: { portal_id: "A-1" } }, { now: NOW });
+    expect(merged).toMatchObject({ lifecycle_status: "closed" });
+    expect(merged.raw_payload).toBe("not json");
   });
 
   it("judges by the stored deadline when the refreshed row has none, and says so", () => {
-    const merged = mergePersistedBid({ ...base, deadline_date: null }, { deadline_date: "10/12/2026" }, { now: NOW });
+    const merged = mergePersistedBid({ ...base, deadline_date: null, raw_payload: { portal_id: "A-1" } }, { deadline_date: "10/12/2026" }, { now: NOW });
     expect(merged).toMatchObject({ lifecycle_status: "closed", is_active: 0, deadline_date: "10/12/2026" });
     expect(merged.raw_payload).toMatchObject({ lifecycle: { closed_reason: "deadline_passed", deadline: "10/12/2026" } });
   });
