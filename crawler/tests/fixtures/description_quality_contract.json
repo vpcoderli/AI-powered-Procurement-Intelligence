@@ -246,6 +246,8 @@
     {"name": "unauthorized access with code", "text": "Unauthorized Access (401)", "issue": "restricted_or_error_body"},
     {"name": "apache forbidden page", "text": "Forbidden\nYou don't have permission to access this resource.", "issue": "restricted_or_error_body"},
     {"name": "forbidden you do not have permission", "text": "Forbidden\nYou do not have permission to view this page.", "issue": "restricted_or_error_body"},
-    {"name": "unauthorized curly apostrophe", "text": "Unauthorized\nYou don’t have permission to view this directory or page.", "issue": "restricted_or_error_body"}
+    {"name": "unauthorized curly apostrophe", "text": "Unauthorized\nYou don’t have permission to view this directory or page.", "issue": "restricted_or_error_body"},
+    {"name": "attention required notice in scope", "text": "Attention required! All bidders must attend the mandatory pre-bid meeting on March 3.", "issue": null},
+    {"name": "attention required alone", "text": "Attention Required!", "issue": "restricted_or_error_body"}
   ]
 }
