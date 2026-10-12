@@ -90,6 +90,25 @@ describe("mergeLifecycleFields with a clock (deadline-passed rule)", () => {
     expect(resolveLifecycle({ lifecycle_status: "open", deadline_date: "10/12/2026 12:00 AM" }, {}, { now: "2026-10-13T12:00:00.000Z" }).closedByDeadline).toBe("10/12/2026 12:00 AM");
   });
 
+  it("keeps a bid whose deadline is a bare 12:00 (no AM/PM) open through the stated day, since it may be 12:00 AM", () => {
+    const at = (deadline: string, now: string) => mergeLifecycleFields({ lifecycle_status: "open", deadline_date: deadline }, {}, { now });
+    // Noon on the 13th in UTC-10 is 22:00Z; the end of the 13th is 10:00Z on the 14th.
+    for (const deadline of ["10/13/2026 12:00", "10/13/2026 12:00:00", "Oct 13, 2026 at 12:00", "10/13/2026 12:00 A"]) {
+      expect(at(deadline, "2026-10-13T22:00:00.000Z"), deadline).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+      expect(at(deadline, "2026-10-14T09:59:59.999Z"), deadline).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+      expect(at(deadline, "2026-10-14T10:00:00.000Z"), deadline).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
+    }
+    // With the PM written, 12:00 is noon.
+    expect(at("10/13/2026 12:00 PM", "2026-10-13T22:00:00.000Z")).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
+    expect(resolveLifecycle({ lifecycle_status: "open", deadline_date: "10/13/2026 12:00" }, {}, { now: "2026-10-13T22:00:00.000Z" }).closedByDeadline).toBeNull();
+  });
+
+  it("does not close a bid before the fraction of a second its ISO deadline states", () => {
+    const row = { lifecycle_status: "open", deadline_date: "2026-10-13T11:59:59.999Z" };
+    expect(mergeLifecycleFields(row, {}, { now: "2026-10-13T11:59:59.998Z" })).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+    expect(mergeLifecycleFields(row, {}, { now: "2026-10-13T11:59:59.999Z" })).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
+  });
+
   it("changes nothing without a clock", () => {
     const row = { lifecycle_status: "open", deadline_date: PASSED };
     expect(mergeLifecycleFields(row)).toMatchObject({ lifecycle_status: "open", is_active: 1 });

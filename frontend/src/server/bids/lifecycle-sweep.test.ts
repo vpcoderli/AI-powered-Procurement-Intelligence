@@ -249,29 +249,34 @@ describe("sweepExpiredBids on SQLite", () => {
     expect(updates.length).toBeLessThanOrEqual(4);
   });
 
-  it("holds a bid whose time has no AM/PM open until its PM reading, then closes it", async () => {
+  it("holds a bid whose time has no AM/PM open until its latest reading, then closes it", async () => {
     seed([
       { id: "ampm:two", deadline: "10/13/2026 2:00" }, // 02:00 is NOW, but as a PM hour it runs to 00:00Z on the 14th: stays open
-      { id: "ampm:noon", deadline: "10/13/2026 12:00" }, // noon is noon: 22:00Z, still ahead
+      { id: "ampm:noon", deadline: "10/13/2026 12:00 PM" }, // noon is noon: 22:00Z, still ahead
+      { id: "ampm:bare-twelve", deadline: "10/13/2026 12:00:00" }, // noon, or 12:00 AM with the AM dropped: good through the 13th, to 10:00Z on the 14th
       { id: "ampm:evening", deadline: "10/12/2026 7:30" }, // its PM reading, 19:30 on the 12th (05:30Z on the 13th), has passed
       { id: "ampm:small-hours", deadline: "10/13/2026 0:30" }, // hour 0 cannot be PM: 10:30Z, passed
       { id: "ampm:given", deadline: "10/13/2026 2:00 AM" }, // the AM is given: 12:00Z, passed
     ]);
     const result = await sweep();
 
-    expect(result).toMatchObject({ scanned: 5, closed: 3, unparseable: 0 });
+    expect(result).toMatchObject({ scanned: 6, closed: 3, unparseable: 0 });
     expect(closedIds()).toEqual(["ampm:evening", "ampm:given", "ampm:small-hours"]);
-    for (const id of ["ampm:two", "ampm:noon"]) expect(read(id)).toMatchObject({ lifecycleStatus: "open", isActive: 1, updatedAt: SEEDED_AT });
+    for (const id of ["ampm:two", "ampm:noon", "ampm:bare-twelve"]) expect(read(id)).toMatchObject({ lifecycleStatus: "open", isActive: 1, updatedAt: SEEDED_AT });
 
-    // Later that day: noon closes at its own 22:00Z, and 2:00 stays open until its PM reading, 00:00Z on the 14th.
+    // Later: 12:00 PM closes at its own 22:00Z, 2:00 at its PM reading (00:00Z on the 14th), the bare 12:00 when the 13th ends.
     const sweepAt = (now: string) => sweepExpiredBids({ database: testDb.db }, { now: new Date(now) });
     expect(await sweepAt("2026-10-13T21:59:59.999Z")).toMatchObject({ closed: 0 });
     expect(await sweepAt("2026-10-13T22:00:00.000Z")).toMatchObject({ closed: 1 });
     expect(read("ampm:noon")).toMatchObject({ lifecycleStatus: "closed", isActive: 0 });
+    expect(read("ampm:bare-twelve")).toMatchObject({ lifecycleStatus: "open", isActive: 1 });
     expect(read("ampm:two")).toMatchObject({ lifecycleStatus: "open", isActive: 1 });
     expect(await sweepAt("2026-10-13T23:59:59.999Z")).toMatchObject({ closed: 0 });
     expect(await sweepAt("2026-10-14T00:00:00.000Z")).toMatchObject({ closed: 1 });
     expect(read("ampm:two")).toMatchObject({ lifecycleStatus: "closed", isActive: 0 });
+    expect(await sweepAt("2026-10-14T09:59:59.999Z")).toMatchObject({ closed: 0 });
+    expect(await sweepAt("2026-10-14T10:00:00.000Z")).toMatchObject({ closed: 1 });
+    expect(read("ampm:bare-twelve")).toMatchObject({ lifecycleStatus: "closed", isActive: 0 });
   });
 
   it("treats a midnight deadline as the end of its stated day, the way portals write a date", async () => {
