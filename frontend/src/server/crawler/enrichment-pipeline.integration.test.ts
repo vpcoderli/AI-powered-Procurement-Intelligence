@@ -13,6 +13,7 @@ import { registerSourcesInMysql, type SourceCandidate } from "../../../scripts/r
 import { listCrawlableSourcesFromMysql } from "./source-registry";
 import { importCrawlerJsonRunIntoSqlite } from "./sqlite-json-importer";
 import { importCrawlerJsonRunIntoMysql, type CrawlerJsonRunPayload } from "./mysql-json-importer";
+import { fenceDetailBackfillPayload, loadDetailBackfillCandidates, type DetailHistoryStore } from "./detail-history";
 
 interface PipelineFixture {
   enriched: CrawlerJsonRunPayload;
@@ -22,6 +23,15 @@ interface PipelineFixture {
   sam_enriched: CrawlerJsonRunPayload;
   sam_failed: CrawlerJsonRunPayload;
   sam_body: string;
+  /** Two persisted body-less SAM rows; the older links an untrusted description. */
+  sam_backfill_history: NonNullable<CrawlerJsonRunPayload["bids"]>;
+  /** A backfill run over them with an attempt budget of 1. */
+  sam_backfill: CrawlerJsonRunPayload;
+}
+
+/** The single backfill slot of the next run, as the runner selects it. */
+async function nextBackfillCandidate(store: DetailHistoryStore): Promise<string[]> {
+  return (await loadDetailBackfillCandidates(store, "sam_gov", undefined, { limit: 1 })).map((row) => String(row.id));
 }
 
 describe.runIf(process.env.RUN_CRAWLER_INTEGRATION === "1")("offline crawler / HTTP extractor / database pipeline", () => {
@@ -105,6 +115,18 @@ describe.runIf(process.env.RUN_CRAWLER_INTEGRATION === "1")("offline crawler / H
       expect(getBidDescription(bid!)).toBe(fixture.sam_body);
       expect(bid?.description).not.toContain("noticedesc");
       expect((await queryBidsFromDatabase(database.db, { q: "SamBoundaryOnlyKeyword" })).bids.map((match) => match.id)).toContain(id);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("frees the only backfill slot once a SAM row the crawler cannot attempt is imported into SQLite", async () => {
+    const database = await createTestDatabase({ seed: false });
+    try {
+      importCrawlerJsonRunIntoSqlite(database.db, { source: "sam_gov", runId: randomUUID(), status: "success", startedAt: "2026-10-07T00:00:00.000Z", bids: fixture.sam_backfill_history });
+      expect(await nextBackfillCandidate({ database: database.db })).toEqual(["sam_gov:offline-backfill-untrusted"]);
+      importCrawlerJsonRunIntoSqlite(database.db, fenceDetailBackfillPayload(fixture.sam_backfill));
+      expect(await nextBackfillCandidate({ database: database.db })).toEqual(["sam_gov:offline-backfill-later"]);
     } finally {
       await database.cleanup();
     }
@@ -232,6 +254,13 @@ describe.runIf(process.env.RUN_CRAWLER_INTEGRATION === "1")("offline crawler / H
       expect(getBidDescription(bid!)).toBe(fixture.sam_body);
       expect(bid?.description).not.toContain("noticedesc");
       expect((await queryBidsFromMysql(mysql, { q: "SamBoundaryOnlyKeyword" })).bids.map((match) => match.id)).toContain(id);
+    });
+
+    it("frees the only backfill slot once a SAM row the crawler cannot attempt is imported into real MySQL", async () => {
+      await importCrawlerJsonRunIntoMysql(mysql, { source: "sam_gov", runId: randomUUID(), status: "success", startedAt: "2026-10-07T00:00:00.000Z", bids: fixture.sam_backfill_history });
+      expect(await nextBackfillCandidate({ mysql })).toEqual(["sam_gov:offline-backfill-untrusted"]);
+      await importCrawlerJsonRunIntoMysql(mysql, fenceDetailBackfillPayload(fixture.sam_backfill));
+      expect(await nextBackfillCandidate({ mysql })).toEqual(["sam_gov:offline-backfill-later"]);
     });
 
     it("quarantines a foreign derived namespace in real MySQL without delisting and reports original evidence", async () => {

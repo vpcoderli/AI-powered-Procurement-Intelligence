@@ -67,6 +67,39 @@ def sam_run(description_ok):
     return json.loads(output.getvalue()), body
 
 
+def sam_backfill_run():
+    """One SAM backfill run with an attempt budget of 1 whose oldest candidate links an untrusted description."""
+    def row(key, first_seen_at, description_url):
+        return {
+            "id": f"sam_gov:{key}", "source_bid_id": key, "dedupe_key": f"sam_gov:{key}", "source": "SAM.gov",
+            "title": f"Trail maintenance {key}", "description": "", "full_description": None,
+            "issuer_name": "Department of the Interior", "issuer_type": "federal", "state_code": "US",
+            "source_url": f"https://sam.gov/opp/{key}/view", "first_seen_at": first_seen_at,
+            "raw_payload": {"description": description_url}, "attachments": [],
+        }
+
+    history = [
+        row("offline-backfill-untrusted", "2020-01-01T00:00:00+00:00",
+            "https://untrusted.example/noticedesc?noticeid=offline-backfill-untrusted"),
+        row("offline-backfill-later", "2020-01-02T00:00:00+00:00",
+            "https://api.sam.gov/prod/opportunities/v1/noticedesc?noticeid=offline-backfill-later"),
+    ]
+
+    class Session:
+        def get(self, url, **kwargs):
+            raise AssertionError(f"an untrusted description link is never fetched: {url}")
+
+    output = io.StringIO()
+    with patch("apsi_crawler.spiders.sam_gov_api.requests.Session", return_value=Session()), \
+         contextlib.redirect_stdout(output):
+        status = cli.fetch_sam_gov(
+            database=None, api_key="offline-test-key", posted_from="09/16/2026", posted_to="09/17/2026",
+            output_json=True, detail_history=history, detail_backfill_only=True, max_descriptions=1,
+        )
+    assert status == 0, output.getvalue()
+    return history, json.loads(output.getvalue())
+
+
 def main():
     scope = ("Install and commission the procurement data integration system. " * 20) + "BoundaryOnlyKeyword."
     detail_html = (ROOT / "services/scrapling-extractor/tests/fixtures/live/il_bidbuy_detail.html").read_text()
@@ -130,9 +163,11 @@ def main():
             local = {level: run(False, level) for level in ("county", "city", "township", "special_district")}
             sam_enriched, sam_body = sam_run(True)
             sam_failed, _ = sam_run(False)
+            sam_backfill_history, sam_backfill = sam_backfill_run()
             print(json.dumps({
                 "enriched": enriched, "plain": plain, "scope": scope, "local": local,
                 "sam_enriched": sam_enriched, "sam_failed": sam_failed, "sam_body": sam_body,
+                "sam_backfill_history": sam_backfill_history, "sam_backfill": sam_backfill,
             }))
         finally:
             extractor.session.close()

@@ -391,7 +391,7 @@ def _needs_enrichment(bid, base_url, config):
     return True
 
 
-def enrich_bids(bids, source, fetch_config, *, extractor=None, session=None, sleep=time.sleep, now=now_iso, monotonic=time.monotonic):
+def enrich_bids(bids, source, fetch_config, *, extractor=None, session=None, sleep=time.sleep, now=now_iso, monotonic=time.monotonic, backfill=False):
     config = parse_enrichment_config(fetch_config)
     stats = {"attempted": 0, "enriched": 0, "valid_bodies": 0, "failed": 0, "skipped": 0, "reason": None, "extractor": None}
     timestamp = now()
@@ -431,7 +431,7 @@ def enrich_bids(bids, source, fetch_config, *, extractor=None, session=None, sle
         for bid in sorted(bids, key=lambda row: detail_priority(row, timestamp)):
             if not _needs_enrichment(bid, base_url, config):
                 stats["skipped"] += 1
-                record_outcome(bid, "reused" if valid_body(bid) else "not_needed", "complete" if _already_complete(bid, config["fields"]) else "missing_detail_url", timestamp)
+                record_outcome(bid, "reused" if valid_body(bid) else "not_needed", "complete" if _already_complete(bid, config["fields"]) else "missing_detail_url", timestamp, backfill=backfill)
                 continue
             if not retry_due(bid, timestamp) or throttled:
                 stats["skipped"] += 1

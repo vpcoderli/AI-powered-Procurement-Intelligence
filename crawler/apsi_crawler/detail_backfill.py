@@ -47,15 +47,21 @@ def detail_priority(bid, timestamp):
     return (at.timestamp() if at else 0, str(bid.get("id") or ""))
 
 
-def record_outcome(bid, status, reason, timestamp, *, attempted=False, obtained_body=False):
+def record_outcome(bid, status, reason, timestamp, *, attempted=False, obtained_body=False, backfill=False):
     previous = outcome_of(bid)
     count = previous.get("attempt_count", 0)
     count = count if isinstance(count, int) and not isinstance(count, bool) and count >= 0 else 0
     retry = previous.get("next_retry_at")
-    if attempted or status == "not_configured" or reason in ("rate_limited", "extractor_unavailable"):
-        # Public login restrictions are retried slowly; transient failures and throttles
-        # cool down for an hour. Complete detail pages may be revisited weekly for changes.
-        seconds = 7 * 86400 if status == "success" and obtained_body else 86400 if status == "restricted" else 3600
+    # A backfill candidate the run cannot attempt as it stands (no detail URL, nothing requested left
+    # to fill, an untrusted or missing SAM description link) keeps its old attempt time, so the parent
+    # would select it first again every run and it would hold one of the run's few slots for good.
+    unattemptable = backfill and not attempted and (
+        status == "not_needed" or reason in ("untrusted_description_url", "description_endpoint_missing"))
+    if attempted or unattemptable or status == "not_configured" or reason in ("rate_limited", "extractor_unavailable"):
+        # Public login restrictions and unattemptable backfill candidates are retried slowly;
+        # transient failures and throttles cool down for an hour. Complete detail pages may be
+        # revisited weekly for changes.
+        seconds = 7 * 86400 if status == "success" and obtained_body else 86400 if status == "restricted" or unattemptable else 3600
         current = _date(timestamp)
         retry = (current + timedelta(seconds=seconds)).isoformat() if current else None
     raw = bid.get("raw_payload")
