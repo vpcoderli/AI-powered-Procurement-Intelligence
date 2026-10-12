@@ -6,7 +6,10 @@ import { createDatabase } from "@/server/db/client";
 import { importCrawlerJsonRunIntoSqlite } from "./sqlite-json-importer";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { importCrawlerJsonRunIntoMysql, type CrawlerJsonRunPayload } from "./mysql-json-importer";
-import { fenceDetailBackfillPayload, loadDetailHistory, type DetailHistoryRecord, type DetailHistoryStore } from "./detail-history";
+import { fenceDetailBackfillPayload, loadDetailBackfillCandidates, loadDetailHistory, type DetailHistoryRecord, type DetailHistoryStore } from "./detail-history";
+
+/** fetch-sam-gov's own `--max-descriptions` default. */
+const SAM_DEFAULT_MAX_DESCRIPTIONS = 25;
 
 export interface SamGovCrawlerRunOptions {
   postedFrom?: string;
@@ -117,16 +120,20 @@ export async function runSamGovCrawler(
   const { python, ...runtime } = crawlerRuntime();
   const useMysqlImport = !options.databasePath && isMysqlDatabaseUrlConfigured();
   const databasePath = options.databasePath ?? defaultDatabasePath();
+  // List runs reuse recent history; backfill runs read only their attempt budget of candidates.
+  const loadHistory = (store: DetailHistoryStore) => options.detailBackfillOnly
+    ? loadDetailBackfillCandidates(store, "sam_gov", undefined, { limit: options.maxDescriptions ?? SAM_DEFAULT_MAX_DESCRIPTIONS })
+    : loadDetailHistory(store, "sam_gov");
   let detailHistory = options.detailHistory;
   if (!detailHistory && options.historyStore) {
-    detailHistory = await loadDetailHistory(options.historyStore, "sam_gov");
+    detailHistory = await loadHistory(options.historyStore);
   } else if (!detailHistory && !options.outputJson) {
     if (useMysqlImport) {
-      detailHistory = await loadDetailHistory({ mysql: resolveMysqlPool() }, "sam_gov");
+      detailHistory = await loadHistory({ mysql: resolveMysqlPool() });
     } else if (existsSync(databasePath)) {
       const database = createDatabase(databasePath);
       try {
-        detailHistory = await loadDetailHistory({ database }, "sam_gov");
+        detailHistory = await loadHistory({ database });
       } finally {
         database.$client.close();
       }

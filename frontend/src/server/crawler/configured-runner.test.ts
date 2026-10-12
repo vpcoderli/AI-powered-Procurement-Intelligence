@@ -160,6 +160,26 @@ describe("runConfiguredCrawlerSourcesOnce reads sources from the database", () =
     mockedRunCrawlTask.mockReset();
   });
 
+  it("skips a history-only source whose body-less rows are all cooling down", async () => {
+    insertSource("cooling_source", { providerFamily: "bidnet", fetchConfig: JSON.stringify({ enrichment: { enabled: true } }) });
+    testDb.db.insert(bids).values({
+      id: "cooling_source:old", source: "cooling_source", sourceBidId: "old", dedupeKey: "cooling_source:old",
+      title: "Road repair", description: "Road repair", issuerName: "County", issuerType: "state", stateCode: "CA",
+      sourceUrl: "https://public.example/bid/old", firstSeenAt: NOW, lastSeenAt: NOW, createdAt: NOW, updatedAt: NOW,
+      rawPayload: JSON.stringify({ enrichment: { outcome: { attempted_at: NOW, next_retry_at: "2099-01-01T00:00:00+00:00" } } }),
+    }).run();
+    let ran = false;
+    await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db, owner: "cooling-test", now: new Date(NOW), detailBackfillOnly: true, sourceIds: ["cooling_source"],
+      matcher: noopMatcher, notifier: noopNotifier,
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
+        ran = true;
+        return { ok: true, source: options.source, status: "success" };
+      }) as never,
+    });
+    expect(ran).toBe(false);
+  });
+
   it("does not let a paused old backlog consume the automatic source cap", async () => {
     insertSource("old_paused", { providerFamily: "bidnet", fetchConfig: JSON.stringify({ enrichment: { enabled: true } }) });
     insertSource("new_ready", { fetchConfig: JSON.stringify({ enrichment: { enabled: true } }) });

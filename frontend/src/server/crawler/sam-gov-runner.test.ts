@@ -13,7 +13,7 @@ vi.mock("node:child_process", () => ({
 }));
 vi.mock("./detail-history", async (importOriginal) => {
   const original = await importOriginal<typeof import("./detail-history")>();
-  return { ...original, loadDetailHistory: vi.fn(async () => []) };
+  return { ...original, loadDetailHistory: vi.fn(async () => []), loadDetailBackfillCandidates: vi.fn(async () => []) };
 });
 vi.mock("./mysql-json-importer", () => ({
   importCrawlerJsonRunIntoMysql: vi.fn(async () => ({

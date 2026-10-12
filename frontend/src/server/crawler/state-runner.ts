@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { crawlerRuntime, type CrawlerExecutionContext } from "./execution-context";
 import type { CrawlerJsonRunPayload } from "./mysql-json-importer";
 import type { CrawlableSource } from "./source-registry";
-import { fenceDetailBackfillPayload, loadDetailHistory, type DetailHistoryRecord, type DetailHistoryStore } from "./detail-history";
+import { detailAttemptBudget, fenceDetailBackfillPayload, loadDetailBackfillCandidates, loadDetailHistory, type DetailHistoryRecord, type DetailHistoryStore } from "./detail-history";
 
 export type CrawlTaskListKind = "open" | "closed" | "awarded";
 
@@ -110,7 +110,12 @@ export async function runCrawlTask(
   options: CrawlTaskOptions,
   context?: CrawlerExecutionContext,
 ): Promise<CrawlTaskResult> {
-  const detailHistory = options.detailHistory ?? (options.historyStore ? await loadDetailHistory(options.historyStore, source.id, source) : undefined);
+  // List runs reuse recent history; backfill runs read only their attempt budget of candidates.
+  const detailHistory = options.detailHistory ?? (options.historyStore
+    ? options.detailBackfillOnly
+      ? await loadDetailBackfillCandidates(options.historyStore, source.id, source, { limit: detailAttemptBudget(source) })
+      : await loadDetailHistory(options.historyStore, source.id, source)
+    : undefined);
   const payload = buildCrawlTaskPayload(source, { ...options, detailHistory });
   const { python, ...runtime } = crawlerRuntime();
 

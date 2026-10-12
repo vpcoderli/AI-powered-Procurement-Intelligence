@@ -20,9 +20,9 @@ from apsi_crawler.discovery_service import (
     InvalidSourceDiscoveryRequestError,
     discover_sources,
 )
-from apsi_crawler.enrichment import enrich_bids
+from apsi_crawler.enrichment import enrich_bids, parse_enrichment_config
 from apsi_crawler.data_quality import body_of, core_issues, prepare_persisted_bid, record, redact_evidence, text
-from apsi_crawler.detail_backfill import apply_detail_history, historical_candidates, outcome_of
+from apsi_crawler.detail_backfill import apply_detail_history, detail_priority, historical_candidates, outcome_of
 from apsi_crawler.errors import VerifiedEmptyListError
 from apsi_crawler.robots_fetch import InvalidRobotsRequestError, fetch_robots
 from apsi_crawler.list_extraction import (
@@ -173,6 +173,12 @@ def _archive_bids(bids, archive_dir, fetch_detail=False):
     ]
 
 
+def _oldest_candidates(candidates, budget):
+    """A backfill run's attempt budget of candidates, oldest attempt first; the rest wait."""
+    timestamp = now_iso()
+    return sorted(candidates, key=lambda row: detail_priority(row, timestamp))[:max(budget, 0)]
+
+
 def _require_non_empty_bids(bids, source):
     if not bids:
         raise EmptyCrawlerResultError(f"Crawler returned no opportunities for source: {source}")
@@ -304,8 +310,8 @@ def fetch_sam_gov(
     try:
         resolved_key = api_key or os.environ.get("SAM_API_KEY", "")
         if detail_backfill_only:
-            bids = enrich_sam_gov_bids(historical_candidates(detail_history, "sam_gov"), resolved_key,
-                                       max_descriptions=max_descriptions)
+            bids = enrich_sam_gov_bids(_oldest_candidates(historical_candidates(detail_history, "sam_gov"), max_descriptions),
+                                       resolved_key, max_descriptions=max_descriptions)
         else:
             bids = fetch_sam_gov_opportunities(
                 api_key=resolved_key,
@@ -477,7 +483,8 @@ def fetch_task(payload):
     try:
         source = task_source_from_payload(payload)
         if payload.get("detail_backfill_only") is True:
-            bids = historical_candidates(payload.get("detail_history"), source.id, source)
+            budget = parse_enrichment_config(payload.get("fetch_config"))["max_details_per_run"]
+            bids = _oldest_candidates(historical_candidates(payload.get("detail_history"), source.id, source), budget)
             _require_non_empty_bids(bids, source.id)
             bids, enrichment_stats = enrich_bids(bids, source, payload.get("fetch_config"))
             metadata.update({"mode": "detail_backfill", "enrichment": enrichment_stats,

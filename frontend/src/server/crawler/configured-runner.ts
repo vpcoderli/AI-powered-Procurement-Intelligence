@@ -1,6 +1,5 @@
 import type { AppDatabase } from "@/server/db/client";
-import { getBidDescription } from "@/lib/bid-description";
-import { loadDetailHistory, type DetailHistoryRecord } from "./detail-history";
+import { historyAge, loadDetailBackfillCandidates } from "./detail-history";
 import type { MysqlCrawlerLockStore } from "./lock-repository";
 import { sendMatchedAlertNotifications, sendMatchedAlertNotificationsFromMysql } from "@/server/notifications/service";
 import { matchEnabledSearchAlerts, matchEnabledSearchAlertsFromMysql } from "@/server/search-alerts/matcher";
@@ -79,28 +78,6 @@ export interface RunConfiguredCrawlerSourcesOnceOptions {
   clock?: () => number;
 }
 
-function missingBody(row: DetailHistoryRecord): boolean {
-  return !getBidDescription({ title: String(row.title ?? ""), description: String(row.description ?? ""), fullDescription: String(row.full_description ?? "") });
-}
-
-function historyOutcome(row: DetailHistoryRecord): Record<string, unknown> {
-  const raw = row.raw_payload as { enrichment?: { outcome?: unknown } } | null;
-  const outcome = raw?.enrichment?.outcome;
-  return outcome && typeof outcome === "object" && !Array.isArray(outcome) ? outcome as Record<string, unknown> : {};
-}
-
-function historyDue(row: DetailHistoryRecord, now: Date): boolean {
-  const retry = historyOutcome(row).next_retry_at;
-  const at = typeof retry === "string" ? Date.parse(retry) : NaN;
-  return !Number.isFinite(at) || at <= now.getTime();
-}
-
-function historyAge(row: DetailHistoryRecord): number {
-  const at = historyOutcome(row).attempted_at ?? row.first_seen_at;
-  const parsed = typeof at === "string" ? Date.parse(at) : NaN;
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function detailBackfillSourceCap(options: RunConfiguredCrawlerSourcesOnceOptions): number {
   const value = options.detailBackfillMaxSources ?? Number(process.env.CRAWLER_DETAIL_BACKFILL_MAX_SOURCES_PER_TICK ?? 10);
   return Number.isInteger(value) && value >= 1 && value <= 100 ? value : 10;
@@ -160,9 +137,8 @@ export async function runConfiguredCrawlerSourcesOnce(
     for (const source of selectedSources) {
       const enrichment = source.fetchConfig.enrichment as { enabled?: unknown } | null;
       if (source.cadence === "manual" || (source.id !== "sam_gov" && enrichment?.enabled !== true)) continue;
-      const history = await loadDetailHistory({ database: options.database, mysql: options.mysql }, source.id, source);
-      const ready = history.filter((row) => missingBody(row) && historyDue(row, now));
-      if (ready.length) queue.push({ source, oldest: ready.reduce((oldest, row) => Math.min(oldest, historyAge(row)), Infinity) });
+      const [oldest] = await loadDetailBackfillCandidates({ database: options.database, mysql: options.mysql }, source.id, source, { limit: 1, now });
+      if (oldest) queue.push({ source, oldest: historyAge(oldest) });
     }
     dueSources = queue.sort((left, right) => left.oldest - right.oldest || left.source.id.localeCompare(right.source.id))
       .map(({ source }) => source);
@@ -177,8 +153,9 @@ export async function runConfiguredCrawlerSourcesOnce(
     const family = source.providerFamily;
     const isSamGov = source.id === "sam_gov";
     if (options.detailBackfillOnly) {
-      const history = await loadDetailHistory({ database: options.database, mysql: options.mysql }, source.id, source);
-      if (!history.some(missingBody)) continue;
+      // Nothing due: a run would only record `deferred` outcomes for rows still cooling down.
+      const [candidate] = await loadDetailBackfillCandidates({ database: options.database, mysql: options.mysql }, source.id, source, { limit: 1, now });
+      if (!candidate) continue;
     }
 
     // Same-tick throttle first: the existing C7 behavior reports these as `deferred` results.
