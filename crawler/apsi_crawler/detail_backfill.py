@@ -5,38 +5,15 @@ uses the last actual attempt (or first observation), so a listing's order cannot
 older records. Observing a deferral never changes the last actual attempt.
 """
 
-import re
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
-from apsi_crawler.content_quality import comparable_text, same_text, useful_text
+from apsi_crawler.content_quality import body_issue, same_text
 
 
 def valid_body_text(value, title):
     """Match the shared display quality gate; short procurement scope is valid."""
-    if not useful_text(value, title):
-        return False
-    text = comparable_text(value)
-    if re.fullmatch(r"https?://\S+", text):
-        return False
-    if re.fullmatch(r"(?:(?:solicitation|short|full|bulletin|bid|project)\s+)?(?:description|desc|summary|scope of work|statement of work)[:\s]*", text):
-        return False
-    if re.fullmatch(r"(?:n/a|none|null|not (?:available|provided)|no description(?: available)?|description (?:not available|pending)|tbd|待补|暂无(?:正文|描述))\.?", text):
-        return False
-    if re.fullmatch(r"(?:solicitation|presolicitation|combined synopsis/solicitation|sources sought|special notice|award notice|sale of surplus property|ifb|rfp|rfq|itb|rfi)\.?", text):
-        return False
-    if re.match(r"(?:please\s+)?(?:log\s*in|sign\s*in|register|create an account|you (?:must|need to) (?:log\s*in|sign\s*in))", text):
-        return False
-    if re.match(r"(?:access denied|forbidden|unauthorized|error (?:403|404|500)|page not found|checking your browser|just a moment|enable javascript|verify (?:you are|that you are) human)\b", text):
-        return False
-    if re.match(r"(?:purchase method|type code|bid type|informal bid flag|allow electronic quote)\s*(?::|：|$)", text):
-        return False
-    navigation = [part for part in re.split(r"\s*[|\n·]\s*", value.strip().casefold()) if part]
-    if navigation and all(re.fullmatch(r"(?:home|about(?: us)?|contact(?: us)?|privacy(?: policy)?|terms(?: of (?:use|service))?|copyright.*|all rights reserved|login|sign in|register)", part) for part in navigation):
-        return False
-    if re.fullmatch(r"\d+[a-z]?\s+[\w\s.]+\s(?:street|st|road|rd|avenue|ave|boulevard|blvd|lane|ln|drive|dr)\.?\s*,[^\n]+\b[a-z]{2}\s+\d{5}(?:-\d{4})?\s*", text):
-        return False
-    return True
+    return body_issue(value, title) is None
 
 
 def valid_body(bid):

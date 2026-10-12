@@ -330,3 +330,52 @@ def _normalize_block_text(value):
     text = (value or "").replace("\xa0", " ").replace("\r", "\n")
     text = re.sub(r"[^\S\n]+", " ", text)
     return re.sub(r" *\n[\s\n]*", "\n", text).strip()
+
+
+# Description classifier, mirrored rule for rule by frontend/src/lib/bid-description.ts
+# `getBidDescriptionIssue`; tests/fixtures/description_quality_contract.json is the shared
+# contract. re.ASCII keeps \w, \b and \d identical to JavaScript's.
+_HTML_BODY_RE = re.compile(r"(?:<!doctype\b|<html\b|<head\b|<body\b)", re.ASCII)
+_URL_BODY_RE = re.compile(r"https?://\S+", re.ASCII)
+_PLACEHOLDER_BODY_RES = tuple(re.compile(pattern, re.ASCII) for pattern in (
+    r"(?:(?:solicitation|short|full|bulletin|bid|project)\s+)?(?:description|desc|summary|scope of work|statement of work)[:\s]*",
+    r"(?:solicitation|presolicitation|combined synopsis\s*/\s*solicitation|sources sought|special notice|award notice|sale of surplus property|ifb|rfp|rfq|itb|rfi)[.:\s]*",
+    r"(?:n/a|none|null|not (?:available|provided)|no description(?: available)?|description (?:not available|pending)|tbd|待补|暂无(?:正文|描述))\.?",
+))
+_RESTRICTED_BODY_RES = tuple(re.compile(pattern, re.ASCII) for pattern in (
+    r"(?:please\s+)?(?:log\s*in|sign\s*in)(?:(?:\s+(?:to|with|on|at)\s+(?:the\s+)?[\w.]+(?:\s+[\w.]+){0,3})?\s+(?:or\s+register\s+)?to\s+(?:view|see|access|download)\b|\s+required\b|\s*[.!]?$)",
+    r"you (?:must|need to) (?:log\s*in|sign\s*in)\b",
+    r"(?:please\s+)?(?:register|create an account)(?:(?:\s+(?:with|on|at)\s+(?:the\s+)?[\w.]+(?:\s+[\w.]+){0,3})?\s+(?:or\s+(?:log\s*in|sign\s*in)\s+)?to\s+(?:view|see|access|download)\b|\s*[.!]?$)",
+    r"(?:access denied|forbidden|unauthorized|error (?:403|404|500)|page not found)(?:\s*[.!:\-–—]|$)",
+    r"(?:checking your browser\b|just a moment(?:\s*(?:\.\.\.|…|[.!])|$)|enable javascript(?:\s+(?:to|and)\b|\s*[.!]?$)|verify (?:you are|that you are) human\b)",
+))
+_METADATA_BODY_RE = re.compile(r"(?:purchase method|type code|bid type|informal bid flag|allow electronic quote)\s*(?::|：|$)", re.ASCII)
+_NAVIGATION_PART_RE = re.compile(r"(?:home|about(?: us)?|contact(?: us)?|privacy(?: policy)?|terms(?: of (?:use|service))?|copyright.*|all rights reserved|login|sign in|register)", re.ASCII)
+_ADDRESS_BODY_RE = re.compile(r"\d+[a-z]?\s+(?:[\w.'-]+\s+){0,5}(?:street|st|road|rd|avenue|ave|boulevard|blvd|lane|ln|drive|dr)\.?(?:\s*,?\s*(?:suite|ste|unit|room|rm|floor|fl)\.?\s*#?[\w-]+)?\s*,\s*[a-z][a-z .'-]*,?\s+[a-z]{2}\s+\d{5}(?:-\d{4})?\.?", re.ASCII)
+
+
+def body_issue(value, title):
+    """Why a description is not procurement content, or None when it is."""
+    identity = echo_key(value)
+    if not identity:
+        return "missing_body"
+    if identity == echo_key(title):
+        return "title_echo"
+    text = comparable_text(value)
+    if _HTML_BODY_RE.match(text):
+        return "restricted_or_error_body"
+    if _URL_BODY_RE.fullmatch(text):
+        return "body_url"
+    if any(pattern.fullmatch(text) for pattern in _PLACEHOLDER_BODY_RES):
+        return "placeholder_body"
+    if any(pattern.match(text) for pattern in _RESTRICTED_BODY_RES):
+        return "restricted_or_error_body"
+    if _METADATA_BODY_RE.match(text):
+        return "metadata_body"
+    # An empty list counts as navigation, exactly like JavaScript's [].every(...).
+    parts = [part for part in (comparable_text(piece) for piece in re.split(r"\s*[|\n·]\s*", value.strip())) if part]
+    if all(_NAVIGATION_PART_RE.fullmatch(part) for part in parts):
+        return "navigation_body"
+    if _ADDRESS_BODY_RE.fullmatch(text):
+        return "address_body"
+    return None
