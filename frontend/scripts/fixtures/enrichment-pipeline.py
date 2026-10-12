@@ -1,7 +1,11 @@
 """Offline cross-language fixture: real list adapter + local HTTP extractor + CLI JSON.
 
 The saved IL detail page's description cell is expanded to exercise the long-body
-boundary. Only the portal transport is replaced; no public portal is contacted.
+boundary. Only the portal transport and the clock are replaced; no public portal is contacted.
+
+The list runs are stamped as of a day before the saved IL row's deadline (30 June 2026). The importers
+close a bid once its deadline has passed, and that deadline is behind the real clock, so a run stamped
+with it would store the bid closed and every search assertion would miss it.
 """
 
 import contextlib
@@ -24,6 +28,10 @@ from apsi_crawler.enrichment import ExtractorClient  # noqa: E402
 from apsi_crawler.html.public_page import FetchedPage  # noqa: E402
 from apsi_crawler.spiders.il_bidbuy import fetch_il_bidbuy_opportunities  # noqa: E402
 from server import create_server  # noqa: E402
+
+
+# Before the saved IL row's deadline (06/30/2026 02:00 PM).
+IL_LIST_RUN_AT = "2026-06-15T12:00:00+00:00"
 
 
 def sam_run(description_ok):
@@ -150,6 +158,7 @@ def main():
                     request["label"] = f"Offline {level} procurement"
                 output = io.StringIO()
                 with patch.dict(registry.DEDICATED_ADAPTERS, {request["source_id"]: list_adapter}), \
+                     patch("apsi_crawler.cli.now_iso", return_value=IL_LIST_RUN_AT), \
                      patch("apsi_crawler.enrichment.ExtractorClient", return_value=extractor), \
                      patch.dict("os.environ", {"SCRAPLING_EXTRACTOR_URL": extractor.base_url}), \
                      patch("apsi_crawler.enrichment.fetch_page", side_effect=lambda url, **kwargs: FetchedPage(detail_html, url, False)), \

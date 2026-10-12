@@ -767,6 +767,87 @@ describe("bid lifecycle in the SQLite importer (2026-09-24 phase 1)", () => {
     expect(row("bidnet_co_denver:1")).toMatchObject({ lifecycleStatus: "closed", isActive: 0 });
   });
 
+  describe("deadline-passed close", () => {
+    const PASSED = "09/20/2026";
+    const AHEAD = "10/20/2026";
+    const lifecycleOf = (id: string) => JSON.parse(row(id)!.rawPayload!).lifecycle;
+
+    it("closes an open bid whose deadline has passed and records why", () => {
+      const result = importCrawlerJsonRunIntoSqlite(testDb.db, payload("bidnet_co_denver", [bid("bidnet_co_denver", "1", { deadline_date: PASSED })], false));
+
+      expect(result).toMatchObject({ insertedCount: 1 });
+      expect(row("bidnet_co_denver:1")).toMatchObject({ lifecycleStatus: "closed", isActive: 0, deadlineDate: PASSED, solicitationNumber: "N-1" });
+      expect(lifecycleOf("bidnet_co_denver:1")).toEqual({ closed_reason: "deadline_passed", closed_observed_at: T0, deadline: PASSED });
+    });
+
+    it("keeps an open bid open while its deadline is ahead, and a bid without a readable deadline open", () => {
+      importCrawlerJsonRunIntoSqlite(testDb.db, payload("bidnet_co_denver", [
+        bid("bidnet_co_denver", "1", { deadline_date: AHEAD }),
+        bid("bidnet_co_denver", "2", { deadline_date: null }),
+        bid("bidnet_co_denver", "3", { deadline_date: "TBD" }),
+      ], false));
+
+      for (const id of ["1", "2", "3"]) expect(row(`bidnet_co_denver:${id}`)).toMatchObject({ lifecycleStatus: "open", isActive: 1 });
+      expect(JSON.parse(row("bidnet_co_denver:1")!.rawPayload!)).not.toHaveProperty("lifecycle");
+    });
+
+    it("reopens the bid when a later import shows a future deadline, with no stale closed_reason", () => {
+      importCrawlerJsonRunIntoSqlite(testDb.db, payload("bidnet_co_denver", [bid("bidnet_co_denver", "1", { deadline_date: PASSED })], false));
+      expect(row("bidnet_co_denver:1")).toMatchObject({ lifecycleStatus: "closed", isActive: 0 });
+
+      importCrawlerJsonRunIntoSqlite(testDb.db, payload("bidnet_co_denver", [bid("bidnet_co_denver", "1", { deadline_date: AHEAD })], false, T1));
+
+      expect(row("bidnet_co_denver:1")).toMatchObject({ lifecycleStatus: "open", isActive: 1, deadlineDate: AHEAD });
+      expect(row("bidnet_co_denver:1")!.rawPayload).not.toContain("closed_reason");
+      expect(JSON.parse(row("bidnet_co_denver:1")!.rawPayload!)).not.toHaveProperty("lifecycle");
+    });
+
+    it("closes again, for the new deadline, when a re-crawled bid has passed it", () => {
+      importCrawlerJsonRunIntoSqlite(testDb.db, payload("bidnet_co_denver", [bid("bidnet_co_denver", "1", { deadline_date: AHEAD })], false));
+      expect(row("bidnet_co_denver:1")).toMatchObject({ lifecycleStatus: "open" });
+
+      importCrawlerJsonRunIntoSqlite(testDb.db, payload("bidnet_co_denver", [bid("bidnet_co_denver", "1", { deadline_date: AHEAD })], false, "2026-10-25T00:00:00.000Z"));
+
+      expect(row("bidnet_co_denver:1")).toMatchObject({ lifecycleStatus: "closed", isActive: 0 });
+      expect(lifecycleOf("bidnet_co_denver:1")).toEqual({ closed_reason: "deadline_passed", closed_observed_at: "2026-10-25T00:00:00.000Z", deadline: AHEAD });
+    });
+
+    it("judges a re-crawled row without a deadline by the stored one", () => {
+      importCrawlerJsonRunIntoSqlite(testDb.db, payload("bidnet_co_denver", [bid("bidnet_co_denver", "1", { deadline_date: AHEAD })], false));
+      importCrawlerJsonRunIntoSqlite(testDb.db, payload("bidnet_co_denver", [bid("bidnet_co_denver", "1", { deadline_date: null })], false, "2026-10-25T00:00:00.000Z"));
+
+      expect(row("bidnet_co_denver:1")).toMatchObject({ lifecycleStatus: "closed", isActive: 0, deadlineDate: AHEAD });
+    });
+
+    it("judges by the time the run finished, else by the time it started", () => {
+      const deadline = "09/24/2026 4:00 PM"; // 02:00Z on the 25th
+      const slowRun = { ...payload("bidnet_co_denver", [bid("bidnet_co_denver", "1", { deadline_date: deadline })], false), finishedAt: "2026-09-25T03:00:00.000Z" };
+      importCrawlerJsonRunIntoSqlite(testDb.db, slowRun);
+      expect(row("bidnet_co_denver:1")).toMatchObject({ lifecycleStatus: "closed", isActive: 0 });
+
+      const unfinished = { ...payload("bidnet_co_denver", [bid("bidnet_co_denver", "2", { deadline_date: deadline })], false), runId: "unfinished-run", finishedAt: null };
+      importCrawlerJsonRunIntoSqlite(testDb.db, unfinished);
+      expect(row("bidnet_co_denver:2")).toMatchObject({ lifecycleStatus: "open", isActive: 1 });
+    });
+
+    it("never downgrades an awarded bid to closed on its deadline", () => {
+      importCrawlerJsonRunIntoSqlite(testDb.db, { ...payload("bidnet_co_denver", [bid("bidnet_co_denver", "5", { lifecycle_status: "awarded", is_active: 0, awarded_date: "07/09/2026", deadline_date: PASSED })], false), metadata: { pagination: { list_kind: "awarded", complete: false } } });
+      importCrawlerJsonRunIntoSqlite(testDb.db, payload("bidnet_co_denver", [bid("bidnet_co_denver", "5", { deadline_date: PASSED })], false, T1));
+
+      expect(row("bidnet_co_denver:5")).toMatchObject({ lifecycleStatus: "awarded", isActive: 0, awardedDate: "07/09/2026" });
+      expect(JSON.parse(row("bidnet_co_denver:5")!.rawPayload!)).not.toHaveProperty("lifecycle");
+    });
+
+    it("counts a bid the deadline closed as seen, so a complete list does not delist it as well", () => {
+      importCrawlerJsonRunIntoSqlite(testDb.db, payload("bidnet_co_denver", [bid("bidnet_co_denver", "1", { deadline_date: PASSED }), bid("bidnet_co_denver", "2")], true));
+      const result = importCrawlerJsonRunIntoSqlite(testDb.db, payload("bidnet_co_denver", [bid("bidnet_co_denver", "1", { deadline_date: PASSED })], true, T1));
+
+      expect(result.delistedCount).toBe(1);
+      expect(lifecycleOf("bidnet_co_denver:1").closed_reason).toBe("deadline_passed");
+      expect(lifecycleOf("bidnet_co_denver:2").closed_reason).toBe("delisted");
+    });
+  });
+
   it("keeps an awarded bid awarded when a closed-list row arrives later", () => {
     importCrawlerJsonRunIntoSqlite(testDb.db, { ...payload("bidnet_co_denver", [bid("bidnet_co_denver", "5", { lifecycle_status: "awarded", is_active: 0, awarded_date: "07/09/2026" })], false), metadata: { pagination: { list_kind: "awarded", complete: false } } });
     importCrawlerJsonRunIntoSqlite(testDb.db, { ...payload("bidnet_co_denver", [bid("bidnet_co_denver", "5", { lifecycle_status: "closed", is_active: 0 })], false, T1), metadata: { pagination: { list_kind: "closed", complete: false } } });

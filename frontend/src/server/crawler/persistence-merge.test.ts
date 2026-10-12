@@ -64,3 +64,84 @@ it("preserves known optional source identity when a refresh omits it", () => {
     title: "Road repairs", source_bid_id: "1", jurisdiction_level: "city", fips_code: "1714000",
   })).toMatchObject({ source_bid_id: "1", jurisdiction_level: "city", fips_code: "1714000" });
 });
+
+describe("deadline-passed close at import", () => {
+  /** 02:00 on 13 October in the deadline zone (UTC-10). */
+  const NOW = "2026-10-13T12:00:00.000Z";
+  const base = { title: "Road repairs", lifecycle_status: "open", is_active: 1 };
+
+  it("closes an open bid whose deadline has passed and records why in its raw payload", () => {
+    const merged = mergePersistedBid({ ...base, deadline_date: "10/12/2026", raw_payload: { portal_id: "A-1" } }, undefined, { now: NOW });
+    expect(merged).toMatchObject({ lifecycle_status: "closed", is_active: 0, deadline_date: "10/12/2026" });
+    expect(merged.raw_payload).toEqual({ portal_id: "A-1", lifecycle: { closed_reason: "deadline_passed", closed_observed_at: NOW, deadline: "10/12/2026" } });
+  });
+
+  it("records the reason on the payload that detail merging builds without losing its enrichment", () => {
+    const enrichment = { applied_fields: ["description"], fields: { description: "x" } };
+    const merged = mergePersistedBid(
+      { ...base, deadline_date: "10/12/2026", description: "Repair bridges and drainage.", raw_payload: { enrichment, lifecycle: { note: "kept" } } },
+      { title: "Road repairs", deadline_date: "10/12/2026", raw_payload: { enrichment: { applied_fields: ["description"], fields: { description: "x" } } } },
+      { now: NOW },
+    );
+    expect(merged.raw_payload).toMatchObject({
+      enrichment: { applied_fields: ["description"] },
+      lifecycle: { note: "kept", closed_reason: "deadline_passed", closed_observed_at: NOW, deadline: "10/12/2026" },
+    });
+  });
+
+  it("starts a payload when the incoming row has none, and reads a payload sent as JSON text", () => {
+    expect(mergePersistedBid({ ...base, deadline_date: "10/12/2026" }, undefined, { now: NOW }).raw_payload)
+      .toEqual({ lifecycle: { closed_reason: "deadline_passed", closed_observed_at: NOW, deadline: "10/12/2026" } });
+    expect(mergePersistedBid({ ...base, deadline_date: "10/12/2026", raw_payload: JSON.stringify({ a: 1 }) }, undefined, { now: NOW }).raw_payload)
+      .toEqual({ a: 1, lifecycle: { closed_reason: "deadline_passed", closed_observed_at: NOW, deadline: "10/12/2026" } });
+  });
+
+  it("judges by the stored deadline when the refreshed row has none, and says so", () => {
+    const merged = mergePersistedBid({ ...base, deadline_date: null }, { deadline_date: "10/12/2026" }, { now: NOW });
+    expect(merged).toMatchObject({ lifecycle_status: "closed", is_active: 0, deadline_date: "10/12/2026" });
+    expect(merged.raw_payload).toMatchObject({ lifecycle: { closed_reason: "deadline_passed", deadline: "10/12/2026" } });
+  });
+
+  it("leaves a bid open, and its payload alone, while the deadline is ahead", () => {
+    const merged = mergePersistedBid({ ...base, deadline_date: "10/14/2026", raw_payload: { portal_id: "A-1" } }, undefined, { now: NOW });
+    expect(merged).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+    expect(merged.raw_payload).toEqual({ portal_id: "A-1" });
+  });
+
+  it("changes nothing without a clock", () => {
+    const merged = mergePersistedBid({ ...base, deadline_date: "10/12/2026", raw_payload: { portal_id: "A-1" } });
+    expect(merged).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+    expect(merged.raw_payload).toEqual({ portal_id: "A-1" });
+  });
+
+  it("does not stamp a bid the crawler closed or that stays awarded", () => {
+    const closed = mergePersistedBid({ ...base, lifecycle_status: "closed", is_active: 0, deadline_date: "10/12/2026", raw_payload: { portal_id: "A-1" } }, undefined, { now: NOW });
+    expect(closed.raw_payload).toEqual({ portal_id: "A-1" });
+    const awarded = mergePersistedBid({ ...base, deadline_date: "10/12/2026", raw_payload: { portal_id: "A-1" } }, { lifecycle_status: "awarded" }, { now: NOW });
+    expect(awarded).toMatchObject({ lifecycle_status: "awarded", is_active: 0 });
+    expect(awarded.raw_payload).toEqual({ portal_id: "A-1" });
+  });
+
+  it("reopens a closed bid whose refreshed deadline is ahead, with no stale closed_reason", () => {
+    const stale = { portal_id: "A-1", lifecycle: { closed_reason: "deadline_passed", closed_observed_at: "2026-10-01T00:00:00.000Z", deadline: "10/01/2026" } };
+    const merged = mergePersistedBid(
+      { ...base, deadline_date: "10/20/2026", raw_payload: { portal_id: "A-1" } },
+      { title: "Road repairs", lifecycle_status: "closed", is_active: 0, deadline_date: "10/01/2026", raw_payload: stale },
+      { now: NOW },
+    );
+    expect(merged).toMatchObject({ lifecycle_status: "open", is_active: 1, deadline_date: "10/20/2026" });
+    expect(merged.raw_payload).toEqual({ portal_id: "A-1" });
+    expect(JSON.stringify(merged.raw_payload)).not.toContain("closed_reason");
+  });
+
+  it("does not carry a stale closed_reason through detail merging either", () => {
+    const stale = { enrichment: { applied_fields: ["description"] }, lifecycle: { closed_reason: "deadline_passed", closed_observed_at: "2026-10-01T00:00:00.000Z" } };
+    const merged = mergePersistedBid(
+      { ...base, deadline_date: "10/20/2026", description: "Repair bridges.", raw_payload: { enrichment: { applied_fields: ["description"] } } },
+      { title: "Road repairs", lifecycle_status: "closed", is_active: 0, description: "Repair bridges.", raw_payload: stale },
+      { now: NOW },
+    );
+    expect(merged).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+    expect(JSON.stringify(merged.raw_payload)).not.toContain("closed_reason");
+  });
+});

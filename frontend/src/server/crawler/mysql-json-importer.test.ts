@@ -381,6 +381,22 @@ describe("bid lifecycle in the MySQL importer (2026-09-24 phase 1)", () => {
     expect(JSON.parse(String(mysql.bids.get("bidnet_co_denver:2")!.raw_payload))).toMatchObject({ lifecycle: { closed_reason: "delisted" } });
   });
 
+  it("closes an open bid whose deadline has passed and reopens it, with no stale reason, when the deadline moves", async () => {
+    const mysql = createFakeMysql();
+    await importCrawlerJsonRunIntoMysql(mysql, run([{ ...bid("1"), deadline_date: "09/20/2026" }, { ...bid("2"), deadline_date: "10/20/2026" }], false, T0));
+
+    expect(mysql.bids.get("bidnet_co_denver:1")).toMatchObject({ lifecycle_status: "closed", is_active: 0, deadline_date: "09/20/2026" });
+    expect(JSON.parse(String(mysql.bids.get("bidnet_co_denver:1")!.raw_payload)).lifecycle)
+      .toEqual({ closed_reason: "deadline_passed", closed_observed_at: T0, deadline: "09/20/2026" });
+    expect(mysql.bids.get("bidnet_co_denver:2")).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+    expect(String(mysql.bids.get("bidnet_co_denver:2")!.raw_payload)).not.toContain("closed_reason");
+
+    await importCrawlerJsonRunIntoMysql(mysql, run([{ ...bid("1"), deadline_date: "10/20/2026" }], false, T1));
+
+    expect(mysql.bids.get("bidnet_co_denver:1")).toMatchObject({ lifecycle_status: "open", is_active: 1, deadline_date: "10/20/2026" });
+    expect(String(mysql.bids.get("bidnet_co_denver:1")!.raw_payload)).not.toContain("closed_reason");
+  });
+
   it("leaves open bids alone after an incomplete run", async () => {
     const mysql = createFakeMysql();
     await importCrawlerJsonRunIntoMysql(mysql, run([bid("1"), bid("2")], true, T0));

@@ -173,12 +173,20 @@ async function main() {
     });
 
     while (!stopping) {
-      const { lists, prechecks, backfill, precheckError } = await tick();
+      const { lists, prechecks, backfill, precheckError, lifecycleSweep, lifecycleSweepError } = await tick();
       workerLogger.info("crawler_run_completed", { results: lists });
       if (prechecks) workerLogger.info("crawler_precheck_queue_completed", { prechecks });
       if (precheckError) {
         workerLogger.error("crawler_precheck_queue_failed", { error: precheckError });
         captureException(precheckError, { worker: "crawler", step: "precheck_queue" });
+      }
+      // A sweep that closed nothing is the normal case and stays quiet; one that closed bids, or failed, is logged.
+      if (lifecycleSweep && lifecycleSweep.closed > 0) {
+        workerLogger.info("crawler_lifecycle_sweep", { event: "crawler_lifecycle_sweep", ...lifecycleSweep });
+      }
+      if (lifecycleSweepError) {
+        workerLogger.error("crawler_lifecycle_sweep", { event: "crawler_lifecycle_sweep", error: lifecycleSweepError });
+        captureException(new Error(lifecycleSweepError), { worker: "crawler", step: "lifecycle_sweep" });
       }
       if (backfill.length) workerLogger.info("crawler_detail_backfill_completed", { results: backfill });
 

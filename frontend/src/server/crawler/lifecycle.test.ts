@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  closedPayload,
+  closedRawPayload,
+  deadlineClosureOf,
   delistedRawPayload,
   delistingApplies,
   mergeLifecycleFields,
@@ -32,6 +35,117 @@ describe("mergeLifecycleFields", () => {
       { lifecycle_status: "awarded", awarded_date: "08/06/2026", deadline_date: null },
       { deadline_date: "07/01/2026", solicitation_number: "1026A" },
     )).toEqual({ lifecycle_status: "awarded", is_active: 0, awarded_date: "08/06/2026", deadline_date: "07/01/2026", solicitation_number: "1026A" });
+  });
+});
+
+describe("mergeLifecycleFields with a clock (deadline-passed rule)", () => {
+  /** 02:00 on 13 October in the deadline zone (UTC-10). */
+  const NOW = "2026-10-13T12:00:00.000Z";
+  const PASSED = "10/12/2026";
+  const AHEAD = "10/14/2026";
+
+  it("closes an open incoming row whose deadline has passed", () => {
+    expect(mergeLifecycleFields({ lifecycle_status: "open", deadline_date: PASSED }, {}, { now: NOW }))
+      .toMatchObject({ lifecycle_status: "closed", is_active: 0, deadline_date: PASSED });
+    // A row that states no status at all reads as open, so the rule applies to it as well.
+    expect(mergeLifecycleFields({ deadline_date: PASSED }, {}, { now: NOW })).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
+    expect(mergeLifecycleFields({ is_active: 1, deadline_date: PASSED }, {}, { now: NOW })).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
+  });
+
+  it("keeps an open row open while its deadline is ahead, including the whole of today's date", () => {
+    expect(mergeLifecycleFields({ lifecycle_status: "open", deadline_date: AHEAD }, {}, { now: NOW })).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+    expect(mergeLifecycleFields({ lifecycle_status: "open", deadline_date: "10/13/2026" }, {}, { now: NOW })).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+    expect(mergeLifecycleFields({ lifecycle_status: "open", deadline_date: "10/13/2026 2:00 PM CST" }, {}, { now: NOW })).toMatchObject({ lifecycle_status: "open" });
+  });
+
+  it("closes at the exact expiry instant and not before", () => {
+    const row = { lifecycle_status: "open", deadline_date: "10/13/2026 2:00 AM" };
+    expect(mergeLifecycleFields(row, {}, { now: "2026-10-13T11:59:59.999Z" })).toMatchObject({ lifecycle_status: "open" });
+    expect(mergeLifecycleFields(row, {}, { now: NOW })).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
+  });
+
+  it("changes nothing without a clock", () => {
+    const row = { lifecycle_status: "open", deadline_date: PASSED };
+    expect(mergeLifecycleFields(row)).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+    expect(mergeLifecycleFields(row, {}, {})).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+    expect(mergeLifecycleFields(row, {}, { now: undefined })).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+  });
+
+  it("ignores a clock that is not a zoned ISO instant", () => {
+    const row = { lifecycle_status: "open", deadline_date: PASSED };
+    for (const now of ["", "yesterday", "2026-10-13", "2026-10-13T12:00:00", "10/13/2026 12:00", "2026-13-45T99:00:00Z"]) {
+      expect(mergeLifecycleFields(row, {}, { now })).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+    }
+  });
+
+  it("reads the offset and fraction forms the Python crawler and JavaScript write", () => {
+    const row = { lifecycle_status: "open", deadline_date: PASSED };
+    for (const now of ["2026-10-13T12:00:00.123456+00:00", "2026-10-13T12:00:00Z", "2026-10-13T07:00:00-05:00", "2026-10-13T12:00+00:00"]) {
+      expect(mergeLifecycleFields(row, {}, { now })).toMatchObject({ lifecycle_status: "closed" });
+    }
+  });
+
+  it("falls back to the stored deadline when the incoming row has none", () => {
+    expect(mergeLifecycleFields({ lifecycle_status: "open", deadline_date: null }, { deadline_date: PASSED }, { now: NOW }))
+      .toMatchObject({ lifecycle_status: "closed", is_active: 0, deadline_date: PASSED });
+    expect(mergeLifecycleFields({ lifecycle_status: "open", deadline_date: "  " }, { deadline_date: AHEAD }, { now: NOW }))
+      .toMatchObject({ lifecycle_status: "open", is_active: 1, deadline_date: AHEAD });
+  });
+
+  it("prefers the incoming deadline over the stored one", () => {
+    expect(mergeLifecycleFields({ lifecycle_status: "open", deadline_date: AHEAD }, { deadline_date: PASSED }, { now: NOW }))
+      .toMatchObject({ lifecycle_status: "open", deadline_date: AHEAD });
+  });
+
+  it("never expires a bid whose deadline cannot be read or is missing", () => {
+    for (const deadline of [null, undefined, "", "TBD", "Not Available", "02/30/2026"]) {
+      expect(mergeLifecycleFields({ lifecycle_status: "open", deadline_date: deadline }, {}, { now: NOW })).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+    }
+  });
+
+  it("leaves a row the crawler already closed alone", () => {
+    expect(mergeLifecycleFields({ lifecycle_status: "closed", deadline_date: AHEAD }, {}, { now: NOW })).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
+    expect(mergeLifecycleFields({ lifecycle_status: "awarded", deadline_date: PASSED }, {}, { now: NOW })).toMatchObject({ lifecycle_status: "awarded", is_active: 0 });
+  });
+
+  it("keeps an awarded existing row awarded", () => {
+    expect(mergeLifecycleFields({ lifecycle_status: "closed", deadline_date: PASSED }, { lifecycle_status: "awarded", awarded_date: "07/09/2026" }, { now: NOW }))
+      .toMatchObject({ lifecycle_status: "awarded", is_active: 0, awarded_date: "07/09/2026" });
+    // Even when the open list shows it again after its deadline, the deadline never downgrades an award to closed.
+    expect(mergeLifecycleFields({ lifecycle_status: "open", deadline_date: PASSED }, { lifecycle_status: "awarded" }, { now: NOW }))
+      .toMatchObject({ lifecycle_status: "awarded", is_active: 0 });
+  });
+
+  it("reopens a closed existing row whose incoming deadline is ahead", () => {
+    expect(mergeLifecycleFields({ lifecycle_status: "open", deadline_date: AHEAD }, { lifecycle_status: "closed", deadline_date: PASSED }, { now: NOW }))
+      .toMatchObject({ lifecycle_status: "open", is_active: 1, deadline_date: AHEAD });
+    expect(mergeLifecycleFields({ lifecycle_status: "open", deadline_date: AHEAD }, { lifecycle_status: "awarded" }, { now: NOW }))
+      .toMatchObject({ lifecycle_status: "open", is_active: 1 });
+  });
+
+  it("still keeps the other lifecycle fields", () => {
+    expect(mergeLifecycleFields(
+      { lifecycle_status: "open", deadline_date: PASSED, solicitation_number: "" },
+      { awarded_date: "08/06/2026", solicitation_number: "1026A" },
+      { now: NOW },
+    )).toEqual({ lifecycle_status: "closed", is_active: 0, awarded_date: "08/06/2026", deadline_date: PASSED, solicitation_number: "1026A" });
+  });
+});
+
+describe("deadlineClosureOf", () => {
+  const NOW = "2026-10-13T12:00:00.000Z";
+
+  it("names the deadline that closed an otherwise open bid", () => {
+    expect(deadlineClosureOf({ lifecycle_status: "open", deadline_date: " 10/12/2026 " }, {}, { now: NOW })).toBe("10/12/2026");
+    expect(deadlineClosureOf({ lifecycle_status: "open" }, { deadline_date: "10/12/2026" }, { now: NOW })).toBe("10/12/2026");
+  });
+
+  it("is null whenever the rule did not close the bid", () => {
+    expect(deadlineClosureOf({ lifecycle_status: "open", deadline_date: "10/12/2026" }, {}, {})).toBeNull();
+    expect(deadlineClosureOf({ lifecycle_status: "open", deadline_date: "10/14/2026" }, {}, { now: NOW })).toBeNull();
+    expect(deadlineClosureOf({ lifecycle_status: "closed", deadline_date: "10/12/2026" }, {}, { now: NOW })).toBeNull();
+    expect(deadlineClosureOf({ lifecycle_status: "open", deadline_date: "10/12/2026" }, { lifecycle_status: "awarded" }, { now: NOW })).toBeNull();
+    expect(deadlineClosureOf({ lifecycle_status: "open", deadline_date: "TBD" }, {}, { now: NOW })).toBeNull();
   });
 });
 
@@ -79,6 +193,42 @@ describe("delistedRawPayload", () => {
     const next = JSON.parse(delistedRawPayload(JSON.stringify({ title: "T", lifecycle: { note: "x" } }), "2026-09-24T01:00:00.000Z"));
     expect(next).toEqual({ title: "T", lifecycle: { note: "x", closed_reason: "delisted", closed_observed_at: "2026-09-24T01:00:00.000Z" } });
     expect(JSON.parse(delistedRawPayload("not json", "t"))).toEqual({ lifecycle: { closed_reason: "delisted", closed_observed_at: "t" } });
+  });
+});
+
+describe("closedRawPayload", () => {
+  const AT = "2026-10-13T12:00:00.000Z";
+
+  it("records the reason and time under lifecycle without losing the payload or its lifecycle keys", () => {
+    const next = JSON.parse(closedRawPayload(JSON.stringify({ title: "T", lifecycle: { note: "x" } }), "deadline_passed", AT)!);
+    expect(next).toEqual({ title: "T", lifecycle: { note: "x", closed_reason: "deadline_passed", closed_observed_at: AT } });
+  });
+
+  it("takes an object payload as well as its JSON text, and adds the extra fields", () => {
+    const expected = { title: "T", lifecycle: { closed_reason: "deadline_passed", closed_observed_at: AT, deadline: "10/12/2026" } };
+    expect(JSON.parse(closedRawPayload({ title: "T" }, "deadline_passed", AT, { deadline: "10/12/2026" })!)).toEqual(expected);
+    expect(JSON.parse(closedRawPayload('{"title":"T"}', "deadline_passed", AT, { deadline: "10/12/2026" })!)).toEqual(expected);
+    expect(JSON.parse(closedRawPayload({}, "delisted", AT)!)).toEqual({ lifecycle: { closed_reason: "delisted", closed_observed_at: AT } });
+  });
+
+  it("replaces an earlier close reason with the new one", () => {
+    const earlier = { lifecycle: { closed_reason: "delisted", closed_observed_at: "2026-09-01T00:00:00.000Z" } };
+    expect(JSON.parse(closedRawPayload(earlier, "deadline_passed", AT)!).lifecycle).toEqual({ closed_reason: "deadline_passed", closed_observed_at: AT });
+  });
+
+  it("is null for a payload that is not a JSON object, so a caller can leave it untouched", () => {
+    for (const raw of ["not json", "", "[1,2]", "42", '"text"', "null", [1], 7, null, undefined]) {
+      expect(closedRawPayload(raw, "deadline_passed", AT)).toBeNull();
+    }
+  });
+});
+
+describe("closedPayload", () => {
+  it("is the same close as an object, null for a payload that is not one", () => {
+    const at = "2026-10-13T12:00:00.000Z";
+    expect(closedPayload({ a: 1 }, "deadline_passed", at, { deadline: "10/12/2026" }))
+      .toEqual({ a: 1, lifecycle: { closed_reason: "deadline_passed", closed_observed_at: at, deadline: "10/12/2026" } });
+    expect(closedPayload("not json", "deadline_passed", at)).toBeNull();
   });
 });
 

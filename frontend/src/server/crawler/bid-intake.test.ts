@@ -229,6 +229,59 @@ describe("bid intake", () => {
     expect(memory.logs[0].payload.metadata).toMatchObject({ lifecycle: { delisted: 1 }, dataQuality: { acceptedIds: ["city_portal:1"] } });
   });
 
+  describe("deadline-passed close", () => {
+    // NOW is 2026-10-08T00:00:00Z; a date-only deadline is good until 10:00Z on the following day.
+    const PASSED = "10/06/2026";
+    const AHEAD = "10/09/2026";
+
+    it.each(["sync", "async"] as const)("stores a bid closed once its deadline has passed, and says why (%s)", async (mode) => {
+      const memory = memoryStore();
+      const payload = run([bid("1", { deadline_date: PASSED }), bid("2", { deadline_date: AHEAD }), bid("3", { deadline_date: "TBD" }), bid("4")]);
+      if (mode === "sync") intakeCrawlerRun(payload, memory.store);
+      else await intakeCrawlerRunAsync(payload, memory.asyncStore);
+
+      expect(memory.bids.get("city_portal:1")).toMatchObject({ lifecycle_status: "closed", is_active: 0,
+        raw_payload: { lifecycle: { closed_reason: "deadline_passed", closed_observed_at: NOW, deadline: PASSED } } });
+      for (const id of ["2", "3", "4"]) expect(memory.bids.get(`city_portal:${id}`)).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+      expect(memory.bids.get("city_portal:2")?.raw_payload).not.toHaveProperty("lifecycle");
+    });
+
+    it("opens the bid again, with no stale reason, when the next run shows a deadline that is ahead", () => {
+      const memory = memoryStore();
+      intakeCrawlerRun(run([bid("1", { deadline_date: PASSED })]), memory.store);
+      expect(memory.bids.get("city_portal:1")).toMatchObject({ lifecycle_status: "closed" });
+      intakeCrawlerRun(run([bid("1", { deadline_date: AHEAD })]), memory.store);
+
+      expect(memory.bids.get("city_portal:1")).toMatchObject({ lifecycle_status: "open", is_active: 1, deadline_date: AHEAD });
+      expect(JSON.stringify(memory.bids.get("city_portal:1")?.raw_payload)).not.toContain("closed_reason");
+    });
+
+    it("judges by the time the run finished, falling back to the time it started", () => {
+      const memory = memoryStore();
+      const rows = [bid("1", { deadline_date: PASSED })];
+      intakeCrawlerRun({ ...run(rows), startedAt: EARLIER, finishedAt: NOW }, memory.store);
+      expect(memory.bids.get("city_portal:1")).toMatchObject({ lifecycle_status: "closed" });
+
+      const other = memoryStore();
+      intakeCrawlerRun({ ...run(rows), startedAt: EARLIER, finishedAt: null }, other.store);
+      expect(other.bids.get("city_portal:1")).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+      const unset = memoryStore();
+      const started = run(rows);
+      delete started.finishedAt;
+      intakeCrawlerRun(started, unset.store);
+      expect(unset.bids.get("city_portal:1")).toMatchObject({ lifecycle_status: "closed" });
+    });
+
+    it("counts a bid the deadline closed as seen, so only the bids a complete list lacks are delisted", () => {
+      const memory = memoryStore([bid("old", { deadline_date: AHEAD })]);
+      const outcome = intakeCrawlerRun(run([bid("1", { deadline_date: PASSED })], { pagination: { complete: true, list_kind: "open" } }), memory.store);
+
+      expect(outcome.result).toMatchObject({ insertedCount: 1, delistedCount: 1 });
+      expect(memory.bids.get("city_portal:1")?.raw_payload).toMatchObject({ lifecycle: { closed_reason: "deadline_passed" } });
+      expect(memory.bids.get("city_portal:old")?.lifecycle_status).toBe("closed");
+    });
+  });
+
   it("accepts verified empty lists but rejects unexplained zero-row success before a write", () => {
     const memory = memoryStore([bid("old")]);
     expect(() => intakeCrawlerRun(run([]), memory.store)).toThrow("no bid rows");

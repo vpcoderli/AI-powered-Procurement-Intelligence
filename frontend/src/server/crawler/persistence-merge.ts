@@ -1,5 +1,5 @@
 import { getBidDescriptionIssue } from "@/lib/bid-description";
-import { mergeLifecycleFields } from "./lifecycle";
+import { closedPayload, deadlineClosureOf, mergeLifecycleFields, type LifecycleMergeOptions } from "./lifecycle";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -53,8 +53,12 @@ function detailProvenance(row: JsonRecord, persisted: boolean) {
   return fields;
 }
 
-/** Shared snake_case merge for SQLite and MySQL, performed inside the write transaction. */
-export function mergePersistedBid(incoming: JsonRecord, existing: JsonRecord = {}): JsonRecord {
+/**
+ * Shared snake_case merge for SQLite and MySQL, performed inside the write transaction.
+ * `options.now` is the ISO instant the run finished: an open bid whose deadline has passed by then is
+ * stored closed, and its raw payload says the deadline closed it.
+ */
+export function mergePersistedBid(incoming: JsonRecord, existing: JsonRecord = {}, options: LifecycleMergeOptions = {}): JsonRecord {
   const merged = { ...incoming };
   for (const field of ["source_bid_id", "dedupe_key", "jurisdiction_level", "fips_code"]) {
     if (!text(incoming[field]) && text(existing[field])) merged[field] = existing[field];
@@ -102,7 +106,13 @@ export function mergePersistedBid(incoming: JsonRecord, existing: JsonRecord = {
       },
     };
   }
-  Object.assign(merged, mergeLifecycleFields(incoming, existing));
+  Object.assign(merged, mergeLifecycleFields(incoming, existing, options));
+  const deadline = deadlineClosureOf(incoming, existing, options);
+  if (deadline !== null && options.now !== undefined) {
+    // The incoming payload replaces the stored one, so a bid that is open again carries no stale reason.
+    const closed = closedPayload(record(merged.raw_payload), "deadline_passed", options.now, { deadline });
+    if (closed) merged.raw_payload = closed;
+  }
   return merged;
 }
 
