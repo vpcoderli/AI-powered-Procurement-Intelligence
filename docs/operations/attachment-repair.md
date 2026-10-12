@@ -84,7 +84,16 @@
 
 ## SAM.gov 附件
 
-SAM.gov 运行把每条机会的 `resourceLinks` 记为附件链接（`archive_status = not_archived`），抓取进程内不下载。归档交给本 worker 尝试，按 `sam_gov` 源的 `fetch_config.attachments` 策略（默认 `archive: true`、`max_per_run` 50）限速、限量。只有调用方显式传 `archiveDocuments: true` 时，`runSamGovCrawler` 才在运行内下载，仅用于手工排查。SAM `resourceLinks` 能否不带 API key 直接下载，还没有用真实链接验证过；验证之前，不要假定这些附件会被归档。下载失败由本 worker 的失败分类和退避处理，不影响抓取运行。
+SAM.gov 运行把每条机会的 `resourceLinks` 记为附件链接（`archive_status = not_archived`），抓取进程内不下载。归档交给本 worker 尝试，按 `sam_gov` 源的 `fetch_config.attachments` 策略（默认 `archive: true`、`max_per_run` 50）限速、限量。只有调用方显式传 `archiveDocuments: true` 时，`runSamGovCrawler` 才在运行内下载，仅用于手工排查。SAM `resourceLinks` 能否不带 API key 直接下载，截至 2026-10-12 仍未验证：没有拿到真实链接，也就没有向 sam.gov 发过请求。原因如下：
+
+- 本地没有 SAM `resourceLinks`，也没有配置 `SAM_API_KEY`。
+- 公开资料里只查到路径模板 `https://sam.gov/api/prod/opps/v3/opportunities/resources/files/{resourceId}/download`。
+- [GSA 的 Get Opportunities 文档](https://open.gsa.gov/api/get-opportunities-public-api/)示例里 `resourceLinks` 为 `null`。文档只说描述链接要附上 API key，没说附件链接要不要。
+- 一个第三方抓取工具的 [README](https://github.com/IncrediblyHungie/sam-gov-scraper) 声称附件下载不需要 key，但说 SAM 会拦截来自数据中心 IP 的下载。这一点同样未经验证。
+
+所以不要假定这些附件会被归档，部署在云主机上的 worker 尤其可能被拦。被拦的下载会按失败分类记下并退避、停放，不影响抓取运行。
+
+要验证时：用 `SAM_API_KEY` 跑一次 SAM 抓取，拿到一条真实链接，再用 `archive-attachments` 按 worker 的方式下载一次，看结论（`archived` / `html_response` / `http_4xx` …）。
 
 每次 SAM 运行都会把 30 天窗口内的全部链接重新发送一遍。只是再次看到的链接（`not_archived`、没有 `storage_path`）不会改动附件已有的 `failed` / `unavailable` 状态、`archive_error`、`failure_kind`、`repair_attempts` 和 `next_repair_at`（`persistence-merge.ts`，与 Python 端 `storage/sqlite.py` 的规则一致），所以失败的链接会按退避和 30 天停放稳定下来，不会每次抓取后又到期。新下载到的归档文件（带 `storage_path`）照常覆盖。候选按来源选取（见"候选选取"），SAM 链接再多，每轮也只占 `sam_gov` 自己的 `max_per_run`。
 
@@ -186,4 +195,4 @@ FROM bid_attachments WHERE archive_status = 'failed' ORDER BY next_repair_at LIM
 
 首轮发现并修复的缺陷：浏览器下载的链接标识取的是 URL 中最后一个数字参数（IL 模板的 `currentPage=1`），导致同一招标的多个附件都下到第一份文件。修复为按参数名（`downloadFileNbr` 等）优先、其次最长数字值、排除分页参数；sidecar 侧改为整词匹配并在多个控件命中同一标识时按附件名消解，无法消解则返回 `LINK_NOT_FOUND`。选取顺序改为"已归档但缺失/损坏 → 从未归档 → 其余失败重试"。
 
-已知但保留：seed/demo 行的占位 https 链接会按退避重试 6 次后转 `unavailable`（约 63 小时）；SAM.gov 附件链接本身是 HTML 页面，两次 `html_response` 后转 `unavailable`（这是 2026-09-16 对当时演示/`uiLink` 行的实测；2026-10 起 SAM 运行记录的是 `resourceLinks`，其可下载性尚未复测）；PNG/JPEG 等图片没有魔数白名单，按响应头类型归档（`application/octet-stream`）。
+已知但保留：seed/demo 行的占位 https 链接会按退避重试 6 次后转 `unavailable`（约 63 小时）；SAM.gov 附件链接本身是 HTML 页面，两次 `html_response` 后转 `unavailable`（这是 2026-09-16 对当时演示/`uiLink` 行的实测；2026-10 起 SAM 运行记录的是 `resourceLinks`，其可下载性仍未验证，见上文"SAM.gov 附件"）；PNG/JPEG 等图片没有魔数白名单，按响应头类型归档（`application/octet-stream`）。
