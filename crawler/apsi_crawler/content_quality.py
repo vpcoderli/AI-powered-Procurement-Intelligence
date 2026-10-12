@@ -343,15 +343,15 @@ _PLACEHOLDER_BODY_RES = tuple(re.compile(pattern, re.ASCII) for pattern in (
     r"(?:n/a|none|null|not (?:available|provided)|no description(?: available)?|description (?:not available|pending)|tbd|待补|暂无(?:正文|描述))\.?",
 ))
 _RESTRICTED_BODY_RES = tuple(re.compile(pattern, re.ASCII) for pattern in (
-    r"(?:please\s+)?(?:log\s*in|sign\s*in)(?:(?:\s+(?:to|with|on|at)\s+(?:the\s+)?[\w.]+(?:\s+[\w.]+){0,3})?\s+(?:or\s+register\s+)?to\s+(?:view|see|access|download)\b|\s+required\b|\s*[.!]?$)",
-    r"you (?:must|need to) (?:log\s*in|sign\s*in)\b",
-    r"(?:please\s+)?(?:register|create an account)(?:(?:\s+(?:with|on|at)\s+(?:the\s+)?[\w.]+(?:\s+[\w.]+){0,3})?\s+(?:or\s+(?:log\s*in|sign\s*in)\s+)?to\s+(?:view|see|access|download)\b|\s*[.!]?$)",
-    r"(?:access denied|forbidden|unauthorized|error (?:403|404|500)|page not found)(?:\s*[.!:\-–—]|$)",
-    r"(?:checking your browser\b|just a moment(?:\s*(?:\.\.\.|…|[.!])|$)|enable javascript(?:\s+(?:to|and)\b|\s*[.!]?$)|verify (?:you are|that you are) human\b)",
+    r"(?:please\s+)?(?:log\s*in|sign\s*in)(?:(?:\s+(?:to|with|on|at)\s+(?:the\s+)?[\w.]+(?:\s+[\w.]+){0,3})?\s+(?:or\s+register\s+)?to\s+(?:view|see|access|download|continue)\b|\s+to\s+(?:your|my)\s+account\b|\s+with\s+your\b|(?:\s+(?:(?:or|and)\s+)?|\s*/\s*)(?:register|sign\s*up)\s*[.!…]*$|\s+(?:is\s+)?required\b|\s*[.!…]*$)",
+    r"you\s+(?:must|need\s+to)\s+(?:be\s+)?(?:log(?:ged)?\s*in|sign(?:ed)?\s*in)(?:\s+(?:or\s+register\s+)?(?:to|in\s+order\s+to)\s+(?:view|see|access|download|continue)\b|\s+to\s+(?:your|my)\s+account\b|\s*[.!…]*$)",
+    r"(?:please\s+)?(?:register|create\s+an\s+account)(?:(?:\s+(?:with|on|at)\s+(?:the\s+)?[\w.]+(?:\s+[\w.]+){0,3})?\s+(?:or\s+(?:log\s*in|sign\s*in)\s+)?to\s+(?:view|see|access|download|continue)\b|(?:\s+(?:(?:or|and)\s+)?|\s*/\s*)(?:log\s*in|sign\s*in)\s*[.!…]*$|\s*[.!…]*$)",
+    r"(?:access\s+denied|forbidden|unauthorized(?:\s+access)?|error\s+(?:401|403|404|500|502|503)(?:\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable))?|(?:401|403|404|500|502|503)\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable)|page\s+not\s+found)(?:\s*[.!:;,|(\-–—]|\s+you\s+(?:do\s+not|don't|don’t)\s+have\s+permission\b|$)",
+    r"(?:checking\s+your\s+browser\b|just\s+a\s+moment(?:\s*(?:\.\.\.|…|[.!,])|$)|(?:please\s+)?enable\s+javascript(?:\s+(?:to|and)\b|\s+in\s+your\s+browser\b|\s*[.!]?$)|verify\s+(?:you\s+are|that\s+you\s+are|you're)\s+(?:a\s+)?human\b|attention\s+required!)",
 ))
 _METADATA_BODY_RE = re.compile(r"(?:purchase method|type code|bid type|informal bid flag|allow electronic quote)\s*(?::|：|$)", re.ASCII)
-_NAVIGATION_PART_RE = re.compile(r"(?:home|about(?: us)?|contact(?: us)?|privacy(?: policy)?|terms(?: of (?:use|service))?|copyright.*|all rights reserved|login|sign in|register)", re.ASCII)
-_ADDRESS_BODY_RE = re.compile(r"\d+[a-z]?\s+(?:[\w.'-]+\s+){0,5}(?:street|st|road|rd|avenue|ave|boulevard|blvd|lane|ln|drive|dr)\.?(?:\s*,?\s*(?:suite|ste|unit|room|rm|floor|fl)\.?\s*#?[\w-]+)?\s*,\s*[a-z][a-z .'-]*,?\s+[a-z]{2}\s+\d{5}(?:-\d{4})?\.?", re.ASCII)
+_NAVIGATION_PART_RE = re.compile(r"(?:home|about(?: us)?|contact(?: us)?|privacy(?: policy)?|terms(?: of (?:use|service))?|copyright.*|all rights reserved|log\s*in|sign\s*in|sign\s*up|register)", re.ASCII)
+_ADDRESS_BODY_RE = re.compile(r"\d+[a-z]?\s+(?:[\w.'-]+\s+){0,5}(?:street|st|road|rd|avenue|ave|boulevard|blvd|lane|ln|drive|dr)\.?(?:\s*,?\s*(?:(?:suite|ste|unit|room|rm|floor|fl|building|bldg|apartment|apt)\.?\s*#?|#\s*)[\w-]+)?\s*,\s*[a-z][a-z .'-]*,?\s+[a-z]{2}\s+\d{5}(?:-\d{4})?\.?", re.ASCII)
 
 
 def body_issue(value, title):
@@ -373,7 +373,7 @@ def body_issue(value, title):
     if _METADATA_BODY_RE.match(text):
         return "metadata_body"
     # An empty list counts as navigation, exactly like JavaScript's [].every(...).
-    parts = [part for part in (comparable_text(piece) for piece in re.split(r"\s*[|\n·]\s*", value.strip())) if part]
+    parts = [part for part in (comparable_text(piece) for piece in re.split(r"[|\n·]", value.strip())) if part]
     if all(_NAVIGATION_PART_RE.fullmatch(part) for part in parts):
         return "navigation_body"
     if _ADDRESS_BODY_RE.fullmatch(text):
