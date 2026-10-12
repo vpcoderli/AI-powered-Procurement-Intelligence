@@ -99,6 +99,27 @@ def record_outcome(bid, status, reason, timestamp, *, attempted=False, obtained_
     return enrichment["outcome"]
 
 
+def _carried_enrichment(enrichment):
+    """Retry provenance that may cross runs: everything except the previous run's field evidence.
+
+    `applied_fields` names the fields THIS run's detail fetch wrote. A copy carried into a retry
+    that then fails makes the importers take the list summary as fresh detail text and clear the
+    verified full description. An explicit [] also stops the importers' legacy branch from
+    treating copied `fields` diagnostics as detail provenance.
+    """
+    carried = deepcopy(enrichment) if isinstance(enrichment, dict) else {}
+    carried["applied_fields"] = []
+    return carried
+
+
+def _fresh_candidate(row):
+    candidate = deepcopy(row)
+    raw = candidate.get("raw_payload")
+    if isinstance(raw, dict) and isinstance(raw.get("enrichment"), dict):
+        raw["enrichment"] = _carried_enrichment(raw["enrichment"])
+    return candidate
+
+
 def apply_detail_history(bids, history, source_id):
     """Reuse only detail fields for exactly matching source/id/title/URL identity."""
     from apsi_crawler.data_quality import core_issues
@@ -116,7 +137,7 @@ def apply_detail_history(bids, history, source_id):
         raw = deepcopy(raw) if isinstance(raw, dict) else {}
         old_raw = row.get("raw_payload") if isinstance(row.get("raw_payload"), dict) else {}
         old_enrichment = old_raw.get("enrichment") if isinstance(old_raw.get("enrichment"), dict) else {}
-        raw["enrichment"] = deepcopy(old_enrichment)
+        raw["enrichment"] = _carried_enrichment(old_enrichment)
         bid["raw_payload"] = raw
         bid["first_seen_at"] = row.get("first_seen_at") or bid.get("first_seen_at")
         if valid_body(row) and not valid_body(bid):
@@ -137,7 +158,7 @@ def historical_candidates(history, source_id, source=None):
     expected_state = getattr(source, "state_code", None) or ("US" if source_id == "sam_gov" else None)
     expected_level = getattr(source, "jurisdiction", None) or ("federal" if source_id == "sam_gov" else None)
     base_url = getattr(source, "base_url", None)
-    return [deepcopy(row) for row in history or [] if isinstance(row, dict) and not core_issues(row)
+    return [_fresh_candidate(row) for row in history or [] if isinstance(row, dict) and not core_issues(row)
             and (not expected_state or row.get("state_code") == expected_state)
             and (not expected_level or row.get("issuer_type") == expected_level)
             and (not base_url or row.get("source_url") != base_url)
