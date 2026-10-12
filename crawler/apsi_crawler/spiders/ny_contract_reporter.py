@@ -1,4 +1,5 @@
 import json
+import re
 from html.parser import HTMLParser
 
 import requests
@@ -19,6 +20,7 @@ _FIELD_LABELS = frozenset(
     (
         "Title:",
         "CR#:",
+        "Company:",
         "Agency:",
         "Division:",
         "Issue date:",
@@ -31,6 +33,19 @@ _FIELD_LABELS = frozenset(
     )
 )
 _IGNORED_CHUNKS = frozenset(("Log in or sign up to view this opportunity",))
+
+# A subcontracting card names the contractor ("Company:") instead of an agency, and carries an
+# unlabelled sentence between its title and its CR#. The sentence is a marker, not content: it
+# must never be appended to whichever field precedes it.
+_SUBCONTRACT_MARKERS = ("this is a subcontracting opportunity",)
+_SUBCONTRACTING_FLAG = "__subcontracting__"
+# Defensive splits for text the page may glue together: the marker sentence onto the title's own
+# text node, and the company onto the CR# value ("2138289 Company: E.W. Howell Co., LLC.").
+_SUBCONTRACT_TITLE_SUFFIX = re.compile(
+    r"\s+(?:" + "|".join(re.escape(marker) for marker in _SUBCONTRACT_MARKERS) + r")\.?\s*$",
+    re.IGNORECASE,
+)
+_CR_NUMBER_WITH_COMPANY = re.compile(r"^(\S+)\s+Company:\s*(.+)$")
 
 
 class NyContractReporterError(Exception):
@@ -81,6 +96,10 @@ class _NyAdsSearchParser(HTMLParser):
             self._current["chunks"].append(text)
 
 
+def _is_subcontract_marker(chunk):
+    return chunk.lower().rstrip(".") in _SUBCONTRACT_MARKERS
+
+
 def _fields_from_chunks(chunks):
     fields = {}
     label = None
@@ -93,6 +112,8 @@ def _fields_from_chunks(chunks):
             values = []
         elif chunk in _IGNORED_CHUNKS:
             continue
+        elif _is_subcontract_marker(chunk):
+            fields[_SUBCONTRACTING_FLAG] = True
         elif label is not None:
             values.append(chunk)
     if label is not None and values:
@@ -103,18 +124,38 @@ def _fields_from_chunks(chunks):
 def _record_from_item(item):
     fields = _fields_from_chunks(item["chunks"])
     ad_id = _normalize_space(item.get("ad_id")) or None
-    source_bid_id = fields.get("CR#:") or ad_id
+    cr_number = fields.get("CR#:")
+    company = fields.get("Company:")
+    title = fields.get("Title:")
+    subcontracting = bool(fields.get(_SUBCONTRACTING_FLAG))
+
+    # A real Company: field always wins; only a company folded into the CR# text is split off.
+    if cr_number and not company:
+        glued = _CR_NUMBER_WITH_COMPANY.match(cr_number)
+        if glued:
+            cr_number = glued.group(1)
+            company = glued.group(2).strip() or None
+
+    if title:
+        bare_title = _SUBCONTRACT_TITLE_SUFFIX.sub("", title, count=1)
+        if bare_title != title:
+            title = bare_title.strip() or None
+            subcontracting = True
+
+    source_bid_id = cr_number or ad_id
     if not source_bid_id:
         raise NyContractReporterError("NY Contract Reporter record is missing source id")
 
     return {
         "source_bid_id": source_bid_id,
-        "title": fields.get("Title:"),
+        "title": title,
         "description": fields.get("Note:"),
         "original_category": fields.get("Category:"),
         "published_date": fields.get("Issue date:"),
         "deadline_date": fields.get("Due date:") or fields.get("Ad end date:"),
-        "issuer_name": fields.get("Agency:"),
+        "issuer_name": fields.get("Agency:") or company,
+        "contractor_company": company,
+        "subcontracting": subcontracting,
         "source_url": NY_CONTRACT_REPORTER_DETAIL_URL_TEMPLATE.format(
             ad_id=ad_id or source_bid_id
         ),
