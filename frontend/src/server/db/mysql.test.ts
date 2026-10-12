@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { BID_CHILD_REFERENCES } from "./bid-child-references";
 import {
   closeResolvedMysqlPool,
   createMysqlPool,
   isMysqlDatabaseUrlConfigured,
+  MYSQL_LEGACY_FIPS_DRIFT_CONDITION,
+  MYSQL_LEGACY_FIPS_DRIFT_RETYPE,
+  MYSQL_LEGACY_FIPS_DRIFT_STAMP,
   MYSQL_LOCAL_ISSUER_TYPE_BACKFILL,
+  MYSQL_NY_SUBCONTRACT_DUPLICATE_DELETE,
+  MYSQL_NY_SUBCONTRACT_REKEY,
   mysqlColumnMigrationStatements,
   mysqlDataMigrationStatements,
   mysqlIndexColumnModification,
@@ -335,15 +341,84 @@ describe("mysql migrations cover the bid lifecycle columns (2026-09-24 phase 1)"
     expect(joined).toContain("data_sources ADD COLUMN consecutive_empty_runs INT NOT NULL DEFAULT 0");
   });
 
-  it("backfills closed lifecycle for inactive rows and local issuer types for legacy bids", () => {
+  it("runs the data fixes in a fixed order", () => {
+    // The FIPS-drift stamp must precede its retype (the stamp reads the stale FIPS the retype overwrites), and the NY
+    // duplicate delete must follow the re-key (the re-key is what gives a duplicate its clean twin).
     expect(mysqlDataMigrationStatements()).toEqual([
       "UPDATE bids SET lifecycle_status = 'closed' WHERE is_active = 0 AND lifecycle_status = 'open'",
       MYSQL_LOCAL_ISSUER_TYPE_BACKFILL,
+      MYSQL_LEGACY_FIPS_DRIFT_STAMP,
+      MYSQL_LEGACY_FIPS_DRIFT_RETYPE,
+      MYSQL_NY_SUBCONTRACT_REKEY,
+      MYSQL_NY_SUBCONTRACT_DUPLICATE_DELETE,
     ]);
+  });
+
+  it("backfills local issuer types for legacy bids", () => {
     expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("ON data_sources.id = SUBSTRING_INDEX(bids.id, ':', 1)");
     expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("IN ('county', 'city', 'township', 'special_district')");
     expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("bids.fips_code = data_sources.fips_code");
     expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("data_sources.state_code COLLATE utf8mb4_bin = bids.state_code COLLATE utf8mb4_bin");
+  });
+
+  it("pins the legacy FIPS-drift statements", () => {
+    const join = "UPDATE bids JOIN data_sources ON data_sources.id = SUBSTRING_INDEX(bids.id, ':', 1)";
+    expect(MYSQL_LEGACY_FIPS_DRIFT_CONDITION).toBe(
+      " WHERE bids.issuer_type = 'state' AND LOCATE(':', bids.id) > 1"
+      + " AND data_sources.jurisdiction_level IN ('county', 'city', 'township', 'special_district')"
+      + " AND data_sources.state_code COLLATE utf8mb4_bin = bids.state_code COLLATE utf8mb4_bin"
+      + " AND (bids.jurisdiction_level IS NULL OR bids.jurisdiction_level = '' OR bids.jurisdiction_level = data_sources.jurisdiction_level)"
+      + " AND bids.fips_code IS NOT NULL AND bids.fips_code <> ''"
+      + " AND data_sources.fips_code IS NOT NULL AND data_sources.fips_code <> ''"
+      + " AND bids.fips_code COLLATE utf8mb4_bin <> data_sources.fips_code COLLATE utf8mb4_bin",
+    );
+    // Multi-table UPDATE assignment order is not guaranteed, so the stamp (which reads bids.fips_code) is its own statement.
+    expect(MYSQL_LEGACY_FIPS_DRIFT_STAMP).toBe(
+      `${join} SET bids.raw_payload = JSON_SET(bids.raw_payload, '$.legacy_fips_code', bids.fips_code)`
+      + `${MYSQL_LEGACY_FIPS_DRIFT_CONDITION} AND JSON_VALID(bids.raw_payload) AND JSON_TYPE(bids.raw_payload) = 'OBJECT'`,
+    );
+    expect(MYSQL_LEGACY_FIPS_DRIFT_RETYPE).toBe(
+      `${join} SET bids.issuer_type = data_sources.jurisdiction_level, bids.fips_code = data_sources.fips_code${MYSQL_LEGACY_FIPS_DRIFT_CONDITION}`,
+    );
+  });
+
+  it("complements the first backfill's FIPS guard exactly, so every candidate row is handled by one of the two", () => {
+    expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain(
+      "AND (bids.fips_code IS NULL OR bids.fips_code = '' OR data_sources.fips_code IS NULL OR data_sources.fips_code = '' OR bids.fips_code = data_sources.fips_code)",
+    );
+    expect(MYSQL_LEGACY_FIPS_DRIFT_CONDITION).toContain("AND bids.fips_code IS NOT NULL AND bids.fips_code <> ''");
+    expect(MYSQL_LEGACY_FIPS_DRIFT_CONDITION).toContain("AND data_sources.fips_code IS NOT NULL AND data_sources.fips_code <> ''");
+  });
+});
+
+describe("mysql NY subcontract re-key statements", () => {
+  it("re-keys with UPDATE IGNORE, so a key another row holds skips the row instead of failing the migration", () => {
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toMatch(/^UPDATE IGNORE bids SET bids\.id = /);
+    expect(MYSQL_NY_SUBCONTRACT_DUPLICATE_DELETE).toMatch(/^DELETE FROM bids WHERE /);
+  });
+
+  it("assigns source_bid_id last, so the result does not depend on the order MySQL evaluates the assignments in", () => {
+    // Left to right, each assignment sees the ones before it; run as an anti-join multi-table update, each sees the original row.
+    const assignments = MYSQL_NY_SUBCONTRACT_REKEY.slice(MYSQL_NY_SUBCONTRACT_REKEY.indexOf(" SET "), MYSQL_NY_SUBCONTRACT_REKEY.indexOf(" WHERE "));
+    expect(assignments.endsWith(", bids.source_bid_id = SUBSTRING_INDEX(bids.source_bid_id, ' Company: ', 1)")).toBe(true);
+    // Every other assignment parses the marker out of the still-intact source_bid_id.
+    expect(assignments.indexOf("bids.source_bid_id = ")).toBe(assignments.lastIndexOf("bids.source_bid_id = "));
+  });
+
+  it("matches only the exact legacy shape and only rows nothing points at", () => {
+    for (const statement of [MYSQL_NY_SUBCONTRACT_REKEY, MYSQL_NY_SUBCONTRACT_DUPLICATE_DELETE]) {
+      expect(statement).toContain("WHERE bids.id LIKE 'ny!_contract!_reporter:% Company: %' ESCAPE '!'");
+      expect(statement).toContain("LOCATE(' Company: ', bids.source_bid_id COLLATE utf8mb4_bin) > 1");
+      expect(statement).toContain("bids.id COLLATE utf8mb4_bin = CONCAT('ny_contract_reporter:', bids.source_bid_id)");
+      // MySQL refuses to select directly from the table it updates or deletes from; a derived table is the sanctioned way.
+      expect(statement).toContain("(SELECT id FROM bids) AS existing WHERE existing.id = CONCAT('ny_contract_reporter:', SUBSTRING_INDEX(bids.source_bid_id, ' Company: ', 1))");
+      // No foreign keys protect child rows in MySQL, so the statement itself must check every one.
+      for (const { table, column } of BID_CHILD_REFERENCES) {
+        expect(statement).toContain(`NOT EXISTS (SELECT 1 FROM ${table} WHERE ${table}.${column} = bids.id)`);
+      }
+    }
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain("AND NOT EXISTS (SELECT 1 FROM (SELECT id FROM bids) AS existing");
+    expect(MYSQL_NY_SUBCONTRACT_DUPLICATE_DELETE).toContain("AND EXISTS (SELECT 1 FROM (SELECT id FROM bids) AS existing");
   });
 });
 
