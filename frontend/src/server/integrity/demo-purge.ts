@@ -10,27 +10,36 @@
  *
  * WHICH DEPENDENTS. Every table whose REFERENCES chain in src/server/db/migrate.ts reaches `bids`
  * (DEMO_PURGE_TABLES, children first; demo-purge.test.ts fails when a table is missing from it, when its references
- * drift from migrate.ts, or when its order is not children-first). MySQL has no foreign keys (mysql.ts strips every
+ * drift from migrate.ts, when its order is not children-first, or when a table the purge keeps gains a reference into
+ * the graph that is not an ON DELETE SET NULL it detaches). MySQL has no foreign keys (mysql.ts strips every
  * REFERENCES) and SQLite cascades only with `foreign_keys=ON`, so both dialects delete explicitly, in the same
  * order, and then verify that nothing was left dangling:
- *   - SQLite runs `PRAGMA foreign_key_check` before COMMIT;
- *   - MySQL runs one orphan-count query per relationship (DEMO_PURGE_RELATIONSHIPS) before COMMIT.
- * Either check rolls the whole purge back when it finds a reference the purge itself left behind. References that
- * were already dangling before the purge (a legacy orphan row unrelated to it) are counted first and do not block it.
+ *   - SQLite runs `PRAGMA foreign_key_check` before COMMIT and compares it with one taken before the first write;
+ *   - MySQL collects, before the first write, the ids the purge removes from every parent table, and before COMMIT asks,
+ *     for every relationship of DEMO_PURGE_RELATIONSHIPS, whether any row of the child table still names one of them.
+ * Either check rolls the whole purge back when it finds a reference the purge itself left behind. Both are exact: a row
+ * that was already an orphan before the purge names a parent that never existed, so it cannot trip the check, and
+ * nothing the purge does can hide behind it.
  *
  * A row is deleted when ANY of its references points at a deleted row, which is what ON DELETE CASCADE does; so a
  * row that names a demo workspace item but belongs to another intent goes too. The ON DELETE SET NULL references
  * into the graph are detached the same way in both dialects (DEMO_PURGE_DETACHMENTS): `knowledge_items.source_bid_id`
  * and `.source_intent_id`, and `award_outcomes.tabulation_artifact_id`. Knowledge items are kept, never deleted.
- * The detachments run first, while the intents they are resolved through still exist.
+ * The detachments run first, while the intents they are resolved through still exist. A link is counted and nulled
+ * only on a row that stays (the demo bids' own award outcomes name their own artifacts, but go anyway), and the plan
+ * counts every one of them (`detachments`; the apply reports `detached`), so a dry run shows every write the apply makes.
  *
  * LEFT UNTOUCHED, as history, because nothing keys them to a bid: `notification_outbox.matched_bid_ids`,
  * `search_alert_digest_runs.matched_bid_ids_json`, `event_log.target_id` / `metadata_json`,
  * `ai_call_logs.metadata_json` and `crawler_logs.metadata`. Files that deleted rows point at through `storage_path`
  * (artifact vault, response-package exports, archived attachments) are not removed either.
  *
- * Run it while the workers are stopped. MySQL has no foreign keys to stop a writer from adding a row for a demo bid
- * between the plan and the commit.
+ * RUN IT IN A MAINTENANCE WINDOW. On MySQL, stop the web app AND every worker first. MySQL has no foreign keys, so
+ * nothing stops the web app from inserting a child row for a demo bid (a save, an intent, a workspace edit) while the
+ * transaction runs; a row committed by another session after the transaction took its snapshot is invisible to the
+ * checks above and would be an orphan once the purge commits. SQLite needs no such window: `.immediate()` takes the
+ * write lock for the whole purge, and the app's connections enforce foreign keys, so a child row for a deleted bid is
+ * refused.
  */
 import type { AppDatabase } from "@/server/db/client";
 import { mysqlExecute, mysqlSelectMany, mysqlSelectOne, mysqlTransaction } from "@/server/db/mysql-runtime";
@@ -50,6 +59,11 @@ export interface DemoPurgePlan {
   dependents: Record<string, number>;
   /** Knowledge items that lose a link to a demo bid or one of its intents; they are kept. */
   knowledgeItemsToDetach: number;
+  /**
+   * Links the purge sets to NULL on rows that stay, per `table.column` (every entry of DEMO_PURGE_DETACHMENTS, zero
+   * included). With `dependents` and `bids` this is every write the apply makes.
+   */
+  detachments: Record<string, number>;
 }
 
 export interface DemoPurgeResult extends DemoPurgePlan {
@@ -57,11 +71,18 @@ export interface DemoPurgeResult extends DemoPurgePlan {
   applied: boolean;
   /** Rows actually deleted, per dependent table and `bids`; all zero when nothing was applied. */
   deleted: Record<string, number>;
+  /** Links actually set to NULL, per `table.column`; all zero when nothing was applied. */
+  detached: Record<string, number>;
 }
 
 /** What `resolveMysqlPool()` returns, narrowed to what the purge uses: reads (`query`) and a transaction. */
 export type DemoPurgeMysql = Parameters<typeof mysqlSelectMany>[0] & Parameters<typeof mysqlTransaction>[0];
-export type DemoPurgeTarget = { database: AppDatabase } | { mysql: DemoPurgeMysql };
+/**
+ * The purge only runs raw SQL on the connection, so a SQLite handle is anything that carries the better-sqlite3
+ * connection as `$client`: a Drizzle `AppDatabase`, or `{ $client }` from a script that opened the file itself.
+ */
+export type DemoPurgeSqlite = Pick<AppDatabase, "$client">;
+export type DemoPurgeTarget = { database: DemoPurgeSqlite } | { mysql: DemoPurgeMysql };
 
 export type DemoPurgeErrorCode = "TOO_MANY_DEMO_BIDS" | "INTEGRITY_CHECK_FAILED";
 
@@ -218,20 +239,11 @@ export interface DemoPurgeRelationship {
   label: string;
 }
 
-/** Every foreign-key relationship of the purge, for the orphan check that stands in for MySQL's missing foreign keys. */
+/** Every foreign-key relationship of the purge, for the check that stands in for MySQL's missing foreign keys. */
 export const DEMO_PURGE_RELATIONSHIPS: readonly DemoPurgeRelationship[] = [
   ...DEMO_PURGE_TABLES.flatMap((entry) => entry.references.map((reference) => ({ child: entry.table, ...reference }))),
   ...DEMO_PURGE_DETACHMENTS.map((entry) => ({ child: entry.table, column: entry.column, parent: entry.parent })),
 ].map((relationship) => ({ ...relationship, label: `${relationship.child}.${relationship.column} -> ${relationship.parent}` }));
-
-/** Rows of `child` whose `column` names a `parent` row that does not exist. */
-export function orphanCountSql(relationship: DemoPurgeRelationship): string {
-  const { child, column, parent } = relationship;
-  return (
-    `SELECT COUNT(*) AS n FROM \`${child}\` c LEFT JOIN \`${parent}\` p ON p.id = c.\`${column}\` ` +
-    `WHERE c.\`${column}\` IS NOT NULL AND p.id IS NULL`
-  );
-}
 
 /* -------------------------------------------------------------------------------------------------------------- */
 /* Statements (dialect-neutral SQL; both runners bind the same parameters)                                         */
@@ -243,7 +255,8 @@ interface Sql {
 }
 
 interface PurgeStatement extends Sql {
-  table: string;
+  /** `table` for a count or a delete, `table.column` for a detachment. */
+  key: string;
 }
 
 const tableByName = new Map(DEMO_PURGE_TABLES.map((entry) => [entry.table, entry]));
@@ -266,23 +279,45 @@ function referencesRemoved(references: readonly DemoPurgeReference[], bidIds: re
   return { sql: parts.map((part) => part.sql).join(" OR "), params: parts.flatMap((part) => part.params) };
 }
 
+const detachmentKey = (entry: DemoPurgeDetachment) => `${entry.table}.${entry.column}`;
+
+/**
+ * The rows whose link is set to NULL: those that name a purged row and stay. A row the purge deletes anyway (a demo
+ * bid's own award outcome, which names its own artifact) keeps its link, so it is neither counted nor written.
+ */
+function detachCondition(entry: DemoPurgeDetachment, bidIds: readonly string[]): Sql {
+  const link = referencesRemoved([entry], bidIds);
+  const purged = tableByName.get(entry.table);
+  if (!purged) return link;
+  const deleted = referencesRemoved(purged.references, bidIds);
+  return { sql: `${link.sql} AND NOT (${deleted.sql})`, params: [...link.params, ...deleted.params] };
+}
+
 function countStatements(bidIds: readonly string[]): PurgeStatement[] {
   return DEMO_PURGE_TABLES.map((entry) => {
     const condition = referencesRemoved(entry.references, bidIds);
-    return { table: entry.table, sql: `SELECT COUNT(*) AS n FROM ${entry.table} WHERE ${condition.sql}`, params: condition.params };
+    return { key: entry.table, sql: `SELECT COUNT(*) AS n FROM ${entry.table} WHERE ${condition.sql}`, params: condition.params };
   });
 }
 
+function detachCountStatements(bidIds: readonly string[]): PurgeStatement[] {
+  return DEMO_PURGE_DETACHMENTS.map((entry) => {
+    const condition = detachCondition(entry, bidIds);
+    return { key: detachmentKey(entry), sql: `SELECT COUNT(*) AS n FROM ${entry.table} WHERE ${condition.sql}`, params: condition.params };
+  });
+}
+
+/** Distinct knowledge items that lose a link in either column (a row that loses both counts once). */
 function knowledgeItemsCountStatement(bidIds: readonly string[]): PurgeStatement {
   const references = DEMO_PURGE_DETACHMENTS.filter((entry) => entry.table === "knowledge_items");
   const condition = referencesRemoved(references, bidIds);
-  return { table: "knowledge_items", sql: `SELECT COUNT(*) AS n FROM knowledge_items WHERE ${condition.sql}`, params: condition.params };
+  return { key: "knowledge_items", sql: `SELECT COUNT(*) AS n FROM knowledge_items WHERE ${condition.sql}`, params: condition.params };
 }
 
 function detachStatements(bidIds: readonly string[]): PurgeStatement[] {
   return DEMO_PURGE_DETACHMENTS.map((entry) => {
-    const condition = referencesRemoved([entry], bidIds);
-    return { table: entry.table, sql: `UPDATE ${entry.table} SET ${entry.column} = NULL WHERE ${condition.sql}`, params: condition.params };
+    const condition = detachCondition(entry, bidIds);
+    return { key: detachmentKey(entry), sql: `UPDATE ${entry.table} SET ${entry.column} = NULL WHERE ${condition.sql}`, params: condition.params };
   });
 }
 
@@ -291,9 +326,9 @@ function deleteStatements(bidIds: readonly string[]): PurgeStatement[] {
   return [
     ...DEMO_PURGE_TABLES.map((entry) => {
       const condition = referencesRemoved(entry.references, bidIds);
-      return { table: entry.table, sql: `DELETE FROM ${entry.table} WHERE ${condition.sql}`, params: condition.params };
+      return { key: entry.table, sql: `DELETE FROM ${entry.table} WHERE ${condition.sql}`, params: condition.params };
     }),
-    { table: "bids", sql: `DELETE FROM bids WHERE id IN (${bidIds.map(() => "?").join(", ")})`, params: [...bidIds] },
+    { key: "bids", sql: `DELETE FROM bids WHERE id IN (${bidIds.map(() => "?").join(", ")})`, params: [...bidIds] },
   ];
 }
 
@@ -345,8 +380,14 @@ function assertWithinLimit(bids: readonly DemoBid[]) {
 }
 
 const zeroDependents = (): Record<string, number> => Object.fromEntries(DEMO_PURGE_TABLES.map((entry) => [entry.table, 0]));
-const emptyPlan = (): DemoPurgePlan => ({ bids: [], dependents: zeroDependents(), knowledgeItemsToDetach: 0 });
-const notApplied = (plan: DemoPurgePlan): DemoPurgeResult => ({ ...plan, applied: false, deleted: { ...zeroDependents(), bids: 0 } });
+const zeroDetachments = (): Record<string, number> => Object.fromEntries(DEMO_PURGE_DETACHMENTS.map((entry) => [detachmentKey(entry), 0]));
+const emptyPlan = (): DemoPurgePlan => ({ bids: [], dependents: zeroDependents(), knowledgeItemsToDetach: 0, detachments: zeroDetachments() });
+const notApplied = (plan: DemoPurgePlan): DemoPurgeResult => ({
+  ...plan,
+  applied: false,
+  deleted: { ...zeroDependents(), bids: 0 },
+  detached: zeroDetachments(),
+});
 const countOf = (row: unknown): number => Number((row as { n?: number | string } | null | undefined)?.n ?? 0);
 
 type Sqlite = AppDatabase["$client"];
@@ -368,10 +409,14 @@ function planWithSqlite(sqlite: Sqlite): DemoPurgePlan {
   const ids = bids.map((bid) => bid.id);
   const dependents = zeroDependents();
   for (const statement of countStatements(ids)) {
-    dependents[statement.table] = countOf(sqlite.prepare(statement.sql).get(...statement.params));
+    dependents[statement.key] = countOf(sqlite.prepare(statement.sql).get(...statement.params));
+  }
+  const detachments = zeroDetachments();
+  for (const statement of detachCountStatements(ids)) {
+    detachments[statement.key] = countOf(sqlite.prepare(statement.sql).get(...statement.params));
   }
   const knowledge = knowledgeItemsCountStatement(ids);
-  return { bids, dependents, knowledgeItemsToDetach: countOf(sqlite.prepare(knowledge.sql).get(...knowledge.params)) };
+  return { bids, dependents, knowledgeItemsToDetach: countOf(sqlite.prepare(knowledge.sql).get(...knowledge.params)), detachments };
 }
 
 type MysqlReader = Parameters<typeof mysqlSelectMany>[0];
@@ -389,10 +434,14 @@ async function planWithMysql(reader: MysqlReader): Promise<DemoPurgePlan> {
   const ids = bids.map((bid) => bid.id);
   const dependents = zeroDependents();
   for (const statement of countStatements(ids)) {
-    dependents[statement.table] = countOf(await mysqlSelectOne(reader, statement.sql, statement.params));
+    dependents[statement.key] = countOf(await mysqlSelectOne(reader, statement.sql, statement.params));
+  }
+  const detachments = zeroDetachments();
+  for (const statement of detachCountStatements(ids)) {
+    detachments[statement.key] = countOf(await mysqlSelectOne(reader, statement.sql, statement.params));
   }
   const knowledge = knowledgeItemsCountStatement(ids);
-  return { bids, dependents, knowledgeItemsToDetach: countOf(await mysqlSelectOne(reader, knowledge.sql, knowledge.params)) };
+  return { bids, dependents, knowledgeItemsToDetach: countOf(await mysqlSelectOne(reader, knowledge.sql, knowledge.params)), detachments };
 }
 
 /* -------------------------------------------------------------------------------------------------------------- */
@@ -430,10 +479,13 @@ function applyWithSqlite(sqlite: Sqlite): DemoPurgeResult {
 
     const ids = plan.bids.map((bid) => bid.id);
     const existing = new Set(foreignKeyViolations(sqlite).map(violationKey));
-    for (const statement of detachStatements(ids)) sqlite.prepare(statement.sql).run(...statement.params);
+    const detached = zeroDetachments();
+    for (const statement of detachStatements(ids)) {
+      detached[statement.key] = sqlite.prepare(statement.sql).run(...statement.params).changes;
+    }
     const deleted: Record<string, number> = { ...zeroDependents(), bids: 0 };
     for (const statement of deleteStatements(ids)) {
-      deleted[statement.table] = sqlite.prepare(statement.sql).run(...statement.params).changes;
+      deleted[statement.key] = sqlite.prepare(statement.sql).run(...statement.params).changes;
     }
 
     // Foreign keys are on, so a delete that would orphan a row has already failed. This catches what deferred or
@@ -447,17 +499,44 @@ function applyWithSqlite(sqlite: Sqlite): DemoPurgeResult {
       }
       throw integrityFailure("SQLite", [...perRelationship].map(([label, count]) => `${label} (${count})`));
     }
-    return { ...plan, applied: true, deleted };
+    return { ...plan, applied: true, deleted, detached };
   });
   return purge.immediate();
 }
 
-async function orphanCounts(reader: MysqlReader): Promise<Map<string, number>> {
-  const counts = new Map<string, number>();
-  for (const relationship of DEMO_PURGE_RELATIONSHIPS) {
-    counts.set(relationship.label, countOf(await mysqlSelectOne(reader, orphanCountSql(relationship))));
+/** The parent tables, other than `bids`, that some relationship of the purge points at. */
+const PARENT_TABLES: readonly DemoPurgeParent[] = [...new Set(DEMO_PURGE_RELATIONSHIPS.map((relationship) => relationship.parent))]
+  .filter((parent) => parent !== "bids");
+
+/** The ids the purge removes from every parent table, read before the first write while those rows still exist. */
+async function collectRemovedIds(reader: MysqlReader, bidIds: readonly string[]): Promise<Record<DemoPurgeParent, string[]>> {
+  const removed = { bids: [...bidIds] } as Record<DemoPurgeParent, string[]>;
+  for (const parent of PARENT_TABLES) {
+    const query = removedIds(parent, bidIds);
+    removed[parent] = (await mysqlSelectMany<{ id: string }>(reader, query.sql, query.params)).map((row) => row.id);
   }
-  return counts;
+  return removed;
+}
+
+/** Ids per statement of the check: far below any parameter limit, and a purge of the most bids it accepts fits in one. */
+const CHECK_CHUNK_SIZE = 500;
+
+/**
+ * For every relationship, how many rows of the child table still name an id the purge removed from its parent.
+ * Rows that never had a parent are not looked at: they name ids that were never removed.
+ */
+async function danglingReferences(reader: MysqlReader, removed: Record<DemoPurgeParent, string[]>): Promise<string[]> {
+  const problems: string[] = [];
+  for (const { child, column, parent, label } of DEMO_PURGE_RELATIONSHIPS) {
+    let rows = 0;
+    for (let start = 0; start < removed[parent].length; start += CHECK_CHUNK_SIZE) {
+      const ids = removed[parent].slice(start, start + CHECK_CHUNK_SIZE);
+      const sql = `SELECT COUNT(*) AS n FROM \`${child}\` WHERE \`${column}\` IN (${ids.map(() => "?").join(", ")})`;
+      rows += countOf(await mysqlSelectOne(reader, sql, ids));
+    }
+    if (rows > 0) problems.push(`${label} (${rows} rows still reference purged rows)`);
+  }
+  return problems;
 }
 
 async function applyWithMysql(pool: DemoPurgeMysql): Promise<DemoPurgeResult> {
@@ -471,21 +550,21 @@ async function applyWithMysql(pool: DemoPurgeMysql): Promise<DemoPurgeResult> {
     if (plan.bids.length === 0) return notApplied(plan);
 
     const ids = plan.bids.map((bid) => bid.id);
-    const orphansBefore = await orphanCounts(connection);
-    for (const statement of detachStatements(ids)) await mysqlExecute(connection, statement.sql, statement.params);
+    const removed = await collectRemovedIds(connection, ids);
+    const detached = zeroDetachments();
+    for (const statement of detachStatements(ids)) {
+      detached[statement.key] = (await mysqlExecute(connection, statement.sql, statement.params)).affectedRows;
+    }
     const deleted: Record<string, number> = { ...zeroDependents(), bids: 0 };
     for (const statement of deleteStatements(ids)) {
-      deleted[statement.table] = (await mysqlExecute(connection, statement.sql, statement.params)).affectedRows;
+      deleted[statement.key] = (await mysqlExecute(connection, statement.sql, statement.params)).affectedRows;
     }
 
-    // No foreign keys here: count, for every relationship, the rows whose parent no longer exists. Rows that were
-    // already orphans before the purge are not its doing. A throw rolls the transaction back (mysqlTransaction).
-    const orphansAfter = await orphanCounts(connection);
-    const introduced = DEMO_PURGE_RELATIONSHIPS
-      .filter((relationship) => (orphansAfter.get(relationship.label) ?? 0) > (orphansBefore.get(relationship.label) ?? 0))
-      .map((relationship) => `${relationship.label} (${orphansAfter.get(relationship.label)} orphans, was ${orphansBefore.get(relationship.label)})`);
-    if (introduced.length > 0) throw integrityFailure("MySQL", introduced);
-    return { ...plan, applied: true, deleted };
+    // No foreign keys here: ask, for every relationship, whether a row still names an id that was just removed. A throw
+    // rolls the transaction back (mysqlTransaction).
+    const dangling = await danglingReferences(connection, removed);
+    if (dangling.length > 0) throw integrityFailure("MySQL", dangling);
+    return { ...plan, applied: true, deleted, detached };
   });
 }
 
@@ -504,9 +583,9 @@ export async function planDemoPurge(target: DemoPurgeTarget): Promise<DemoPurgeP
 }
 
 /**
- * Dry run unless `apply`: then one transaction detaches the knowledge-item links, deletes the dependents children
- * first and the bids last, verifies that nothing dangles and commits, or rolls back and throws a DemoPurgeError.
- * A second apply finds no demo bid and writes nothing.
+ * Dry run unless `apply`: then one transaction detaches the links that must go (knowledge items, award outcomes),
+ * deletes the dependents children first and the bids last, verifies that nothing dangles and commits, or rolls back
+ * and throws a DemoPurgeError. A second apply finds no demo bid and writes nothing.
  */
 export async function purgeDemoBids(target: DemoPurgeTarget, options: { apply: boolean }): Promise<DemoPurgeResult> {
   if (!options.apply) return notApplied(await planDemoPurge(target));

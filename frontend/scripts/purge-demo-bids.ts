@@ -1,7 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createDatabase } from "../src/server/db/client";
+import Database from "better-sqlite3";
 import {
   closeResolvedMysqlPool,
   isMysqlDatabaseUrlConfigured,
@@ -17,7 +17,7 @@ export interface PurgeDemoBidsCliOptions {
   help: boolean;
 }
 
-/** A bad command line: reported, then exit code 2. */
+/** A bad command line, or a target that cannot be used (no such SQLite file): reported, then exit code 2. */
 export class PurgeDemoBidsUsageError extends Error {}
 
 export interface PurgeDemoBidsIo {
@@ -42,7 +42,8 @@ export function formatPurgeDemoBidsHelp() {
     "  --json                Print machine-readable output.",
     "  --help                Print this help.",
     "",
-    "Exit codes: 0 done, 1 error (the purge is rolled back), 2 usage.",
+    "Exit codes: 0 done, 1 error (the purge is rolled back), 2 usage (a bad command line, a backup file that is missing,",
+    "empty or the database itself, or a SQLite database that is not there).",
     "",
     "Which bids: id prefix (text before the first ':') is not a data_sources.id, and either the id ends with",
     "_demo_readiness and source_bid_id starts with demo: (npm run demo:prepare), or the id is all digits and",
@@ -58,10 +59,17 @@ export function formatPurgeDemoBidsHelp() {
     "columns (artifact vault, response-package exports, archived attachments) are not removed.",
     "",
     "Target: DATABASE_URL / MYSQL_DATABASE_URL when it is a mysql:// URL, otherwise the SQLite file at DATABASE_PATH",
-    "(default data/apsi.sqlite). The process environment is used as it is; .env.local is not read. The target is printed.",
-    "Run it with the workers stopped. npm run demo:prepare, npm run db:seed and npm run db:mysql:import-sqlite re-create",
-    "demo bids (the first against MySQL, the second in the local SQLite file, the third by copying that file into MySQL):",
-    "never run any of them against winbids or production.",
+    "(default data/apsi.sqlite, which must exist: nothing is created). The process environment is used as it is;",
+    ".env.local is not read. The target is printed to stderr as soon as it is opened.",
+    "",
+    "Run it in a maintenance window. On MySQL stop the web app AND every worker first: MySQL has no foreign keys, so the",
+    "web app can insert a child row for a demo bid (a save, an intent, a workspace edit) while the purge runs, and that row",
+    "would be an orphan after the commit. On SQLite the purge holds the write lock for its whole transaction and the app",
+    "enforces foreign keys, so nothing can slip in.",
+    "",
+    "npm run demo:prepare, npm run db:seed and npm run db:mysql:import-sqlite re-create demo bids (the first against",
+    "MySQL, the second in the local SQLite file, the third by copying that file into MySQL): never run any of them",
+    "against winbids or production.",
   ].join("\n");
 }
 
@@ -93,9 +101,27 @@ export function parsePurgeDemoBidsArgs(argv: readonly string[]): PurgeDemoBidsCl
   return options;
 }
 
-/** Why `--apply` may not run yet, or null when the backup file it names exists and holds something. */
-export function backupFileProblem(backupFile: string | null): string | null {
+/** The same file under another name: the same path once resolved, or a symbolic or hard link to it. */
+function isSameFile(left: string, right: string): boolean {
+  if (path.resolve(left) === path.resolve(right)) return true;
+  try {
+    const a = statSync(left);
+    const b = statSync(right);
+    return a.ino !== 0 && a.dev === b.dev && a.ino === b.ino;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Why `--apply` may not run yet, or null when the backup file it names exists and holds something. `databasePath` is
+ * the SQLite file the purge is about to change (null on MySQL): the database is never its own backup.
+ */
+export function backupFileProblem(backupFile: string | null, databasePath: string | null = null): string | null {
   if (!backupFile) return `--apply requires --backup-file <path>. ${BACKUP_HINT}`;
+  if (databasePath && isSameFile(backupFile, databasePath)) {
+    return `--backup-file ${backupFile} is the SQLite database itself, not a backup of it. ${BACKUP_HINT}`;
+  }
   let stats;
   try {
     stats = statSync(path.resolve(backupFile));
@@ -131,6 +157,11 @@ export function formatPurgeDemoBidsReport(result: DemoPurgeResult, target: strin
   const counts = Object.entries(result.applied ? result.deleted : result.dependents).filter(([table]) => table !== "bids");
   const width = Math.max(0, ...counts.map(([table]) => table.length));
   for (const [table, count] of counts) lines.push(`  ${table.padEnd(width)}  ${count}`);
+  // The other writes of the apply: links nulled on rows that stay. With the rows above, every write of the apply.
+  const links = Object.entries(result.applied ? result.detached : result.detachments);
+  const linkWidth = Math.max(0, ...links.map(([link]) => link.length));
+  lines.push("Links set to NULL on rows that are kept:");
+  for (const [link, count] of links) lines.push(`  ${link.padEnd(linkWidth)}  ${count}`);
   lines.push(`Knowledge items that lose a link to a demo bid or intent (kept): ${result.knowledgeItemsToDetach}`);
 
   if (result.applied) {
@@ -152,34 +183,55 @@ export function formatPurgeDemoBidsReport(result: DemoPurgeResult, target: strin
   return lines.join("\n");
 }
 
+type ResolvedTarget = { kind: "mysql"; databaseUrl: string } | { kind: "sqlite"; databasePath: string };
+
+/** Which database the environment points at, without touching it. */
+function resolveTarget(env: NodeJS.ProcessEnv): ResolvedTarget {
+  if (isMysqlDatabaseUrlConfigured(env)) return { kind: "mysql", databaseUrl: requireMysqlDatabaseUrl(env) };
+  return { kind: "sqlite", databasePath: path.resolve(process.cwd(), env.DATABASE_PATH?.trim() || path.join("data", "apsi.sqlite")) };
+}
+
 interface OpenedTarget {
   target: DemoPurgeTarget;
   description: string;
   close: () => Promise<void>;
 }
 
-async function openTarget(env: NodeJS.ProcessEnv): Promise<OpenedTarget> {
-  if (isMysqlDatabaseUrlConfigured(env)) {
-    const databaseUrl = requireMysqlDatabaseUrl(env);
+async function openTarget(resolved: ResolvedTarget): Promise<OpenedTarget> {
+  if (resolved.kind === "mysql") {
     // mysql-smoke.ts pulls in most of the server; only the MySQL runtime needs its URL redaction.
     const { redactMysqlDatabaseUrl } = await import("../src/server/db/mysql-smoke");
     return {
-      target: { mysql: resolveMysqlPool(databaseUrl) },
-      description: `mysql ${redactMysqlDatabaseUrl(databaseUrl)}`,
+      target: { mysql: resolveMysqlPool(resolved.databaseUrl) },
+      description: `mysql ${redactMysqlDatabaseUrl(resolved.databaseUrl)}`,
       // An open mysql2 pool keeps the process alive, so it is released on every path (see src/server/db/mysql.ts).
       close: () => closeResolvedMysqlPool(),
     };
   }
 
-  const databasePath = path.resolve(process.cwd(), env.DATABASE_PATH?.trim() || path.join("data", "apsi.sqlite"));
-  // createDatabase would create an empty file at a mistyped path, and the purge would then find nothing.
-  if (!existsSync(databasePath)) throw new Error(`SQLite database not found: ${databasePath}`);
-  const database = createDatabase(databasePath);
+  // Opening a SQLite path creates an empty database at a mistyped one, and so does importing the app's db/client (its
+  // `db` is created at import time, in <cwd>/data). This script does neither: it checks that the file is there, then
+  // opens it with fileMustExist, and the purge reads and writes through that connection alone.
+  if (!existsSync(resolved.databasePath)) {
+    throw new PurgeDemoBidsUsageError(
+      `SQLite database not found: ${resolved.databasePath}. Nothing was created. ` +
+        "Set DATABASE_PATH to the database file (the default is data/apsi.sqlite in the directory you run this from).",
+    );
+  }
+  const sqlite = new Database(resolved.databasePath, { fileMustExist: true });
+  try {
+    // The settings the app gives its own connections (db/client.ts), except journal_mode: the purge does not change it.
+    sqlite.pragma("busy_timeout = 5000");
+    sqlite.pragma("foreign_keys = ON");
+  } catch (error) {
+    sqlite.close();
+    throw error;
+  }
   return {
-    target: { database },
-    description: `sqlite ${databasePath}`,
+    target: { database: { $client: sqlite } },
+    description: `sqlite ${resolved.databasePath}`,
     close: async () => {
-      database.$client.close();
+      sqlite.close();
     },
   };
 }
@@ -204,8 +256,10 @@ export async function runPurgeDemoBids(
     io.stdout(formatPurgeDemoBidsHelp());
     return 0;
   }
+
+  const resolved = resolveTarget(env);
   if (options.apply) {
-    const problem = backupFileProblem(options.backupFile);
+    const problem = backupFileProblem(options.backupFile, resolved.kind === "sqlite" ? resolved.databasePath : null);
     if (problem) {
       io.stderr(problem);
       return 2;
@@ -214,7 +268,10 @@ export async function runPurgeDemoBids(
 
   let opened: OpenedTarget | undefined;
   try {
-    opened = await openTarget(env);
+    opened = await openTarget(resolved);
+    // Before anything is planned or written: a run that fails or rolls back still says which database it hit. It goes
+    // to stderr, so that --json leaves stdout as one JSON document.
+    io.stderr(`Target: ${opened.description}`);
     const result = await purgeDemoBids(opened.target, { apply: options.apply });
     const mode = options.apply ? "apply" : "dry-run";
     io.stdout(
@@ -225,7 +282,7 @@ export async function runPurgeDemoBids(
     return 0;
   } catch (error) {
     io.stderr(error instanceof Error ? error.message : String(error));
-    return 1;
+    return error instanceof PurgeDemoBidsUsageError ? 2 : 1;
   } finally {
     await opened?.close();
   }

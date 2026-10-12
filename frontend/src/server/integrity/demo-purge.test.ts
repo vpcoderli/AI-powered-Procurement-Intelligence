@@ -5,6 +5,7 @@ import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
   DEMO_PURGE_DETACHMENTS,
   DEMO_PURGE_MAX_BIDS,
+  DEMO_PURGE_RELATIONSHIPS,
   DEMO_PURGE_TABLES,
   DemoPurgeError,
   demoBidKind,
@@ -13,15 +14,18 @@ import {
   planDemoPurge,
   purgeDemoBids,
   type DemoPurgeMysql,
+  type DemoPurgeParent,
 } from "./demo-purge";
 import {
   EXPECTED_DEMO_DEPENDENTS,
+  EXPECTED_DEMO_DETACHMENTS,
   EXPECTED_KNOWLEDGE_ITEMS_TO_DETACH,
   REAL_BID_ID,
   SEED_AT,
   SURVIVOR_BID_IDS,
   buildDemoPurgeSeed,
   expectedDemoDependents,
+  expectedDemoDetachments,
   expectedPresence,
   insertStatement,
   isDemoOwned,
@@ -174,6 +178,7 @@ describe("demo and seed bid purge on SQLite", () => {
     expect(plan.bids.map((bid) => bid.id)).toEqual(["1", "2", "al_state_procurement_demo_readiness", "wa_state_procurement_demo_readiness"]);
     expect(plan.dependents).toEqual(EXPECTED_DEMO_DEPENDENTS);
     expect(plan.knowledgeItemsToDetach).toBe(EXPECTED_KNOWLEDGE_ITEMS_TO_DETACH);
+    expect(plan.detachments).toEqual(EXPECTED_DEMO_DETACHMENTS);
     expect(totalChanges(sqlite)).toBe(before);
     expect(rowCounts(sqlite, [...DEPENDENT_TABLES, "bids", "knowledge_items"])).toEqual(tableCounts);
   });
@@ -195,8 +200,11 @@ describe("demo and seed bid purge on SQLite", () => {
 
     expect(result.applied).toBe(false);
     expect(result.dependents).toEqual(EXPECTED_DEMO_DEPENDENTS);
+    expect(result.detachments).toEqual(EXPECTED_DEMO_DETACHMENTS);
     expect(result.bids).toHaveLength(4);
     expect(Object.values(result.deleted).every((count) => count === 0)).toBe(true);
+    expect(Object.values(result.detached).every((count) => count === 0)).toBe(true);
+    expect(Object.keys(result.detached)).toEqual(Object.keys(EXPECTED_DEMO_DETACHMENTS));
     expect(totalChanges(sqlite)).toBe(before);
     expectSeedState(sqlite, rows, { purged: false });
   });
@@ -213,6 +221,7 @@ describe("demo and seed bid purge on SQLite", () => {
     expect(result.dependents).toEqual(EXPECTED_DEMO_DEPENDENTS);
     expect(result.knowledgeItemsToDetach).toBe(EXPECTED_KNOWLEDGE_ITEMS_TO_DETACH);
     expect(result.deleted).toEqual({ ...EXPECTED_DEMO_DEPENDENTS, bids: 4 });
+    expect(result.detached).toEqual(EXPECTED_DEMO_DETACHMENTS);
 
     expectSeedState(sqlite, rows, { purged: true });
     expect(presentKeys(sqlite, "bids")).toEqual(new Set(SURVIVOR_BID_IDS));
@@ -240,7 +249,9 @@ describe("demo and seed bid purge on SQLite", () => {
     expect(second.applied).toBe(false);
     expect(second.knowledgeItemsToDetach).toBe(0);
     expect(Object.values(second.dependents).every((count) => count === 0)).toBe(true);
+    expect(Object.values(second.detachments).every((count) => count === 0)).toBe(true);
     expect(Object.values(second.deleted).every((count) => count === 0)).toBe(true);
+    expect(Object.values(second.detached).every((count) => count === 0)).toBe(true);
     expect(second.deleted.bids).toBe(0);
     expect(totalChanges(sqlite)).toBe(before);
   });
@@ -269,10 +280,14 @@ describe("demo and seed bid purge on SQLite", () => {
       response_workspace_comments: EXPECTED_DEMO_DEPENDENTS.response_workspace_comments + 1,
       response_workspace_item_artifacts: EXPECTED_DEMO_DEPENDENTS.response_workspace_item_artifacts + 1,
     });
+    // The survivor's award outcome stays, so the plan announces its lost link; the four demo award outcomes, which
+    // name their own artifacts, are deleted and are not counted as links that merely lose their target.
+    expect(plan.detachments).toEqual({ ...EXPECTED_DEMO_DETACHMENTS, "award_outcomes.tabulation_artifact_id": 1 });
 
     const result = await purgeDemoBids({ database: testDb.db }, { apply: true });
 
     expect(result.deleted).toEqual({ ...plan.dependents, bids: 4 });
+    expect(result.detached).toEqual(plan.detachments);
     expect(presentKeys(sqlite, "response_workspace_comments").has("comment_cross")).toBe(false);
     expect(presentKeys(sqlite, "response_workspace_item_artifacts").has(`${survivorItem}|${demoArtifact}`)).toBe(false);
     expect(sqlite.prepare("SELECT tabulation_artifact_id FROM award_outcomes WHERE id = ?").get(survivorAward)).toEqual({
@@ -325,13 +340,34 @@ describe("demo and seed bid purge on SQLite", () => {
     expect(plan.bids.filter((bid) => bid.kind === "mock_seed")).toHaveLength(6);
     expect(plan.dependents).toEqual(expectedDemoDependents(56));
     expect(plan.knowledgeItemsToDetach).toBe(2 * 56);
+    expect(plan.detachments).toEqual(expectedDemoDetachments(56));
 
     const result = await purgeDemoBids({ database: testDb.db }, { apply: true });
 
     expect(result.deleted).toEqual({ ...expectedDemoDependents(56), bids: 56 });
+    expect(result.detached).toEqual(expectedDemoDetachments(56));
     expectSeedState(sqlite, rows, { purged: true });
     expect(presentKeys(sqlite, "bids")).toEqual(new Set(SURVIVOR_BID_IDS));
     expect(sqlite.pragma("foreign_key_check")).toEqual([]);
+  });
+
+  it("shows in a dry run every write the apply makes", async () => {
+    seedSqlite(testDb);
+    // A kept award outcome that borrowed a demo artifact, so every kind of write is in the plan.
+    sqlite.prepare("UPDATE award_outcomes SET tabulation_artifact_id = ? WHERE id = ?").run("artifact_1", `award_${seedTag(REAL_BID_ID)}`);
+    const sum = (counts: Record<string, number>) => Object.values(counts).reduce((total, count) => total + count, 0);
+    const plan = await planDemoPurge({ database: testDb.db });
+    const planned = sum(plan.dependents) + plan.bids.length + sum(plan.detachments);
+    const before = totalChanges(sqlite);
+
+    const result = await purgeDemoBids({ database: testDb.db }, { apply: true });
+
+    // SQLite counts the rows its own foreign key actions change as well, so a write that the plan did not announce
+    // (a cascade, a SET NULL the purge did not count) would make this number larger than the plan.
+    expect(totalChanges(sqlite) - before).toBe(planned);
+    expect(result.deleted).toEqual({ ...plan.dependents, bids: plan.bids.length });
+    expect(result.detached).toEqual(plan.detachments);
+    expect(Object.keys(plan.detachments)).toEqual(DEMO_PURGE_DETACHMENTS.map((entry) => `${entry.table}.${entry.column}`));
   });
 
   /** `count` mock bids that match the rule and have no dependents; ids 1000 and up. */
@@ -432,6 +468,32 @@ function tablesReaching(references: readonly ParsedReference[], root: string): S
   return reached;
 }
 
+/**
+ * What is wrong with the references of the tables the purge does NOT list (it only detaches them, or has never heard of
+ * them). Their rows survive the purge, so every reference they have into the graph must be an ON DELETE SET NULL that
+ * the purge detaches. A CASCADE would have SQLite delete rows behind the purge's back and outside its counts (and leave
+ * them in MySQL), and a reference without an action, or RESTRICT, would refuse the delete of the parent.
+ */
+function referencesOfUnlistedTables(
+  references: readonly ParsedReference[],
+  listed: ReadonlySet<string>,
+  inGraph: ReadonlySet<string>,
+  detachments: readonly { table: string; column: string; parent: string }[],
+): string[] {
+  const detached = new Set(detachments.map((entry) => `${entry.table}.${entry.column} -> ${entry.parent}`));
+  const problems: string[] = [];
+  for (const reference of references) {
+    if (listed.has(reference.table) || !inGraph.has(reference.parent)) continue;
+    const link = `${reference.table}.${reference.column} -> ${reference.parent}`;
+    if (reference.onDelete !== "SET NULL") {
+      problems.push(`${link} is ON DELETE ${reference.onDelete ?? "NO ACTION"}, but ${reference.table} is not purged: only ON DELETE SET NULL may point into the graph`);
+    } else if (!detached.has(link)) {
+      problems.push(`${link} is ON DELETE SET NULL but not in DEMO_PURGE_DETACHMENTS, so MySQL would leave it dangling`);
+    }
+  }
+  return problems;
+}
+
 describe("the demo purge table list against the REFERENCES clauses of migrate.ts", () => {
   const references = parseReferences(createTableBlock);
   const reached = tablesReaching(references, "bids");
@@ -484,6 +546,35 @@ describe("the demo purge table list against the REFERENCES clauses of migrate.ts
     expect(DEMO_PURGE_DETACHMENTS.map((entry) => `${entry.table}.${entry.column} -> ${entry.parent}`).sort()).toEqual(expected);
   });
 
+  it("lets a table the purge keeps reference the graph only through ON DELETE SET NULL links that the purge detaches", () => {
+    expect(referencesOfUnlistedTables(references, listed, inGraph, DEMO_PURGE_DETACHMENTS)).toEqual([]);
+    // knowledge_items is the table this is about: it is detached, never deleted, and has exactly those two links.
+    expect(references.filter((reference) => reference.table === "knowledge_items" && inGraph.has(reference.parent)).map((reference) => reference.onDelete))
+      .toEqual(["SET NULL", "SET NULL"]);
+  });
+
+  it("reports a reference that would delete, or block, rows of a table the purge keeps", () => {
+    const added = (over: Partial<ParsedReference>): ParsedReference => ({
+      table: "knowledge_items", column: "legacy_bid_id", parent: "bids", parentColumn: "id", onDelete: "CASCADE", ...over,
+    });
+    const problems = (extra: ParsedReference) => referencesOfUnlistedTables([...references, extra], listed, inGraph, DEMO_PURGE_DETACHMENTS);
+
+    // CASCADE: SQLite would delete these rows with the bid, behind the purge's back and outside its counts.
+    expect(problems(added({}))).toEqual([expect.stringContaining("knowledge_items.legacy_bid_id -> bids")]);
+    expect(problems(added({ parent: "intent_to_bid" }))).toEqual([expect.stringContaining("knowledge_items.legacy_bid_id -> intent_to_bid")]);
+    // No ON DELETE clause (NO ACTION) and RESTRICT would refuse the delete of the parent.
+    expect(problems(added({ onDelete: null }))).toEqual([expect.stringContaining("NO ACTION")]);
+    expect(problems(added({ onDelete: "RESTRICT" }))).toEqual([expect.stringContaining("RESTRICT")]);
+    // SET NULL is the one acceptable action, and only when the purge detaches that very column.
+    expect(problems(added({ onDelete: "SET NULL" }))).toEqual([expect.stringContaining("not in DEMO_PURGE_DETACHMENTS")]);
+    expect(problems(added({ column: "source_bid_id", onDelete: "SET NULL" }))).toEqual([]);
+    // A table that is new to the graph is reported the same way.
+    expect(problems(added({ table: "bid_notes" }))).toEqual([expect.stringContaining("bid_notes.legacy_bid_id -> bids")]);
+    // Not its business: a reference outside the graph, or one of a table the purge lists (checked by its own test).
+    expect(problems(added({ table: "audit_log", parent: "users" }))).toEqual([]);
+    expect(problems(added({ table: "bid_attachments" }))).toEqual([]);
+  });
+
   it("only references parents through their id column", () => {
     for (const reference of references.filter((candidate) => inGraph.has(candidate.parent))) {
       expect(reference.parentColumn, `${reference.table}.${reference.column}`).toBe("id");
@@ -514,18 +605,41 @@ describe("the demo purge table list against the REFERENCES clauses of migrate.ts
 /* The MySQL branch against a scripted pool (the real server is exercised by demo-purge.mysql.integration.test.ts) */
 /* -------------------------------------------------------------------------------------------------------------- */
 
+/** The ids a purge removes from each parent table other than `bids`, unless a test says otherwise. */
+const DEFAULT_REMOVED_IDS: Partial<Record<DemoPurgeParent, string[]>> = {
+  intent_to_bid: ["intent-1", "intent-2"],
+  response_workspace_items: ["item-1", "item-2", "item-3"],
+  supplier_artifacts: ["artifact-1"],
+  quote_requests: ["quote-1"],
+  response_package_snapshots: ["snapshot-1"],
+  response_package_exports: ["export-1"],
+};
+const FAKE_BID_IDS = ["1", "al_state_procurement_demo_readiness"];
+
 interface FakeMysqlOptions {
   registered?: string[];
   candidates?: Array<{ id: string; source_bid_id: string }>;
-  /** Rows per dependent table, as a plan count and as the affected-rows count of its DELETE. */
+  /**
+   * Rows per dependent table (a plan count, and the affected rows of its DELETE); per `table.column` for a
+   * detachment (the plan count, and the affected rows of its UPDATE); `knowledge_items` is the distinct plan count.
+   */
   counts?: Record<string, number>;
-  orphans?: (relationship: string, phase: "before" | "after") => number;
+  /** The ids the purge removes from each parent table other than `bids`. */
+  removed?: Partial<Record<DemoPurgeParent, string[]>>;
+  /** Rows of a relationship (`child.column -> parent`) that still reference one of the ids a check binds. */
+  dangling?: (relationship: string, ids: unknown[]) => number;
 }
+
+const relationshipLabel = (child: string, column: string) =>
+  DEMO_PURGE_RELATIONSHIPS.find((relationship) => relationship.child === child && relationship.column === column)?.label ?? `${child}.${column}`;
 
 function createFakeMysql(options: FakeMysqlOptions = {}) {
   const events: string[] = [];
+  /** Everything the purge asked for, in order: `collect <parent>`, `write <sql>`, `check <relationship>`. */
+  const calls: string[] = [];
   const executed: string[] = [];
   const executedValues: unknown[][] = [];
+  const checks: Array<{ label: string; ids: unknown[] }> = [];
   let transactionOpen = false;
   let poolQueriesInTransaction = 0;
   const candidates = options.candidates ?? [
@@ -534,31 +648,44 @@ function createFakeMysql(options: FakeMysqlOptions = {}) {
     { id: "ca_caleprocure:RFQ-1", source_bid_id: "demo:not-a-demo-bid" },
   ];
 
-  const answer = (sql: string): unknown[] => {
+  /** The key a plan count or an affected-rows count is scripted under. */
+  const countKey = (sql: string, table: string, firstColumn: string) => {
+    if (table === "knowledge_items") return / OR source_intent_id IN \(/.test(sql) && firstColumn === "source_bid_id" ? "knowledge_items" : `knowledge_items.${firstColumn}`;
+    return DEMO_PURGE_DETACHMENTS.some((entry) => entry.table === table && entry.column === firstColumn) ? `${table}.${firstColumn}` : table;
+  };
+
+  const answer = (sql: string, values: unknown[]): unknown[] => {
     if (/FROM data_sources/.test(sql)) return (options.registered ?? ["ca_caleprocure"]).map((id) => ({ id }));
     if (/FROM bids WHERE source_bid_id LIKE/.test(sql)) {
       return candidates.map((row) => ({ ...row, title: `Bid ${row.id}`, state_code: "XX", lifecycle_status: "open" }));
     }
-    const orphan = sql.match(/FROM `(\w+)` c LEFT JOIN `(\w+)` p ON p\.id = c\.`(\w+)`/);
-    if (orphan) {
-      const relationship = `${orphan[1]}.${orphan[3]} -> ${orphan[2]}`;
-      return [{ n: options.orphans?.(relationship, executed.length === 0 ? "before" : "after") ?? 0 }];
+    const collect = sql.match(/^SELECT id FROM (\w+) WHERE /);
+    if (collect) {
+      calls.push(`collect ${collect[1]}`);
+      return (options.removed?.[collect[1] as DemoPurgeParent] ?? DEFAULT_REMOVED_IDS[collect[1] as DemoPurgeParent] ?? []).map((id) => ({ id }));
     }
-    const count = sql.match(/^SELECT COUNT\(\*\) AS n FROM (\w+) WHERE/);
-    if (count) {
-      const table = count[1];
-      return [{ n: table === "knowledge_items" ? (options.counts?.knowledge_items ?? 0) : (options.counts?.[table] ?? 0) }];
+    const check = sql.match(/^SELECT COUNT\(\*\) AS n FROM `(\w+)` WHERE `(\w+)` IN \(/);
+    if (check) {
+      const label = relationshipLabel(check[1], check[2]);
+      calls.push(`check ${label}`);
+      checks.push({ label, ids: values });
+      return [{ n: options.dangling?.(label, values) ?? 0 }];
     }
+    const count = sql.match(/^SELECT COUNT\(\*\) AS n FROM (\w+) WHERE (\w+) IN \(/);
+    if (count) return [{ n: options.counts?.[countKey(sql, count[1], count[2])] ?? 0 }];
     throw new Error(`unscripted query: ${sql}`);
   };
 
   const connection = {
-    query: async (sql: string) => [answer(sql)],
+    query: async (sql: string, values: unknown[] = []) => [answer(sql, values)],
     execute: async (sql: string, values: unknown[] = []) => {
+      calls.push(`write ${sql}`);
       executed.push(sql);
       executedValues.push(values);
-      const table = sql.match(/^(?:DELETE FROM|UPDATE) (\w+)/)?.[1] ?? "";
-      return [{ affectedRows: sql.startsWith("DELETE FROM bids") ? 2 : (options.counts?.[table] ?? 0), insertId: 0 }];
+      const detach = sql.match(/^UPDATE (\w+) SET (\w+) = NULL/);
+      const table = sql.match(/^DELETE FROM (\w+)/)?.[1] ?? "";
+      const key = detach ? `${detach[1]}.${detach[2]}` : table;
+      return [{ affectedRows: sql.startsWith("DELETE FROM bids") ? FAKE_BID_IDS.length : (options.counts?.[key] ?? 0), insertId: 0 }];
     },
     beginTransaction: async () => { events.push("begin"); transactionOpen = true; },
     commit: async () => { events.push("commit"); transactionOpen = false; },
@@ -566,26 +693,35 @@ function createFakeMysql(options: FakeMysqlOptions = {}) {
     release: () => { events.push("release"); },
   };
   const pool = {
-    query: async (sql: string) => {
+    query: async (sql: string, values: unknown[] = []) => {
       if (transactionOpen) poolQueriesInTransaction += 1;
-      return [answer(sql)];
+      return [answer(sql, values)];
     },
     getConnection: async () => connection,
   };
   return {
     pool: pool as unknown as DemoPurgeMysql,
     events,
+    calls,
     executed,
     executedValues,
+    checks,
     get poolQueriesInTransaction() { return poolQueriesInTransaction; },
   };
 }
 
 const verbAndTable = (sql: string) => sql.match(/^(DELETE FROM|UPDATE) (\w+)/)!.slice(1).join(" ");
+const removedIdsOf = (parent: DemoPurgeParent, removed: FakeMysqlOptions["removed"] = {}) =>
+  parent === "bids" ? FAKE_BID_IDS : (removed[parent] ?? DEFAULT_REMOVED_IDS[parent] ?? []);
 
 describe("demo and seed bid purge on MySQL, with a scripted pool", () => {
-  it("plans without a transaction and without writing", async () => {
-    const fake = createFakeMysql({ counts: { bid_attachments: 3, intent_to_bid: 2, knowledge_items: 1 } });
+  it("plans without a transaction and without writing, every detachment included", async () => {
+    const fake = createFakeMysql({
+      counts: {
+        bid_attachments: 3, intent_to_bid: 2, knowledge_items: 1,
+        "knowledge_items.source_bid_id": 1, "knowledge_items.source_intent_id": 1, "award_outcomes.tabulation_artifact_id": 2,
+      },
+    });
 
     const result = await purgeDemoBids({ mysql: fake.pool }, { apply: false });
 
@@ -594,13 +730,17 @@ describe("demo and seed bid purge on MySQL, with a scripted pool", () => {
     expect(result.dependents.bid_attachments).toBe(3);
     expect(result.dependents.intent_to_bid).toBe(2);
     expect(result.knowledgeItemsToDetach).toBe(1);
+    expect(result.detachments).toEqual({
+      "knowledge_items.source_bid_id": 1, "knowledge_items.source_intent_id": 1, "award_outcomes.tabulation_artifact_id": 2,
+    });
     expect(Object.keys(result.dependents)).toEqual(DEMO_PURGE_TABLES.map((entry) => entry.table));
+    expect(Object.keys(result.detachments)).toEqual(DEMO_PURGE_DETACHMENTS.map((entry) => `${entry.table}.${entry.column}`));
     expect(fake.events).toEqual([]);
     expect(fake.executed).toEqual([]);
   });
 
-  it("detaches first, deletes dependents children first, deletes the bids last, and commits once", async () => {
-    const fake = createFakeMysql({ counts: { bid_attachments: 3 } });
+  it("detaches first, deletes dependents children first, deletes the bids last, commits once, and reports what it wrote", async () => {
+    const fake = createFakeMysql({ counts: { bid_attachments: 3, "award_outcomes.tabulation_artifact_id": 2, award_outcomes: 5 } });
 
     const result = await purgeDemoBids({ mysql: fake.pool }, { apply: true });
 
@@ -612,9 +752,24 @@ describe("demo and seed bid purge on MySQL, with a scripted pool", () => {
     ]);
     expect(result.applied).toBe(true);
     expect(result.deleted.bid_attachments).toBe(3);
+    expect(result.deleted.award_outcomes).toBe(5);
     expect(result.deleted.bids).toBe(2);
+    expect(result.detached).toEqual({
+      "knowledge_items.source_bid_id": 0, "knowledge_items.source_intent_id": 0, "award_outcomes.tabulation_artifact_id": 2,
+    });
     // Everything inside the transaction goes through its own connection (a pool of one would otherwise deadlock).
     expect(fake.poolQueriesInTransaction).toBe(0);
+  });
+
+  it("does not count, or null, the link of an award outcome that the same purge deletes", async () => {
+    const fake = createFakeMysql();
+
+    await purgeDemoBids({ mysql: fake.pool }, { apply: true });
+
+    const update = fake.executed.find((sql) => sql.startsWith("UPDATE award_outcomes"))!;
+    expect(update).toMatch(/WHERE tabulation_artifact_id IN \(SELECT id FROM supplier_artifacts WHERE .*\) AND NOT \(intent_id IN \(.*\) OR bid_id IN \(.*\)\)$/);
+    // Rows of a table that is not purged have no such exclusion.
+    expect(fake.executed.find((sql) => sql.startsWith("UPDATE knowledge_items SET source_bid_id"))).not.toContain("AND NOT");
   });
 
   it("binds only the demo bids that the rule accepts", async () => {
@@ -623,45 +778,96 @@ describe("demo and seed bid purge on MySQL, with a scripted pool", () => {
     await purgeDemoBids({ mysql: fake.pool }, { apply: true });
 
     // The last statement deletes the bids; the third candidate carries a demo: source_bid_id but a registered prefix.
-    expect(fake.executedValues.at(-1)).toEqual(["1", "al_state_procurement_demo_readiness"]);
+    expect(fake.executedValues.at(-1)).toEqual(FAKE_BID_IDS);
     expect(fake.executedValues.flat()).not.toContain("ca_caleprocure:RFQ-1");
   });
 
-  it("rolls back, and does not commit, when a relationship has more orphans afterwards than before", async () => {
+  it("collects the ids it removes before its first write, and checks them after its last", async () => {
+    const fake = createFakeMysql();
+
+    await purgeDemoBids({ mysql: fake.pool }, { apply: true });
+
+    const firstWrite = fake.calls.findIndex((call) => call.startsWith("write "));
+    const lastWrite = fake.calls.findLastIndex((call) => call.startsWith("write "));
+    const collects = fake.calls.flatMap((call, index) => (call.startsWith("collect ") ? [index] : []));
+    const checks = fake.calls.flatMap((call, index) => (call.startsWith("check ") ? [index] : []));
+    const parents = [...new Set(DEMO_PURGE_RELATIONSHIPS.map((relationship) => relationship.parent))].filter((parent) => parent !== "bids");
+    expect(fake.calls.filter((call) => call.startsWith("collect ")).sort()).toEqual(parents.map((parent) => `collect ${parent}`).sort());
+    expect(Math.max(...collects)).toBeLessThan(firstWrite);
+    expect(Math.min(...checks)).toBeGreaterThan(lastWrite);
+  });
+
+  it("checks every relationship of the list, plus every detachment, against exactly the ids removed from its parent", async () => {
+    const fake = createFakeMysql();
+
+    await purgeDemoBids({ mysql: fake.pool }, { apply: true });
+
+    expect(DEMO_PURGE_RELATIONSHIPS.length).toBe(
+      DEMO_PURGE_TABLES.reduce((total, entry) => total + entry.references.length, 0) + DEMO_PURGE_DETACHMENTS.length,
+    );
+    for (const relationship of DEMO_PURGE_RELATIONSHIPS) {
+      expect(fake.checks.filter((check) => check.label === relationship.label), relationship.label)
+        .toEqual([{ label: relationship.label, ids: removedIdsOf(relationship.parent) }]);
+    }
+    expect(fake.checks).toHaveLength(DEMO_PURGE_RELATIONSHIPS.length);
+  });
+
+  it("rolls back, and does not commit, when a row still references a purged id", async () => {
     const fake = createFakeMysql({
-      orphans: (relationship, phase) => (relationship === "response_workspace_comments.item_id -> response_workspace_items" && phase === "after" ? 1 : 0),
+      dangling: (relationship) => (relationship === "response_workspace_comments.item_id -> response_workspace_items" ? 2 : 0),
     });
 
     const failure = await purgeDemoBids({ mysql: fake.pool }, { apply: true }).then(() => undefined, (error: unknown) => error);
 
     expect(failure).toBeInstanceOf(DemoPurgeError);
     expect((failure as DemoPurgeError).code).toBe("INTEGRITY_CHECK_FAILED");
-    expect((failure as DemoPurgeError).message).toContain("response_workspace_comments.item_id -> response_workspace_items");
+    expect((failure as DemoPurgeError).message).toContain("response_workspace_comments.item_id -> response_workspace_items (2 rows still reference purged rows)");
     expect(fake.events).toEqual(["begin", "rollback", "release"]);
   });
 
-  it("does not let orphans that were already there block the purge", async () => {
-    const fake = createFakeMysql({ orphans: (relationship) => (relationship === "bid_attachments.bid_id -> bids" ? 7 : 0) });
+  it("names every relationship that still has a row pointing at a purged id", async () => {
+    const fake = createFakeMysql({
+      dangling: (relationship) => (["bid_attachments.bid_id -> bids", "submission_confirmations.intent_id -> intent_to_bid"].includes(relationship) ? 1 : 0),
+    });
+
+    const failure = await purgeDemoBids({ mysql: fake.pool }, { apply: true }).then(() => undefined, (error: unknown) => error);
+
+    expect((failure as DemoPurgeError).message).toContain("bid_attachments.bid_id -> bids (1 rows");
+    expect((failure as DemoPurgeError).message).toContain("submission_confirmations.intent_id -> intent_to_bid (1 rows");
+    expect((failure as DemoPurgeError).message).not.toContain("saved_bids");
+  });
+
+  it("does not query a relationship whose parent lost no row", async () => {
+    const fake = createFakeMysql({ removed: { quote_requests: [], response_package_exports: [] } });
 
     const result = await purgeDemoBids({ mysql: fake.pool }, { apply: true });
 
     expect(result.applied).toBe(true);
-    expect(fake.events).toEqual(["begin", "commit", "release"]);
+    const asked = new Set(fake.checks.map((check) => check.label));
+    expect(asked.has("quote_request_artifacts.quote_request_id -> quote_requests")).toBe(false);
+    expect(asked.has("response_package_export_review_events.export_id -> response_package_exports")).toBe(false);
+    // ...while the other relationships of the same tables are still checked.
+    expect(asked.has("quote_request_artifacts.artifact_id -> supplier_artifacts")).toBe(true);
+    expect(asked.has("response_package_export_review_events.snapshot_id -> response_package_snapshots")).toBe(true);
+    for (const check of fake.checks) expect(check.ids.length, check.label).toBeGreaterThan(0);
   });
 
-  it("checks every relationship of the list, plus every detachment, once before and once after", async () => {
-    const asked: string[] = [];
-    const fake = createFakeMysql({ orphans: (relationship, phase) => { asked.push(`${phase} ${relationship}`); return 0; } });
+  it("splits a long id list so that no check binds more than 500 ids, and adds up what every piece finds", async () => {
+    const manyIntents = Array.from({ length: 1201 }, (_, index) => `intent-${index}`);
+    const fake = createFakeMysql({
+      removed: { intent_to_bid: manyIntents },
+      // The second piece of every intent relationship finds one row.
+      dangling: (relationship, ids) => (relationship === "submission_confirmations.intent_id -> intent_to_bid" && ids[0] === "intent-500" ? 3 : 0),
+    });
 
-    await purgeDemoBids({ mysql: fake.pool }, { apply: true });
+    const failure = await purgeDemoBids({ mysql: fake.pool }, { apply: true }).then(() => undefined, (error: unknown) => error);
 
-    const relationships = [
-      ...DEMO_PURGE_TABLES.flatMap((entry) => entry.references.map((reference) => `${entry.table}.${reference.column} -> ${reference.parent}`)),
-      ...DEMO_PURGE_DETACHMENTS.map((entry) => `${entry.table}.${entry.column} -> ${entry.parent}`),
-    ];
-    expect(new Set(relationships).size).toBe(relationships.length);
-    expect(asked.filter((entry) => entry.startsWith("before ")).map((entry) => entry.slice(7)).sort()).toEqual([...relationships].sort());
-    expect(asked.filter((entry) => entry.startsWith("after ")).map((entry) => entry.slice(6)).sort()).toEqual([...relationships].sort());
+    const intentChecks = fake.checks.filter((check) => check.label === "submission_confirmations.intent_id -> intent_to_bid");
+    expect(intentChecks.map((check) => check.ids.length)).toEqual([500, 500, 201]);
+    expect(intentChecks.flatMap((check) => check.ids)).toEqual(manyIntents);
+    expect(Math.max(...fake.checks.map((check) => check.ids.length))).toBeLessThanOrEqual(500);
+    expect((failure as DemoPurgeError).message).toContain("submission_confirmations.intent_id -> intent_to_bid (3 rows still reference purged rows)");
+    expect(fake.events).toEqual(["begin", "rollback", "release"]);
   });
 
   it("finds nothing to do when no row matches: no transaction, nothing written", async () => {

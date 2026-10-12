@@ -1,14 +1,20 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { linkSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTestDatabase, type TestDatabase } from "../src/server/db/test-utils";
 import { DEMO_PURGE_TABLES } from "../src/server/integrity/demo-purge";
 import {
   EXPECTED_DEMO_DEPENDENTS,
+  EXPECTED_DEMO_DETACHMENTS,
+  REAL_BID_ID,
   SURVIVOR_BID_IDS,
   buildDemoPurgeSeed,
   insertStatement,
+  seedTag,
 } from "../src/server/integrity/demo-purge.fixtures";
 import {
   PurgeDemoBidsUsageError,
@@ -49,6 +55,18 @@ describe("purge-demo-bids arguments", () => {
     ]) {
       expect(help, text).toContain(text);
     }
+  });
+
+  it("tells the operator to stop the web app and every worker on MySQL, and why SQLite needs no such window", () => {
+    const help = formatPurgeDemoBidsHelp().replace(/\s+/g, " ");
+    for (const text of [
+      "maintenance window", "On MySQL stop the web app AND every worker first", "MySQL has no foreign keys",
+      "(a save, an intent, a workspace edit)", "orphan after the commit",
+      "On SQLite the purge holds the write lock for its whole transaction and the app enforces foreign keys",
+    ]) {
+      expect(help, text).toContain(text);
+    }
+    expect(help).not.toContain("Run it with the workers stopped");
   });
 });
 
@@ -99,6 +117,25 @@ describe("purge-demo-bids", () => {
       expect(backupFileProblem(backup(""))).toContain("is empty");
       expect(backupFileProblem(backup("-- dump\n"))).toBeNull();
     });
+
+    it("refuses the SQLite database itself as the backup, however its path is spelled", () => {
+      const database = testDb.databasePath;
+      const itself = "is the SQLite database itself, not a backup of it";
+      expect(backupFileProblem(database, database)).toContain(itself);
+      expect(backupFileProblem(path.relative(process.cwd(), database), database)).toContain(itself);
+      expect(backupFileProblem(path.join(path.dirname(database), ".", path.basename(database)), database)).toContain(itself);
+      expect(backupFileProblem(database, database)).toContain("npm run db:backup");
+      // A symbolic link and a hard link are the same file.
+      const symbolic = path.join(directory, "symbolic.sqlite");
+      symlinkSync(database, symbolic);
+      expect(backupFileProblem(symbolic, database)).toContain(itself);
+      const hard = path.join(directory, "hard.sqlite");
+      linkSync(database, hard);
+      expect(backupFileProblem(hard, database)).toContain(itself);
+      // Any other non-empty file is accepted, and on MySQL there is no database file to compare with.
+      expect(backupFileProblem(backup(), database)).toBeNull();
+      expect(backupFileProblem(backup(), null)).toBeNull();
+    });
   });
 
   it("prints the help and exits 0", async () => {
@@ -131,6 +168,17 @@ describe("purge-demo-bids", () => {
     expect(out).toEqual([]);
   });
 
+  it("exits 2 when --backup-file is the database itself, and changes nothing", async () => {
+    const before = bidIds();
+
+    expect(await runPurgeDemoBids(["--apply", "--backup-file", testDb.databasePath], env(), io())).toBe(2);
+
+    expect(err.join("\n")).toContain("is the SQLite database itself, not a backup of it");
+    expect(err.join("\n")).toContain("npm run db:backup");
+    expect(out).toEqual([]);
+    expect(bidIds()).toEqual(before);
+  });
+
   it("prints the plan on a dry run and writes nothing", async () => {
     const before = bidIds();
 
@@ -144,12 +192,58 @@ describe("purge-demo-bids", () => {
     expect(text).toMatch(/bid_attachments\s+8\b/);
     expect(text).toMatch(/response_workspace_items\s+8\b/);
     expect(text).toMatch(/intent_to_bid\s+4\b/);
+    expect(text).toMatch(/Links set to NULL on rows that are kept:\n  knowledge_items\.source_bid_id\s+4\n  knowledge_items\.source_intent_id\s+8\n  award_outcomes\.tabulation_artifact_id\s+0\n/);
     expect(text).toContain("Knowledge items that lose a link to a demo bid or intent (kept): 8");
     expect(text).toContain("--apply --backup-file");
     expect(text).toContain("npm run db:backup");
     expect(text).toContain("notification_outbox.matched_bid_ids");
-    expect(err).toEqual([]);
+    expect(err).toEqual([`Target: sqlite ${testDb.databasePath}`]);
     expect(bidIds()).toEqual(before);
+  });
+
+  /** A kept award outcome that borrowed a demo artifact as its tabulation sheet. */
+  function borrowDemoArtifact() {
+    testDb.db.$client.prepare("UPDATE award_outcomes SET tabulation_artifact_id = ? WHERE id = ?")
+      .run("artifact_1", `award_${seedTag(REAL_BID_ID)}`);
+  }
+
+  it("lists in a dry run the link of a kept award outcome that names a purged artifact", async () => {
+    borrowDemoArtifact();
+
+    expect(await runPurgeDemoBids([], env(), io())).toBe(0);
+    expect(out.join("\n")).toMatch(/Links set to NULL on rows that are kept:\n[\s\S]*\n  award_outcomes\.tabulation_artifact_id\s+1\n/);
+
+    out.length = 0;
+    expect(await runPurgeDemoBids(["--json"], env(), io())).toBe(0);
+    const planned = JSON.parse(out.join("\n"));
+    expect(planned.detachments).toEqual({ ...EXPECTED_DEMO_DETACHMENTS, "award_outcomes.tabulation_artifact_id": 1 });
+    expect(Object.values(planned.detached).every((count) => count === 0)).toBe(true);
+  });
+
+  it("reports the links it set to NULL on rows that stay, under the same heading as the plan", async () => {
+    borrowDemoArtifact();
+
+    expect(await runPurgeDemoBids(["--apply", "--backup-file", backup()], env(), io())).toBe(0);
+
+    expect(out.join("\n")).toMatch(/Links set to NULL on rows that are kept:\n  knowledge_items\.source_bid_id\s+4\n  knowledge_items\.source_intent_id\s+8\n  award_outcomes\.tabulation_artifact_id\s+1\n/);
+  });
+
+  it("says which database it hit before it plans, so even a failed run names it", async () => {
+    const empty = path.join(directory, "empty.sqlite");
+    writeFileSync(empty, "");
+
+    expect(await runPurgeDemoBids([], testEnv(empty), io())).toBe(1);
+
+    expect(err).toEqual([`Target: sqlite ${empty}`, "no such table: data_sources"]);
+    expect(out).toEqual([]);
+  });
+
+  it("keeps the target off stdout, so --json stays a single JSON document", async () => {
+    expect(await runPurgeDemoBids(["--json"], env(), io())).toBe(0);
+
+    expect(err).toEqual([`Target: sqlite ${testDb.databasePath}`]);
+    expect(out).toHaveLength(1);
+    expect(JSON.parse(out[0]).target).toBe(`sqlite ${testDb.databasePath}`);
   });
 
   it("lists every table of the purge in the report, a table without rows included", async () => {
@@ -205,7 +299,9 @@ describe("purge-demo-bids", () => {
   it("applies as JSON, and a second apply finds nothing to do", async () => {
     expect(await runPurgeDemoBids(["--apply", "--json", "--backup-file", backup()], env(), io())).toBe(0);
     const applied = JSON.parse(out.join("\n"));
-    expect(applied).toMatchObject({ mode: "apply", applied: true, deleted: { ...EXPECTED_DEMO_DEPENDENTS, bids: 4 } });
+    expect(applied).toMatchObject({
+      mode: "apply", applied: true, deleted: { ...EXPECTED_DEMO_DEPENDENTS, bids: 4 }, detached: EXPECTED_DEMO_DETACHMENTS,
+    });
 
     out.length = 0;
     expect(await runPurgeDemoBids(["--apply", "--backup-file", backup()], env(), io())).toBe(0);
@@ -214,13 +310,22 @@ describe("purge-demo-bids", () => {
     expect(out.join("\n")).not.toContain("dry run");
   });
 
-  it("exits 1, with the reason on stderr, when the database file is not there", async () => {
-    const missing = path.join(directory, "elsewhere", "apsi.sqlite");
-    mkdirSync(path.dirname(missing));
+  it("exits 2 with a clear message, and creates nothing, when the database file is not there", async () => {
+    const elsewhere = path.join(directory, "elsewhere");
+    mkdirSync(elsewhere);
+    const missing = path.join(elsewhere, "apsi.sqlite");
 
-    expect(await runPurgeDemoBids([], testEnv(missing), io())).toBe(1);
-    expect(err.join("\n")).toContain(`SQLite database not found: ${missing}`);
+    expect(await runPurgeDemoBids([], testEnv(missing), io())).toBe(2);
+    expect(await runPurgeDemoBids(["--apply", "--backup-file", backup()], testEnv(missing), io())).toBe(2);
+
+    expect(err).toHaveLength(2);
+    for (const line of err) {
+      expect(line).toContain(`SQLite database not found: ${missing}`);
+      expect(line).toContain("DATABASE_PATH");
+      expect(line).toContain("Nothing was created");
+    }
     expect(out).toEqual([]);
+    expect(readdirSync(elsewhere)).toEqual([]);
   });
 
   it("exits 1 and changes nothing when the integrity check refuses the purge", async () => {
@@ -231,8 +336,84 @@ describe("purge-demo-bids", () => {
 
     expect(await runPurgeDemoBids(["--apply", "--backup-file", backup()], env(), io())).toBe(1);
 
+    expect(err[0]).toBe(`Target: sqlite ${testDb.databasePath}`);
     expect(err.join("\n")).toContain("unlisted_child");
     expect(out).toEqual([]);
     expect(bidIds()).toEqual(before);
   });
+});
+
+/* A fresh process in a directory of its own: importing the app's db/client creates <cwd>/data/apsi.sqlite as a side
+ * effect, and only a real process can show that the script no longer does. */
+
+const frontendDir = fileURLToPath(new URL("..", import.meta.url));
+const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
+
+function runScriptIn(cwd: string, args: string[], env: Record<string, string> = {}): Promise<{ status: number | null; output: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, ["--import", tsxLoader, path.join(frontendDir, "scripts", "purge-demo-bids.ts"), ...args], {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        NODE_ENV: "test",
+        DATABASE_URL: "",
+        MYSQL_DATABASE_URL: "",
+        DATABASE_PATH: "",
+        // tsx takes its tsconfig (the @/ alias) from the working directory, which has none: use the project's.
+        TSX_TSCONFIG_PATH: path.join(frontendDir, "tsconfig.json"),
+        ...env,
+      },
+    });
+    let output = "";
+    child.stdout?.on("data", (chunk) => (output += chunk));
+    child.stderr?.on("data", (chunk) => (output += chunk));
+    const deadline = setTimeout(() => child.kill("SIGKILL"), 25_000);
+    child.on("close", (status) => {
+      clearTimeout(deadline);
+      resolve({ status, output });
+    });
+  });
+}
+
+describe("purge-demo-bids as a process of its own", () => {
+  let workingDirectory: string;
+
+  beforeEach(() => {
+    workingDirectory = mkdtempSync(path.join(tmpdir(), "apsi-purge-cwd-"));
+  });
+
+  afterEach(() => {
+    rmSync(workingDirectory, { recursive: true, force: true });
+  });
+
+  it("exits 2 and leaves a directory without a database exactly as it was", async () => {
+    const run = await runScriptIn(workingDirectory, []);
+
+    // Importing the app's db/client would have created data/apsi.sqlite here by now.
+    expect(readdirSync(workingDirectory)).toEqual([]);
+    expect(run.status).toBe(2);
+    expect(run.output).toContain("SQLite database not found");
+    expect(run.output).not.toContain("no such table");
+  }, 40_000);
+
+  it("leaves the working directory alone even when the database it was given exists", async () => {
+    const testDb = await createTestDatabase();
+    try {
+      for (const row of buildDemoPurgeSeed()) {
+        const { sql, params } = insertStatement(row);
+        testDb.db.$client.prepare(sql).run(...params);
+      }
+
+      const run = await runScriptIn(workingDirectory, ["--json"], { DATABASE_PATH: testDb.databasePath });
+
+      expect(readdirSync(workingDirectory)).toEqual([]);
+      expect(run.status).toBe(0);
+      expect(run.output).toContain(`Target: sqlite ${testDb.databasePath}`);
+      const report = JSON.parse(run.output.slice(run.output.indexOf("{")));
+      expect(report.bids).toHaveLength(4);
+    } finally {
+      await testDb.cleanup();
+    }
+  }, 40_000);
 });

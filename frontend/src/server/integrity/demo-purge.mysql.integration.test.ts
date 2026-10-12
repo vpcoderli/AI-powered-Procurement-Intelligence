@@ -3,22 +3,25 @@ import { createPool, type Pool } from "mysql2/promise";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createMysqlPool, runMysqlMigrations } from "@/server/db/mysql";
 import {
+  DEMO_PURGE_DETACHMENTS,
   DEMO_PURGE_RELATIONSHIPS,
   DEMO_PURGE_TABLES,
   DemoPurgeError,
   findDemoBids,
-  orphanCountSql,
   planDemoPurge,
   purgeDemoBids,
+  type DemoPurgeRelationship,
 } from "./demo-purge";
 import {
   EXPECTED_DEMO_DEPENDENTS,
+  EXPECTED_DEMO_DETACHMENTS,
   EXPECTED_KNOWLEDGE_ITEMS_TO_DETACH,
   REAL_BID_ID,
   SEED_AT,
   SURVIVOR_BID_IDS,
   buildDemoPurgeSeed,
   expectedDemoDependents,
+  expectedDemoDetachments,
   expectedPresence,
   insertStatement,
   isDemoOwned,
@@ -28,6 +31,14 @@ import {
 } from "./demo-purge.fixtures";
 
 const DEMO_IDS_SORTED = ["1", "2", "al_state_procurement_demo_readiness", "wa_state_procurement_demo_readiness"];
+
+/**
+ * Rows of `child` whose `column` names a `parent` row that does not exist: the oracle of these tests. It looks at
+ * the whole table, which the purge's own check deliberately does not.
+ */
+const orphanSql = ({ child, column, parent }: DemoPurgeRelationship) =>
+  `SELECT COUNT(*) AS n FROM \`${child}\` c LEFT JOIN \`${parent}\` p ON p.id = c.\`${column}\` ` +
+  `WHERE c.\`${column}\` IS NOT NULL AND p.id IS NULL`;
 
 describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("demo and seed bid purge on real MySQL", () => {
   const databaseName = `apsi_crawler_test_${randomUUID().replaceAll("-", "")}`;
@@ -90,7 +101,7 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("demo and see
   async function orphanCounts(): Promise<Record<string, number>> {
     const counts: Record<string, number> = {};
     for (const relationship of DEMO_PURGE_RELATIONSHIPS) {
-      const [rows] = await mysql.query(orphanCountSql(relationship));
+      const [rows] = await mysql.query(orphanSql(relationship));
       counts[relationship.label] = Number((rows as Array<{ n: number | string }>)[0].n);
     }
     return counts;
@@ -132,8 +143,10 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("demo and see
     expect(plan.bids.map((bid) => bid.id)).toEqual(DEMO_IDS_SORTED);
     expect(plan.dependents).toEqual(EXPECTED_DEMO_DEPENDENTS);
     expect(plan.knowledgeItemsToDetach).toBe(EXPECTED_KNOWLEDGE_ITEMS_TO_DETACH);
+    expect(plan.detachments).toEqual(EXPECTED_DEMO_DETACHMENTS);
     expect(dry.applied).toBe(false);
     expect(dry.dependents).toEqual(plan.dependents);
+    expect(dry.detachments).toEqual(plan.detachments);
     expect(await countAll(tables)).toEqual(before);
     await expectSeedState(rows, { purged: false });
   });
@@ -151,6 +164,7 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("demo and see
     expect(result.dependents).toEqual(EXPECTED_DEMO_DEPENDENTS);
     expect(result.knowledgeItemsToDetach).toBe(EXPECTED_KNOWLEDGE_ITEMS_TO_DETACH);
     expect(result.deleted).toEqual({ ...EXPECTED_DEMO_DEPENDENTS, bids: 4 });
+    expect(result.detached).toEqual(EXPECTED_DEMO_DETACHMENTS);
 
     await expectSeedState(rows, { purged: true });
     expect(await presentKeys("bids")).toEqual(new Set(SURVIVOR_BID_IDS));
@@ -190,8 +204,13 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("demo and see
       [survivorItem, "artifact_1", SEED_AT],
     );
 
+    const plan = await planDemoPurge(target());
+    // The kept award outcome that borrowed a demo artifact is counted; the demo bids' own award outcomes are not.
+    expect(plan.detachments).toEqual({ ...EXPECTED_DEMO_DETACHMENTS, "award_outcomes.tabulation_artifact_id": 1 });
+
     const result = await purgeDemoBids(target(), { apply: true });
 
+    expect(result.detached).toEqual(plan.detachments);
     expect(result.deleted).toEqual({
       ...EXPECTED_DEMO_DEPENDENTS,
       response_workspace_comments: EXPECTED_DEMO_DEPENDENTS.response_workspace_comments + 1,
@@ -205,19 +224,42 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("demo and see
     expect(Object.values(await orphanCounts()).every((count) => count === 0)).toBe(true);
   });
 
-  it("is not blocked by an orphan that was already there", async () => {
+  it("is not blocked by orphans that were already there, in the very relationships it checks", async () => {
     const rows = buildDemoPurgeSeed();
     await seed(rows);
+    // Each of these names a parent that never existed, so none names an id the purge removes.
     await mysql.query(
       "INSERT INTO bid_attachments (id, bid_id, name, url, created_at) VALUES (?, ?, ?, ?, ?)",
       ["attachment_ghost", "a_bid_that_never_existed", "Ghost.pdf", "https://example.test/ghost.pdf", SEED_AT],
     );
+    await mysql.query(
+      "INSERT INTO submission_confirmations (id, intent_id, user_id, submitted_at, method, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ["confirmation_ghost", "an_intent_that_never_existed", "u_alice", SEED_AT, "portal", SEED_AT, SEED_AT],
+    );
+    await mysql.query(
+      "INSERT INTO response_workspace_comments (id, intent_id, item_id, author_user_id, body, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ["comment_ghost", "an_intent_that_never_existed", "an_item_that_never_existed", "u_alice", "Ghost", SEED_AT, SEED_AT],
+    );
+    await mysql.query(
+      "INSERT INTO knowledge_items (id, organization_id, created_by_user_id, title, body, type, source_kind, source_bid_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      ["knowledge_ghost", "org_acme", "u_alice", "Ghost", "Ghost", "note", "manual", "a_bid_that_never_existed", SEED_AT, SEED_AT],
+    );
+    const before = await orphanCounts();
+    expect(before["bid_attachments.bid_id -> bids"]).toBe(1);
+    expect(before["submission_confirmations.intent_id -> intent_to_bid"]).toBe(1);
+    expect(before["response_workspace_comments.intent_id -> intent_to_bid"]).toBe(1);
+    expect(before["response_workspace_comments.item_id -> response_workspace_items"]).toBe(1);
+    expect(before["knowledge_items.source_bid_id -> bids"]).toBe(1);
 
     const result = await purgeDemoBids(target(), { apply: true });
 
     expect(result.applied).toBe(true);
-    expect((await presentKeys("bid_attachments")).has("attachment_ghost")).toBe(true);
-    expect((await orphanCounts())["bid_attachments.bid_id -> bids"]).toBe(1);
+    for (const [table, id] of [["bid_attachments", "attachment_ghost"], ["submission_confirmations", "confirmation_ghost"],
+      ["response_workspace_comments", "comment_ghost"], ["knowledge_items", "knowledge_ghost"]]) {
+      expect((await presentKeys(table)).has(id), `${table} ${id}`).toBe(true);
+    }
+    // They are exactly what they were: neither more nor fewer than before.
+    expect(await orphanCounts()).toEqual(before);
   });
 
   it("rolls the whole purge back when it would leave an orphan behind", async () => {
@@ -237,12 +279,46 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("demo and see
 
       expect(failure).toBeInstanceOf(DemoPurgeError);
       expect((failure as DemoPurgeError).code).toBe("INTEGRITY_CHECK_FAILED");
-      expect((failure as DemoPurgeError).message).toContain("bid_attachments.bid_id -> bids");
+      expect((failure as DemoPurgeError).message).toContain("bid_attachments.bid_id -> bids (4 rows still reference purged rows)");
       await expectSeedState(rows, { purged: false });
       expect(await presentKeys("bids")).toEqual(new Set([...SURVIVOR_BID_IDS, ...DEMO_IDS_SORTED]));
       expect((await knowledgeLinks()).knowledge_1).toEqual({ bid: "1", intent: "intent_1" });
+      expect([...(await presentKeys("bid_attachments"))].filter((id) => id.startsWith("resurrected_"))).toEqual([]);
     } finally {
       await mysql.query("DROP TRIGGER IF EXISTS demo_purge_resurrect");
+    }
+  });
+
+  it("rolls the whole purge back when a row for a purged intent appears, counting only the rows that name a purged id", async () => {
+    const rows = buildDemoPurgeSeed();
+    await seed(rows);
+    // An orphan that was there before sits in the same relationship; it must not be counted, nor hide the new rows.
+    await mysql.query(
+      "INSERT INTO submission_confirmations (id, intent_id, user_id, submitted_at, method, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ["confirmation_ghost", "an_intent_that_never_existed", "u_alice", SEED_AT, "portal", SEED_AT, SEED_AT],
+    );
+    // A writer that adds a confirmation for every intent that goes: the ids the purge removes from a parent that
+    // is not `bids` must have been collected before the delete, or this row would look like an old orphan.
+    await mysql.query("DROP TRIGGER IF EXISTS demo_purge_late_confirmation");
+    await mysql.query(
+      `CREATE TRIGGER demo_purge_late_confirmation AFTER DELETE ON intent_to_bid FOR EACH ROW
+         INSERT INTO submission_confirmations (id, intent_id, user_id, submitted_at, method, created_at, updated_at)
+         VALUES (CONCAT('late_', OLD.id), OLD.id, 'u_alice', OLD.created_at, 'portal', OLD.created_at, OLD.created_at)`,
+    );
+
+    try {
+      const failure = await purgeDemoBids(target(), { apply: true }).then(() => undefined, (error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(DemoPurgeError);
+      expect((failure as DemoPurgeError).code).toBe("INTEGRITY_CHECK_FAILED");
+      expect((failure as DemoPurgeError).message).toContain("submission_confirmations.intent_id -> intent_to_bid (4 rows still reference purged rows)");
+      expect((failure as DemoPurgeError).message).not.toContain("bid_attachments");
+      await expectSeedState(rows, { purged: false });
+      expect((await presentKeys("submission_confirmations")).has("confirmation_ghost")).toBe(true);
+      // The rows the trigger added went with the rollback.
+      expect([...(await presentKeys("submission_confirmations"))].filter((id) => id.startsWith("late_"))).toEqual([]);
+    } finally {
+      await mysql.query("DROP TRIGGER IF EXISTS demo_purge_late_confirmation");
     }
   });
 
@@ -255,10 +331,12 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("demo and see
     expect(plan.bids.filter((bid) => bid.kind === "demo_readiness")).toHaveLength(50);
     expect(plan.dependents).toEqual(expectedDemoDependents(56));
     expect(plan.knowledgeItemsToDetach).toBe(2 * 56);
+    expect(plan.detachments).toEqual(expectedDemoDetachments(56));
 
     const result = await purgeDemoBids(target(), { apply: true });
 
     expect(result.deleted).toEqual({ ...expectedDemoDependents(56), bids: 56 });
+    expect(result.detached).toEqual(expectedDemoDetachments(56));
     await expectSeedState(rows, { purged: true });
     expect(await presentKeys("bids")).toEqual(new Set(SURVIVOR_BID_IDS));
     expect(Object.values(await orphanCounts()).every((count) => count === 0)).toBe(true);
@@ -270,5 +348,6 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("demo and see
     const plan = await planDemoPurge(target());
 
     expect(Object.keys(plan.dependents)).toEqual(DEMO_PURGE_TABLES.map((entry) => entry.table));
+    expect(Object.keys(plan.detachments)).toEqual(DEMO_PURGE_DETACHMENTS.map((entry) => `${entry.table}.${entry.column}`));
   });
 });

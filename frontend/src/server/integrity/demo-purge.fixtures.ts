@@ -269,6 +269,22 @@ export const EXPECTED_DEMO_DEPENDENTS: Record<string, number> = {
 /** Two knowledge items per demo bid lose a link; `ki_unrelated` and the survivors' items are untouched. */
 export const EXPECTED_KNOWLEDGE_ITEMS_TO_DETACH = 8;
 
+/**
+ * Links the purge sets to NULL on rows that stay, per `table.column`, for the four demo bids: each demo bid has one
+ * knowledge item that points at its bid and its intent and one that points only at its intent. The demo bids' own
+ * award outcomes name their own artifact, but they are deleted, so no award outcome that stays loses a link.
+ */
+export const EXPECTED_DEMO_DETACHMENTS: Record<string, number> = {
+  "knowledge_items.source_bid_id": 4,
+  "knowledge_items.source_intent_id": 8,
+  "award_outcomes.tabulation_artifact_id": 0,
+};
+
+/** EXPECTED_DEMO_DETACHMENTS for a seed with `demoBidCount` demo bids instead of four. */
+export function expectedDemoDetachments(demoBidCount: number): Record<string, number> {
+  return Object.fromEntries(Object.entries(EXPECTED_DEMO_DETACHMENTS).map(([link, count]) => [link, (count / 4) * demoBidCount]));
+}
+
 /** EXPECTED_DEMO_DEPENDENTS for a seed with `demoBidCount` demo bids instead of four. */
 export function expectedDemoDependents(demoBidCount: number): Record<string, number> {
   return Object.fromEntries(Object.entries(EXPECTED_DEMO_DEPENDENTS).map(([table, count]) => [table, (count / 4) * demoBidCount]));
