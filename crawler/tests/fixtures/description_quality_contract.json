@@ -203,6 +203,13 @@
     {"name": "address with apt", "text": "123 Main Street, Apt 2B, Springfield, IL 62701", "issue": "address_body"},
     {"name": "address with suite hash", "text": "123 Main Street, Suite #100, Springfield, IL 62701", "issue": "address_body"},
     {"name": "address without comma before state", "text": "123 Main Street, Springfield IL 62701", "issue": "address_body"},
-    {"name": "address with final period", "text": "123 Main Street, Springfield, IL 62701.", "issue": "address_body"}
+    {"name": "address with final period", "text": "123 Main Street, Springfield, IL 62701.", "issue": "address_body"},
+    {"name": "copyright clearance services", "text": "Copyright clearance services for the county library digitization project.", "issue": null},
+    {"name": "copyright clearance with a later year", "text": "Copyright clearance services for the 2024 digitization project.", "issue": null},
+    {"name": "copyright sign line", "text": "Copyright © 2024 City of Springfield", "issue": "navigation_body"},
+    {"name": "copyright (c) line", "text": "Copyright (c) 2024 Springfield County", "issue": "navigation_body"},
+    {"name": "copyright year line", "text": "Copyright 2024 City of Springfield", "issue": "navigation_body"},
+    {"name": "copyright all rights reserved line", "text": "Copyright City of Springfield. All rights reserved.", "issue": "navigation_body"},
+    {"name": "navigation with a copyright line", "text": "Privacy Policy | Copyright Springfield County, all rights reserved", "issue": "navigation_body"}
   ]
 }
