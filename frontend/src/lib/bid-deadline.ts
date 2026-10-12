@@ -15,8 +15,16 @@
  * portals sometimes drop the AM/PM, and closing a bid late is acceptable where closing it early is not.
  * Hour 0 and hours 13 to 23 cannot be PM hours of a 12-hour clock, hour 12 already reads as noon, a time
  * with an AM/PM is taken as it says, and ISO times and epoch numbers are 24-hour by construction, so none
- * of those is widened. `parseBidDeadline` gives the literal reading; `bidDeadlineExpiresAtMs` and
- * `bidDeadlinePassed` are the ones that allow for the missing AM/PM, and for a date-only deadline's whole day.
+ * of those is widened.
+ *
+ * A time of exactly midnight (00:00 with seconds 0, written 0:00, 00:00, 00:00:00, 12:00 AM or 12:00:00 AM)
+ * is how many portals write a date-only deadline, so it expires like one: at the end of its stated day, the
+ * next midnight in UTC-10, in every form but the epoch ones. For an ISO time with a `Z` or an offset the
+ * stated day is the date as written, not the date in UTC. Read as the start of that day, the bid would
+ * close up to a day early (34 hours early for `2026-10-13T00:00:00Z`).
+ *
+ * `parseBidDeadline` gives the literal reading; `bidDeadlineExpiresAtMs` and `bidDeadlinePassed` are the
+ * ones that allow for the missing AM/PM, for a date-only deadline's whole day and for a midnight time.
  *
  * Pure: no clock, no string-to-Date parsing, no dependence on the server's time zone.
  */
@@ -33,15 +41,15 @@ export interface ParsedBidDeadline {
 /** A deadline as read from its text, with how long past its instant the bid stays open. Not exported: callers see `ParsedBidDeadline`. */
 interface BidDeadlineReading extends ParsedBidDeadline {
   /**
-   * Milliseconds after `instantMs` before the bid counts as expired: a day for a date-only deadline, twelve hours
-   * for an hour from 1 to 11 written without an AM/PM (it may be a PM hour), none otherwise.
+   * Milliseconds after `instantMs` before the bid counts as expired: up to the end of the stated day for a date-only
+   * deadline or a time of exactly midnight, twelve hours for an hour from 1 to 11 written without an AM/PM (it may be
+   * a PM hour), none otherwise.
    */
   graceMs: number;
 }
 
 const MINUTE_MS = 60_000;
 const HALF_DAY_MS = 43_200_000;
-const DAY_MS = 86_400_000;
 /** Longest text a deadline can be; it bounds the work the patterns below can be made to do. */
 const MAX_DEADLINE_TEXT_LENGTH = 64;
 /** A deadline lies in these years (the UTC year of its instant, inclusive); a date outside them is a placeholder or a typo. */
@@ -99,16 +107,24 @@ function mayBePm(clock: Clock | null, meridiem: string | undefined): boolean {
   return clock !== null && meridiem === undefined && clock.hour >= 1 && clock.hour <= 11;
 }
 
+/** The end of a calendar day in the deadline zone, which is the start of the next one. */
+function endOfDayMs(year: number, month: number, day: number): number {
+  return utcMs(year, month, day + 1, null) - DEADLINE_ZONE_OFFSET_MINUTES * MINUTE_MS;
+}
+
 /**
  * The deadline for a calendar day (and time of day, when there is one) read on a clock `zoneOffsetMinutes` ahead of UTC.
- * `pmPossible` is `mayBePm` for the clock; the bid then stays open twelve hours past the literal reading.
+ * A date-only deadline, and a time of exactly 00:00, are good through their stated day (for a zoned ISO time, the day as
+ * written). `pmPossible` is `mayBePm` for the clock; the bid then stays open twelve hours past the literal reading.
  */
 function fromCalendar(year: number, month: number, day: number, clock: Clock | null, zoneOffsetMinutes: number, pmPossible = false): BidDeadlineReading | null {
   if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) return null;
+  const instantMs = utcMs(year, month, day, clock) - zoneOffsetMinutes * MINUTE_MS;
+  const wholeDay = clock === null || (clock.hour === 0 && clock.minute === 0 && clock.second === 0);
   return {
-    instantMs: utcMs(year, month, day, clock) - zoneOffsetMinutes * MINUTE_MS,
+    instantMs,
     dateOnly: clock === null,
-    graceMs: clock === null ? DAY_MS : pmPossible ? HALF_DAY_MS : 0,
+    graceMs: wholeDay ? endOfDayMs(year, month, day) - instantMs : pmPossible ? HALF_DAY_MS : 0,
   };
 }
 
@@ -186,8 +202,9 @@ export function parseBidDeadline(text: string | null | undefined): ParsedBidDead
 }
 
 /**
- * Instant (ms) from which the bid counts as expired; null when unparseable. A date-only deadline is good through its
- * whole day, and an hour from 1 to 11 with no AM/PM is good until its PM reading, twelve hours after the literal one.
+ * Instant (ms) from which the bid counts as expired; null when unparseable. A date-only deadline, and a time of exactly
+ * midnight, are good through their whole stated day; an hour from 1 to 11 with no AM/PM is good until its PM reading,
+ * twelve hours after the literal one.
  */
 export function bidDeadlineExpiresAtMs(text: string | null | undefined): number | null {
   const reading = readBidDeadline(text);

@@ -365,6 +365,87 @@ describe("a time with no AM/PM", () => {
   });
 });
 
+describe("a time of exactly midnight", () => {
+  /** 00:00 on 14 October in UTC-10: the end of 13 October, where a date-only deadline for the 13th expires. */
+  const END_OF_THE_13TH = Date.UTC(2026, 9, 14, 10);
+
+  it("expires like a date-only deadline, at the end of its stated day, in every form", () => {
+    for (const text of [
+      // US numeric: 12-hour and 24-hour spellings, with and without a zone word, with at/@.
+      "10/13/2026 12:00 AM", "10/13/2026 00:00", "10/13/2026 0:00:00", "10/13/2026 0:00", "10/13/2026 12:00:00 AM", "10/13/2026 12:00 am",
+      "10/13/2026 12:00AM", "10/13/2026 0:00 CST", "10/13/2026 12:00 AM CST", "10/13/2026 12:00 AMCST", "10/13/2026 at 12:00 AM", "10/13/2026 @ 00:00",
+      // Month name.
+      "Oct 13, 2026 @ 12:00 AM", "Oct 13, 2026 at 12:00 AM", "Oct 13, 2026 00:00", "October 13 2026 0:00:00 EST",
+      // ISO, zoneless and zoned; the date is the one written, whatever the offset does to the instant.
+      "2026-10-13T00:00:00Z", "2026-10-13T00:00:00", "2026-10-13 00:00:00", "2026-10-13T00:00", "2026-10-13T00:00:00.000Z",
+      "2026-10-13T00:00:00-05:00", "2026-10-13T00:00:00+05:30", "2026-10-13T00:00:00+14:00", "2026-10-13T00:00:00-12:00", "2026-10-13T00:00:00+0000",
+    ]) {
+      expect(bidDeadlineExpiresAtMs(text), text).toBe(END_OF_THE_13TH);
+      expect(bidDeadlinePassed(text, NOW), text).toBe(false);
+    }
+  });
+
+  it("is passed once the stated day has ended, and not before", () => {
+    expect(bidDeadlineExpiresAtMs("10/12/2026 12:00 AM")).toBe(Date.UTC(2026, 9, 13, 10));
+    expect(bidDeadlinePassed("10/12/2026 12:00 AM", NOW)).toBe(true);
+    for (const text of ["10/13/2026 12:00 AM", "2026-10-13T00:00:00Z"]) {
+      expect(bidDeadlinePassed(text, END_OF_THE_13TH - 1), text).toBe(false);
+      expect(bidDeadlinePassed(text, END_OF_THE_13TH), text).toBe(true);
+    }
+  });
+
+  it("agrees with the date-only deadline for the same day", () => {
+    expect(bidDeadlineExpiresAtMs("10/13/2026")).toBe(END_OF_THE_13TH);
+    expect(bidDeadlineExpiresAtMs("2026-10-13")).toBe(END_OF_THE_13TH);
+    expect(bidDeadlineExpiresAtMs("02/28/2028 12:00 AM")).toBe(bidDeadlineExpiresAtMs("02/28/2028"));
+    expect(bidDeadlineExpiresAtMs("02/29/2028 12:00 AM")).toBe(Date.UTC(2028, 2, 1, 10));
+    expect(bidDeadlineExpiresAtMs("12/31/2026 12:00 AM")).toBe(Date.UTC(2027, 0, 1, 10));
+    expect(bidDeadlineExpiresAtMs("2026-12-31T00:00:00Z")).toBe(Date.UTC(2027, 0, 1, 10));
+  });
+
+  it("keeps parseBidDeadline literal and in its public shape, with the year window on that instant", () => {
+    expect(parseBidDeadline("10/13/2026 12:00 AM")).toEqual({ instantMs: Date.UTC(2026, 9, 13, 10), dateOnly: false });
+    expect(parseBidDeadline("2026-10-13T00:00:00Z")).toEqual({ instantMs: Date.UTC(2026, 9, 13, 0), dateOnly: false });
+    expect(parseBidDeadline("2026-10-13T00:00:00-05:00")).toEqual({ instantMs: Date.UTC(2026, 9, 13, 5), dateOnly: false });
+    expect(parseBidDeadline("2026-10-13T00:00:00")).toEqual({ instantMs: Date.UTC(2026, 9, 13, 10), dateOnly: false });
+    expect(Object.keys(parseBidDeadline("10/13/2026 00:00")!).sort()).toEqual(["dateOnly", "instantMs"]);
+    // Both literal instants are 1999-12-31T10:00Z, outside the window, whatever the midnight rule would make of the expiry.
+    expect(parseBidDeadline("12/31/1999 12:00 AM")).toBeNull();
+    expect(bidDeadlineExpiresAtMs("12/31/1999 12:00 AM")).toBeNull();
+    expect(parseBidDeadline("2000-01-01T00:00:00+14:00")).toBeNull();
+    expect(bidDeadlineExpiresAtMs("2000-01-01T00:00:00+14:00")).toBeNull();
+    expect(parseBidDeadline("12/31/2100 12:00 AM")?.instantMs).toBe(Date.UTC(2100, 11, 31, 10));
+    expect(parseBidDeadline("01/01/2101 12:00 AM")).toBeNull();
+  });
+
+  it("leaves every other time as it was", () => {
+    expect(bidDeadlineExpiresAtMs("10/13/2026 12:01 AM")).toBe(Date.UTC(2026, 9, 13, 10, 1));
+    expect(bidDeadlineExpiresAtMs("10/13/2026 12:00:01 AM")).toBe(Date.UTC(2026, 9, 13, 10, 0, 1));
+    expect(bidDeadlineExpiresAtMs("10/13/2026 0:01")).toBe(Date.UTC(2026, 9, 13, 10, 1));
+    expect(bidDeadlineExpiresAtMs("10/13/2026 00:00:01")).toBe(Date.UTC(2026, 9, 13, 10, 0, 1));
+    expect(bidDeadlineExpiresAtMs("Oct 13, 2026 @ 12:01 AM")).toBe(Date.UTC(2026, 9, 13, 10, 1));
+    expect(bidDeadlineExpiresAtMs("10/13/2026 12:00 PM")).toBe(Date.UTC(2026, 9, 13, 22));
+    expect(bidDeadlineExpiresAtMs("10/13/2026 12:00")).toBe(Date.UTC(2026, 9, 13, 22));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T00:00:01Z")).toBe(Date.UTC(2026, 9, 13, 0, 0, 1));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T00:01:00Z")).toBe(Date.UTC(2026, 9, 13, 0, 1));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T12:00:00Z")).toBe(Date.UTC(2026, 9, 13, 12));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T23:59:59-05:00")).toBe(Date.UTC(2026, 9, 14, 4, 59, 59));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T01:00:00Z")).toBe(Date.UTC(2026, 9, 13, 1));
+  });
+
+  it("does not touch the epoch forms, even at a UTC midnight", () => {
+    const midnight = Date.UTC(2026, 9, 13);
+    for (const text of [String(midnight), String(midnight / 1000), `/Date(${midnight})/`]) {
+      expect(bidDeadlineExpiresAtMs(text), text).toBe(midnight);
+    }
+  });
+
+  it("is not a 12-hour reading: a bare 0:00 is midnight, not a time that might be PM", () => {
+    expect(bidDeadlineExpiresAtMs("10/13/2026 0:00")).toBe(END_OF_THE_13TH);
+    expect(bidDeadlineExpiresAtMs("10/13/2026 0:00")).not.toBe(Date.UTC(2026, 9, 13, 22));
+  });
+});
+
 describe("an 'at' between the date and the time in the month-name form", () => {
   it("reads Aug 21, 2026 at 2:00 PM like the @ form, in any case", () => {
     const expected = { instantMs: Date.UTC(2026, 7, 22, 0), dateOnly: false };
@@ -443,7 +524,7 @@ describe("purity", () => {
   });
 
   const battery = [
-    "10/12/2026", "10/13/2026 2:00 AM", "10/13/2026 2:00 PM CST", "10/13/2026 2:00", "Oct 13, 2026 at 2:00", "Aug 21, 2026 @ 02:00 PM", "2026-10-13T08:00:00", "2026-10-13",
+    "10/12/2026", "10/13/2026 2:00 AM", "10/13/2026 2:00 PM CST", "10/13/2026 2:00", "Oct 13, 2026 at 2:00", "10/13/2026 12:00 AM", "2026-10-13T00:00:00-05:00", "Aug 21, 2026 @ 02:00 PM", "2026-10-13T08:00:00", "2026-10-13",
     "2026-10-13T08:00:00-05:00", "/Date(1893456000000)/", "1761757200", "02/29/2028", "not a date",
   ];
 

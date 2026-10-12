@@ -77,6 +77,19 @@ describe("mergeLifecycleFields with a clock (deadline-passed rule)", () => {
     expect(mergeLifecycleFields({ ...row, deadline_date: "10/13/2026 0:30" }, {}, { now: "2026-10-13T12:00:00.000Z" })).toMatchObject({ lifecycle_status: "closed" });
   });
 
+  it("keeps a bid whose deadline is a midnight open through the stated day, as a date-only deadline is", () => {
+    const at = (deadline: string, now: string) => mergeLifecycleFields({ lifecycle_status: "open", deadline_date: deadline }, {}, { now });
+    // The end of 13 October in UTC-10 is 10:00Z on the 14th.
+    for (const deadline of ["10/13/2026 12:00 AM", "10/13/2026 00:00", "2026-10-13T00:00:00Z", "2026-10-13T00:00:00"]) {
+      expect(at(deadline, "2026-10-13T12:00:00.000Z"), deadline).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+      expect(at(deadline, "2026-10-14T09:59:59.999Z"), deadline).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+      expect(at(deadline, "2026-10-14T10:00:00.000Z"), deadline).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
+    }
+    // One minute past midnight is a time of its own.
+    expect(at("10/13/2026 12:01 AM", "2026-10-13T12:00:00.000Z")).toMatchObject({ lifecycle_status: "closed" });
+    expect(resolveLifecycle({ lifecycle_status: "open", deadline_date: "10/12/2026 12:00 AM" }, {}, { now: "2026-10-13T12:00:00.000Z" }).closedByDeadline).toBe("10/12/2026 12:00 AM");
+  });
+
   it("changes nothing without a clock", () => {
     const row = { lifecycle_status: "open", deadline_date: PASSED };
     expect(mergeLifecycleFields(row)).toMatchObject({ lifecycle_status: "open", is_active: 1 });

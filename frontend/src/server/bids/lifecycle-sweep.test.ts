@@ -274,6 +274,32 @@ describe("sweepExpiredBids on SQLite", () => {
     expect(read("ampm:two")).toMatchObject({ lifecycleStatus: "closed", isActive: 0 });
   });
 
+  it("treats a midnight deadline as the end of its stated day, the way portals write a date", async () => {
+    seed([
+      { id: "midnight:ampm", deadline: "10/13/2026 12:00 AM" }, // the 13th ends at 10:00Z on the 14th: still open at NOW
+      { id: "midnight:24h", deadline: "10/13/2026 00:00" },
+      { id: "midnight:iso", deadline: "2026-10-13T00:00:00Z" },
+      { id: "midnight:zoneless", deadline: "2026-10-13T00:00:00" },
+      { id: "midnight:future", deadline: "01/01/2027 12:00 AM" },
+      { id: "midnight:yesterday", deadline: "10/12/2026 12:00 AM" }, // the 12th ended at 10:00Z on the 13th: closed
+      { id: "midnight:june", deadline: "2026-06-02T00:00:00Z" },
+      { id: "midnight:a-minute-later", deadline: "10/13/2026 12:01 AM" }, // not midnight: 10:01Z on the 13th, closed
+    ]);
+    const result = await sweep();
+
+    expect(result).toMatchObject({ scanned: 8, closed: 3, unparseable: 0 });
+    expect(closedIds()).toEqual(["midnight:a-minute-later", "midnight:june", "midnight:yesterday"]);
+    for (const id of ["midnight:ampm", "midnight:24h", "midnight:iso", "midnight:zoneless", "midnight:future"]) {
+      expect(read(id)).toMatchObject({ lifecycleStatus: "open", isActive: 1, updatedAt: SEEDED_AT });
+    }
+
+    const sweepAt = (now: string) => sweepExpiredBids({ database: testDb.db }, { now: new Date(now) });
+    expect(await sweepAt("2026-10-14T09:59:59.999Z")).toMatchObject({ closed: 0 });
+    expect(await sweepAt("2026-10-14T10:00:00.000Z")).toMatchObject({ closed: 4 });
+    expect(read("midnight:future")).toMatchObject({ lifecycleStatus: "open" });
+    expect(JSON.parse(read("midnight:iso").rawPayload!).lifecycle).toMatchObject({ closed_reason: "deadline_passed", deadline: "2026-10-13T00:00:00Z" });
+  });
+
   it("ignores a batch size that is not a positive whole number", async () => {
     seed();
     for (const batchSize of [0, -3, 1.5, Number.NaN]) {
