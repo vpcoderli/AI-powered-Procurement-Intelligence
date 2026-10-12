@@ -8,6 +8,15 @@ function failure(errorCode: string, errorMessage = ""): RunCrawlerSourceOnceResu
 }
 
 describe("crawler retries", () => {
+  it("returns the real last failure before retry backoff when the caller cannot start another attempt", async () => {
+    const last = failure("HTTPError", "503 Service Unavailable");
+    const run = vi.fn(async () => last);
+    const sleep = vi.fn(async () => {});
+    expect(await retryCrawlerSourceResult(run, { maxAttempts: 3, canRetry: () => false, sleep })).toBe(last);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it.each(["HtmlPageError", "EmptyCrawlerResultError", "CrawlerPersistenceError", "CrawlerLeaseLostError", "Error"])("does not retry %s", async (code) => {
     const run = vi.fn(async () => failure(code));
     await retryCrawlerSourceResult(run, { maxAttempts: 3, sleep: async () => {} });

@@ -5,11 +5,12 @@ import { bidAttachments, bids, crawlerLocks, crawlerLogs } from "@/server/db/sch
 import type { CrawlerJsonImportResult, CrawlerJsonRunPayload } from "./mysql-json-importer";
 import type { CrawlableSource } from "./source-registry";
 
-import { mergePersistedAttachments, mergePersistedBid, snakeCaseRecord } from "./persistence-merge";
+import { snakeCaseRecord } from "./persistence-merge";
+import { intakeCrawlerRun } from "./bid-intake";
 import { CrawlerPersistenceError, persistenceFailurePayload, validateCrawlerImport } from "./persistence-errors";
 import { CrawlerLeaseLostError, type CrawlerLeaseFence } from "./execution-context";
 import { assertPersistenceLease } from "./persistence-lease";
-import { delistedRawPayload, delistingApplies, sourceBidIdLikePattern, withLifecycleMetadata } from "./lifecycle";
+import { delistedRawPayload, sourceBidIdLikePattern } from "./lifecycle";
 
 type SqliteImportStore = Pick<AppDatabase, "select" | "insert" | "update">;
 
@@ -38,13 +39,6 @@ function optionalNumber(value: unknown) {
 function activeValue(value: unknown) {
   if (value === false || value === 0 || value === "0") return 0;
   return 1;
-}
-
-function normalizedBidId(row: JsonRecord) {
-  return stringValue(
-    row.id,
-    `${stringValue(row.source, "crawler")}:${stringValue(row.source_bid_id ?? row.dedupe_key, "unknown")}`,
-  );
 }
 
 /**
@@ -117,14 +111,12 @@ function attachmentRowsForBid(row: JsonRecord, bidId: string, fallbackTimestamp:
     mimeType: optionalString(attachment.mime_type),
     sortOrder: optionalNumber(attachment.sort_order) ?? index,
     createdAt: stringValue(attachment.created_at, fallbackTimestamp),
+    verifiedAt: optionalString(attachment.verified_at),
   }));
 }
 
-function mergeAttachments(db: SqliteImportStore, row: JsonRecord, bidId: string, fallbackTimestamp: string) {
-  if (!Array.isArray(row.attachments) || row.attachments.length === 0) return;
-  const existing = db.select().from(bidAttachments).where(eq(bidAttachments.bidId, bidId)).all().map(snakeCaseRecord);
-  const incoming = mergePersistedAttachments(existing, row.attachments as JsonRecord[], bidId);
-  for (const attachmentRow of attachmentRowsForBid({ attachments: incoming }, bidId, fallbackTimestamp)) {
+function writeAttachments(db: SqliteImportStore, rows: JsonRecord[], existing: JsonRecord[], bidId: string, fallbackTimestamp: string) {
+  for (const attachmentRow of attachmentRowsForBid({ attachments: rows }, bidId, fallbackTimestamp)) {
     const insert = db.insert(bidAttachments).values(attachmentRow);
     if (existing.some((attachment) => attachment.id === attachmentRow.id)) {
       insert.onConflictDoUpdate({ target: bidAttachments.id, set: attachmentRow }).run();
@@ -135,35 +127,25 @@ function mergeAttachments(db: SqliteImportStore, row: JsonRecord, bidId: string,
   }
 }
 
-/** Resolve the persisted row for a payload bid by primary id, then by dedupe key (MySQL twin does the same). */
-function existingBidFor(db: SqliteImportStore, row: JsonRecord) {
-  const byId = db.select().from(bids).where(eq(bids.id, normalizedBidId(row))).get();
-  if (byId) return byId;
-  const dedupeKey = stringValue(row.dedupe_key);
-  return dedupeKey ? db.select().from(bids).where(eq(bids.dedupeKey, dedupeKey)).get() : undefined;
+/** Resolve by primary id, then the unique dedupe key; the domain chooses the effective id. */
+function existingBidFor(db: SqliteImportStore, id: string, dedupeKey: string) {
+  return db.select().from(bids).where(eq(bids.id, id)).get()
+    ?? (dedupeKey ? db.select().from(bids).where(eq(bids.dedupeKey, dedupeKey)).get() : undefined);
 }
 
-function upsertBid(db: SqliteImportStore, row: JsonRecord, fallbackTimestamp: string): { id: string; status: "inserted" | "updated" } {
-  const existing = existingBidFor(db, row);
-  // A dedupe-key match under another primary id updates that row instead of failing the run.
-  const id = existing?.id ?? normalizedBidId(row);
-  const merged = mergePersistedBid(row, existing ? snakeCaseRecord(existing) : undefined);
-  const updateValues = bidUpdateValues(merged, fallbackTimestamp);
-  const insertValues = {
-    id,
-    source: stringValue(row.source),
-    dedupeKey: stringValue(row.dedupe_key),
-    firstSeenAt: stringValue(row.first_seen_at, fallbackTimestamp),
-    createdAt: stringValue(row.created_at, fallbackTimestamp),
-    ...updateValues,
-  };
-
+function writeBid(db: SqliteImportStore, row: JsonRecord, fallbackTimestamp: string) {
+  const updateValues = bidUpdateValues(row, fallbackTimestamp);
   db.insert(bids)
-    .values(insertValues)
+    .values({
+      id: stringValue(row.id),
+      source: stringValue(row.source),
+      dedupeKey: stringValue(row.dedupe_key),
+      firstSeenAt: stringValue(row.first_seen_at, fallbackTimestamp),
+      createdAt: stringValue(row.created_at, fallbackTimestamp),
+      ...updateValues,
+    })
     .onConflictDoUpdate({ target: bids.id, set: updateValues })
     .run();
-
-  return { id, status: existing ? "updated" : "inserted" };
 }
 
 function delistMissingOpenBids(db: SqliteImportStore, sourceId: string, seen: Set<string>, at: string) {
@@ -219,33 +201,31 @@ export function importCrawlerJsonRunIntoSqlite(
   lease?: CrawlerLeaseFence,
 ): CrawlerJsonImportResult {
   try {
+    // Preserve rejection before transaction/lease acquisition; intake also validates direct callers.
     validateCrawlerImport(payload);
-    return db.transaction((transaction) => {
+    const outcome = db.transaction((transaction) => {
       const checkLease = () => {
         if (!lease) return;
         const row = transaction.select().from(crawlerLocks).where(eq(crawlerLocks.source, lease.source)).get();
         assertPersistenceLease(lease, row);
       };
       checkLease();
-      const bidRows = payload.bids ?? [];
-      let insertedCount = 0;
-      let updatedCount = 0;
-      const seen = new Set<string>();
-      for (const row of bidRows) {
-        const result = upsertBid(transaction, row, payload.startedAt);
-        if (result.status === "inserted") insertedCount += 1;
-        else updatedCount += 1;
-        seen.add(result.id);
-        mergeAttachments(transaction, row, result.id, payload.startedAt);
-      }
-      const delisted = delistingApplies(payload)
-        ? delistMissingOpenBids(transaction, payload.source, seen, payload.finishedAt ?? payload.startedAt)
-        : null;
-      const counts = { fetchedCount: bidRows.length, insertedCount, updatedCount };
-      insertCrawlerLog(transaction, delisted === null ? payload : withLifecycleMetadata(payload, delisted), counts);
+      const outcome = intakeCrawlerRun(payload, {
+        findBid(id, dedupeKey) {
+          const row = existingBidFor(transaction, id, dedupeKey);
+          return row ? snakeCaseRecord(row) : undefined;
+        },
+        readAttachments: (id) => transaction.select().from(bidAttachments).where(eq(bidAttachments.bidId, id)).all().map(snakeCaseRecord),
+        writeBid: (row) => writeBid(transaction, row, payload.startedAt),
+        writeAttachments: (id, rows, existing) => writeAttachments(transaction, rows, existing, id, payload.startedAt),
+        delistMissingOpenBids: (source, seen, at) => delistMissingOpenBids(transaction, source, seen, at),
+        writeLog: (loggedPayload, counts) => insertCrawlerLog(transaction, loggedPayload, counts),
+      });
       checkLease();
-      return { ...counts, logCount: 1, ...(delisted === null ? {} : { delistedCount: delisted }) };
+      return outcome;
     }, lease ? { behavior: "immediate" } : undefined);
+    payload.metadata = outcome.metadata;
+    return outcome.result;
   } catch (error) {
     const failure = error instanceof CrawlerLeaseLostError ? error : new CrawlerPersistenceError(error);
     try {
@@ -270,13 +250,22 @@ function stampedValue(existing: unknown, sourceValue: string | null): unknown {
  */
 export function stampJurisdiction(
   payload: CrawlerJsonRunPayload,
-  source: Pick<CrawlableSource, "jurisdictionLevel" | "jurisdictionName" | "fipsCode">,
+  source: Pick<CrawlableSource, "jurisdictionLevel" | "jurisdictionName" | "fipsCode"> & Partial<Pick<CrawlableSource, "id" | "label" | "issuerType" | "stateCode" | "baseUrl">>,
 ): CrawlerJsonRunPayload {
   const bidRows = payload.bids;
   if (!bidRows || bidRows.length === 0) return payload;
 
   return {
     ...payload,
+    metadata: {
+      ...payload.metadata,
+      sourceIdentity: {
+        id: source.id ?? payload.source, label: source.label ?? null,
+        issuerType: source.jurisdictionLevel ?? source.issuerType,
+        stateCode: source.stateCode ?? null, jurisdictionLevel: source.jurisdictionLevel,
+        fipsCode: source.fipsCode, baseUrl: source.baseUrl ?? null,
+      },
+    },
     bids: bidRows.map((row) => ({
       ...row,
       jurisdiction_level: stampedValue(row.jurisdiction_level, source.jurisdictionLevel),

@@ -32,6 +32,7 @@
     "ops:production:check": "tsx scripts/production-readiness-check.ts",
     "ops:launch-handoff": "tsx scripts/launch-handoff.ts",
     "crawler:once": "tsx scripts/run-crawler-once.ts",
+    "crawler:details:backfill": "tsx scripts/run-detail-backfill-once.ts",
     "worker:crawler": "tsx scripts/crawler-worker.ts",
     "worker:crawler:check": "tsx scripts/crawler-worker.ts --check",
     "worker:events": "tsx scripts/event-worker.ts",

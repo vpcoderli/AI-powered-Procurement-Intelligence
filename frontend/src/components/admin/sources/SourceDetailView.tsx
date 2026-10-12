@@ -14,10 +14,10 @@ import {
   AdminApiError,
   checkAdminDataSourceHealth,
   getAdminDataSourceDetail,
-  runStateCrawlersNow,
   updateAdminDataSource,
   type AdminDataSource,
 } from "@/lib/api/admin";
+import { runManualCrawl } from "@/lib/manual-crawl";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { formatDate } from "../admin-format";
 import { useAdminSession } from "../admin-session";
@@ -154,7 +154,9 @@ export function SourceDetailView({ sourceId }: { sourceId: string }) {
     act("run", async () => {
       if (!runId) return;
       try {
-        setNotice(singleRunReport(t, source.label, await runStateCrawlersNow([runId])));
+        const outcome = await runManualCrawl({ sources: [source] }, { transportFailure: "stop" });
+        if (outcome.failed) throw outcome.failure;
+        setNotice(singleRunReport(t, source.label, outcome.statuses[runId]));
         await resource.reload();
       } catch {
         failure(t("admin.runSourceFailed").replace("{source}", source.label));

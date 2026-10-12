@@ -52,6 +52,13 @@ describe("GET /api/bids", () => {
     expect(body.filters.q).toBe("cloud");
   });
 
+  it.each(["county", "city", "township", "special_district"] as const)("passes %s issuer filters alongside state geography", async (issuerType) => {
+    const response = await GET(new Request(`http://localhost/api/bids?states=CA&issuerType=${issuerType}`));
+
+    expect(response.status).toBe(200);
+    expect(queryBids).toHaveBeenCalledWith(expect.objectContaining({ states: ["CA"], issuerType }));
+  });
+
   it("falls back to defaults for invalid enum query values", async () => {
     const response = await GET(
       new Request(

@@ -155,6 +155,10 @@ discover-sources output: 43 pages, 2036 agencies, stopped_reason=exhausted; 819 
 
 注册进来的行 `approval_status` 为 NULL，也就是[治理拦截](./local-source-approval.md#1-什么是治理拦截)状态，不会被调度器碰到。发现这一步**没有**、也不该有任何绕过门禁的能力。
 
+注册会统一校验字段类型、有效州码（50 州及 DC）、机构级别、HTTP(S) 地址，以及 county / city / township GEOID 的 5 / 7 / 10 位长度与州前缀；`fetchConfig.base_url` 若提供，必须等于 `baseUrl`，BidNet 必须提供这一字段。Bonfire 必须提供合法的 `fetchConfig.tenant`，并与 `baseUrl` 的 `<tenant>.bonfirehub.com` 主机一致，避免适配器实际抓取另一租户。无效候选会打印具体错误并退出 1（包括 `--dry-run`）。真实批次仍会注册其中有效的候选，按错误行复核后重跑即可。
+
+地方源重新注册只允许更新显示名称、频率与解析配置；同 id 的州、辖区、GEOID、平台或租户地址变化会拒绝，避免既有招标和人工审批被转移到另一实体。门户迁移应使用经复核的管理端修改，另一辖区应使用新 id。同一 BidNet 租户的根路径与采购组路径视为一个租户，Bonfire 同一租户子域名也只允许一个地方源 id；同 GEOID 的不同采购部门仍可各自注册。
+
 ## 5. 人工审阅要看什么
 
 `candidates.json` 是给人改的，不是给人直接过的。逐条至少确认三件事：
@@ -173,6 +177,7 @@ discover-sources output: 43 pages, 2036 agencies, stopped_reason=exhausted; 819 
 | `level_not_requested` | 被本次 `levels` 排除 | 下次放开 `levels` 再跑 |
 | `unresolved_state` | 采购组不是州（`mitn`、`bgis` 等），推断不出州码 | 人工补州码后手写候选。**只在不带 `states` 的全量跑里出现**——带过滤时这些机构由采集器直接丢掉，只在 `stats.unresolved_state_skipped` 里留个数 |
 | `already_registered` | 租户 slug 命中已登记地址。`detail` 是持有该租户的源 id（请求里用 `existing_sources[].base_url` 给出时），否则是命中的那条已登记地址 | 正常，说明库里已有。只撞 id 不会进这里 |
+| `duplicate_tenant` | 本轮另一条目录路径已为同一租户生成候选，`detail` 是该候选 id | 正常，采购组路径与根路径别名只保留一个候选 |
 | `ambiguous_match` | 同州同名多条，`detail` 列出候选 GEOID | 人工挑一条，手写 `fipsCode` |
 | `no_fips_match` | Census 表里查无此名，且郡名前缀规则也没救回来 | 人工查实际辖区后补 `fipsCode`；查不到就别注册 |
 | `unusable_name` | 归一化后名字为空 | 极罕见，人工处理 |

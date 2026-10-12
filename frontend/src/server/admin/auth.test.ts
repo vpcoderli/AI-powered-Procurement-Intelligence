@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { SESSION_COOKIE_NAME, hashSessionToken } from "@/server/auth/session";
 import { sessions, users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
@@ -161,6 +162,18 @@ describe("requireAdmin", () => {
       userId: "user_admin",
     });
   });
+
+  it.each(["", "not a date", "275760-09-14T00:00:00.000Z", "2000-01-01T00:00:00.000Z"])(
+    "rejects an admin session with an invalid or expired expiry %j without marking it seen",
+    async (expiresAt) => {
+      const token = "invalid_expiry_admin_token";
+      createSessionUser(testDb, { id: "invalid_expiry_admin", email: "expiry@example.com", role: "admin", token });
+      testDb.db.update(sessions).set({ expiresAt }).where(eq(sessions.id, "session_invalid_expiry_admin")).run();
+
+      await expect(requireAdminAccess(testDb.db, requestWithSession(token))).rejects.toMatchObject({ code: "FORBIDDEN" });
+      expect(testDb.db.select().from(sessions).where(eq(sessions.id, "session_invalid_expiry_admin")).get()?.lastSeenAt).toBe(NOW);
+    },
+  );
 
   it("rejects authenticated non-admin users", async () => {
     const token = "session_token";

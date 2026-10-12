@@ -58,16 +58,23 @@ class _PortalHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):  # noqa: A002 - keep pytest output clean
         return
 
-    def _html(self, body):
+    def _html(self, body, cookie=None):
         payload = body.encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(payload)
 
     def do_GET(self):
-        if self.path.startswith("/detail"):
+        if self.path.startswith("/session-detail"):
+            self._html(
+                DETAIL_PAGE.replace('action="/file"', 'action="/session-file"'),
+                cookie="public_session=ready; Path=/; HttpOnly",
+            )
+        elif self.path.startswith("/detail"):
             self._html(DETAIL_PAGE)
         elif self.path.startswith("/login"):
             self._html(LOGIN_PAGE)
@@ -77,11 +84,14 @@ class _PortalHandler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
-        if self.path != "/file":
+        if self.path not in ("/file", "/session-file"):
             self.send_error(404)
             return
         length = int(self.headers.get("Content-Length") or 0)
         self.rfile.read(length)
+        if self.path == "/session-file" and "public_session=ready" not in (self.headers.get("Cookie") or ""):
+            self.send_error(403, "Public detail session required")
+            return
         self.send_response(200)
         self.send_header("Content-Type", "application/pdf")
         self.send_header("Content-Disposition", 'attachment; filename="Doc.pdf"')
@@ -139,6 +149,30 @@ def download(payload):
 
 
 class TestBrowserDownload:
+    def test_javascript_download_keeps_the_public_detail_page_session(self, chromium_available, portal):
+        result = download(
+            {
+                "page_url": f"{portal}/session-detail",
+                "link": {"href_contains": "123", "text": "Doc.pdf"},
+                "timeout_seconds": 30,
+                "allowed_hosts": ["127.0.0.1"],
+            }
+        )
+        assert result.content == PDF_BYTES
+        assert result.final_url.endswith("/session-file")
+
+    def test_stateless_post_cannot_download_a_session_attachment(self, portal):
+        from urllib.parse import urlparse
+
+        connection = http.client.HTTPConnection(urlparse(portal).netloc, timeout=5)
+        try:
+            connection.request("POST", "/session-file", body="docId=123")
+            response = connection.getresponse()
+            assert response.status == 403
+            assert b"Public detail session required" in response.read()
+        finally:
+            connection.close()
+
     def test_clicking_a_javascript_link_returns_the_attachment_bytes(self, chromium_available, portal):
         result = download(
             {

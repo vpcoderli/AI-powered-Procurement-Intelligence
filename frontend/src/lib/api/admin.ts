@@ -874,6 +874,18 @@ export async function runSamGovCrawlerNow(options: CrawlerRunWindowOptions = {})
       : { method: "POST" },
   );
 
+  // SAM's route uses 409 for governance/lock skips and 500 for a completed runner
+  // failure. Preserve those structured outcomes; auth/network failures still reject.
+  if (response.status === 409 || response.status === 500) {
+    const body: unknown = await response.clone().json().catch(() => null);
+    if (typeof body === "object" && body !== null) {
+      const outcome = body as { source?: unknown; status?: unknown; ok?: unknown };
+      const expectedStatus = response.status === 409
+        ? ["blocked", "locked", "disabled", "deferred"].includes(String(outcome.status))
+        : outcome.status === "failure";
+      if (outcome.source === "sam_gov" && outcome.ok === false && expectedStatus) return body;
+    }
+  }
   return parseResponse<unknown>(response);
 }
 

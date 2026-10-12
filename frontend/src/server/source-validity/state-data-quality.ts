@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { desc, eq, ne } from "drizzle-orm";
 import { STATE_CRAWLER_SOURCES, type StateCrawlerSourceMetadata } from "@/lib/state-crawler-sources";
 import { bidDetailPath, bidIdFromRouteParam } from "@/lib/bid-routes";
+import { hasSourceWideVerifiedEmpty } from "@/lib/crawler-data-quality";
 import type { AppDatabase } from "@/server/db/client";
 import { mysqlSelectMany } from "@/server/db/mysql-runtime";
 import { bidAttachments, bids, crawlerLogs, dataSources, riskCheckSnapshots, sourceHealthSnapshots } from "@/server/db/schema";
@@ -681,8 +682,10 @@ async function createStateDataQualityReportFromDataset(
         const stateBids = stateBidsByState.get(source.stateCode) ?? [];
         const stateEnabledSources = enabledSources.get(source.stateCode) ?? [];
         const reasons: StateDataQualityReason[] = [];
+        const latestCrawlerLog = latestCrawlerLogForSource(source, latestCrawlerLogs);
+        const verifiedEmpty = latestCrawlerLog?.status === "success" && crawlerRowCount(latestCrawlerLog) === 0 && hasSourceWideVerifiedEmpty(latestCrawlerLog.metadata);
 
-        if (stateBids.length === 0) {
+        if (stateBids.length === 0 && !verifiedEmpty) {
           reasons.push(reason("missing_state_bid", `${source.stateCode} has no active state bid rows.`));
         }
 
@@ -735,7 +738,6 @@ async function createStateDataQualityReportFromDataset(
         const attachmentQuality = await attachmentQualityForState(source, stateBids, attachmentRowsByBid, attachmentRoots);
         reasons.push(...attachmentQuality.reasons);
 
-        const latestCrawlerLog = latestCrawlerLogForSource(source, latestCrawlerLogs);
         if (!latestCrawlerLog || isStale(latestCrawlerLog.startedAt, now, options.maxCrawlerAgeMs ?? DEFAULT_CRAWLER_MAX_AGE_MS)) {
           reasons.push(
             reason(
@@ -746,7 +748,7 @@ async function createStateDataQualityReportFromDataset(
             ),
           );
         }
-        if (latestCrawlerLog?.status === "success" && crawlerRowCount(latestCrawlerLog) === 0) {
+        if (latestCrawlerLog?.status === "success" && crawlerRowCount(latestCrawlerLog) === 0 && !verifiedEmpty) {
           reasons.push(reason("crawler_success_zero_rows", `${source.id} latest successful crawler run produced 0 rows.`));
         }
         if (latestCrawlerLog) {

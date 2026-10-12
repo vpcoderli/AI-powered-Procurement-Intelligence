@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { STATE_FIPS, fipsForStateCode } from "./state-fips";
 
 describe("state FIPS table", () => {
-  it("covers all 50 states", () => {
-    expect(Object.keys(STATE_FIPS)).toHaveLength(50);
+  it("covers all 50 states and the District of Columbia", () => {
+    expect(Object.keys(STATE_FIPS)).toHaveLength(51);
+    expect(STATE_FIPS.DC).toBe("11");
   });
 
   it("maps known states to standard two-digit GEOIDs", () => {
@@ -20,7 +21,7 @@ describe("state FIPS table", () => {
   });
 
   it("never reuses a FIPS code across states", () => {
-    expect(new Set(Object.values(STATE_FIPS)).size).toBe(50);
+    expect(new Set(Object.values(STATE_FIPS)).size).toBe(51);
   });
 
   it("resolves case-insensitively and returns null for unknown codes", () => {

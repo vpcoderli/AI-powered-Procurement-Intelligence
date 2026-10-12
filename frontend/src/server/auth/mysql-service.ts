@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Pool } from "mysql2/promise";
+import { isTokenUnexpired } from "@/lib/token-expiry";
 import type { PublicWorkspace } from "@/server/account/workspace";
 import {
   applyFeatureOverrides,
@@ -392,7 +393,7 @@ export async function getMysqlSessionUser(pool: Pool, sessionToken: string) {
 
   if (!row) return null;
 
-  if (new Date(row.expiresAt).getTime() <= Date.now() || row.isDisabled === 1 || row.isDisabled === "1" || !row.email) {
+  if (!isTokenUnexpired(row.expiresAt) || row.isDisabled === 1 || row.isDisabled === "1" || !row.email) {
     await mysqlExecute(pool, "DELETE FROM sessions WHERE id = ?", [row.sessionId]);
     return null;
   }

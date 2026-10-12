@@ -4,6 +4,14 @@ import { toServerBidFixture } from "@/server/bids/test-fixtures";
 import { calculateBidMatch } from "./service";
 
 describe("match score service", () => {
+  it("rejects analysis when a bid has only a title echo", () => {
+    const bid = toServerBidFixture({ ...MOCK_BIDS[0], description: MOCK_BIDS[0].title, fullDescription: "" });
+    expect(() => calculateBidMatch(bid, {
+      userId: "user_empty", companyName: "", businessTypes: [], categories: [], keywords: [], certifications: [],
+      serviceStates: [], minContractValue: null, maxContractValue: null, riskPreferences: [], completionScore: 0,
+      createdAt: null, updatedAt: null,
+    })).toThrow("valid procurement description");
+  });
   it("scores a bid higher when profile state and keywords match", () => {
     const bid = toServerBidFixture(MOCK_BIDS.find((item) => item.stateCode === "CA")!);
 
@@ -82,10 +90,10 @@ describe("match score service", () => {
       toServerBidFixture({
         ...MOCK_BIDS[0],
         title: "SBE supplier opportunity",
-        description: "",
+        description: "Supply pumps.",
         fullDescription: "",
         originalCategory: "",
-        issuerName: "",
+        issuerName: "Public Works",
         stateCode: "WA",
         tags: [],
         amount: "",

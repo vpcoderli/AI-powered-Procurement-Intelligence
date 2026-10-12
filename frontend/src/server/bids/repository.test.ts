@@ -70,6 +70,8 @@ describe("bid repository", () => {
           ];
         }
 
+        if (sql.includes("FROM data_sources")) return [[]];
+
         return [
           [
             {
@@ -124,7 +126,9 @@ describe("bid repository", () => {
       }),
     ]);
     expect(queryCalls[0]).toContain("display_status <> 'suppressed'");
-    expect(queryCalls[1]).toContain("FROM bid_attachments");
+    expect(queryCalls[1]).toContain("FROM data_sources");
+    expect(queryCalls[2]).toContain("FROM bid_attachments");
+    expect(queryCalls[2]).not.toContain("source_bid_id");
   });
 
   it("gets a bid with attachments by id", async () => {

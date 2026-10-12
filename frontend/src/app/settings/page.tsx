@@ -74,6 +74,7 @@ import {
   type BillingInvoicesResponse,
 } from "@/lib/api/auth";
 import { canUseFeature, lockedFeatureMessage } from "@/lib/features/useFeature";
+import { ISSUER_TYPES, isIssuerTypeFilter, type IssuerTypeFilter } from "@/lib/issuer-types";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { ACCOUNT_TIER_LABELS, type AccountTier, type FeatureKey, type ProductPlanKey } from "@/server/auth/entitlements";
 import type { DeadlineReminder } from "@/server/deadlines/types";
@@ -112,7 +113,7 @@ type SearchAlertDraft = {
   name: string;
   keywords: string;
   states: string;
-  issuerType: "all" | "federal" | "state";
+  issuerType: IssuerTypeFilter;
   deadline: "any" | "next7" | "next30";
   published: "any" | "last24" | "last7";
   sort: "relevance" | "newest" | "deadline";
@@ -1742,7 +1743,7 @@ export default function SettingsPage() {
                         onValueChange={(value) =>
                           setSearchAlertDraft((draft) => ({
                             ...draft,
-                            issuerType: value === "federal" || value === "state" ? value : "all",
+                            issuerType: isIssuerTypeFilter(value) ? value : "all",
                           }))
                         }
                       >
@@ -1753,12 +1754,11 @@ export default function SettingsPage() {
                           <SelectItem value="all" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
                             {t("settings.searchAlertIssuer_all")}
                           </SelectItem>
-                          <SelectItem value="federal" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
-                            {t("settings.searchAlertIssuer_federal")}
-                          </SelectItem>
-                          <SelectItem value="state" className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
-                            {t("settings.searchAlertIssuer_state")}
-                          </SelectItem>
+                          {ISSUER_TYPES.map((value) => (
+                            <SelectItem key={value} value={value} className="focus:bg-slate-50 focus:text-slate-900 cursor-pointer">
+                              {t(`settings.searchAlertIssuer_${value}`)}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>

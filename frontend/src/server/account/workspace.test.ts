@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { registerUser } from "@/server/auth/service";
 import { UsageLimitError } from "@/server/auth/usage-limits";
-import { notificationOutbox, organizationMemberships, organizations, users, workspaceInvitations } from "@/server/db/schema";
+import { notificationOutbox, organizationMemberships, organizations, sessions, users, workspaceInvitations } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { markNotificationFailed, markNotificationSent } from "@/server/notifications/outbox-repository";
 import {
@@ -380,6 +380,22 @@ describe("workspace account service", () => {
       acceptedAt: expect.any(String),
     });
   });
+
+  it.each(["", "not a date", "275760-09-14T00:00:00.000Z"])(
+    "refuses an invitation with unreadable expiry %j without activating the member",
+    async (expiresAt) => {
+      const owner = await registerBusinessOwner({ email: "owner@example.com", password: "strong-password" });
+      const invite = await inviteWorkspaceMember(testDb.db, owner.user.id, { email: "member@example.com", role: "member" });
+      testDb.db.update(workspaceInvitations).set({ expiresAt }).where(eq(workspaceInvitations.invitedUserId, invite.member.userId)).run();
+      const before = testDb.db.select().from(users).where(eq(users.id, invite.member.userId)).get();
+
+      await expect(acceptWorkspaceInvitation(testDb.db, { token: invite.inviteToken, password: "member-strong-password" })).rejects.toBeInstanceOf(WorkspaceInvitationNotFoundError);
+      expect(testDb.db.select().from(users).where(eq(users.id, invite.member.userId)).get()).toEqual(before);
+      expect(testDb.db.select().from(workspaceInvitations).where(eq(workspaceInvitations.invitedUserId, invite.member.userId)).get()?.acceptedAt).toBeNull();
+      expect(testDb.db.select().from(organizationMemberships).where(eq(organizationMemberships.userId, invite.member.userId)).get()?.status).toBe("invited");
+      expect(testDb.db.select().from(sessions).where(eq(sessions.userId, invite.member.userId)).all()).toEqual([]);
+    },
+  );
 
   it("rejects invitation acceptance when the workspace has no remaining team seats", async () => {
     const owner = await registerBusinessOwner({

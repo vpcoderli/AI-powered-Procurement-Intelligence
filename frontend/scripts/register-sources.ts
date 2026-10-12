@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
+import { STATE_FIPS } from "../src/lib/state-fips";
 import { createDatabase, type AppDatabase } from "../src/server/db/client";
 import { closeResolvedMysqlPool, isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "../src/server/db/mysql";
-import { mysqlExecute } from "../src/server/db/mysql-runtime";
+import { mysqlExecute, mysqlSelectMany, mysqlTransaction } from "../src/server/db/mysql-runtime";
 import { runMigrations } from "../src/server/db/migrate";
 import { dataSources } from "../src/server/db/schema";
 
@@ -20,23 +21,121 @@ export interface SourceCandidate {
 }
 
 const VALID_JURISDICTION_LEVELS = new Set(["federal", "state", "county", "city", "township", "special_district"]);
+const LOCAL_LEVELS = new Set(["county", "city", "township", "special_district"]);
 const VALID_CADENCES = new Set(["hourly", "daily", "weekly", "manual"]);
 
 export function validateCandidate(c: SourceCandidate): string[] {
   const errors: string[] = [];
-  if (!c.id?.trim()) errors.push("id is required");
-  if (!c.label?.trim()) errors.push("label is required");
-  if (!c.stateCode?.trim()) errors.push("stateCode is required");
+  for (const field of ["id", "label", "issuerType", "stateCode", "baseUrl", "jurisdictionName"] as const) {
+    if (typeof c[field] !== "string" || !c[field].trim()) errors.push(`${field} must be a non-empty string`);
+  }
+  if (typeof c.fipsCode !== "string") errors.push("fipsCode must be a string");
+  if (c.providerFamily !== null && (typeof c.providerFamily !== "string" || !c.providerFamily.trim()))
+    errors.push("providerFamily must be a non-empty string or null");
   if (!VALID_JURISDICTION_LEVELS.has(c.jurisdictionLevel))
     errors.push(`jurisdictionLevel must be one of ${[...VALID_JURISDICTION_LEVELS].join(", ")}`);
+  else if (c.issuerType !== c.jurisdictionLevel)
+    errors.push("issuerType must match jurisdictionLevel");
   if (!VALID_CADENCES.has(c.cadence))
     errors.push(`cadence must be one of ${[...VALID_CADENCES].join(", ")}`);
+
+  const stateFips = typeof c.stateCode === "string" && Object.hasOwn(STATE_FIPS, c.stateCode)
+    ? STATE_FIPS[c.stateCode] : undefined;
+  if (c.jurisdictionLevel === "federal") {
+    if (c.stateCode !== "US") errors.push("stateCode must be US for federal sources");
+  } else if (!stateFips) {
+    errors.push("stateCode must be a valid uppercase US state code");
+  }
+  const lengths: Record<string, number> = { state: 2, county: 5, city: 7, township: 10 };
+  const length = Object.hasOwn(lengths, c.jurisdictionLevel) ? lengths[c.jurisdictionLevel] : undefined;
+  if (length && (
+    typeof c.fipsCode !== "string" || !new RegExp(`^\\d{${length}}$`).test(c.fipsCode) ||
+    !stateFips || !c.fipsCode.startsWith(stateFips)
+  )) {
+    errors.push(`fipsCode must be a ${length}-digit ${c.jurisdictionLevel} GEOID in stateCode`);
+  }
+  try {
+    const url = new URL(c.baseUrl);
+    if (!["http:", "https:"].includes(url.protocol) || !url.hostname || url.username || url.password)
+      errors.push("baseUrl must be an absolute http(s) URL without credentials");
+  } catch {
+    errors.push("baseUrl must be an absolute http(s) URL");
+  }
+  if (c.fetchConfig === null || typeof c.fetchConfig !== "object" || Array.isArray(c.fetchConfig)) {
+    errors.push("fetchConfig must be a JSON object");
+  } else {
+    if (c.fetchConfig.base_url !== undefined && c.fetchConfig.base_url !== c.baseUrl)
+      errors.push("fetchConfig.base_url must match baseUrl");
+    if (c.providerFamily === "bidnet" && (typeof c.fetchConfig.base_url !== "string" || !c.fetchConfig.base_url.trim()))
+      errors.push("fetchConfig.base_url is required for BidNet sources");
+    if (c.providerFamily === "bonfire") {
+      const tenant = c.fetchConfig.tenant;
+      let host = "";
+      try { host = new URL(c.baseUrl).hostname; } catch { /* Already reported above. */ }
+      if (typeof tenant !== "string" || tenant.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(tenant) ||
+          host !== `${tenant}.bonfirehub.com`)
+        errors.push("fetchConfig.tenant must be a valid Bonfire tenant matching baseUrl");
+    }
+  }
   return errors;
 }
 
 interface RegisterResult {
   inserted: number;
   errors: Array<{ id: string; errors: string[] }>;
+}
+
+type RegisteredSourceIdentity = Pick<
+  typeof dataSources.$inferSelect,
+  "id" | "issuerType" | "stateCode" | "baseUrl" | "jurisdictionLevel" | "jurisdictionName" | "fipsCode" | "providerFamily" | "fetchConfig"
+>;
+
+/** Mirrors discovery_service.TENANT_KEYS: BidNet root/group aliases name one tenant. */
+function sourceTenantKey(providerFamily: string | null, baseUrl: unknown): string | null {
+  if (typeof baseUrl !== "string") return null;
+  try {
+    const url = new URL(baseUrl);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (providerFamily === "bonfire") return host;
+    if (providerFamily !== "bidnet") return null;
+    let segments = url.pathname.toLowerCase().split("/").filter(Boolean);
+    const list = segments.indexOf("solicitations");
+    if (list !== -1) segments = segments.slice(0, list);
+    return segments.length ? `${host}/${segments.at(-1)}` : host;
+  } catch {
+    return null;
+  }
+}
+
+function localSourceIdentityChanges(existing: RegisteredSourceIdentity | null | undefined, c: SourceCandidate): string[] {
+  if (!existing) return [];
+  if (!LOCAL_LEVELS.has(c.jurisdictionLevel) && !LOCAL_LEVELS.has(existing.jurisdictionLevel ?? existing.issuerType)) return [];
+
+  const fields = ["issuerType", "stateCode", "baseUrl", "jurisdictionLevel", "jurisdictionName", "fipsCode", "providerFamily"] as const;
+  const changed: string[] = fields.filter((field) => existing[field] !== c[field]);
+  let config: Record<string, unknown> = {};
+  try {
+    const value: unknown = JSON.parse(existing.fetchConfig ?? "{}");
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) config = value as Record<string, unknown>;
+  } catch { /* An invalid legacy config cannot supply an identity override. */ }
+  for (const key of ["base_url", "tenant"] as const) {
+    const oldValue = key === "base_url" ? config[key] ?? existing.baseUrl : config[key] ?? null;
+    const newValue = key === "base_url" ? c.fetchConfig[key] ?? c.baseUrl : c.fetchConfig[key] ?? null;
+    if (oldValue !== newValue) changed.push(`fetchConfig.${key}`);
+  }
+  return changed.length > 0
+    ? [`local source identity change (${changed.join(", ")}) refused: use reviewed admin changes for a moved portal or a new source id for another jurisdiction`]
+    : [];
+}
+
+function registrationIdentityErrors(rows: RegisteredSourceIdentity[], c: SourceCandidate): string[] {
+  const errors = localSourceIdentityChanges(rows.find((row) => row.id === c.id), c);
+  if (errors.length > 0 || !LOCAL_LEVELS.has(c.jurisdictionLevel)) return errors;
+  const key = sourceTenantKey(c.providerFamily, c.baseUrl);
+  if (!key) return [];
+  const duplicate = rows.find((row) => row.id !== c.id && LOCAL_LEVELS.has(row.jurisdictionLevel ?? row.issuerType)
+    && row.providerFamily === c.providerFamily && sourceTenantKey(row.providerFamily, row.baseUrl) === key);
+  return duplicate ? [`tenant is already registered as ${duplicate.id}; use that source id instead of creating a duplicate`] : [];
 }
 
 /** The only `stats.stopped_reason` that means the directory walk ran off its last page. */
@@ -157,7 +256,10 @@ export function splitSuggestedCandidates(
   const register: SourceCandidate[] = [];
   const heldBack: HeldBackCandidate[] = [];
   for (const c of file.candidates) {
-    const sourceId = file.suggested.get(c.baseUrl);
+    const key = sourceTenantKey(c.providerFamily, c.baseUrl);
+    const sourceId = file.suggested.get(c.baseUrl) ?? (key
+      ? [...file.suggested.entries()].find(([url]) => sourceTenantKey(c.providerFamily, url) === key)?.[1]
+      : undefined);
     if (sourceId) heldBack.push({ id: c.id, baseUrl: c.baseUrl, sourceId });
     else register.push(c);
   }
@@ -190,6 +292,8 @@ export function describeCandidateFile(file: CandidateFile): string {
  * sign-off recorded through the admin console must survive an arbitrary number of re-registration
  * runs. See source-registry.ts's listCrawlableSources: a county/city row with a NULL
  * approval_status stays excluded from crawling until an admin explicitly approves it.
+ * Local-source identity changes are refused: preserving approval while changing the tenant or
+ * jurisdiction would silently transfer human sign-off to another source.
  */
 export function registerSources(db: AppDatabase, candidates: SourceCandidate[], now: string): RegisterResult {
   let inserted = 0;
@@ -198,29 +302,20 @@ export function registerSources(db: AppDatabase, candidates: SourceCandidate[], 
   for (const c of candidates) {
     const validationErrors = validateCandidate(c);
     if (validationErrors.length > 0) {
-      errors.push({ id: c.id || "(empty)", errors: validationErrors });
+      errors.push({ id: typeof c.id === "string" && c.id ? c.id : "(invalid id)", errors: validationErrors });
       continue;
     }
 
-    db.insert(dataSources)
-      .values({
-        id: c.id,
-        label: c.label,
-        issuerType: c.issuerType,
-        stateCode: c.stateCode,
-        baseUrl: c.baseUrl,
-        jurisdictionLevel: c.jurisdictionLevel,
-        jurisdictionName: c.jurisdictionName,
-        fipsCode: c.fipsCode,
-        providerFamily: c.providerFamily,
-        cadence: c.cadence,
-        fetchConfig: JSON.stringify(c.fetchConfig),
-        createdAt: now,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: dataSources.id,
-        set: {
+    const registered = db.transaction((tx) => {
+      const rows = tx.select().from(dataSources).all();
+      const identityErrors = registrationIdentityErrors(rows, c);
+      if (identityErrors.length > 0) {
+        errors.push({ id: c.id, errors: identityErrors });
+        return false;
+      }
+      tx.insert(dataSources)
+        .values({
+          id: c.id,
           label: c.label,
           issuerType: c.issuerType,
           stateCode: c.stateCode,
@@ -231,12 +326,30 @@ export function registerSources(db: AppDatabase, candidates: SourceCandidate[], 
           providerFamily: c.providerFamily,
           cadence: c.cadence,
           fetchConfig: JSON.stringify(c.fetchConfig),
+          createdAt: now,
           updatedAt: now,
-        },
-      })
-      .run();
+        })
+        .onConflictDoUpdate({
+          target: dataSources.id,
+          set: {
+            label: c.label,
+            issuerType: c.issuerType,
+            stateCode: c.stateCode,
+            baseUrl: c.baseUrl,
+            jurisdictionLevel: c.jurisdictionLevel,
+            jurisdictionName: c.jurisdictionName,
+            fipsCode: c.fipsCode,
+            providerFamily: c.providerFamily,
+            cadence: c.cadence,
+            fetchConfig: JSON.stringify(c.fetchConfig),
+            updatedAt: now,
+          },
+        })
+        .run();
+      return true;
+    }, { behavior: "immediate" });
 
-    inserted++;
+    if (registered) inserted++;
   }
 
   return { inserted, errors };
@@ -254,13 +367,32 @@ export async function registerSourcesInMysql(
   for (const c of candidates) {
     const validationErrors = validateCandidate(c);
     if (validationErrors.length > 0) {
-      errors.push({ id: c.id || "(empty)", errors: validationErrors });
+      errors.push({ id: typeof c.id === "string" && c.id ? c.id : "(invalid id)", errors: validationErrors });
       continue;
     }
 
-    await mysqlExecute(
-      pool,
-      `INSERT INTO data_sources
+    const registered = await mysqlTransaction(pool, async (connection) => {
+      const rows = await mysqlSelectMany<RegisteredSourceIdentity>(
+        connection,
+        `SELECT id, issuer_type AS issuerType, state_code AS stateCode, base_url AS baseUrl,
+                jurisdiction_level AS jurisdictionLevel, jurisdiction_name AS jurisdictionName,
+                fips_code AS fipsCode, provider_family AS providerFamily, fetch_config AS fetchConfig
+         FROM data_sources WHERE id = ? OR
+           (provider_family <=> ? AND (
+             jurisdiction_level IN ('county', 'city', 'township', 'special_district') OR
+             (jurisdiction_level IS NULL AND issuer_type IN ('county', 'city', 'township', 'special_district'))
+           ))
+         FOR UPDATE`,
+        [c.id, c.providerFamily],
+      );
+      const identityErrors = registrationIdentityErrors(rows, c);
+      if (identityErrors.length > 0) {
+        errors.push({ id: c.id, errors: identityErrors });
+        return false;
+      }
+      await mysqlExecute(
+        connection,
+        `INSERT INTO data_sources
          (id, label, issuer_type, state_code, base_url, jurisdiction_level, jurisdiction_name,
           fips_code, provider_family, cadence, fetch_config, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -276,14 +408,16 @@ export async function registerSourcesInMysql(
          cadence = VALUES(cadence),
          fetch_config = VALUES(fetch_config),
          updated_at = VALUES(updated_at)`,
-      [
-        c.id, c.label, c.issuerType, c.stateCode, c.baseUrl,
-        c.jurisdictionLevel, c.jurisdictionName, c.fipsCode,
-        c.providerFamily, c.cadence, JSON.stringify(c.fetchConfig), now, now,
-      ] as never[],
-    );
+        [
+          c.id, c.label, c.issuerType, c.stateCode, c.baseUrl,
+          c.jurisdictionLevel, c.jurisdictionName, c.fipsCode,
+          c.providerFamily, c.cadence, JSON.stringify(c.fetchConfig), now, now,
+        ] as never[],
+      );
+      return true;
+    });
 
-    inserted++;
+    if (registered) inserted++;
   }
 
   return { inserted, errors };
@@ -329,6 +463,7 @@ async function main() {
       console.log(`  ${c.id}: ${errors.length === 0 ? "OK" : errors.join(", ")}`);
     }
     console.log(`Dry run: ${candidates.length - invalid} valid, ${invalid} invalid`);
+    if (invalid > 0) process.exitCode = 1;
     if (refusal) {
       console.error(`A real run would refuse this file: ${refusal}`);
       process.exitCode = 1;
@@ -348,6 +483,8 @@ async function main() {
     try {
       const result = await registerSourcesInMysql(resolveMysqlPool(), candidates, now);
       console.log(`Registered ${result.inserted} sources (MySQL), ${result.errors.length} errors`);
+      for (const entry of result.errors) console.error(`${entry.id}: ${entry.errors.join("; ")}`);
+      if (result.errors.length > 0) process.exitCode = 1;
     } finally {
       // Also on a failed write: an open pool keeps this process alive (see src/server/db/mysql.ts).
       await closeResolvedMysqlPool();
@@ -358,6 +495,8 @@ async function main() {
     const result = registerSources(db, candidates, now);
     db.$client.close();
     console.log(`Registered ${result.inserted} sources (SQLite), ${result.errors.length} errors`);
+    for (const entry of result.errors) console.error(`${entry.id}: ${entry.errors.join("; ")}`);
+    if (result.errors.length > 0) process.exitCode = 1;
   }
 }
 

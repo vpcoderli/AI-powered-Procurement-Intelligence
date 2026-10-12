@@ -16,8 +16,9 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 import requests
 
 from apsi_crawler.html.public_page import fetch_page
-from apsi_crawler.content_quality import comparable_text, has_full_body, is_body, is_login_html, same_text, useful_text
+from apsi_crawler.content_quality import comparable_text, has_full_body, is_body, is_contact_metadata, is_login_html, same_text, useful_text
 from apsi_crawler.date_window import normalize_published_date
+from apsi_crawler.detail_backfill import detail_priority, record_outcome, retry_due, valid_body, valid_body_text
 from apsi_crawler.storage.sqlite import now_iso
 
 ENRICHMENT_FIELDS = ("description", "attachments", "category", "contact", "published_date")
@@ -317,7 +318,12 @@ def merge_enrichment(bid, extracted, template, requested_fields=None):
     original_values = {}
     for key in ("original_category", "contact_name", "contact_email", "contact_phone", "published_date"):
         value = fields.get(key)
-        if not _empty(value) and _empty(bid.get(key)):
+        old_contact_metadata = key == "contact_name" and "contact" in requested and is_contact_metadata(bid.get(key))
+        if key == "contact_name" and is_contact_metadata(value):
+            value = None
+        if old_contact_metadata:
+            updates[key] = value
+        elif not _empty(value) and _empty(bid.get(key)):
             updates[key] = normalize_published_date(value) if key == "published_date" else value
             if key == "published_date":
                 original_values[key] = value
@@ -350,7 +356,8 @@ def merge_enrichment(bid, extracted, template, requested_fields=None):
     raw_payload = deepcopy(bid.get("raw_payload"))
     if not isinstance(raw_payload, dict):
         raw_payload = {}
-    raw_payload["enrichment"] = {"fields": deepcopy(extracted.get("diagnostics", {})), "applied_fields": list(updates)}
+    previous_enrichment = raw_payload.get("enrichment")
+    raw_payload["enrichment"] = {**(previous_enrichment if isinstance(previous_enrichment, dict) else {}), "fields": deepcopy(extracted.get("diagnostics", {})), "applied_fields": list(updates)}
     if original_values:
         raw_payload["enrichment"]["original_values"] = original_values
     bid.update(updates)
@@ -365,7 +372,9 @@ def _already_complete(bid, fields):
         # A list of links cannot prove that no new detail attachments exist.
         "attachments": lambda: False,
         "category": lambda: not _empty(bid.get("original_category")),
-        "contact": lambda: all(not _empty(bid.get(key)) for key in ("contact_name", "contact_email", "contact_phone")),
+        "contact": lambda: not is_contact_metadata(bid.get("contact_name")) and all(
+            not _empty(bid.get(key)) for key in ("contact_name", "contact_email", "contact_phone")
+        ),
         "published_date": lambda: not _empty(bid.get("published_date")),
     }
     return all(checks[field]() for field in fields if field in checks)
@@ -384,11 +393,14 @@ def _needs_enrichment(bid, base_url, config):
 
 def enrich_bids(bids, source, fetch_config, *, extractor=None, session=None, sleep=time.sleep, now=now_iso, monotonic=time.monotonic):
     config = parse_enrichment_config(fetch_config)
-    stats = {"attempted": 0, "enriched": 0, "failed": 0, "skipped": 0, "reason": None, "extractor": None}
+    stats = {"attempted": 0, "enriched": 0, "valid_bodies": 0, "failed": 0, "skipped": 0, "reason": None, "extractor": None}
+    timestamp = now()
 
     if not config["enabled"]:
         stats["skipped"] = len(bids)
         stats["reason"] = "disabled"
+        for bid in bids:
+            record_outcome(bid, "disabled", "disabled", timestamp)
         return bids, stats
 
     if extractor is None:
@@ -396,6 +408,8 @@ def enrich_bids(bids, source, fetch_config, *, extractor=None, session=None, sle
         if not extractor_base_url:
             stats["skipped"] = len(bids)
             stats["reason"] = "extractor_not_configured"
+            for bid in bids:
+                record_outcome(bid, "not_configured", "extractor_not_configured", timestamp)
             return bids, stats
         extractor = ExtractorClient(extractor_base_url)
 
@@ -403,6 +417,8 @@ def enrich_bids(bids, source, fetch_config, *, extractor=None, session=None, sle
     if not version:
         stats["skipped"] = len(bids)
         stats["reason"] = "extractor_unavailable"
+        for bid in bids:
+            record_outcome(bid, "deferred", "extractor_unavailable", timestamp)
         return bids, stats
     stats["extractor"] = version
 
@@ -410,10 +426,20 @@ def enrich_bids(bids, source, fetch_config, *, extractor=None, session=None, sle
     client = session or requests.Session()
     close_client = session is None
     last_request_at = None
+    throttled = False
     try:
-        for bid in bids:
-            if stats["attempted"] >= config["max_details_per_run"] or not _needs_enrichment(bid, base_url, config):
+        for bid in sorted(bids, key=lambda row: detail_priority(row, timestamp)):
+            if not _needs_enrichment(bid, base_url, config):
                 stats["skipped"] += 1
+                record_outcome(bid, "reused" if valid_body(bid) else "not_needed", "complete" if _already_complete(bid, config["fields"]) else "missing_detail_url", timestamp)
+                continue
+            if not retry_due(bid, timestamp) or throttled:
+                stats["skipped"] += 1
+                record_outcome(bid, "deferred", "rate_limited" if throttled else "cooldown", timestamp)
+                continue
+            if stats["attempted"] >= config["max_details_per_run"]:
+                stats["skipped"] += 1
+                record_outcome(bid, "budget", "budget_exhausted", timestamp)
                 continue
 
             current_time = monotonic()
@@ -436,7 +462,16 @@ def enrich_bids(bids, source, fetch_config, *, extractor=None, session=None, sle
                     raise RedirectedOffTarget("detail HTML contains a login form without bid content")
                 extracted = extractor.extract(page.html, bid["source_url"], config["fields"], config["detail_selectors"])
                 changed = merge_enrichment(bid, extracted, config["attachment_url_template"], config["fields"])
-                bid["detail_fetched_at"] = now()
+                bid["detail_fetched_at"] = timestamp
+                fetched_body = valid_body({"title": bid.get("title"), **extracted.get("fields", {})})
+                # A real fetched body counts only when it is the body actually selected.
+                selected_body = fetched_body and any(
+                    valid_body_text(extracted.get("fields", {}).get(field), bid.get("title"))
+                    and any(same_text(extracted["fields"][field], bid.get(selected)) for selected in ("description", "full_description"))
+                    for field in ("description", "full_description")
+                )
+                stats["valid_bodies"] += int(selected_body)
+                record_outcome(bid, "success" if selected_body else "failure", None if selected_body else "body_not_obtained", timestamp, attempted=True, obtained_body=selected_body)
                 # `enriched` counts WRITES, not parses: an extractor call that returned only
                 # values the record already had (or nothing at all) changed no field, so the
                 # record is a skip. Otherwise a source that answers with an empty SPA shell
@@ -447,6 +482,9 @@ def enrich_bids(bids, source, fetch_config, *, extractor=None, session=None, sle
                     stats["skipped"] += 1
             except Exception as error:  # noqa: BLE001 - fail-open by contract: never propagate to the caller
                 stats["failed"] += 1
+                restricted = isinstance(error, RedirectedOffTarget) or "status 403" in str(error)
+                throttled = "status 429" in str(error)
+                record_outcome(bid, "restricted" if restricted else "failure", "public_access_restricted" if restricted else "rate_limited" if throttled else type(error).__name__, timestamp, attempted=True)
                 # The stats dict shape is fixed by contract (fetch-task's stdout is parsed JSON),
                 # so failure detail can't live there. Emit it to stderr instead — never stdout,
                 # which carries only the JSON result — so an operator can still tell a portal 403

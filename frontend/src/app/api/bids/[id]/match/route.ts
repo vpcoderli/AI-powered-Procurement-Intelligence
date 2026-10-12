@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getBidUsability } from "@/lib/bid-usability";
 import { resolvePrincipal } from "@/server/auth/principal";
 import { isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { getBidById } from "@/server/bids/service";
@@ -54,6 +55,9 @@ export async function GET(request: Request, context: RouteContext) {
 
     if (!bid) {
       return bidNotFound();
+    }
+    if (!getBidUsability(bid).analysis) {
+      return NextResponse.json({ error: { code: "BID_ANALYSIS_UNAVAILABLE", message: "A valid procurement description is required before analysis." } }, { status: 409 });
     }
 
     const profile = isAuthenticatedPrincipal(principal)

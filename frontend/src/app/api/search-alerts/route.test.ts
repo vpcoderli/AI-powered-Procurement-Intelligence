@@ -64,7 +64,7 @@ const alert: SearchAlert & { digestHistory: SearchAlertDigestRun[] } = {
 
 describe("GET /api/search-alerts", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     resolvePrincipal.mockResolvedValue({
       kind: "anonymous",
       userId: "anon_existing",
@@ -131,7 +131,7 @@ describe("GET /api/search-alerts", () => {
 
 describe("POST /api/search-alerts", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     resolvePrincipal.mockResolvedValue({
       kind: "anonymous",
       userId: "anon_existing",
@@ -139,6 +139,35 @@ describe("POST /api/search-alerts", () => {
       tier: "free",
       features: [],
     });
+  });
+
+  it.each(["county", "city", "township", "special_district"] as const)("accepts %s search alerts without widening the issuer filter", async (issuerType) => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "authenticated", userId: "user_1", role: "user", tier: "free", features: [],
+    });
+    createSearchAlert.mockResolvedValueOnce(alert);
+    const query = { states: ["CA"], issuerType };
+    const input = { name: "Local bids", query, frequency: "daily", isEnabled: true };
+    const response = await POST(new Request("http://localhost/api/search-alerts", {
+      method: "POST", body: JSON.stringify(input),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(createSearchAlert).toHaveBeenCalledWith(expect.anything(), "user_1", input);
+  });
+
+  it.each(["bogus", "constructor", "City"])("rejects unknown issuer type %s", async (issuerType) => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "authenticated", userId: "user_1", role: "user", tier: "free", features: [],
+    });
+    const query = { issuerType };
+    const input = { name: "Local bids", query, frequency: "daily", isEnabled: true };
+    const response = await POST(new Request("http://localhost/api/search-alerts", {
+      method: "POST", body: JSON.stringify(input),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(createSearchAlert).not.toHaveBeenCalled();
   });
 
   it("requires an authenticated principal before creating alerts", async () => {

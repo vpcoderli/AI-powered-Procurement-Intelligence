@@ -432,6 +432,17 @@ describe("list Run now, in chunks", () => {
 });
 
 describe("detail Run now of one source", () => {
+  it("keeps an unknown-source response error distinct from an omitted result", () => {
+    expect(singleRunReport(t, "City of Aurora", { phase: "done", status: "unknown", errorCode: "UNKNOWN_SOURCE" })).toEqual({
+      message: "Unable to run state crawler for City of Aurora.",
+      tone: "error",
+    });
+    expect(singleRunReport(t, "City of Aurora", { phase: "done", status: "unknown" })).toEqual({
+      message: "City of Aurora was not run: Unknown.",
+      tone: "info",
+    });
+  });
+
   it("reports a run that went through", () => {
     expect(singleRunReport(t, "City of Aurora", runResponse(["success"]))).toEqual({
       message: "State crawler run completed for City of Aurora.",

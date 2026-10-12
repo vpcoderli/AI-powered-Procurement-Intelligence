@@ -16,7 +16,8 @@ at capture time and is consumed by `tests/test_live_fixtures.py`.
 ### What the heuristics get with no selectors, and which selectors each source needs
 
 **IL BidBuy** — everything heuristic; no selectors required.
-- `description` ← "Description:" table label (BuySpeed's one-line description).
+- `description` ← "Bulletin Desc:" (`Changeorder to increase value of contract`). The
+  header's "Description:" repeats the title and is lower priority than the bulletin scope.
 - `contact` ← "Info Contact:" cell ("Contact Amanda Olinger at (217) 524-8437" → name
   `Amanda Olinger`, phone `(217) 524-8437`; the leading "Contact"/trailing "at" are stripped
   by `_clean_contact_name`).
@@ -24,14 +25,17 @@ at capture time and is consumed by `tests/test_live_fixtures.py`.
   links are returned with `url: null` + `raw_href` (never fabricated); the crawler resolves
   them through the source's `attachment_url_template` (spec §4.3), which for BuySpeed is
   `bidDetail.sda?downloadFileNbr={n}&docId={docId}&currentPage=1&mode=download&parentUrl=close`.
-- `category` ← "NIGP Code:" rows when present; `published_date` — the page carries no
+- `category` ← "NIGP Code:" rows when present, with "Type Code:" as a fallback;
+  `published_date` — the page carries no
   posted date (only "Bid Opening Date", which is the deadline) → `not_found` is correct.
 
 **OregonBuys** — same platform as IL; one selector.
-- `description`, `attachments` (javascript link, as above), `category` ("NIGP Code:" →
-  `948-07 Administration Services, Health`) all heuristic.
-- `contact` needs a selector: the page's first "Contact" text is a long Aon contact list, so
-  the heuristic returns junk. Use the "Purchaser:" cell:
+- `description` ← "Bulletin Desc:" (the purpose of the RFP), `attachments` (javascript
+  link, as above), `category` ("NIGP Code:" → `948-07 Administration Services, Health`)
+  all heuristic.
+- `contact` needs a selector when the desired contact is the purchaser: "Info Contact:"
+  contains a long Aon contact list, so the heuristic extracts its first email and leaves
+  the name empty. Use the "Purchaser:" cell:
   `//td[normalize-space(.)='Purchaser:']/following-sibling::td[1]` → `Steve Norman`.
   (The same XPath works on any BuySpeed portal, IL included.)
 
@@ -48,6 +52,10 @@ at capture time and is consumed by `tests/test_live_fixtures.py`.
 
 These selector sets are what Task 11's admin configuration should ship as defaults for the
 three sources.
+
+Label heuristics ignore navigation and require a recognized label. Empty value cells stay
+`not_found`; they never fall through to a neighboring metadata row or an unrelated prose
+block. Explicit selectors retain precedence over these heuristics.
 
 ## Portals whose detail pages are NOT server-rendered — no fixture, no extraction test
 

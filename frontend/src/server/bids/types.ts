@@ -1,7 +1,8 @@
-import type { Bid, IssuerType } from "./domain";
+import type { IssuerTypeFilter } from "@/lib/issuer-types";
+import type { Bid } from "./domain";
 
 export type SortOption = "relevance" | "newest" | "deadline";
-export type ApiIssuerType = "all" | IssuerType;
+export type ApiIssuerType = IssuerTypeFilter;
 export type DeadlinePreset = "any" | "next7" | "next30";
 export type PublishedPreset = "any" | "last24" | "last7";
 
@@ -44,7 +45,7 @@ export interface SavedBidsResponse {
 
 export interface ApiErrorResponse {
   error: {
-    code: "BID_NOT_FOUND" | "AUTH_REQUIRED" | "INVALID_REQUEST" | "INTERNAL_ERROR" | "USAGE_LIMIT_REACHED";
+    code: "BID_NOT_FOUND" | "BID_ANALYSIS_UNAVAILABLE" | "AUTH_REQUIRED" | "INVALID_REQUEST" | "INTERNAL_ERROR" | "USAGE_LIMIT_REACHED";
     message: string;
     feature?: string;
     limit?: number;

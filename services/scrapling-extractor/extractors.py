@@ -10,11 +10,22 @@ from scrapling.parser import Selector
 SUPPORTED_FIELDS = ("description", "attachments", "category", "contact", "published_date")
 
 _LABELS = {
-    "description": ("Description", "Summary", "Scope of Work", "Scope", "Details"),
+    "description": (
+        # BuySpeed's Description is the title; Bulletin Desc carries the actual scope.
+        "Bulletin Desc", "Solicitation Description", "Bid Description", "Description of Services",
+        "Scope of Work", "Statement of Work", "Project Summary", "Description",
+        "Short Description", "Summary", "Scope", "Details",
+    ),
     # "NIGP Code" is the commodity classification BuySpeed portals (IL BidBuy, OregonBuys) print.
-    "category": ("Category", "Commodity", "NIGP Code", "NAICS", "UNSPSC", "Classification"),
-    "contact": ("Contact", "Buyer", "Procurement Officer", "Point of Contact"),
-    "published_date": ("Posted Date", "Published", "Publish Date", "Issue Date", "Post Date", "Posted"),
+    "category": ("Category", "Commodity", "NIGP Code", "NAICS", "UNSPSC", "Classification", "Type Code"),
+    "contact": (
+        "Info Contact", "Contact", "Contact Information", "Contact Info", "Contact Person",
+        "Buyer", "Procurement Officer", "Point of Contact",
+    ),
+    "published_date": (
+        "Posted Date", "Published", "Published Date", "Publish Date", "Issue Date",
+        "Post Date", "Date Posted", "Posted",
+    ),
     "attachments": ("File Attachments", "Attachments", "Documents", "Bid Documents", "Files"),
 }
 _DOCUMENT_EXTENSIONS = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".csv", ".ppt", ".pptx", ".txt")
@@ -52,24 +63,34 @@ def _element_text(element):
     return _clean(element.get_all_text(separator=" ", strip=True))
 
 
-def _label_value(page, labels):
+def _label_value(page, labels, skip_empty=False):
     """Text of the cell/element that follows a label cell (table rows, dt/dd, label/value divs)."""
     for label in labels:
-        match = page.find_by_text(label, partial=True, first_match=True, case_sensitive=False)
-        if not match:
-            continue  # find_by_text(first_match=True) returns an empty Selectors, not None, on no match
-        own = _clean(match.text)
-        if own is None or len(own) > len(label) + 40:
-            continue  # the label matched inside a long paragraph, not a label cell
-        following = match.next
-        value = _element_text(following)
-        if value:
-            return value, following
-        parent_next = match.parent.next if match.parent is not None else None
-        value = _element_text(parent_next)
-        if value:
-            return value, parent_next
+        key = label.casefold()
+        matches = page.find_by_text(label, partial=True, first_match=False, case_sensitive=False)
+        for match in matches:
+            if match.tag in _NOISE_ANCESTOR_TAGS or _has_noise_ancestor(match) or _label_key(match) != key:
+                continue
+            # A label may have inline or paragraph wrappers. Empty contact/description
+            # values are authoritative; categories may scan other recognized labels.
+            # Never climb from <td> into <tr> and consume a neighboring metadata row.
+            label_node = match
+            while (
+                label_node.parent is not None
+                and label_node.parent.tag in ("td", "th", "dt", "label", "div", "p", "span", "strong", "b")
+                and _label_key(label_node.parent) == key
+            ):
+                label_node = label_node.parent
+            following = label_node.next
+            value = _element_text(following)
+            if skip_empty and value is None:
+                continue
+            return value, following if following is not None else label_node
     return None, None
+
+
+def _label_key(element):
+    return (_element_text(element) or "").rstrip(" :：").casefold()
 
 
 def _select(page, selector):
@@ -157,7 +178,8 @@ def _attachments(page, url, selector=None):
             anchors = [
                 a
                 for a in page.css("a[href]")
-                if _mime_for(a.attrib.get("href", "")) or _mime_for(_clean(a.text) or "")
+                if not _has_noise_ancestor(a)
+                and (_mime_for(a.attrib.get("href", "")) or _mime_for(_clean(a.text) or ""))
             ]
     results, seen = [], set()
     for anchor in anchors:
@@ -292,8 +314,8 @@ def extract(html, url, fields, selectors=None, storage_dir=None):
             value = _element_text(selected.first) if selected else None
             diagnostics[field] = "selector" if value else "not_found"
         else:
-            value, _ = _label_value(page, _LABELS[field])
-            if value is None and field == "description":
+            value, label_value = _label_value(page, _LABELS[field], skip_empty=field == "category")
+            if value is None and label_value is None and field == "description":
                 value = _largest_text_block(page)
             diagnostics[field] = "heuristic" if value else "not_found"
 

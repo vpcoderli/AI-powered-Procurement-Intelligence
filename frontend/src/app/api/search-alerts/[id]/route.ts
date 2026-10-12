@@ -1,3 +1,4 @@
+import { isIssuerTypeFilter } from "@/lib/issuer-types";
 import { NextResponse } from "next/server";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
 import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
@@ -66,10 +67,7 @@ function isQuery(value: unknown): value is NonNullable<UpdateSearchAlertInput["q
   return (
     (query.q === undefined || typeof query.q === "string") &&
     (query.states === undefined || isStringArray(query.states)) &&
-    (query.issuerType === undefined ||
-      query.issuerType === "all" ||
-      query.issuerType === "federal" ||
-      query.issuerType === "state") &&
+    (query.issuerType === undefined || isIssuerTypeFilter(query.issuerType)) &&
     (query.deadline === undefined ||
       query.deadline === "any" ||
       query.deadline === "next7" ||

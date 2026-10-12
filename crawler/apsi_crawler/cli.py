@@ -21,6 +21,8 @@ from apsi_crawler.discovery_service import (
     discover_sources,
 )
 from apsi_crawler.enrichment import enrich_bids
+from apsi_crawler.data_quality import body_of, core_issues, prepare_persisted_bid, record, redact_evidence, text
+from apsi_crawler.detail_backfill import apply_detail_history, historical_candidates, outcome_of
 from apsi_crawler.errors import VerifiedEmptyListError
 from apsi_crawler.robots_fetch import InvalidRobotsRequestError, fetch_robots
 from apsi_crawler.list_extraction import (
@@ -35,7 +37,7 @@ from apsi_crawler.live_validation import (
 )
 from apsi_crawler.tenant_discovery import InvalidDiscoveryRequestError, discover_tenant
 from apsi_crawler.sources.registry import get_fixture_loader
-from apsi_crawler.spiders.sam_gov_api import fetch_sam_gov_opportunities
+from apsi_crawler.spiders.sam_gov_api import enrich_sam_gov_bids, fetch_sam_gov_opportunities
 from apsi_crawler.storage.archive import archive_bid_documents
 from apsi_crawler.storage.archive_attachments import (
     InvalidArchiveRequestError,
@@ -48,17 +50,90 @@ class EmptyCrawlerResultError(Exception):
     pass
 
 
-def _upsert_bids(connection, bids):
+def _upsert_bids(connection, bids, quality=None):
     inserted_count = 0
     updated_count = 0
-
-    for bid in bids:
-        result = upsert_bid(connection, bid)
-        if result == "inserted":
-            inserted_count += 1
-        elif result == "updated":
-            updated_count += 1
-
+    quality = quality if quality is not None else {}
+    quality.update({"schemaVersion": 1, "checkedAt": now_iso(), "execution": "success", "listCoverage": "unknown",
+                    "contentStatus": "unknown", "receivedCount": len(bids), "uniqueCount": 0, "acceptedCount": 0,
+                    "quarantinedCount": 0, "duplicateCount": 0, "validBodyCount": 0, "retainedBodyCount": 0,
+                    "fetchedBodyCount": 0, "analysisReadyCount": 0, "acceptedIds": [], "quarantinedRecords": [], "duplicateRecords": []})
+    groups = []
+    aliases = {}
+    for index, bid in enumerate(bids):
+        keys = [f"{field}:{text(bid.get(field))}" for field in ("id", "dedupe_key", "source_bid_id") if text(bid.get(field))]
+        linked = []
+        for key in keys:
+            group = aliases.get(key)
+            if group is not None and not any(group is previous for previous in linked):
+                linked.append(group)
+        group = linked[0] if linked else []
+        if not linked:
+            groups.append(group)
+        for other in linked[1:]:
+            group.extend(other)
+            groups.remove(other)
+            for key, value in list(aliases.items()):
+                if value is other:
+                    aliases[key] = group
+        group.append((index, bid))
+        for key in keys:
+            aliases[key] = group
+    if not connection.in_transaction:
+        connection.execute("BEGIN IMMEDIATE")
+    try:
+        for group in groups:
+            quality["uniqueCount"] += 1
+            quality["duplicateCount"] += len(group) - 1
+            ranked = sorted(group, key=lambda item: (len(core_issues(item[1])), -len(body_of(item[1])), item[0]))
+            index, bid = ranked[0]
+            quality["duplicateRecords"].extend({"index": duplicate_index, "id": duplicate.get("id"), "row": redact_evidence(duplicate)} for duplicate_index, duplicate in ranked[1:])
+            issues = core_issues(bid)
+            identity_fields = ("source_bid_id", "dedupe_key", "state_code", "issuer_type", "jurisdiction_level", "fips_code")
+            if any(len({text(row.get(field)) for _, row in group if text(row.get(field))}) > 1 for field in identity_fields):
+                issues.append("conflicting_duplicate_identity")
+            cursor = connection.execute("SELECT * FROM bids WHERE id = ? LIMIT 1", (bid.get("id"),))
+            stored = cursor.fetchone()
+            if stored is None:
+                cursor = connection.execute("SELECT * FROM bids WHERE dedupe_key = ? LIMIT 1", (bid.get("dedupe_key"),))
+                stored = cursor.fetchone()
+            existing = dict(zip((column[0] for column in cursor.description), stored)) if stored else None
+            if existing and not core_issues(existing):
+                issues.extend(f"identity_changed:{field}" for field in identity_fields if text(bid.get(field)) and text(existing.get(field)) and text(bid[field]) != text(existing[field]))
+            if issues:
+                quality["quarantinedRecords"].append({"index": index, "id": bid.get("id"), "issues": issues, "row": redact_evidence(bid)})
+                quality["quarantinedCount"] += 1
+                continue
+            incoming = {**bid}
+            if existing:
+                incoming["id"] = existing["id"]
+                if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='bid_attachments'").fetchone():
+                    cursor = connection.execute("SELECT * FROM bid_attachments WHERE bid_id = ?", (existing["id"],))
+                    old_files = [dict(zip((column[0] for column in cursor.description), row)) for row in cursor.fetchall()]
+                    files = {file.get("url"): file for file in old_files}
+                    for file in incoming.get("attachments") or []:
+                        prior_file = files.get(file.get("url"), {})
+                        merged_file = {**prior_file, **file}
+                        same_archive = prior_file and all(merged_file.get(field) == prior_file.get(field) for field in ("storage_path", "byte_size", "content_type", "checksum_sha256"))
+                        merged_file["verified_at"] = prior_file.get("verified_at") if same_archive else None
+                        files[file.get("url")] = merged_file
+                    incoming["attachments"] = list(files.values())
+            merged = prepare_persisted_bid(incoming, existing, quality["checkedAt"])
+            result = upsert_bid(connection, merged, commit=False)
+            inserted_count += int(result == "inserted")
+            updated_count += int(result == "updated")
+            quality["acceptedCount"] += 1
+            quality["acceptedIds"].append(merged["id"])
+            body = record(record(merged.get("raw_payload")).get("data_quality"))["body"]
+            quality["validBodyCount"] += int(body["valid"])
+            quality["retainedBodyCount"] += int(body["valid"] and body["reused"])
+        quality["fetchedBodyCount"] = quality["validBodyCount"] - quality["retainedBodyCount"]
+        quality["analysisReadyCount"] = quality["validBodyCount"]
+        quality["contentStatus"] = "unusable" if not quality["acceptedCount"] else "partial" if quality["quarantinedCount"] or quality["validBodyCount"] < quality["acceptedCount"] else "usable"
+        quality["reconciliation"] = {"observed": quality["uniqueCount"], "accepted": quality["acceptedCount"], "quarantined": quality["quarantinedCount"], "balanced": quality["uniqueCount"] == quality["acceptedCount"] + quality["quarantinedCount"]}
+    except Exception:
+        connection.rollback()
+        raise
     return inserted_count, updated_count
 
 
@@ -93,7 +168,7 @@ def _archive_bids(bids, archive_dir, fetch_detail=False):
             bid,
             archive_dir,
             fetch_detail=fetch_detail,
-        )
+        ) if not core_issues(bid) else bid
         for bid in bids
     ]
 
@@ -159,8 +234,11 @@ def import_fixture(
         _require_non_empty_bids(bids, source)
         if archive_documents:
             bids = _archive_bids(bids, archive_dir or _default_archive_dir(database), archive_detail_pages)
-        inserted_count, updated_count = _upsert_bids(connection, bids)
-        metadata = {"archive": _archive_summary(bids)} if archive_documents else None
+        quality = {}
+        inserted_count, updated_count = _upsert_bids(connection, bids, quality)
+        metadata = {"dataQuality": quality}
+        if archive_documents:
+            metadata["archive"] = _archive_summary(bids)
 
         write_crawler_log(
             connection,
@@ -177,6 +255,8 @@ def import_fixture(
         )
         return 0
     except Exception as error:
+        if connection:
+            connection.rollback()
         write_crawler_log(
             connection,
             source=source,
@@ -210,6 +290,9 @@ def fetch_sam_gov(
     archive_dir=None,
     archive_detail_pages=False,
     output_json=False,
+    max_descriptions=25,
+    detail_history=None,
+    detail_backfill_only=False,
 ):
     started_at = now_iso()
     started = perf_counter()
@@ -219,21 +302,42 @@ def fetch_sam_gov(
         Path(database).parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(database)
     try:
-        bids = fetch_sam_gov_opportunities(
-            api_key=api_key or os.environ.get("SAM_API_KEY", ""),
-            posted_from=posted_from,
-            posted_to=posted_to,
-            limit=limit,
-            max_records=max_records,
-        )
+        resolved_key = api_key or os.environ.get("SAM_API_KEY", "")
+        if detail_backfill_only:
+            bids = enrich_sam_gov_bids(historical_candidates(detail_history, "sam_gov"), resolved_key,
+                                       max_descriptions=max_descriptions)
+        else:
+            bids = fetch_sam_gov_opportunities(
+                api_key=resolved_key,
+                posted_from=posted_from,
+                posted_to=posted_to,
+                limit=limit,
+                max_records=max_records,
+                max_descriptions=max_descriptions,
+                detail_history=detail_history,
+            )
         _require_non_empty_bids(bids, DEFAULT_SOURCE)
         if archive_documents:
             bids = _archive_bids(bids, _archive_target_dir(database, archive_dir), archive_detail_pages)
         inserted_count = 0
         updated_count = 0
+        quality = {}
         if connection:
-            inserted_count, updated_count = _upsert_bids(connection, bids)
+            inserted_count, updated_count = _upsert_bids(connection, bids, quality)
         metadata = {"posted_from": posted_from, "posted_to": posted_to, "limit": limit}
+        if quality:
+            metadata["dataQuality"] = quality
+        outcomes = [outcome_of(bid) for bid in bids]
+        metadata["enrichment"] = {
+            "attempted": sum(outcome.get("attempted") is True for outcome in outcomes),
+            "enriched": sum(bool((bid.get("raw_payload") or {}).get("enrichment", {}).get("applied_fields")) for bid in bids),
+            "valid_bodies": sum(outcome.get("attempted") is True and outcome.get("status") == "success" for outcome in outcomes),
+            "failed": sum(outcome.get("status") in ("failure", "restricted") for outcome in outcomes),
+            "skipped": sum(outcome.get("attempted") is not True for outcome in outcomes),
+        }
+        if detail_backfill_only:
+            metadata["mode"] = "detail_backfill"
+            metadata["pagination"] = {"complete": False, "stopped_reason": "detail_backfill", "requests_made": metadata["enrichment"]["attempted"]}
         if archive_documents:
             metadata["archive"] = _archive_summary(bids)
         finished_at = now_iso()
@@ -268,6 +372,8 @@ def fetch_sam_gov(
             )
         return 0
     except Exception as error:
+        if connection:
+            connection.rollback()
         finished_at = now_iso()
         duration_ms = int((perf_counter() - started) * 1000)
         error_code = type(error).__name__
@@ -370,6 +476,17 @@ def fetch_task(payload):
 
     try:
         source = task_source_from_payload(payload)
+        if payload.get("detail_backfill_only") is True:
+            bids = historical_candidates(payload.get("detail_history"), source.id, source)
+            _require_non_empty_bids(bids, source.id)
+            bids, enrichment_stats = enrich_bids(bids, source, payload.get("fetch_config"))
+            metadata.update({"mode": "detail_backfill", "enrichment": enrichment_stats,
+                             "pagination": {"complete": False, "stopped_reason": "detail_backfill", "requests_made": enrichment_stats["attempted"]}})
+            result = _json_run_payload(source=source.id, run_id=run_id, status="success", started_at=started_at,
+                                       finished_at=now_iso(), duration_ms=int((perf_counter() - started) * 1000), metadata=metadata, bids=bids)
+            result["taskId"] = task_id
+            _print_json_payload(result)
+            return 0
         adapter = resolve_adapter(source.id, payload.get("provider_family"))
         metadata["adapter"] = getattr(adapter, "__name__", "unknown")
 
@@ -414,6 +531,7 @@ def fetch_task(payload):
         # liveness check and before the date window so filtered-out rows are never fetched
         # twice... but is ALWAYS fail-open: any crash here is recorded, never raised.
         try:
+            apply_detail_history(bids, payload.get("detail_history"), source.id)
             bids, enrichment_stats = enrich_bids(bids, source, payload.get("fetch_config"))
         except Exception as error:  # noqa: BLE001 - enrichment must never fail the run
             enrichment_stats = {
@@ -606,10 +724,13 @@ def build_parser():
     fetch_sam_gov_parser.add_argument("--posted-to", required=True)
     fetch_sam_gov_parser.add_argument("--limit", type=int, default=100)
     fetch_sam_gov_parser.add_argument("--max-records", type=int)
+    fetch_sam_gov_parser.add_argument("--max-descriptions", type=int, default=25)
     fetch_sam_gov_parser.add_argument("--archive-documents", action="store_true")
     fetch_sam_gov_parser.add_argument("--archive-dir")
     fetch_sam_gov_parser.add_argument("--archive-detail-pages", action="store_true")
     fetch_sam_gov_parser.add_argument("--output-json", action="store_true")
+    fetch_sam_gov_parser.add_argument("--detail-history-stdin", action="store_true")
+    fetch_sam_gov_parser.add_argument("--detail-backfill-only", action="store_true")
 
     subparsers.add_parser("fetch-task")
 
@@ -672,6 +793,9 @@ def main(argv=None):
             api_key=args.api_key,
             limit=args.limit,
             max_records=args.max_records,
+            max_descriptions=args.max_descriptions,
+            detail_history=json.load(sys.stdin) if args.detail_history_stdin else None,
+            detail_backfill_only=args.detail_backfill_only,
             archive_documents=args.archive_documents,
             archive_dir=args.archive_dir,
             archive_detail_pages=args.archive_detail_pages,

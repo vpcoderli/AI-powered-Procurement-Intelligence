@@ -58,6 +58,14 @@ describe("PlatformPauseRegistry", () => {
 });
 
 describe("requestsMadeOf", () => {
+  it.each([undefined, null, "", " ", false, [], {}, -1, 1.5, "not reported"])("treats %j as an unknown request cost", (requests_made) => {
+    expect(requestsMadeOf({ ok: false, source: "s", status: "failure", runner: { ok: false, source: "s", status: "failure", stdout: "", stderr: "", payload: { metadata: { pagination: { requests_made } } } } })).toBeNull();
+  });
+
+  it.each([0, 2, "2"])("accepts an explicitly reported count %j", (requests_made) => {
+    expect(requestsMadeOf({ ok: false, source: "s", status: "failure", runner: { ok: false, source: "s", status: "failure", stdout: "", stderr: "", payload: { metadata: { pagination: { requests_made } } } } })).toBe(Number(requests_made));
+  });
+
   it("reads metadata.pagination.requests_made from a finished run", () => {
     const runner = (metadata: unknown) => ({ ok: true, source: "s", status: "success", stdout: "", stderr: "", payload: { metadata } });
     expect(requestsMadeOf({ ok: true, source: "s", status: "success", runner: runner({ pagination: { requests_made: 2 } }) } as never)).toBe(2);

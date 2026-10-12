@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { isTokenUnexpired } from "@/lib/token-expiry";
 import type { AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { passwordResetTokens, sessions, users } from "@/server/db/schema";
@@ -183,7 +184,7 @@ export async function resetPasswordWithToken(
     throw new AccountDisabledError();
   }
 
-  if (new Date(row.expiresAt).getTime() <= Date.now()) {
+  if (!isTokenUnexpired(row.expiresAt)) {
     throw new ExpiredPasswordResetTokenError();
   }
 
@@ -251,7 +252,7 @@ export async function resetPasswordWithTokenFromMysql(
     throw new AccountDisabledError();
   }
 
-  if (new Date(row.expiresAt).getTime() <= Date.now()) {
+  if (!isTokenUnexpired(row.expiresAt)) {
     throw new ExpiredPasswordResetTokenError();
   }
 

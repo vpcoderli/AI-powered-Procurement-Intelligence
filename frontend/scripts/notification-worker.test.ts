@@ -179,12 +179,10 @@ describe("crawler worker script", () => {
     expect(result.stderr).toContain("DATABASE_URL resolves to SQLite");
   });
 
-  it("retries each crawler source independently with configurable backoff and alerts on exhaustion", () => {
+  it("delegates crawl execution to the complete worker tick and keeps retry settings in preflight", () => {
     const script = readFileSync(new URL("crawler-worker.ts", import.meta.url), "utf8");
 
-    expect(script).toContain("createRetryingRunCrawlerSourceOnce");
-    expect(script).toContain("retryCrawlerSourceResult");
-    expect(script).toContain("emitWorkerFailureAlert");
+    expect(script).toContain("createCrawlerWorkerTick");
     expect(script).toContain("CRAWLER_WORKER_RETRY_MAX_ATTEMPTS");
     expect(script).toContain("CRAWLER_WORKER_RETRY_BASE_DELAY_MS");
     expect(script).toContain("CRAWLER_WORKER_RETRY_MAX_DELAY_MS");

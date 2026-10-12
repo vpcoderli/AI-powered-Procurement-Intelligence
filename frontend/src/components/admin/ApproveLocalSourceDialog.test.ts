@@ -60,6 +60,9 @@ const form: ApproveLocalSourceForm = {
 };
 
 describe("isLocalJurisdictionSource", () => {
+  it.each(["county", "city", "township", "special_district"])("requires the local approval ledger for legacy %s rows", (issuerType) => {
+    expect(isLocalJurisdictionSource(adminSource({ jurisdictionLevel: null, issuerType }))).toBe(true);
+  });
   it("treats everything outside federal/state as governance-gated", () => {
     expect(isLocalJurisdictionSource(adminSource({ jurisdictionLevel: "county" }))).toBe(true);
     expect(isLocalJurisdictionSource(adminSource({ jurisdictionLevel: "city" }))).toBe(true);
@@ -69,8 +72,7 @@ describe("isLocalJurisdictionSource", () => {
   });
 
   it("maps legacy NULL jurisdiction rows the way the orchestrator's gate does", () => {
-    // Same fallback as blockedReasonFor(): legacy rows are state portals, federal issuers federal.
-    expect(isLocalJurisdictionSource(adminSource({ jurisdictionLevel: null }))).toBe(false);
+    expect(isLocalJurisdictionSource(adminSource({ jurisdictionLevel: null, issuerType: "state" }))).toBe(false);
     expect(
       isLocalJurisdictionSource(adminSource({ jurisdictionLevel: null, issuerType: "federal" })),
     ).toBe(false);

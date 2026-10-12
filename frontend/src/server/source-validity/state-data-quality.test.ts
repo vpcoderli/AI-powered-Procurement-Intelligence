@@ -319,6 +319,25 @@ describe("50-state data quality gate", () => {
     expect(reasonCodesForState(report, "CA")).toContain("crawler_success_zero_rows");
   });
 
+  it("accepts a tenant-confirmed empty open list without claiming missing active state data", async () => {
+    const seeded = await createSeededQualityDatabase({ omitStates: ["WY"] });
+    seeded.db.insert(crawlerLogs).values({ id: "wy_empty", source: "wy_state_procurement", runId: "wy_empty", status: "success", startedAt: "2026-06-29T01:00:00.000Z", fetchedCount: 0, metadata: JSON.stringify({ emptyState: { verified: true, tenant_confirmed: true }, pagination: { complete: true, list_kind: "open" } }) }).run();
+    const report = await createStateDataQualityReport(seeded.db, new Date(NOW));
+    expect(report.rows).toHaveLength(50);
+    expect(reasonCodesForState(report, "WY")).not.toContain("missing_state_bid");
+    expect(reasonCodesForState(report, "WY")).not.toContain("crawler_success_zero_rows");
+  });
+
+  it("does not infer source emptiness from a date-filtered or partial zero-row run", async () => {
+    for (const scope of [{ dateFilter: { kept: 0, dropped: 2, unparsed: 0, from: "2026-06-01" } }, { pagination: { complete: false, list_kind: "open" } }]) {
+      const seeded = await createSeededQualityDatabase({ omitStates: ["WY"] });
+      seeded.db.insert(crawlerLogs).values({ id: "wy_scoped", source: "wy_state_procurement", runId: "wy_scoped", status: "success", startedAt: "2026-06-29T01:00:00.000Z", fetchedCount: 0, metadata: JSON.stringify({ emptyState: { verified: true, tenant_confirmed: true }, ...scope }) }).run();
+      const report = await createStateDataQualityReport(seeded.db, new Date(NOW));
+      expect(reasonCodesForState(report, "WY")).toContain("missing_state_bid");
+      expect(reasonCodesForState(report, "WY")).toContain("crawler_success_zero_rows");
+    }
+  });
+
   it("builds a prioritized remediation action queue from state quality reason codes", async () => {
     const seeded = await createSeededQualityDatabase({ omitStates: ["WY"] });
     seeded.db

@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { getBidAttachmentDownload, type BidAttachmentDownload } from "@/server/bids/attachments";
+import { getBidById } from "@/server/bids/service";
+import { looksLikeHtml } from "@/server/attachments/verify";
 import { db } from "@/server/db/client";
 
 interface RouteContext {
@@ -94,6 +97,7 @@ function fallbackResponse(
 
 export async function GET(_request: Request, context: RouteContext) {
   const { id, attachmentId } = await context.params;
+  if (!(await getBidById(id))) return notFound();
   const attachment = await getBidAttachmentDownload(db, id, attachmentId);
 
   if (!attachment) {
@@ -112,6 +116,23 @@ export async function GET(_request: Request, context: RouteContext) {
       "archive_missing",
       "archive_status_note",
     );
+  }
+
+  const checksum = createHash("sha256").update(content).digest("hex");
+  const isInvalid = content.byteLength === 0 || looksLikeHtml(content)
+    || /text\/html|application\/xhtml/i.test(attachment.mimeType ?? "")
+    || (attachment.archiveStatus === "archived" && (
+      !/^[a-f\d]{64}$/i.test(attachment.checksumSha256 ?? "")
+      || checksum !== attachment.checksumSha256?.toLowerCase()
+      || (attachment.byteSize != null && attachment.byteSize !== content.byteLength)
+      || (attachment.mimeType === "application/pdf" && !content.subarray(0, 4).equals(Buffer.from("%PDF")))
+      || (/application\/(?:zip|vnd\.openxmlformats-officedocument\.)/i.test(attachment.mimeType ?? "")
+        && !["504b0304", "504b0506", "504b0708"].includes(content.subarray(0, 4).toString("hex")))
+      || (/^application\/(?:msword|vnd\.ms-excel|vnd\.ms-powerpoint)$/i.test(attachment.mimeType ?? "")
+        && content.subarray(0, 8).toString("hex") !== "d0cf11e0a1b11ae1")
+    ));
+  if (isInvalid) {
+    return fallbackResponse(attachment, "Archived file failed content verification (type, size or checksum).", "archive_failed", "archive_status_note");
   }
 
   return new Response(content, {

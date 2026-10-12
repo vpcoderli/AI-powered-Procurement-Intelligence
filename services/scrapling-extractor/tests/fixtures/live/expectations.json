@@ -3,7 +3,7 @@
     "fixture": "il_bidbuy_detail.html",
     "url": "https://www.bidbuy.illinois.gov/bso/external/bidDetail.sda?docId=27-493ISP-ADMIN-B-54102&external=true&parentUrl=close",
     "expect": {
-      "description": "ISP Temporary Services for ISP Defined Positions",
+      "description": "Changeorder to increase value of contract",
       "original_category": "962-69",
       "contact_name": "Amanda Olinger",
       "contact_phone": "(217) 524-8437"
@@ -15,7 +15,7 @@
     "fixture": "or_oregonbuys_detail.html",
     "url": "https://oregonbuys.gov/bso/external/bidDetail.sda?docId=S-X24129-00017971&external=true&parentUrl=close",
     "expect": {
-      "description": "Medical Third-Party Administration Services",
+      "description": "administer CIS' Medical self-insured health plans",
       "original_category": "948-07",
       "contact_name": "Steve Norman"
     },

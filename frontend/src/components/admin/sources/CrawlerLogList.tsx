@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { listAdminCrawlerLogs, type AdminCrawlerLog } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import { qualityObject, readCrawlerQualityEvidence } from "@/lib/crawler-data-quality";
 import { fallbackMessage, formatDate, statusTone, textPreview } from "../admin-format";
 import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
 import { useAdminResource } from "../use-admin-resource";
@@ -47,6 +48,9 @@ function CrawlerLogError({ message }: { message: string }) {
  */
 export function CrawlerLogRow({ log }: { log: AdminCrawlerLog }) {
   const { t } = useLanguage();
+  const quality = readCrawlerQualityEvidence(log.metadata);
+  const mode = qualityObject(log.metadata).mode === "detail_backfill" ? "detail_backfill" : "list";
+  const count = (value: number | null) => value === null ? "N/A" : String(value);
 
   return (
     <div className="grid gap-2 px-4 py-3 md:grid-cols-[1fr_auto] md:items-center">
@@ -54,9 +58,19 @@ export function CrawlerLogRow({ log }: { log: AdminCrawlerLog }) {
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-medium break-all text-slate-900">{log.source}</span>
           <Badge variant="outline" className={statusTone(log.status)}>
-            {log.status}
+            {t("admin.sourceQualityExecution")}: {log.status}
           </Badge>
+          <span className="text-xs text-slate-500">{t("admin.sourceQualityMode")}: {t(`admin.sourceQualityMode_${mode}`)}</span>
           <span className="text-xs text-slate-500">{formatDate(log.finishedAt ?? log.startedAt)}</span>
+        </div>
+        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+          <span>{t("admin.sourceQualityCoverage")}: {t(`admin.sourceQualityCoverage_${quality.listCoverage}`)}</span>
+          <span>{t("admin.sourceQualityContent")}: {t(`admin.sourceQualityContent_${quality.contentStatus}`)}</span>
+          <span>{t("admin.sourceQualityValidBodies")}: {count(quality.validBodyCount)}</span>
+          <span>{t("admin.sourceQualityNewBodies")}: {count(quality.fetchedBodyCount)}</span>
+          <span>{t("admin.sourceQualityRetainedBodies")}: {count(quality.retainedBodyCount)}</span>
+          <span>{t("admin.sourceQualityAnalysisReady")}: {count(quality.analysisReadyCount)}</span>
+          <span>{t("admin.sourceQualityQuarantined")}: {count(quality.quarantinedCount)}</span>
         </div>
         {log.errorMessage && <CrawlerLogError message={log.errorMessage} />}
         {log.fallbackSource && (

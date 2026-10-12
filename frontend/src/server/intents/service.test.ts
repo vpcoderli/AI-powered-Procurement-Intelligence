@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { intentToBid, organizations, users } from "@/server/db/schema";
+import { bids, intentToBid, organizations, users } from "@/server/db/schema";
 import { inviteWorkspaceMember, listWorkspaceMemberUserIds } from "@/server/account/workspace";
 import { registerUser } from "@/server/auth/service";
 import { createTestDatabase } from "@/server/db/test-utils";
@@ -8,6 +8,7 @@ import type { BidMatchResult } from "@/server/match/types";
 import { createIntentRow } from "./repository";
 import {
   createIntentForBid,
+  getUserIntent,
   listUserIntents,
   updateIntentStatus,
 } from "./service";
@@ -38,6 +39,27 @@ const match: BidMatchResult = {
 };
 
 describe("intent service", () => {
+  it("isolates historical intents whose current bid is quarantined or has no valid analysis content", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+    try {
+      const first = await createIntentForBid(testDb.db, "anon_seed", "1");
+      const second = await createIntentForBid(testDb.db, "anon_seed", "2");
+      testDb.db.update(bids).set({ title: "Untitled" }).where(eq(bids.id, "1")).run();
+      expect((await listUserIntents(testDb.db, "anon_seed")).map((intent) => intent.id)).toEqual([second.id]);
+      expect(await getUserIntent(testDb.db, "anon_seed", first.id)).toBeUndefined();
+      testDb.db.update(bids).set({ description: "Description:", fullDescription: "" }).where(eq(bids.id, "2")).run();
+      expect(await listUserIntents(testDb.db, "anon_seed")).toEqual([]);
+      expect(testDb.db.select().from(intentToBid).all()).toHaveLength(2);
+    } finally { await testDb.cleanup(); }
+  });
+  it("does not persist a new analysis workspace for an opportunity with no meaningful body", async () => {
+    const testDb = await createTestDatabase({ seed: true });
+    try {
+      testDb.db.update(bids).set({ description: "Description:", fullDescription: null }).where(eq(bids.id, "1")).run();
+      await expect(createIntentForBid(testDb.db, "anon_seed", "1")).rejects.toThrow("valid procurement description");
+      expect(testDb.db.select().from(intentToBid).all()).toHaveLength(0);
+    } finally { await testDb.cleanup(); }
+  });
   it("creates an intent and stores generated fields", async () => {
     const testDb = await createTestDatabase({ seed: true });
 

@@ -62,21 +62,11 @@ describe("sources list view, safer bulk actions", () => {
 
   it("tallies every chunked write outside the try, so a partial success is reported with the server's message", () => {
     const view = read();
-    // Prechecks, approve, hold and run.
-    expect(view.split("sendInChunks(")).toHaveLength(5);
+    // The generic write helper remains for prechecks, approve and hold.
+    expect(view.split("sendInChunks(")).toHaveLength(4);
     for (const report of ["precheckReport(", "approvalReport(", "holdReport(", "runReport(", "failedReport("]) expect(view).toContain(report);
     // The old catch swallowed the tally and the reason behind one generic sentence.
     expect(view).not.toContain('setNotice(t("admin.updateFailed"))');
-  });
-
-  it("runs the selected sources five per request, like the batch run panel, and tallies every response", () => {
-    const view = read();
-    expect(view).toContain("chunkSourceIds(runIds, BATCH_RUN_CHUNK_SIZE)");
-    expect(view).toContain("(chunk) => runStateCrawlersNow(chunk)");
-    expect(view).toContain("addRunResponse,");
-    expect(view).toContain("runReport(t, outcome, skippedIds.length)");
-    // One run request for the whole selection could outlast a proxy's idle timeout.
-    expect(view).not.toContain("runStateCrawlersNow(runIds)");
   });
 
   it("leaves blocked rows out of bulk approve and hold, and does not claim a ledger for every approved row", () => {

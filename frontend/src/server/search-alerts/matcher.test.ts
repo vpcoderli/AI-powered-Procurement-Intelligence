@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { queryBidsFromMysql } from "@/server/bids/service";
-import { alerts } from "@/server/db/schema";
+import { alerts, bids } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { matchEnabledSearchAlerts, matchEnabledSearchAlertsFromMysql } from "./matcher";
 
@@ -25,6 +25,37 @@ describe("search alert matcher", () => {
 
   afterEach(async () => {
     await testDb.cleanup();
+  });
+
+  it.each(["county", "city", "township", "special_district"] as const)("matches only %s bids within the selected state in SQLite", async (issuerType) => {
+    testDb.db.update(bids).set({ issuerType }).where(eq(bids.id, "2")).run();
+    testDb.db.update(bids).set({ issuerType }).where(eq(bids.id, "4")).run();
+    testDb.db.insert(alerts).values({
+      id: "local_alert", userId: "anon_seed", name: "Local bids",
+      query: JSON.stringify({ states: ["CA"], issuerType }) as string | null, frequency: "daily", isEnabled: 1,
+      createdAt: "2026-05-19", updatedAt: "2026-05-19",
+    }).run();
+
+    const result = await matchEnabledSearchAlerts(testDb.db);
+    expect(result.matches).toHaveLength(1);
+    expect(result.matches[0].query).toMatchObject({ states: ["CA"], issuerType });
+    expect(result.matches[0].bidIds).toEqual(["2"]);
+  });
+
+  it.each(["county", "city", "township", "special_district"] as const)("keeps %s JSON and legacy filters when matching MySQL alerts", async (issuerType) => {
+    const mysql = createFakeMysqlMatcherStore();
+    mysql.alerts[0].issuerType = issuerType;
+    mysql.alerts[0].query = JSON.stringify({ states: ["CA"], issuerType });
+    mockedQueryBidsFromMysql.mockResolvedValue({
+      bids: [], total: 0,
+      filters: { q: "", states: ["ca"], issuerType, deadline: "any", published: "any", sort: "relevance" },
+    });
+
+    await matchEnabledSearchAlertsFromMysql(mysql);
+    expect(mockedQueryBidsFromMysql).toHaveBeenLastCalledWith(mysql, expect.objectContaining({ states: ["CA"], issuerType }), expect.anything());
+    mysql.alerts[0].query = null;
+    await matchEnabledSearchAlertsFromMysql(mysql);
+    expect(mockedQueryBidsFromMysql).toHaveBeenLastCalledWith(mysql, expect.objectContaining({ states: ["CA"], issuerType }), expect.anything());
   });
 
   it("updates lastMatchedAt for enabled alerts with matching bids", async () => {
@@ -199,7 +230,7 @@ function createFakeMysqlMatcherStore() {
       id: "alert_mysql",
       userId: "user_mysql",
       name: "MySQL Cloud alerts",
-      query: JSON.stringify({ q: "cloud", states: ["CA"], issuerType: "state", sort: "relevance" }),
+      query: JSON.stringify({ q: "cloud", states: ["CA"], issuerType: "state", sort: "relevance" }) as string | null,
       states: JSON.stringify(["CA"]),
       issuerType: "state",
       deadlinePreset: "any",
@@ -233,14 +264,14 @@ function createFakeMysqlMatcherStore() {
 
   return {
     alerts,
-    query: vi.fn(async (sql: string) => {
+    query: vi.fn(async (sql: string): Promise<[typeof alerts, unknown?]> => {
       if (sql.includes("FROM alerts") && sql.includes("WHERE is_enabled = 1")) {
         return [alerts.filter((alert) => alert.isEnabled === 1), undefined];
       }
 
       return [[], undefined];
     }),
-    execute: vi.fn(async (_sql: string, values: unknown[] = []) => {
+    execute: vi.fn(async (_sql: string, values: unknown[] = []): Promise<[unknown, unknown?]> => {
       const alert = alerts.find((row) => row.id === values[2]);
       if (alert) {
         alert.lastMatchedAt = String(values[0]);

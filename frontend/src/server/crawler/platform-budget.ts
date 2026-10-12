@@ -100,6 +100,8 @@ export function requestsMadeOf(result: RunCrawlerSourceOnceResult): number | nul
   const metadata = result.runner?.payload?.metadata;
   const pagination = metadata && typeof metadata === "object" ? (metadata as Record<string, unknown>).pagination : null;
   if (!pagination || typeof pagination !== "object") return null;
-  const value = Number((pagination as Record<string, unknown>).requests_made);
-  return Number.isFinite(value) && value >= 0 ? value : null;
+  const raw = (pagination as Record<string, unknown>).requests_made;
+  if (typeof raw !== "number" && (typeof raw !== "string" || raw.trim() === "")) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }

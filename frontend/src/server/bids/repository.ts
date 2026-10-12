@@ -1,9 +1,11 @@
 import { and, asc, eq, inArray, ne } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
-import { bidAttachments, bids, savedBids, users } from "@/server/db/schema";
+import { bidAttachments, bids, dataSources, savedBids, users } from "@/server/db/schema";
 import { detailAccessFromRawPayload } from "@/lib/bid-access";
 import { bidLifecycleStatusOf } from "@/lib/bid-lifecycle";
+import { bidDataQualityFromRawPayload, getBidUsability } from "@/lib/bid-usability";
 import { attachmentDownloadUrl } from "./attachments";
+import { createRegisteredSourceIdentityGuard, type RegisteredSourceIdentity } from "./registered-source-identity";
 import type { Bid } from "./domain";
 
 function nowIso() {
@@ -30,6 +32,52 @@ function parseStringArrayJson(value: string | null) {
   } catch {
     return [];
   }
+}
+
+function sourceIdentityFromRow(row: {
+  rawPayload: string | null; sourceBidId?: string | null; dedupeKey?: string | null;
+  jurisdictionLevel?: string | null; fipsCode?: string | null;
+}) {
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = JSON.parse(row.rawPayload || "{}");
+  } catch { /* Legacy non-JSON payloads use normalized database identity. */ }
+  return {
+    sourceBidId: row.sourceBidId ?? (typeof payload?.source_bid_id === "string" ? payload.source_bid_id : undefined),
+    dedupeKey: row.dedupeKey ?? (typeof payload?.dedupe_key === "string" ? payload.dedupe_key : undefined),
+    jurisdictionLevel: row.jurisdictionLevel ?? (typeof payload?.jurisdiction_level === "string" ? payload.jurisdiction_level : undefined),
+    fipsCode: row.fipsCode ?? (typeof payload?.fips_code === "string" ? payload.fips_code : undefined),
+  };
+}
+
+function isPublishableRow(row: {
+  id: string; source: string; title: string; issuerName: string; issuerType: string; stateCode: string; sourceUrl: string;
+  rawPayload: string | null; qualityFlagsJson: string | null;
+}, matchesSource: ReturnType<typeof createRegisteredSourceIdentityGuard>) {
+  const identity = { ...row, ...sourceIdentityFromRow(row) };
+  if (!matchesSource(identity)) return false;
+  return getBidUsability({
+    ...identity,
+    qualityFlags: parseStringArrayJson(row.qualityFlagsJson),
+    dataQuality: bidDataQualityFromRawPayload(row.rawPayload),
+  }).discovery;
+}
+
+function registeredSourceGuard(db: AppDatabase) {
+  const sources = db.select({
+    id: dataSources.id, label: dataSources.label, issuerType: dataSources.issuerType,
+    jurisdictionLevel: dataSources.jurisdictionLevel, stateCode: dataSources.stateCode, fipsCode: dataSources.fipsCode,
+  }).from(dataSources).all();
+  return createRegisteredSourceIdentityGuard(sources);
+}
+
+async function registeredSourceGuardFromMysql(mysql: MysqlBidsReader) {
+  const [sources] = await mysql.query(`
+    SELECT id, label, issuer_type AS issuerType, jurisdiction_level AS jurisdictionLevel,
+      state_code AS stateCode, fips_code AS fipsCode
+    FROM data_sources
+  `);
+  return createRegisteredSourceIdentityGuard(sources as RegisteredSourceIdentity[]);
 }
 
 function tagsFromBid(row: typeof bids.$inferSelect) {
@@ -72,6 +120,7 @@ function attachmentsForBids(db: AppDatabase, bidIds: string[]) {
       contentType: row.contentType ?? row.mimeType ?? "",
       checksumSha256: row.checksumSha256 ?? "",
       fetchedAt: row.fetchedAt ?? "",
+      verifiedAt: row.verifiedAt ?? "",
       archiveError: row.archiveError ?? "",
     });
     byBid.set(row.bidId, current);
@@ -82,6 +131,10 @@ function attachmentsForBids(db: AppDatabase, bidIds: string[]) {
 
 interface MysqlBidRow {
   id: string;
+  sourceBidId?: string | null;
+  dedupeKey?: string | null;
+  jurisdictionLevel?: string | null;
+  fipsCode?: string | null;
   title: string;
   source: string;
   sourceUrl: string;
@@ -129,13 +182,17 @@ interface MysqlAttachmentRow {
   sizeLabel: string | null;
   mimeType: string | null;
   sortOrder: number;
+  verifiedAt?: string | null;
 }
 
 export interface MysqlBidsReader {
   query: (
     sql: string,
     values?: unknown[],
-  ) => Promise<[MysqlBidRow[] | MysqlAttachmentRow[]] | [MysqlBidRow[] | MysqlAttachmentRow[], unknown]>;
+  ) => Promise<
+    [MysqlBidRow[] | MysqlAttachmentRow[] | RegisteredSourceIdentity[]] |
+    [MysqlBidRow[] | MysqlAttachmentRow[] | RegisteredSourceIdentity[], unknown]
+  >;
 }
 
 async function executeMysqlBidsWrite(mysql: MysqlBidsReader, sql: string, values: unknown[] = []) {
@@ -183,6 +240,7 @@ function attachmentsFromMysqlRows(rows: MysqlAttachmentRow[]) {
       contentType: row.contentType ?? row.mimeType ?? "",
       checksumSha256: row.checksumSha256 ?? "",
       fetchedAt: row.fetchedAt ?? "",
+      verifiedAt: row.verifiedAt ?? "",
       archiveError: row.archiveError ?? "",
     });
     byBid.set(row.bidId, current);
@@ -210,7 +268,7 @@ function toBid(
     amount: row.amount ?? "",
     publishedDate: row.publishedDate ?? "",
     deadlineDate: row.deadlineDate ?? "",
-    contactName: row.contactName ?? "",
+    contactName: /^(?:purchase method|type code|bid type|informal bid flag|allow electronic quote)\s*(?::|：|$)/i.test(row.contactName ?? "") ? "" : row.contactName ?? "",
     contactEmail: row.contactEmail ?? "",
     contactPhone: row.contactPhone ?? "",
     attachments,
@@ -229,6 +287,8 @@ function toBid(
     lifecycleStatus: bidLifecycleStatusOf(row.lifecycleStatus) ?? (row.isActive === 1 ? "open" : "closed"),
     awardedDate: row.awardedDate ?? "",
     detailAccess: detailAccessFromRawPayload(row.rawPayload),
+    dataQuality: bidDataQualityFromRawPayload(row.rawPayload),
+    ...sourceIdentityFromRow(row),
     updatedAt: row.updatedAt,
   };
 }
@@ -252,7 +312,7 @@ function toBidFromMysql(
     amount: row.amount ?? "",
     publishedDate: row.publishedDate ?? "",
     deadlineDate: row.deadlineDate ?? "",
-    contactName: row.contactName ?? "",
+    contactName: /^(?:purchase method|type code|bid type|informal bid flag|allow electronic quote)\s*(?::|：|$)/i.test(row.contactName ?? "") ? "" : row.contactName ?? "",
     contactEmail: row.contactEmail ?? "",
     contactPhone: row.contactPhone ?? "",
     attachments,
@@ -271,6 +331,8 @@ function toBidFromMysql(
     lifecycleStatus: bidLifecycleStatusOf(row.lifecycleStatus) ?? (row.isActive === 1 ? "open" : "closed"),
     awardedDate: row.awardedDate ?? "",
     detailAccess: detailAccessFromRawPayload(row.rawPayload),
+    dataQuality: bidDataQualityFromRawPayload(row.rawPayload),
+    ...sourceIdentityFromRow(row),
     updatedAt: row.updatedAt,
   };
 }
@@ -301,7 +363,9 @@ export async function ensureUserFromMysql(mysql: MysqlBidsReader, userId: string
 }
 
 export async function listBids(db: AppDatabase, savedBidIds: string[] = []) {
-  const rows = db.select().from(bids).where(ne(bids.displayStatus, "suppressed")).orderBy(asc(bids.id)).all();
+  const matchesSource = registeredSourceGuard(db);
+  const rows = db.select().from(bids).where(ne(bids.displayStatus, "suppressed")).orderBy(asc(bids.id)).all()
+    .filter((row) => isPublishableRow(row, matchesSource));
   const attachmentMap = attachmentsForBids(
     db,
     rows.map((row) => row.id),
@@ -315,6 +379,10 @@ export async function listBidsFromMysql(mysql: MysqlBidsReader, savedBidIds: str
   const [bidRows] = await mysql.query(`
     SELECT
       id,
+      source_bid_id AS sourceBidId,
+      dedupe_key AS dedupeKey,
+      jurisdiction_level AS jurisdictionLevel,
+      fips_code AS fipsCode,
       title,
       source,
       source_url AS sourceUrl,
@@ -348,7 +416,8 @@ export async function listBidsFromMysql(mysql: MysqlBidsReader, savedBidIds: str
     WHERE display_status <> 'suppressed'
     ORDER BY id ASC
   `);
-  const typedBidRows = bidRows as MysqlBidRow[];
+  const matchesSource = await registeredSourceGuardFromMysql(mysql);
+  const typedBidRows = (bidRows as MysqlBidRow[]).filter((row) => isPublishableRow(row, matchesSource));
   const bidIds = typedBidRows.map((row) => row.id);
   const savedSet = new Set(savedBidIds);
 
@@ -370,6 +439,7 @@ export async function listBidsFromMysql(mysql: MysqlBidsReader, savedBidIds: str
         content_type AS contentType,
         checksum_sha256 AS checksumSha256,
         fetched_at AS fetchedAt,
+        verified_at AS verifiedAt,
         archive_status AS archiveStatus,
         archive_error AS archiveError,
         size_label AS sizeLabel,
@@ -393,7 +463,7 @@ export async function getBidByIdFromRepository(db: AppDatabase, id: string) {
     .where(and(eq(bids.id, id), ne(bids.displayStatus, "suppressed")))
     .limit(1)
     .get();
-  if (!row) return undefined;
+  if (!row || !isPublishableRow(row, registeredSourceGuard(db))) return undefined;
 
   const attachmentMap = attachmentsForBids(db, [id]);
   return toBid(row, attachmentMap.get(id) ?? [], new Set());
@@ -404,6 +474,10 @@ export async function getBidByIdFromMysql(mysql: MysqlBidsReader, id: string) {
     `
       SELECT
         id,
+        source_bid_id AS sourceBidId,
+        dedupe_key AS dedupeKey,
+        jurisdiction_level AS jurisdictionLevel,
+        fips_code AS fipsCode,
         title,
         source,
         source_url AS sourceUrl,
@@ -440,7 +514,7 @@ export async function getBidByIdFromMysql(mysql: MysqlBidsReader, id: string) {
     [id],
   );
   const row = (bidRows as MysqlBidRow[])[0];
-  if (!row) return undefined;
+  if (!row || !isPublishableRow(row, await registeredSourceGuardFromMysql(mysql))) return undefined;
 
   const [attachmentRows] = await mysql.query(
     `
@@ -455,6 +529,7 @@ export async function getBidByIdFromMysql(mysql: MysqlBidsReader, id: string) {
         content_type AS contentType,
         checksum_sha256 AS checksumSha256,
         fetched_at AS fetchedAt,
+        verified_at AS verifiedAt,
         archive_status AS archiveStatus,
         archive_error AS archiveError,
         size_label AS sizeLabel,

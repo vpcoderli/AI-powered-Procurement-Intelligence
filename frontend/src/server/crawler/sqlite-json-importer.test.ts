@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { bidAttachments, bids, crawlerLocks, crawlerLogs } from "@/server/db/schema";
 import type { CrawlableSource } from "./source-registry";
@@ -348,11 +348,11 @@ describe("crawler JSON SQLite importer", () => {
   };
 
   it("keeps an enriched description when a later run only carries the title again", () => {
-    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Full scope of work", full_description: "Full scope of work", original_category: "Construction", published_date: "08/14/2026", contact_email: "jane@example.gov", detail_fetched_at: NOW }));
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Replace pavement and repair drainage.", full_description: "Replace pavement and repair drainage.", original_category: "Construction", published_date: "08/14/2026", contact_email: "jane@example.gov", detail_fetched_at: NOW }));
     importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Road Repair", full_description: null, original_category: "", published_date: null, contact_email: null, detail_fetched_at: null }));
 
     const row = testDb.db.select().from(bids).where(eq(bids.id, "il_bidbuy:1")).get();
-    expect(row?.description).toBe("Full scope of work");
+    expect(row?.description).toBe("Replace pavement and repair drainage.");
     expect(row?.fullDescription).toBeNull();
     expect(row?.originalCategory).toBe("Construction");
     expect(row?.publishedDate).toBe("08/14/2026");
@@ -370,21 +370,21 @@ describe("crawler JSON SQLite importer", () => {
   });
 
   it("keeps enriched fields when a later run only carries whitespace-only values", () => {
-    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Full scope of work", full_description: "Full scope of work", contact_email: "jane@example.gov" }));
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Replace pavement and repair drainage.", full_description: "Replace pavement and repair drainage.", contact_email: "jane@example.gov" }));
     importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "  ", full_description: "  ", contact_email: " " }));
 
     const row = testDb.db.select().from(bids).where(eq(bids.id, "il_bidbuy:1")).get();
-    expect(row?.description).toBe("Full scope of work");
+    expect(row?.description).toBe("Replace pavement and repair drainage.");
     expect(row?.fullDescription).toBeNull();
     expect(row?.contactEmail).toBe("jane@example.gov");
   });
 
   it("keeps an enriched description when a later run echoes the title with different case and whitespace", () => {
-    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Full scope of work" }));
+    importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "Replace pavement and repair drainage." }));
     importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith({ ...baseBid, description: "  ROAD REPAIR  " }));
 
     const row = testDb.db.select().from(bids).where(eq(bids.id, "il_bidbuy:1")).get();
-    expect(row?.description).toBe("Full scope of work");
+    expect(row?.description).toBe("Replace pavement and repair drainage.");
   });
 
   it("keeps existing attachments when a later run carries an empty attachment list", () => {
@@ -457,6 +457,24 @@ describe("crawler JSON SQLite importer", () => {
     expect(testDb.db.select().from(crawlerLogs).where(eq(crawlerLogs.runId, failed.runId)).get()).toMatchObject({ status: "failure", insertedCount: 0, updatedCount: 0, errorCode: "CrawlerPersistenceError" });
   });
 
+  it("replaces upstream accepted quality with failure evidence after rollback and preserves input metadata", () => {
+    testDb.db.$client.exec("CREATE TRIGGER reject_success_log BEFORE INSERT ON crawler_logs WHEN NEW.status = 'success' BEGIN SELECT RAISE(FAIL, 'log unavailable'); END");
+    const failed: CrawlerJsonRunPayload = { ...payloadWith({ ...baseBid, description: "Valid bridge repair scope" }),
+      metadata: { dataQuality: { schemaVersion: 1, execution: "success", contentStatus: "usable", acceptedCount: 77, acceptedIds: ["upstream"] } } };
+    const metadata = structuredClone(failed.metadata);
+    let error: unknown;
+    try { importCrawlerJsonRunIntoSqlite(testDb.db, failed); } catch (caught) { error = caught; }
+    expect(error).toMatchObject({ name: "CrawlerPersistenceError", failureLogged: true });
+    expect(testDb.db.select().from(bids).all()).toEqual([]);
+    const log = testDb.db.select().from(crawlerLogs).where(eq(crawlerLogs.runId, failed.runId)).get()!;
+    expect(log).toMatchObject({ status: "failure", fetchedCount: 0, insertedCount: 0, updatedCount: 0 });
+    expect(JSON.parse(log.metadata!)).toMatchObject({ persistence: { fetchedBeforePersistence: 1 }, dataQuality: {
+      execution: "failure", contentStatus: "unknown", acceptedCount: 0, acceptedIds: [], receivedCount: 0,
+      reconciliation: { observed: 0, accepted: 0, quarantined: 0, balanced: true },
+    } });
+    expect(failed.metadata).toEqual(metadata);
+  });
+
   it("accepts an explained date-filtered zero-row success and rejects raw empty success", () => {
     const empty = { source: "il_bidbuy", runId: "filtered", status: "success" as const, startedAt: NOW, bids: [], metadata: { dateFilter: { from: "2026-09-01", to: null, kept: 0, dropped: 2, unparsed: 0 } } };
     expect(importCrawlerJsonRunIntoSqlite(testDb.db, empty)).toMatchObject({ fetchedCount: 0, logCount: 1 });
@@ -527,6 +545,15 @@ describe("crawler JSON SQLite importer", () => {
     testDb.db.insert(crawlerLocks).values({ source: "il_bidbuy", owner: "replacement", acquiredAt: NOW, expiresAt: "2026-07-31T00:10:00.000Z" }).run();
     expect(() => importCrawlerJsonRunIntoSqlite(testDb.db, payloadWith(baseBid), { source: "il_bidbuy", owner: "old-owner", now: () => NOW })).toThrow(/lease was lost/);
     expect(testDb.db.select().from(bids).all()).toHaveLength(0);
+  });
+
+  it("validates empty success before opening a transaction or evaluating its lease", () => {
+    const transaction = vi.spyOn(testDb.db, "transaction");
+    const run = { ...payloadWith(baseBid), bids: [] };
+    try {
+      expect(() => importCrawlerJsonRunIntoSqlite(testDb.db, run, { source: "il_bidbuy", owner: "old-owner", now: () => NOW })).toThrow("no bid rows");
+      expect(transaction).not.toHaveBeenCalled();
+    } finally { transaction.mockRestore(); }
   });
 });
 

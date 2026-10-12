@@ -1,3 +1,4 @@
+import { isIssuerTypeFilter } from "@/lib/issuer-types";
 import { eq } from "drizzle-orm";
 import type { Bid } from "@/server/bids/domain";
 import type { MysqlBidsReader } from "@/server/bids/repository";
@@ -73,7 +74,7 @@ function parseStoredQuery(value: string | null): BidQuery {
         ...(Array.isArray(query.states) && query.states.every((item) => typeof item === "string")
           ? { states: query.states }
           : {}),
-        ...(query.issuerType === "all" || query.issuerType === "federal" || query.issuerType === "state"
+        ...(isIssuerTypeFilter(query.issuerType)
           ? { issuerType: query.issuerType }
           : {}),
         ...(query.deadline === "any" || query.deadline === "next7" || query.deadline === "next30"
@@ -113,7 +114,7 @@ function queryFromMysqlAlert(row: MysqlEnabledAlertRow): BidQuery {
     states: storedQuery.states ?? parseStates(row.states),
     issuerType:
       storedQuery.issuerType ??
-      (row.issuerType === "federal" || row.issuerType === "state" ? row.issuerType : "all"),
+      (isIssuerTypeFilter(row.issuerType) ? row.issuerType : "all"),
     deadline:
       storedQuery.deadline ??
       (row.deadlinePreset === "next7" || row.deadlinePreset === "next30" ? row.deadlinePreset : "any"),

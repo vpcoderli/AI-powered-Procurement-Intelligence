@@ -74,7 +74,7 @@ def _existing_bid_archive_values(connection, bid_id, table_columns):
 
 
 def _existing_attachment_archive_values(connection, bid_id, table_columns):
-    columns = ["id", "url", *[column for column in ARCHIVE_ATTACHMENT_COLUMNS if column in table_columns]]
+    columns = ["id", "url", "created_at", *[column for column in (*ARCHIVE_ATTACHMENT_COLUMNS, "verified_at", "repair_attempts", "next_repair_at", "failure_kind") if column in table_columns]]
     cursor = connection.execute(
         f"SELECT {', '.join(columns)} FROM bid_attachments WHERE bid_id = ?",
         (bid_id,),
@@ -109,14 +109,25 @@ def _replace_bid_attachments(connection, bid):
         bid_id,
         table_columns,
     )
+    reserved_ids = {row["id"] for row in existing_archive_values.values()}
     connection.execute("DELETE FROM bid_attachments WHERE bid_id = ?", (bid_id,))
 
     for index, attachment in enumerate(bid.get("attachments") or []):
         url = attachment.get("url")
         if not url:
             raise ValueError("Bid attachment is missing url")
+        existing = existing_archive_values.get(url)
+        suffix = index + 1
+        candidate_id = f"{bid_id}:attachment:{suffix}"
+        if existing:
+            candidate_id = existing["id"]
+        else:
+            while candidate_id in reserved_ids:
+                suffix += 1
+                candidate_id = f"{bid_id}:attachment:{suffix}"
+        reserved_ids.add(candidate_id)
         values = {
-            "id": f"{bid_id}:attachment:{index + 1}",
+            "id": candidate_id,
             "bid_id": bid_id,
             "name": attachment.get("name") or f"Attachment {index + 1}",
             "url": url,
@@ -140,6 +151,14 @@ def _replace_bid_attachments(connection, bid):
         existing = existing_archive_values.get(url)
         for column in ARCHIVE_ATTACHMENT_COLUMNS:
             _preserve_existing_archive_value(values, existing, column)
+        if existing:
+            values["id"] = existing["id"]
+            values["created_at"] = existing.get("created_at") or values["created_at"]
+        for column in ("repair_attempts", "next_repair_at", "failure_kind"):
+            values[column] = existing.get(column) if existing else None
+        values["repair_attempts"] = values["repair_attempts"] or 0
+        same_archive = existing and all(values.get(column) == existing.get(column) for column in ("storage_path", "byte_size", "content_type", "checksum_sha256"))
+        values["verified_at"] = existing.get("verified_at") if same_archive else None
         _execute_insert(
             connection,
             "bid_attachments",
@@ -147,7 +166,7 @@ def _replace_bid_attachments(connection, bid):
         )
 
 
-def upsert_bid(connection, bid):
+def upsert_bid(connection, bid, *, commit=True):
     existing = connection.execute(
         "SELECT id FROM bids WHERE dedupe_key = ?",
         (bid["dedupe_key"],),
@@ -196,6 +215,8 @@ def upsert_bid(connection, bid):
                     "detail_archive_error",
                     "last_seen_at",
                     "updated_at",
+                    "jurisdiction_level", "jurisdiction_name", "fips_code",
+                    "lifecycle_status", "awarded_date", "solicitation_number",
                 )
                 if column in table_columns and column in bid
             ]
@@ -206,7 +227,8 @@ def upsert_bid(connection, bid):
                 + (bid["dedupe_key"],),
             )
             _replace_bid_attachments(connection, {**bid, "id": existing[0]})
-            connection.commit()
+            if commit:
+                connection.commit()
             return "updated"
 
         insert_values = {
@@ -247,12 +269,15 @@ def upsert_bid(connection, bid):
                 "last_seen_at",
                 "created_at",
                 "updated_at",
+                "jurisdiction_level", "jurisdiction_name", "fips_code",
+                "lifecycle_status", "awarded_date", "solicitation_number",
             )
             if column in table_columns and column in bid
         }
         _execute_insert(connection, "bids", insert_values)
         _replace_bid_attachments(connection, bid)
-        connection.commit()
+        if commit:
+            connection.commit()
         return "inserted"
     except Exception:
         connection.rollback()

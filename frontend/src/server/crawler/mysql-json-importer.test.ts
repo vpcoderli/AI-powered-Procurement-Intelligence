@@ -122,6 +122,15 @@ describe("crawler JSON MySQL importer", () => {
     ).rejects.toThrow("Crawler JSON import refused a successful run with no bid rows.");
   });
 
+  it("validates empty success before acquiring a connection or evaluating its lease", async () => {
+    const mysql = createFakeMysql();
+    await expect(importCrawlerJsonRunIntoMysql(mysql, { ...payload(), bids: [] },
+      { source: "il_bidbuy", owner: "old-owner", now: () => NOW })).rejects.toThrow("no bid rows");
+    expect(mysql.events).not.toContain("acquire");
+    expect(mysql.events).not.toContain("begin");
+    expect(mysql.events).not.toContain("lease-read");
+  });
+
   it("includes jurisdiction_level, jurisdiction_name, and fips_code in the emitted bids upsert SQL and persists their values", async () => {
     let capturedSql = "";
     let capturedValues: unknown[] = [];
@@ -272,6 +281,24 @@ describe("crawler JSON MySQL importer", () => {
     expect(mysql.events).toContain("rollback");
   });
 
+  it("logs fresh failure quality after rollback and releases the transaction connection before logging", async () => {
+    const mysql = createFakeMysql(); mysql.failAttachment = true;
+    const failed = { ...payload({ description: "Repair pavement and drainage", attachments: [{ url: "https://x/a" }] }),
+      metadata: { dataQuality: { execution: "success", contentStatus: "usable", acceptedCount: 77, acceptedIds: ["upstream"] } } };
+    const metadata = structuredClone(failed.metadata);
+    await expect(importCrawlerJsonRunIntoMysql(mysql, failed)).rejects.toMatchObject({ name: "CrawlerPersistenceError", failureLogged: true });
+    expect(mysql.bids.size).toBe(0);
+    expect(mysql.logs[0]).toMatchObject({ status: "failure", fetched_count: 0, inserted_count: 0, updated_count: 0 });
+    expect(JSON.parse(String(mysql.logs[0].metadata))).toMatchObject({ persistence: { fetchedBeforePersistence: 1 }, dataQuality: {
+      execution: "failure", contentStatus: "unknown", acceptedCount: 0, acceptedIds: [], receivedCount: 0,
+      reconciliation: { observed: 0, accepted: 0, quarantined: 0, balanced: true },
+    } });
+    expect(mysql.events.indexOf("rollback")).toBeLessThan(mysql.events.indexOf("release"));
+    expect(mysql.events.indexOf("release")).toBeLessThan(mysql.events.indexOf("pool-execute"));
+    expect(mysql.events.filter((event) => event === "release")).toHaveLength(1);
+    expect(failed.metadata).toEqual(metadata);
+  });
+
   it("accepts an explained date-filtered zero-row success", async () => {
     const mysql = createFakeMysql();
     expect(await importCrawlerJsonRunIntoMysql(mysql, { ...payload(), bids: [], metadata: { dateFilter: { from: "2026-09-01", to: null, kept: 0, dropped: 2, unparsed: 0 } } })).toEqual({ fetchedCount: 0, insertedCount: 0, updatedCount: 0, logCount: 1 });
@@ -364,9 +391,39 @@ describe("bid lifecycle in the MySQL importer (2026-09-24 phase 1)", () => {
   });
 });
 
+
+describe("MySQL quality publication boundary", () => {
+  it("quarantines malformed rows and reconciles duplicates", async () => {
+    const mysql = createFakeMysql();
+    const run = payload({ description: "Repair bridges." });
+    run.bids.push({ ...run.bids[0] });
+    run.bids.push({ ...run.bids[0], id: "bad", dedupe_key: "il_bidbuy:bad", title: "Untitled opportunity" });
+    const result = await importCrawlerJsonRunIntoMysql(mysql, run);
+    expect(result).toMatchObject({ fetchedCount: 3, insertedCount: 1, updatedCount: 0 });
+    expect([...mysql.bids.keys()]).toEqual(["bid_1"]);
+    expect(JSON.parse(String(mysql.logs[0].metadata))).toMatchObject({ dataQuality: {
+      acceptedCount: 1, quarantinedCount: 1, duplicateCount: 1, reconciliation: { balanced: true },
+    } });
+  });
+  it("does not mutate prior records or delist others after a quarantined complete list", async () => {
+    const mysql = createFakeMysql();
+    await importCrawlerJsonRunIntoMysql(mysql, payload({ id: "il_bidbuy:1", description: "Repair bridges." }));
+    await importCrawlerJsonRunIntoMysql(mysql, payload({ id: "il_bidbuy:2", dedupe_key: "il_bidbuy:2", description: "Upgrade culverts." }));
+    const run = { ...payload({ id: "il_bidbuy:1", title: "Untitled opportunity" }), metadata: { pagination: { complete: true, list_kind: "open" } } };
+    await importCrawlerJsonRunIntoMysql(mysql, run);
+    expect(mysql.bids.get("il_bidbuy:1")?.title).toBe("Road Repair");
+    expect(mysql.bids.get("il_bidbuy:2")?.lifecycle_status).toBe("open");
+  });
+  it("ignores rows carried by a failed run", async () => {
+    const mysql = createFakeMysql();
+    await importCrawlerJsonRunIntoMysql(mysql, { ...payload(), status: "failure" });
+    expect(mysql.bids.size).toBe(0);
+  });
+});
+
 let sequence = 0;
 function payload(overrides: Record<string, unknown> = {}) {
-  return { source: "il_bidbuy", runId: `run_${sequence++}`, status: "success" as const, startedAt: NOW, bids: [{ id: "bid_1", source: "Illinois BidBuy", dedupe_key: "il_bidbuy:1", title: "Road Repair", state_code: "IL", source_url: "https://x/1", ...overrides }] };
+  return { source: "il_bidbuy", runId: `run_${sequence++}`, status: "success" as const, startedAt: NOW, bids: [{ id: "bid_1", source: "Illinois BidBuy", dedupe_key: "il_bidbuy:1", title: "Road Repair", issuer_name: "Illinois purchasing office", issuer_type: "state", state_code: "IL", source_url: "https://x/1", ...overrides }] };
 }
 
 // An explicit transaction-capable connection fake tests orchestration and bound values.

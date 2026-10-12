@@ -171,6 +171,22 @@ def test_follows_next_links_until_the_last_page():
     assert bids[0]["lifecycle_status"] == "closed"
 
 
+@pytest.mark.parametrize("readable", [True, False])
+def test_duplicate_sidecar_rows_on_one_page_are_emitted_once(readable):
+    page = OPEN if readable else NO_ROWS_FOR_THE_READER
+    fetcher = PagedFetcher({DENVER + "/solicitations/open-bids": page})
+    extractor = Extractor(items_for=lambda html: _sidecar_items(OPEN) * 2)
+
+    bids, stats, pagination = run_paginated_list_extraction(
+        _source(), fetcher.adapter(), _scrapling_config(), _request(list_kind="open"), extractor=extractor,
+    )
+
+    assert len(bids) == len({bid["source_bid_id"] for bid in bids}) == 6
+    assert stats["items"] == 6
+    assert pagination["complete"] is readable
+    assert len(fetcher.urls) == 1
+
+
 def test_stops_at_max_pages_and_reports_where_to_resume():
     fetcher = _closed_two_pages()
 

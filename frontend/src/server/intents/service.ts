@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { BidAnalysisUnavailableError, getBidUsability } from "@/lib/bid-usability";
 import { db, type AppDatabase } from "@/server/db/client";
 import { listWorkspaceMemberUserIds } from "@/server/account/workspace";
 import { listMysqlWorkspaceMemberUserIds } from "@/server/account/mysql-workspace";
@@ -124,6 +125,7 @@ async function hydrateIntent(db: AppDatabase, row: IntentRow): Promise<IntentDet
   if (!bid) {
     throw new IntentBidNotFoundError();
   }
+  if (!getBidUsability(bid).analysis) throw new BidAnalysisUnavailableError();
 
   const match = parseJsonField<BidMatchResult>(row.matchScoreSnapshotJson, "matchScoreSnapshotJson");
 
@@ -157,6 +159,7 @@ async function hydrateMysqlIntent(mysql: ReturnType<typeof resolveMysqlPool>, ro
   if (!bid) {
     throw new IntentBidNotFoundError();
   }
+  if (!getBidUsability(bid).analysis) throw new BidAnalysisUnavailableError();
 
   const match = parseJsonField<BidMatchResult>(row.matchScoreSnapshotJson, "matchScoreSnapshotJson");
 
@@ -176,6 +179,13 @@ async function hydrateMysqlIntent(mysql: ReturnType<typeof resolveMysqlPool>, ro
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+async function visibleIntent(promise: Promise<IntentDetail>): Promise<IntentDetail | undefined> {
+  try { return await promise; } catch (error) {
+    if (error instanceof IntentBidNotFoundError || error instanceof BidAnalysisUnavailableError) return undefined;
+    throw error;
+  }
 }
 
 function mysqlIntentSelectSql(whereClause: string) {
@@ -320,7 +330,8 @@ async function listMysqlUserIntents(
     scopeUserIds,
   );
 
-  return Promise.all(rows.map((row) => hydrateMysqlIntent(mysql, row)));
+  const intents = await Promise.all(rows.map((row) => visibleIntent(hydrateMysqlIntent(mysql, row))));
+  return intents.filter((intent): intent is IntentDetail => Boolean(intent));
 }
 
 async function getMysqlUserIntent(
@@ -332,7 +343,7 @@ async function getMysqlUserIntent(
   const scopeUserIds = await mysqlScopeUserIds(userId, options);
   const row = await findMysqlIntentByUsersAndId(scopeUserIds, intentId);
 
-  return row ? hydrateMysqlIntent(mysql, row) : undefined;
+  return row ? visibleIntent(hydrateMysqlIntent(mysql, row)) : undefined;
 }
 
 async function updateMysqlIntentStatus(
@@ -430,7 +441,8 @@ export async function listUserIntents(
 
   const scopeUserIds = scopedUserIds(database, userId, options);
 
-  return Promise.all(listIntentRowsForUsers(database, scopeUserIds).map((row) => hydrateIntent(database, row)));
+  const intents = await Promise.all(listIntentRowsForUsers(database, scopeUserIds).map((row) => visibleIntent(hydrateIntent(database, row))));
+  return intents.filter((intent): intent is IntentDetail => Boolean(intent));
 }
 
 export async function getUserIntent(
@@ -446,7 +458,7 @@ export async function getUserIntent(
   const scopeUserIds = scopedUserIds(database, userId, options);
   const row = findIntentByUsersAndId(database, scopeUserIds, intentId);
 
-  return row ? hydrateIntent(database, row) : undefined;
+  return row ? visibleIntent(hydrateIntent(database, row)) : undefined;
 }
 
 export async function updateIntentStatus(

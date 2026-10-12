@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { ADMIN_CONSOLE_ROLES, normalizeUserRole, type AdminConsoleRole } from "@/server/auth/entitlements";
 import { readSessionToken, hashSessionToken } from "@/server/auth/session";
+import { isTokenUnexpired } from "@/lib/token-expiry";
 import type { AppDatabase } from "@/server/db/client";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { mysqlExecute, mysqlSelectOne } from "@/server/db/mysql-runtime";
@@ -99,7 +100,7 @@ export async function requireAdminAccess(
     );
     const role = normalizeUserRole(row?.role);
 
-    if (!row || new Date(row.expiresAt).getTime() <= Date.now() || !allowedRoles.includes(role as AdminAccessRole)) {
+    if (!row || !isTokenUnexpired(row.expiresAt) || !allowedRoles.includes(role as AdminAccessRole)) {
       throw new AdminAuthError();
     }
 
@@ -135,7 +136,7 @@ export async function requireAdminAccess(
     .get();
 
   const role = normalizeUserRole(row?.role);
-  if (!row || new Date(row.expiresAt).getTime() <= Date.now() || !allowedRoles.includes(role as AdminAccessRole)) {
+  if (!row || !isTokenUnexpired(row.expiresAt) || !allowedRoles.includes(role as AdminAccessRole)) {
     throw new AdminAuthError();
   }
 

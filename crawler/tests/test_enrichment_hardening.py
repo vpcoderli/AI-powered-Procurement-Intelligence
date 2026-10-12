@@ -132,12 +132,20 @@ def test_legitimate_bid_body_in_form_with_optional_login_is_accepted():
     {"fields": {"description": "Good scope"}, "attachments": "bad"},
     {"fields": {"description": ["bad"]}},
 ])
-def test_malformed_response_fails_open_without_any_partial_mutation(result):
+def test_malformed_response_fails_open_without_any_partial_field_mutation(result):
     bid = _bid(raw_payload={"list": "evidence"})
     before = deepcopy(bid)
     out, stats, _ = run_detail(bid, result)
     assert stats["failed"] == 1
-    assert out == before
+    outcome = out["raw_payload"]["enrichment"]["outcome"]
+    assert outcome["status"] == "failure"
+    assert outcome["attempted"] is True and outcome["attempt_count"] == 1
+    assert outcome["valid_body"] is False and outcome["verified_at"] is None
+    assert set(out["raw_payload"]["enrichment"]) == {"outcome"}
+    # Only durable attempt evidence may be written; malformed parser fields cannot mutate
+    # the bid or the original list evidence.
+    without_attempt_evidence = {**out, "raw_payload": {key: value for key, value in out["raw_payload"].items() if key != "enrichment"}}
+    assert without_attempt_evidence == before
 
 
 def test_direct_merge_rejects_invalid_attachment_before_writing_description():

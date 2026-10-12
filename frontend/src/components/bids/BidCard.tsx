@@ -10,6 +10,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useSavedBids } from "@/context/SavedBidsContext";
 import { getBidDescription } from "@/lib/bid-description";
 import type { Bid } from "@/lib/mock-data";
+import { issuerTypeLabelKey } from "@/lib/issuer-types";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { bidDetailPath } from "@/lib/bid-routes";
 
@@ -47,7 +48,7 @@ export function BidCard({ bid, onAuthPrompt }: BidCardProps) {
                   {bid.source}
                 </Badge>
                 <Badge variant="secondary" className="rounded-md bg-slate-100 text-slate-600 px-2 py-0.5">
-                  {bid.issuerType === "federal" ? t("dashboard.federal") : t("dashboard.state")}
+                  {t(issuerTypeLabelKey(bid.issuerType))}
                 </Badge>
                 <span className="text-xs font-medium text-slate-500 flex items-center gap-1.5 uppercase tracking-wider">
                   <Building2 size={12} className="text-slate-400" />
@@ -61,7 +62,7 @@ export function BidCard({ bid, onAuthPrompt }: BidCardProps) {
           </div>
 
           <p className="text-sm text-slate-600 line-clamp-2 mb-6 flex-1 leading-relaxed">
-            {getBidDescription(bid)}
+            {getBidDescription(bid) || t("bid.bodyPending")}
           </p>
 
           <div className="flex flex-wrap items-center justify-between gap-4 mt-auto pt-5 border-t border-slate-100">

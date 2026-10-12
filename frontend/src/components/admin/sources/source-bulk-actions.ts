@@ -1,37 +1,14 @@
-import { batchStatusFromRunResult } from "@/components/admin/JurisdictionBatchRunPanel";
+import { batchStatusFromRunResult, summarizeRunResults, type BatchRunEntryStatus } from "@/lib/manual-crawl";
+export { runTargets, summarizeRunResults, emptyRunTally, addRunResponse, type RunTally } from "@/lib/manual-crawl";
+import type { RunTally } from "@/lib/manual-crawl";
 import type { BatchUpdateAdminDataSourcesResponse, StateCrawlerRunResponse } from "@/lib/api/admin";
 import type { AdminDataSourceIndexItem } from "@/server/admin/data-source-list-contract";
-import { crawlerRunIdFor, type CrawlerRunSource } from "./crawler-run-id";
 
 /** Spec §5.2 limits. */
 // The precheck-requests route refuses more than MAX_REQUESTED_IDS (500) ids in one request (src/server/admin/precheck-queue.ts).
 // That module belongs to the phase-3 governance code, which this page does not import from, so the limit is repeated here.
 export const PRECHECK_REQUEST_CHUNK = 500;
 export const RUN_NOW_LIMIT = 20;
-
-export function runTargets(items: readonly CrawlerRunSource[]): { runIds: string[]; skippedIds: string[] } {
-  const runIds: string[] = [];
-  const skippedIds: string[] = [];
-  for (const item of items) {
-    const runId = crawlerRunIdFor(item);
-    if (runId) runIds.push(runId);
-    else skippedIds.push(item.id);
-  }
-  return { runIds: Array.from(new Set(runIds)), skippedIds };
-}
-
-/** success → ok; failure and unknown ids → failed; blocked/locked/disabled/deferred → skipped. */
-export function summarizeRunResults(response: StateCrawlerRunResponse): { ok: number; failed: number; skipped: number } {
-  let ok = 0;
-  let failed = response.errors?.length ?? 0;
-  let skipped = 0;
-  for (const result of response.results) {
-    if (result.status === "success") ok += 1;
-    else if (result.status === "failure") failed += 1;
-    else skipped += 1;
-  }
-  return { ok, failed, skipped };
-}
 
 /** What the precheck rule reads from a row; a list item and an index item both carry it. */
 export type PrecheckCandidate = Pick<AdminDataSourceIndexItem, "id" | "level" | "approvalState" | "isEnabled">;
@@ -210,22 +187,6 @@ export function holdReport(t: Translate, outcome: ChunkedOutcome<number>, blocke
   return { message: sentences(parts), outcome: outcome.failed ? "failed" : "done" };
 }
 
-/** What the run requests of a "Run now" added up to (`summarizeRunResults` of each response). */
-export interface RunTally {
-  ok: number;
-  failed: number;
-  skipped: number;
-}
-
-export function emptyRunTally(): RunTally {
-  return { ok: 0, failed: 0, skipped: 0 };
-}
-
-export function addRunResponse(tally: RunTally, response: StateCrawlerRunResponse): RunTally {
-  const summary = summarizeRunResults(response);
-  return { ok: tally.ok + summary.ok, failed: tally.failed + summary.failed, skipped: tally.skipped + summary.skipped };
-}
-
 /** The list's "Run now": what the requests that went through ran, the rows without a run id, and the error that stopped the rest. */
 export function runReport(t: Translate, outcome: ChunkedOutcome<RunTally>, notRunnable: number): BulkReport {
   const { ok, failed, skipped } = outcome.tally;
@@ -250,8 +211,16 @@ export function runReport(t: Translate, outcome: ChunkedOutcome<RunTally>, notRu
 export function singleRunReport(
   t: Translate,
   label: string,
-  response: StateCrawlerRunResponse,
+  response: StateCrawlerRunResponse | BatchRunEntryStatus | undefined,
 ): { message: string; tone: "info" | "error" } {
+  if (!response || "phase" in response) {
+    const status = response?.phase === "done" ? response.status : "unknown";
+    if (status === "failure" || (response?.phase === "done" && response.errorCode)) {
+      return { message: t("admin.runSourceFailed").replace("{source}", label), tone: "error" };
+    }
+    if (status === "success") return { message: t("admin.runSourceQueued").replace("{source}", label), tone: "info" };
+    return { message: t("admin.runSourceSkipped").replace("{source}", label).replace("{status}", t(`admin.batchRunStatus_${status}`)), tone: "info" };
+  }
   const summary = summarizeRunResults(response);
   if (summary.failed > 0) return { message: t("admin.runSourceFailed").replace("{source}", label), tone: "error" };
   if (summary.ok > 0 && summary.skipped === 0) return { message: t("admin.runSourceQueued").replace("{source}", label), tone: "info" };

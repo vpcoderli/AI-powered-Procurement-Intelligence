@@ -47,6 +47,17 @@ def has_full_body(bid):
     )
 
 
+_CONTACT_METADATA_RE = re.compile(
+    r"^(?:purchase method|type code|bid type|informal bid flag|allow electronic quote)\s*(?::|：|$)",
+    re.I,
+)
+
+
+def is_contact_metadata(value):
+    """Portal labels accidentally read after an empty contact cell are never contact names."""
+    return bool(isinstance(value, str) and _CONTACT_METADATA_RE.match(" ".join(value.split())))
+
+
 # Portals qualify the description label ("Solicitation Description", "Short Description",
 # "Bulletin Desc"). An exact-match list of five strings made every such page look like a login
 # wall as soon as it also carried a site-wide login widget, which disables enrichment for the

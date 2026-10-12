@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { isTokenUnexpired } from "@/lib/token-expiry";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { hashPassword } from "@/server/auth/password";
 import { UsageLimitError, getUsageLimitStatus } from "@/server/auth/usage-limits";
@@ -757,7 +758,7 @@ export async function acceptWorkspaceInvitation(db: AppDatabase, input: AcceptWo
     !invitation ||
     invitation.acceptedAt ||
     invitation.revokedAt ||
-    new Date(invitation.expiresAt).getTime() <= Date.now()
+    !isTokenUnexpired(invitation.expiresAt)
   ) {
     throw new WorkspaceInvitationNotFoundError();
   }

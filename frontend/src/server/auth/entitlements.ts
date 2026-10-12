@@ -1,3 +1,5 @@
+import { isTokenUnexpired } from "@/lib/token-expiry";
+
 export const USER_ROLES = ["user", "admin", "operator", "support"] as const;
 export const ACCOUNT_TIERS = ["free", "pro", "business", "enterprise"] as const;
 
@@ -152,7 +154,10 @@ export function applyFeatureOverrides(
       continue;
     }
 
-    if (typeof override.expiresAt === "string" && new Date(override.expiresAt).getTime() <= now.getTime()) {
+    if (
+      override.expiresAt !== null && override.expiresAt !== undefined &&
+      (typeof override.expiresAt !== "string" || !isTokenUnexpired(override.expiresAt, now.getTime()))
+    ) {
       continue;
     }
 

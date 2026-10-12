@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isTokenUnexpired } from "@/lib/token-expiry";
 import { eq } from "drizzle-orm";
 import { ensureUserWorkspace, type PublicWorkspace } from "@/server/account/workspace";
 import { reconcileUserSubscriptionLifecycle } from "@/server/billing/subscriptions";
@@ -331,7 +332,7 @@ export async function getSessionUser(db: AppDatabase, sessionToken: string) {
     return null;
   }
 
-  if (new Date(row.expiresAt).getTime() <= Date.now()) {
+  if (!isTokenUnexpired(row.expiresAt)) {
     db.delete(sessions).where(eq(sessions.id, row.sessionId)).run();
     return null;
   }

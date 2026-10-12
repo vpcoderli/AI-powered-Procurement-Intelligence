@@ -7,6 +7,7 @@ import { createTestDatabase } from "@/server/db/test-utils";
 import { createMysqlPool, runMysqlMigrations } from "@/server/db/mysql";
 import { getBidByIdFromMysql, getBidByIdFromRepository } from "@/server/bids/repository";
 import { queryBidsFromDatabase, queryBidsFromMysql } from "@/server/bids/service";
+import { createSourceDataQualityReportFromMysql } from "@/server/source-validity/source-data-quality";
 import { getBidDescription } from "@/lib/bid-description";
 import { registerSourcesInMysql, type SourceCandidate } from "../../../scripts/register-sources";
 import { listCrawlableSourcesFromMysql } from "./source-registry";
@@ -17,6 +18,10 @@ interface PipelineFixture {
   enriched: CrawlerJsonRunPayload;
   plain: CrawlerJsonRunPayload;
   scope: string;
+  local: Record<string, CrawlerJsonRunPayload>;
+  sam_enriched: CrawlerJsonRunPayload;
+  sam_failed: CrawlerJsonRunPayload;
+  sam_body: string;
 }
 
 describe.runIf(process.env.RUN_CRAWLER_INTEGRATION === "1")("offline crawler / HTTP extractor / database pipeline", () => {
@@ -53,6 +58,53 @@ describe.runIf(process.env.RUN_CRAWLER_INTEGRATION === "1")("offline crawler / H
       expect(getBidDescription(after!)).toBe(fixture.scope);
       const matches = await queryBidsFromDatabase(database.db, { q: "BoundaryOnlyKeyword" });
       expect(matches.bids.map((bid) => bid.id)).toContain(id);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("clears a historical portal-label contact in SQLite while preserving its other contact fields", async () => {
+    const database = await createTestDatabase({ seed: false });
+    try {
+      importCrawlerJsonRunIntoSqlite(database.db, fixture.enriched);
+      const id = String(fixture.enriched.bids![0].id);
+      database.db.$client.prepare("UPDATE bids SET contact_name = ?, contact_email = ?, contact_phone = ? WHERE id = ?")
+        .run("Purchase Method: Open Market", "buyer@example.gov", "555-0100", id);
+      importCrawlerJsonRunIntoSqlite(database.db, fixture.plain);
+      expect(await getBidByIdFromRepository(database.db, id)).toMatchObject({
+        contactName: "", contactEmail: "buyer@example.gov", contactPhone: "555-0100",
+      });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it.each(["county", "city", "township", "special_district"] as const)("preserves %s identity through Python, SQLite and search", async (level) => {
+    const database = await createTestDatabase({ seed: false });
+    try {
+      const payload = fixture.local[level];
+      const id = String(payload.bids![0].id);
+      expect(payload.bids![0].issuer_type).toBe(level);
+      importCrawlerJsonRunIntoSqlite(database.db, payload);
+      expect(await getBidByIdFromRepository(database.db, id)).toMatchObject({ issuerType: level, stateCode: "IL" });
+      const matches = await queryBidsFromDatabase(database.db, { states: ["IL"], issuerType: level });
+      expect(matches.bids.map((bid) => bid.id)).toContain(id);
+      expect((await queryBidsFromDatabase(database.db, { issuerType: "state" })).bids).toHaveLength(0);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("retains SAM API body and full-body search after a detail failure in SQLite", async () => {
+    const database = await createTestDatabase({ seed: false });
+    try {
+      const id = String(fixture.sam_enriched.bids![0].id);
+      importCrawlerJsonRunIntoSqlite(database.db, fixture.sam_enriched);
+      importCrawlerJsonRunIntoSqlite(database.db, fixture.sam_failed);
+      const bid = await getBidByIdFromRepository(database.db, id);
+      expect(getBidDescription(bid!)).toBe(fixture.sam_body);
+      expect(bid?.description).not.toContain("noticedesc");
+      expect((await queryBidsFromDatabase(database.db, { q: "SamBoundaryOnlyKeyword" })).bids.map((match) => match.id)).toContain(id);
     } finally {
       await database.cleanup();
     }
@@ -124,6 +176,15 @@ describe.runIf(process.env.RUN_CRAWLER_INTEGRATION === "1")("offline crawler / H
         legal_review_status: "approved_public",
       })]);
       expect((await listCrawlableSourcesFromMysql(mysql)).map((source) => source.id)).toContain(candidate.id);
+
+      const aliasUrl = "https://www.bidnetdirect.com/city-of-boulder/solicitations/open-bids";
+      expect(await registerSourcesInMysql(mysql, [{
+        ...candidate, id: "boulder_alias_mysql_test", baseUrl: aliasUrl, fetchConfig: { base_url: aliasUrl },
+      }], now)).toMatchObject({ inserted: 0, errors: [{ errors: [expect.stringContaining("already registered")] }] });
+      expect(await registerSourcesInMysql(mysql, [{ ...candidate, fipsCode: "0801111", jurisdictionName: "Different city" }], now))
+        .toMatchObject({ inserted: 0, errors: [{ errors: [expect.stringContaining("identity change")] }] });
+      const [unchanged] = await mysql.query("SELECT fips_code, approval_status FROM data_sources WHERE id = ?", [candidate.id]);
+      expect(unchanged).toEqual([expect.objectContaining({ fips_code: candidate.fipsCode, approval_status: "approved" })]);
     });
 
     it("retains detail content and attachments after repeated real MySQL imports", async () => {
@@ -138,6 +199,148 @@ describe.runIf(process.env.RUN_CRAWLER_INTEGRATION === "1")("offline crawler / H
       expect(getBidDescription(after!)).toBe(fixture.scope);
       const matches = await queryBidsFromMysql(mysql, { q: "BoundaryOnlyKeyword" });
       expect(matches.bids.map((bid) => bid.id)).toContain(id);
+    });
+
+    it("clears a historical portal-label contact in MySQL while preserving its other contact fields", async () => {
+      const bid = { ...fixture.enriched.bids![0], id: "contact:legacy", dedupe_key: "contact:legacy", source_bid_id: "contact-legacy" };
+      await importCrawlerJsonRunIntoMysql(mysql, { ...fixture.enriched, runId: randomUUID(), bids: [bid] });
+      await mysql.query("UPDATE bids SET contact_name = ?, contact_email = ?, contact_phone = ? WHERE id = ?",
+        ["Purchase Method: Contract", "buyer@example.gov", "555-0100", bid.id]);
+      await importCrawlerJsonRunIntoMysql(mysql, {
+        ...fixture.plain, runId: randomUUID(), bids: [{ ...fixture.plain.bids![0], id: bid.id, dedupe_key: bid.dedupe_key, source_bid_id: bid.source_bid_id }],
+      });
+      expect(await getBidByIdFromMysql(mysql, bid.id)).toMatchObject({
+        contactName: "", contactEmail: "buyer@example.gov", contactPhone: "555-0100",
+      });
+    });
+
+    it.each(["county", "city", "township", "special_district"] as const)("preserves %s identity through Python, real MySQL and search", async (level) => {
+      const payload = fixture.local[level];
+      const id = String(payload.bids![0].id);
+      await importCrawlerJsonRunIntoMysql(mysql, payload);
+      expect(await getBidByIdFromMysql(mysql, id)).toMatchObject({ issuerType: level, stateCode: "IL" });
+      const matches = await queryBidsFromMysql(mysql, { states: ["IL"], issuerType: level });
+      expect(matches.bids.map((bid) => bid.id)).toContain(id);
+      expect((await queryBidsFromMysql(mysql, { issuerType: "state" })).bids.map((bid) => bid.id)).not.toContain(id);
+    });
+
+    it("retains SAM API body and full-body search after a detail failure in real MySQL", async () => {
+      const id = String(fixture.sam_enriched.bids![0].id);
+      await importCrawlerJsonRunIntoMysql(mysql, fixture.sam_enriched);
+      await importCrawlerJsonRunIntoMysql(mysql, fixture.sam_failed);
+      const bid = await getBidByIdFromMysql(mysql, id);
+      expect(getBidDescription(bid!)).toBe(fixture.sam_body);
+      expect(bid?.description).not.toContain("noticedesc");
+      expect((await queryBidsFromMysql(mysql, { q: "SamBoundaryOnlyKeyword" })).bids.map((match) => match.id)).toContain(id);
+    });
+
+    it("quarantines a foreign derived namespace in real MySQL without delisting and reports original evidence", async () => {
+      const sourceId = "derived_identity_city_mysql";
+      const foreignId = "other_identity_city_mysql:one";
+      const at = "2026-10-08T00:00:00.000Z";
+      expect(await registerSourcesInMysql(mysql, [{ id: sourceId, label: "Derived identity city", issuerType: "city", stateCode: "IL",
+        jurisdictionLevel: "city", jurisdictionName: "City", fipsCode: "1714000", baseUrl: "https://city.example.gov/open-bids",
+        providerFamily: null, cadence: "daily", fetchConfig: {} }], at)).toEqual({ inserted: 1, errors: [] });
+      // Older registrations can retain the broad issuer type while declaring the local level.
+      await mysql.query("UPDATE data_sources SET issuer_type = 'state' WHERE id = ?", [sourceId]);
+      const old = { id: `${sourceId}:old`, source: "Derived identity city", source_bid_id: "old", dedupe_key: `${sourceId}:old`,
+        title: "Road repairs", description: "Resurface public roads and improve drainage.", issuer_name: "City Agency", issuer_type: "city",
+        jurisdiction_level: "city", state_code: "IL", source_url: "https://city.example.gov/bids/old" };
+      const initial: CrawlerJsonRunPayload = { source: sourceId, runId: randomUUID(), status: "success", startedAt: "2026-10-07T00:00:00.000Z", bids: [old] };
+      await importCrawlerJsonRunIntoMysql(mysql, initial);
+      const incoming = { ...old, id: "", source_bid_id: "one", dedupe_key: foreignId, source_url: "https://city.example.gov/bids/one" };
+      const run: CrawlerJsonRunPayload = { ...initial, runId: randomUUID(), startedAt: at, finishedAt: at, bids: [incoming],
+        metadata: { sourceIdentity: { id: sourceId, stateCode: "IL", issuerType: "city", jurisdictionLevel: "city" },
+          pagination: { complete: true, list_kind: "open" } } };
+      const result = await importCrawlerJsonRunIntoMysql(mysql, run);
+      expect(result).toMatchObject({ insertedCount: 0, updatedCount: 0 });
+      expect(result).not.toHaveProperty("delistedCount");
+      const [saved] = await mysql.query("SELECT id, lifecycle_status FROM bids WHERE id = ? OR id = ?", [old.id, foreignId]);
+      expect(saved).toEqual([expect.objectContaining({ id: old.id, lifecycle_status: "open" })]);
+      expect(run.metadata).toMatchObject({ pagination: { complete: false, quality_blocked: true }, dataQuality: {
+        acceptedCount: 0, quarantinedCount: 1, acceptedIds: [], contentStatus: "unusable", quarantinedRecords: [
+          { id: null, issues: ["source_identity_mismatch:id"], row: { id: "", dedupe_key: foreignId } },
+        ],
+      } });
+      const report = await createSourceDataQualityReportFromMysql(mysql, new Date(at));
+      expect(report.readConsistency).toBe("snapshot");
+      expect(report.rows.find((row) => row.sourceId === sourceId)).toMatchObject({ listCoverage: "partial", contentStatus: "unusable",
+        run: { acceptedCount: 0, quarantinedCount: 1 }, stored: { bidCount: 1, coreInvalidCount: 0, analysisReadyCount: 1 } });
+      expect(incoming.id).toBe("");
+    });
+
+    it("rejects a foreign actual MySQL dedupe target before writes even when its prior core is malformed", async () => {
+      const sourceId = "dedupe_identity_city_mysql";
+      const otherSourceId = "dedupe_identity_other_mysql";
+      const at = "2026-10-08T00:00:00.000Z";
+      expect(await registerSourcesInMysql(mysql, [sourceId, otherSourceId].map((id) => ({ id, label: id, issuerType: "city", stateCode: "IL",
+        jurisdictionLevel: "city", jurisdictionName: "City", fipsCode: "1714000", baseUrl: `https://${id}.example.gov/open-bids`,
+        providerFamily: null, cadence: "daily", fetchConfig: {} })), at)).toEqual({ inserted: 2, errors: [] });
+      const old = { id: `${sourceId}:old`, source: sourceId, source_bid_id: "old", dedupe_key: `${sourceId}:old`,
+        title: "Road repairs", description: "Preserve this city's road reconstruction scope.", issuer_name: "City Agency", issuer_type: "city",
+        jurisdiction_level: "city", state_code: "IL", source_url: "https://city.example.gov/bids/old",
+        attachments: [{ id: `${sourceId}:file`, name: "Original.pdf", url: "https://city.example.gov/original.pdf" }] };
+      const other = { ...old, id: `${otherSourceId}:one`, source: otherSourceId, source_bid_id: "one", dedupe_key: `${otherSourceId}:one`,
+        description: "Preserve the other city's road construction scope.", source_url: "https://other.example.gov/bids/one",
+        attachments: [{ id: `${otherSourceId}:file`, name: "Original.pdf", url: "https://other.example.gov/original.pdf" }] };
+      await importCrawlerJsonRunIntoMysql(mysql, { source: sourceId, runId: randomUUID(), status: "success", startedAt: "2026-10-07T00:00:00.000Z", bids: [old] });
+      await importCrawlerJsonRunIntoMysql(mysql, { source: otherSourceId, runId: randomUUID(), status: "success", startedAt: "2026-10-07T00:00:00.000Z", bids: [other] });
+      for (const malformed of [false, true]) {
+        if (malformed) await mysql.query("UPDATE bids SET title = 'Untitled opportunity' WHERE id = ?", [other.id]);
+        const [beforeBids] = await mysql.query("SELECT * FROM bids WHERE id IN (?, ?) ORDER BY id", [old.id, other.id]);
+        const [beforeFiles] = await mysql.query("SELECT * FROM bid_attachments WHERE bid_id IN (?, ?) ORDER BY id", [old.id, other.id]);
+        const incoming = { ...other, id: `${sourceId}:one`, source: sourceId, description: "Replace this new city's storm sewer and drainage systems.",
+          source_url: "https://city.example.gov/bids/one", attachments: [{ id: `${sourceId}:incoming`, name: "New.pdf", url: "https://city.example.gov/new.pdf" }] };
+        const run: CrawlerJsonRunPayload = { source: sourceId, runId: randomUUID(), status: "success", startedAt: at, finishedAt: at, bids: [incoming],
+          metadata: { sourceIdentity: { id: sourceId, stateCode: "IL", issuerType: "city", jurisdictionLevel: "city" },
+            pagination: { complete: true, list_kind: "open" } } };
+        expect(await importCrawlerJsonRunIntoMysql(mysql, run)).toEqual({ fetchedCount: 1, insertedCount: 0, updatedCount: 0, logCount: 1 });
+        const [afterBids] = await mysql.query("SELECT * FROM bids WHERE id IN (?, ?) ORDER BY id", [old.id, other.id]);
+        const [afterFiles] = await mysql.query("SELECT * FROM bid_attachments WHERE bid_id IN (?, ?) ORDER BY id", [old.id, other.id]);
+        expect(afterBids).toEqual(beforeBids);
+        expect(afterFiles).toEqual(beforeFiles);
+        expect(run.metadata).toMatchObject({ pagination: { complete: false, quality_blocked: true }, dataQuality: {
+          acceptedCount: 0, quarantinedCount: 1, acceptedIds: [], reconciliation: { observed: 1, accepted: 0, quarantined: 1, balanced: true },
+          quarantinedRecords: [{ id: incoming.id, issues: ["source_identity_mismatch:id"], row: incoming }],
+        } });
+        const report = await createSourceDataQualityReportFromMysql(mysql, new Date(at));
+        expect(report.rows.find((row) => row.sourceId === sourceId)).toMatchObject({ contentStatus: "unusable", listCoverage: "partial",
+          stored: { bidCount: 1, coreInvalidCount: 0 } });
+        expect(report.rows.find((row) => row.sourceId === otherSourceId)).toMatchObject({ stored: { bidCount: 1, coreInvalidCount: Number(malformed) } });
+      }
+    });
+
+    it("quarantines bad complete-list candidates and reports effective attachments in a real MySQL snapshot", async () => {
+      const sourceId = "quality_city_mysql";
+      await registerSourcesInMysql(mysql, [{
+        id: sourceId, label: "Quality city", issuerType: "city", stateCode: "IL",
+        baseUrl: "https://procurement.example.gov/bids", jurisdictionLevel: "city", jurisdictionName: "Quality city", fipsCode: "1714000",
+        providerFamily: null, cadence: "daily", fetchConfig: {},
+      }], "2026-10-01T00:00:00Z");
+      const bid = { ...fixture.local.city.bids![0], source: "Quality city", id: `${sourceId}:1`, source_bid_id: "quality-1", dedupe_key: `${sourceId}:1`,
+        title: "Repair QA city bridges", jurisdiction_level: "city", fips_code: "1714000", description: "Repair bridges.", full_description: null,
+        attachments: [{ name: "Scope.pdf", url: "https://procurement.example.gov/scope.pdf", archive_status: "archived", storage_path: "/tmp/scope.pdf",
+          byte_size: 42, checksum_sha256: "a".repeat(64), content_type: "application/pdf" }],
+      };
+      const run = { ...fixture.local.city, source: sourceId, runId: randomUUID(), startedAt: "2026-09-29T00:00:00Z", finishedAt: "2026-09-29T00:00:01Z", bids: [bid] };
+      await importCrawlerJsonRunIntoMysql(mysql, run);
+      await mysql.query("UPDATE bid_attachments SET verified_at = ? WHERE bid_id = ?", ["2026-09-29T00:00:00Z", bid.id]);
+      await importCrawlerJsonRunIntoMysql(mysql, { ...run, runId: randomUUID(), bids: [{ ...bid, id: `${sourceId}:2`, source_bid_id: "quality-2", dedupe_key: `${sourceId}:2`, attachments: [] }] });
+      await importCrawlerJsonRunIntoMysql(mysql, { ...run, runId: randomUUID(), bids: [{ ...bid, attachments: [] }] });
+      const badRun = { ...run, runId: randomUUID(), startedAt: "2026-10-01T00:00:00Z", finishedAt: "2026-10-01T00:00:01Z", bids: [{ ...bid, title: "Untitled opportunity" }], metadata: { pagination: { complete: true, list_kind: "open" } } };
+      await importCrawlerJsonRunIntoMysql(mysql, badRun);
+      const [saved] = await mysql.query("SELECT title, lifecycle_status, raw_payload FROM bids WHERE id = ?", [bid.id]);
+      expect(saved).toEqual([expect.objectContaining({ title: bid.title, lifecycle_status: "open" })]);
+      const raw = (saved as Array<{raw_payload: string | Record<string, unknown>}>)[0].raw_payload;
+      expect(typeof raw === "string" ? JSON.parse(raw) : raw).toMatchObject({ data_quality: { attachments: { discovered: 1, verified: 1 } } });
+      const [other] = await mysql.query("SELECT lifecycle_status FROM bids WHERE id = ?", [`${sourceId}:2`]);
+      expect(other).toEqual([expect.objectContaining({ lifecycle_status: "open" })]);
+      const report = await createSourceDataQualityReportFromMysql(mysql, new Date("2026-10-01T00:00:00Z"));
+      expect(report.readConsistency).toBe("snapshot");
+      expect(report.rows.find((row) => row.sourceId === sourceId)).toMatchObject({
+        jurisdictionLevel: "city", listCoverage: "partial", contentStatus: "unusable",
+        run: { quarantinedCount: 1 }, stored: { bidCount: 2, validBodyCount: 2, attachmentsVerified: 1 },
+      });
     });
 
     it("logs a legitimate date-filtered empty result in real MySQL", async () => {
@@ -171,6 +374,72 @@ describe.runIf(process.env.RUN_CRAWLER_INTEGRATION === "1")("offline crawler / H
       expect(attachmentsAfter).toEqual(attachmentsBefore);
       const [failures] = await mysql.query("SELECT error_code FROM crawler_logs WHERE run_id = ? AND status = 'failure'", [runId]);
       expect(failures).toEqual([expect.objectContaining({ error_code: "CrawlerPersistenceError" })]);
+    });
+
+    it("uses the stored dedupe-match id for attachment ownership, accepted evidence and delisting", async () => {
+      const source = "intake_dedupe";
+      const bid = { ...fixture.enriched.bids![0], id: `${source}:stored`, source_bid_id: "dedupe-one", dedupe_key: `${source}:key`, attachments: [] };
+      const initial = { ...fixture.enriched, source, runId: randomUUID(), metadata: {}, bids: [bid] };
+      await importCrawlerJsonRunIntoMysql(mysql, initial);
+      const incoming = { ...initial, runId: randomUUID(), metadata: { pagination: { complete: true, list_kind: "open" } },
+        bids: [{ ...bid, id: `${source}:alternate`, title: "Refreshed bridge scope", attachments: [
+          { id: `${source}:file`, name: "Scope.pdf", url: "https://example.invalid/intake-dedupe.pdf" },
+        ] }] };
+      const result = await importCrawlerJsonRunIntoMysql(mysql, incoming);
+      expect(result).toMatchObject({ insertedCount: 0, updatedCount: 1, delistedCount: 0 });
+      expect(incoming.metadata).toMatchObject({ dataQuality: { acceptedIds: [bid.id] } });
+      const [saved] = await mysql.query("SELECT id, title, lifecycle_status FROM bids WHERE dedupe_key = ?", [bid.dedupe_key]);
+      expect(saved).toEqual([expect.objectContaining({ id: bid.id, title: "Refreshed bridge scope", lifecycle_status: "open" })]);
+      const [files] = await mysql.query("SELECT bid_id FROM bid_attachments WHERE id = ?", [`${source}:file`]);
+      expect(files).toEqual([expect.objectContaining({ bid_id: bid.id })]);
+    });
+
+    it("rolls back the whole batch on an attachment owned by another bid and logs zero accepted quality in a single-connection pool", async () => {
+      const source = "intake_collision";
+      const owner = { ...fixture.enriched.bids![0], id: `${source}:owner`, source_bid_id: "collision-owner", dedupe_key: `${source}:owner`,
+        attachments: [{ id: `${source}:shared`, name: "Original.pdf", url: "https://example.invalid/intake-owner.pdf" }] };
+      const initial = { ...fixture.enriched, source, runId: randomUUID(), metadata: {}, bids: [owner] };
+      await importCrawlerJsonRunIntoMysql(mysql, initial);
+      const failed = { ...initial, runId: randomUUID(), metadata: structuredClone(initial.metadata), bids: [
+        { ...owner, id: `${source}:collateral`, source_bid_id: "collision-collateral", dedupe_key: `${source}:collateral`, attachments: [] },
+        { ...owner, id: `${source}:offender`, source_bid_id: "collision-offender", dedupe_key: `${source}:offender`,
+          attachments: [{ id: `${source}:shared`, name: "Must never move.pdf", url: "https://example.invalid/intake-offender.pdf" }] },
+      ] };
+      const metadata = structuredClone(failed.metadata);
+      await expect(importCrawlerJsonRunIntoMysql(mysql, failed)).rejects.toMatchObject({ name: "CrawlerPersistenceError", failureLogged: true });
+      const [saved] = await mysql.query("SELECT id FROM bids WHERE id LIKE ?", [`${source}:%`]);
+      expect(saved).toEqual([expect.objectContaining({ id: owner.id })]);
+      const [files] = await mysql.query("SELECT bid_id, name, url FROM bid_attachments WHERE id = ?", [`${source}:shared`]);
+      expect(files).toEqual([expect.objectContaining({ bid_id: owner.id, name: "Original.pdf", url: "https://example.invalid/intake-owner.pdf" })]);
+      const [logs] = await mysql.query("SELECT status, fetched_count, inserted_count, updated_count, metadata FROM crawler_logs WHERE run_id = ?", [failed.runId]);
+      expect(logs).toEqual([expect.objectContaining({ status: "failure", fetched_count: 0, inserted_count: 0, updated_count: 0 })]);
+      const raw = (logs as Array<{ metadata: string | Record<string, unknown> }>)[0].metadata;
+      expect(typeof raw === "string" ? JSON.parse(raw) : raw).toMatchObject({ persistence: { fetchedBeforePersistence: 2 },
+        dataQuality: { execution: "failure", acceptedCount: 0, acceptedIds: [], contentStatus: "unknown" } });
+      expect(failed.metadata).toEqual(metadata);
+    });
+
+    it("requires real MySQL attachments to be reverified after changed bytes and rejects incoming verification for new files", async () => {
+      const source = "intake_verified";
+      const attachment = { id: `${source}:file`, name: "Scope.pdf", url: "https://example.invalid/intake-verified.pdf", archive_status: "archived",
+        storage_path: "scope.pdf", byte_size: 42, checksum_sha256: "a".repeat(64), content_type: "application/pdf", verified_at: "2026-09-29T00:00:00Z" };
+      const bid = { ...fixture.enriched.bids![0], id: `${source}:one`, source_bid_id: "verified-one", dedupe_key: `${source}:one`, attachments: [attachment] };
+      const initial = { ...fixture.enriched, source, runId: randomUUID(), metadata: {}, bids: [bid] };
+      await importCrawlerJsonRunIntoMysql(mysql, initial);
+      const [newFiles] = await mysql.query("SELECT verified_at FROM bid_attachments WHERE id = ?", [attachment.id]);
+      expect(newFiles).toEqual([expect.objectContaining({ verified_at: null })]);
+      await mysql.query("UPDATE bid_attachments SET verified_at = ? WHERE id = ?", [attachment.verified_at, attachment.id]);
+      await importCrawlerJsonRunIntoMysql(mysql, { ...initial, runId: randomUUID(), bids: [{ ...bid, attachments: [] }] });
+      const [retained] = await mysql.query("SELECT raw_payload FROM bids WHERE id = ?", [bid.id]);
+      const retainedRaw = (retained as Array<{ raw_payload: string | Record<string, unknown> }>)[0].raw_payload;
+      expect(typeof retainedRaw === "string" ? JSON.parse(retainedRaw) : retainedRaw).toMatchObject({ data_quality: { capabilities: { attachments: true } } });
+      await importCrawlerJsonRunIntoMysql(mysql, { ...initial, runId: randomUUID(), bids: [{ ...bid,
+        attachments: [{ ...attachment, checksum_sha256: "b".repeat(64) }] }] });
+      const [changedFiles] = await mysql.query("SELECT verified_at FROM bid_attachments WHERE id = ?", [attachment.id]);
+      expect(changedFiles).toEqual([expect.objectContaining({ verified_at: null })]);
+      const [changed] = await mysql.query("SELECT raw_payload FROM bids WHERE id = ?", [bid.id]);
+      const raw = (changed as Array<{ raw_payload: string | Record<string, unknown> }>)[0].raw_payload;
+      expect(typeof raw === "string" ? JSON.parse(raw) : raw).toMatchObject({ data_quality: { capabilities: { attachments: false }, attachments: { verified: 0 } } });
     });
 
     it("rolls back a real single-connection MySQL transaction if its lease expires before commit", async () => {

@@ -1,4 +1,5 @@
 import type { Bid } from "@/server/bids/domain";
+import { BidAnalysisUnavailableError, getBidUsability, isVerifiedBidAttachment } from "@/lib/bid-usability";
 import { createDeterministicAiRunMetadata } from "@/server/ai/run-metadata";
 import { resolvePromptVersion } from "@/server/ai/prompt-registry";
 import { PROMPT_NAMES } from "@/server/ai/known-prompts";
@@ -35,8 +36,8 @@ function riskFlagsForBid(bid: Bid, match: BidMatchResult) {
     flags.push("Response window is 7 days or less.");
   }
 
-  if (bid.attachments.length === 0) {
-    flags.push("No attachments are available.");
+  if (!bid.attachments.some(isVerifiedBidAttachment)) {
+    flags.push("No verified attachment files are available.");
   }
 
   if (bid.amount.trim().length === 0) {
@@ -57,9 +58,11 @@ export function generateIntentBrief({
   bid: Bid;
   match: BidMatchResult;
 }): GeneratedIntentContent & { aiRun: AiRunMetadata } {
+  if (!getBidUsability(bid).analysis) throw new BidAnalysisUnavailableError();
+  const verifiedFiles = bid.attachments.filter(isVerifiedBidAttachment).length;
   const attachmentSummary =
     bid.attachments.length > 0
-      ? `${bid.attachments.length} attachment${bid.attachments.length === 1 ? "" : "s"} available`
+      ? `${bid.attachments.length} attachment links discovered; ${verifiedFiles} verified files`
       : "no attachments listed";
 
   return {

@@ -4,6 +4,11 @@ import type { RunCrawlerSourceOnceResult } from "./orchestrator";
 import { isPlatformThrottleSignature } from "./platform-deferral";
 import { buildCrawlerFailureInput } from "./source-health-outcome";
 
+export type CrawlerRetryOptions = Omit<RetryOptions, "isRetryable"> & {
+  /** Stop before backoff when the caller cannot admit another real attempt. */
+  canRetry?: () => boolean;
+};
+
 /**
  * Retry only structured transient ingestion failures; successful ingestion is terminal.
  *
@@ -14,17 +19,41 @@ import { buildCrawlerFailureInput } from "./source-health-outcome";
  */
 export function retryCrawlerSourceResult(
   run: () => Promise<RunCrawlerSourceOnceResult>,
-  options: Omit<RetryOptions, "isRetryable"> = {},
-): Promise<RunCrawlerSourceOnceResult> {
-  return retryResultWithBackoff(run, {
+  options?: CrawlerRetryOptions,
+): Promise<RunCrawlerSourceOnceResult>;
+export function retryCrawlerSourceResult(
+  run: () => Promise<RunCrawlerSourceOnceResult | null>,
+  options?: CrawlerRetryOptions,
+): Promise<RunCrawlerSourceOnceResult | null>;
+export function retryCrawlerSourceResult(
+  run: () => Promise<RunCrawlerSourceOnceResult | null>,
+  options: CrawlerRetryOptions = {},
+): Promise<RunCrawlerSourceOnceResult | null> {
+  let attempts = 0;
+  let lastResult: RunCrawlerSourceOnceResult | null = null;
+  let stopped = false;
+  return retryResultWithBackoff(async () => {
+    const result = await run();
+    // The caller may stop admission after a spacing/backoff wait. No actual attempt
+    // occurred: keep the last real result and do not count another attempt or failure.
+    if (result === null) {
+      stopped = true;
+      return lastResult;
+    }
+    attempts += 1;
+    lastResult = result;
+    return result;
+  }, {
     ...options,
-    isOk: (result) => result.status !== "failure",
+    isOk: (result) => stopped || result?.status !== "failure",
     toError: (result) => result,
     isRetryable: (error) => {
       const result = error as RunCrawlerSourceOnceResult;
       if (result.status !== "failure") return false;
       if (isPlatformThrottleSignature(result)) return false;
-      return shouldRetry(classifyCrawlerFailure(buildCrawlerFailureInput(result.runner)));
+      if (!shouldRetry(classifyCrawlerFailure(buildCrawlerFailureInput(result.runner)))) return false;
+      // The final attempt never needs another reservation, even when it is transient.
+      return attempts >= Math.max(1, options.maxAttempts ?? 3) || (options.canRetry?.() ?? true);
     },
   });
 }

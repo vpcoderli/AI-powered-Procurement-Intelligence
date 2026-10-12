@@ -1,4 +1,6 @@
 import type { AppDatabase } from "@/server/db/client";
+import { getBidDescription } from "@/lib/bid-description";
+import { loadDetailHistory, type DetailHistoryRecord } from "./detail-history";
 import type { MysqlCrawlerLockStore } from "./lock-repository";
 import { sendMatchedAlertNotifications, sendMatchedAlertNotificationsFromMysql } from "@/server/notifications/service";
 import { matchEnabledSearchAlerts, matchEnabledSearchAlertsFromMysql } from "@/server/search-alerts/matcher";
@@ -11,6 +13,7 @@ import {
   type RunCrawlerSourceOnceResult,
 } from "./orchestrator";
 import { recordSourceHealthOutcome } from "./source-health-outcome";
+import { retryCrawlerSourceResult, type CrawlerRetryOptions } from "./retrying-runner";
 import {
   PlatformDeferralTracker,
   isPlatformThrottleSignature,
@@ -47,7 +50,21 @@ export interface RunConfiguredCrawlerSourcesOnceOptions {
   matcher?: CrawlerMatcher;
   notifier?: CrawlerNotifier;
   stateRunnerOptions?: { limit?: number; query?: string | null };
+  /** Retry persisted missing bodies without listing or claiming current source liveness. */
+  detailBackfillOnly?: boolean;
+  sourceIds?: string[];
+  /** Append a controlled historical sweep to the existing worker tick; defaults to env, false. */
+  includeDetailBackfill?: boolean;
+  detailBackfillMaxSources?: number;
+  /** Internal: automatic retries exclude manual cadence and skip records still cooling down. */
+  automaticDetailBackfill?: boolean;
+  /** Shared when a normal tick appends historical work, preserving platform request spacing. */
+  platformTracker?: PlatformDeferralTracker;
   runCrawlerSourceOnce?: ConfiguredRunner;
+  /** Retry individual source attempts here so each attempt observes the shared controls. */
+  retry?: Omit<CrawlerRetryOptions, "canRetry">;
+  /** Stop admitting work after worker shutdown; an already-running lease completes normally. */
+  isStopping?: () => boolean;
   /** Contract C7 knobs (injectable sleeper/interval); defaults come from the environment. */
   platformDeferral?: PlatformDeferralOptions;
   /** Hourly request budgets per provider_family (spec 2026-09-24 §5.5); defaults from CRAWLER_PLATFORM_BUDGETS over `bidnet=60`. */
@@ -60,6 +77,33 @@ export interface RunConfiguredCrawlerSourcesOnceOptions {
   platformPauses?: PlatformPauseRegistry;
   /** Wall clock for pauses (tests). */
   clock?: () => number;
+}
+
+function missingBody(row: DetailHistoryRecord): boolean {
+  return !getBidDescription({ title: String(row.title ?? ""), description: String(row.description ?? ""), fullDescription: String(row.full_description ?? "") });
+}
+
+function historyOutcome(row: DetailHistoryRecord): Record<string, unknown> {
+  const raw = row.raw_payload as { enrichment?: { outcome?: unknown } } | null;
+  const outcome = raw?.enrichment?.outcome;
+  return outcome && typeof outcome === "object" && !Array.isArray(outcome) ? outcome as Record<string, unknown> : {};
+}
+
+function historyDue(row: DetailHistoryRecord, now: Date): boolean {
+  const retry = historyOutcome(row).next_retry_at;
+  const at = typeof retry === "string" ? Date.parse(retry) : NaN;
+  return !Number.isFinite(at) || at <= now.getTime();
+}
+
+function historyAge(row: DetailHistoryRecord): number {
+  const at = historyOutcome(row).attempted_at ?? row.first_seen_at;
+  const parsed = typeof at === "string" ? Date.parse(at) : NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function detailBackfillSourceCap(options: RunConfiguredCrawlerSourcesOnceOptions): number {
+  const value = options.detailBackfillMaxSources ?? Number(process.env.CRAWLER_DETAIL_BACKFILL_MAX_SOURCES_PER_TICK ?? 10);
+  return Number.isInteger(value) && value >= 1 && value <= 100 ? value : 10;
 }
 
 export function parseStateCrawlerLimit() {
@@ -109,13 +153,33 @@ export async function runConfiguredCrawlerSourcesOnce(
 
   // Budgeted families are no longer subject to the flat per-tick concurrency cap; the budget
   // itself decides how many of them run this tick.
-  const dueSources = selectDueSources(allSources, now, { uncappedFamilies: budget.budgetedFamilies() });
+  const selectedSources = options.sourceIds ? allSources.filter((source) => options.sourceIds!.includes(source.id)) : allSources;
+  let dueSources = options.detailBackfillOnly ? selectedSources : selectDueSources(selectedSources, now, { uncappedFamilies: budget.budgetedFamilies() });
+  if (options.detailBackfillOnly && options.automaticDetailBackfill) {
+    const queue: Array<{ source: CrawlableSource; oldest: number }> = [];
+    for (const source of selectedSources) {
+      const enrichment = source.fetchConfig.enrichment as { enabled?: unknown } | null;
+      if (source.cadence === "manual" || (source.id !== "sam_gov" && enrichment?.enabled !== true)) continue;
+      const history = await loadDetailHistory({ database: options.database, mysql: options.mysql }, source.id, source);
+      const ready = history.filter((row) => missingBody(row) && historyDue(row, now));
+      if (ready.length) queue.push({ source, oldest: ready.reduce((oldest, row) => Math.min(oldest, historyAge(row)), Infinity) });
+    }
+    dueSources = queue.sort((left, right) => left.oldest - right.oldest || left.source.id.localeCompare(right.source.id))
+      .map(({ source }) => source);
+  }
   const results: RunCrawlerSourceOnceResult[] = [];
-  const platform = new PlatformDeferralTracker(options.platformDeferral);
+  const platform = options.platformTracker ?? new PlatformDeferralTracker(options.platformDeferral);
 
+  let historicalSourcesStarted = 0;
   for (const source of dueSources) {
+    if (options.isStopping?.()) break;
+    if (options.automaticDetailBackfill && historicalSourcesStarted >= detailBackfillSourceCap(options)) break;
     const family = source.providerFamily;
-    const isSamGov = source.id === "sam_gov" || source.issuerType === "federal";
+    const isSamGov = source.id === "sam_gov";
+    if (options.detailBackfillOnly) {
+      const history = await loadDetailHistory({ database: options.database, mysql: options.mysql }, source.id, source);
+      if (!history.some(missingBody)) continue;
+    }
 
     // Same-tick throttle first: the existing C7 behavior reports these as `deferred` results.
     const throttledBy = platform.deferredBy(source);
@@ -130,45 +194,89 @@ export async function runConfiguredCrawlerSourcesOnce(
       skip(family, "paused");
       continue;
     }
-    const reserved = budget.isBudgeted(family) ? budget.reserve(family, listPagesFor(source)) : null;
+    let reserved = budget.isBudgeted(family) ? budget.reserve(family, listPagesFor(source)) : null;
     if (budget.isBudgeted(family) && reserved === null) {
       skip(family, "budget");
       continue;
     }
-    await platform.waitForPlatformSlot(source);
+    historicalSourcesStarted += 1;
+    const runAttempt = async (): Promise<RunCrawlerSourceOnceResult | null> => {
+      await platform.waitForPlatformSlot(source);
+      if (options.isStopping?.()) {
+        if (reserved !== null && family) budget.settle(family, reserved, 0);
+        return null;
+      }
+      let effectiveSource = source;
+      if (options.detailBackfillOnly && reserved !== null) {
+        const rawEnrichment = source.fetchConfig.enrichment;
+        const enrichment = rawEnrichment && typeof rawEnrichment === "object" && !Array.isArray(rawEnrichment) ? rawEnrichment as Record<string, unknown> : {};
+        const requested = typeof enrichment.max_details_per_run === "number" ? enrichment.max_details_per_run : 25;
+        effectiveSource = { ...source, fetchConfig: { ...source.fetchConfig, enrichment: { ...enrichment, max_details_per_run: Math.max(1, Math.min(requested, reserved)) } } };
+      }
+      let result: RunCrawlerSourceOnceResult;
+      try {
+        result = await runCrawlerSourceOnce(options.database, {
+          mysql: options.mysql,
+          source: source.id,
+          owner: options.owner,
+          runner: isSamGov
+            ? (_runnerOptions, context) => runSamGovCrawler({ historyStore: { database: options.database, mysql: options.mysql }, detailBackfillOnly: options.detailBackfillOnly, ...(options.detailBackfillOnly && reserved !== null ? { maxDescriptions: reserved } : {}) }, context)
+            : (_runnerOptions, context) =>
+                runStateSourceAndImport(effectiveSource, options, {
+                  taskId: `tsk_${source.id}_${now.getTime()}`,
+                  limit: options.stateRunnerOptions?.limit,
+                  query: options.stateRunnerOptions?.query ?? null,
+                  detailBackfillOnly: options.detailBackfillOnly,
+                }, context),
+          matcher,
+          notifier,
+        });
+      } catch (error) {
+        result = crawlerExceptionResult(source.id, error);
+      }
+      if (reserved !== null && family) {
+        const contacted = result.status === "success" || result.status === "failure";
+        budget.settle(family, reserved, contacted ? requestsMadeOf(result) ?? reserved : 0);
+      }
+      platform.observe(source, result);
+      if (family && isPlatformThrottleSignature(result)) pauses.pause(family, clock() + pauseMs);
+      return result;
+    };
 
-    let result: RunCrawlerSourceOnceResult;
-    try {
-      result = await runCrawlerSourceOnce(options.database, {
-        mysql: options.mysql,
-        source: source.id,
-        owner: options.owner,
-        runner: isSamGov
-          ? (_runnerOptions, context) => runSamGovCrawler(undefined, context)
-          : (_runnerOptions, context) =>
-              runStateSourceAndImport(source, options, {
-                taskId: `tsk_${source.id}_${now.getTime()}`,
-                limit: options.stateRunnerOptions?.limit,
-                query: options.stateRunnerOptions?.query ?? null,
-              }, context),
-        matcher,
-        notifier,
-      });
-    } catch (error) {
-      result = crawlerExceptionResult(source.id, error);
-    }
+    const result = options.retry ? await retryCrawlerSourceResult(runAttempt, {
+      ...options.retry,
+      canRetry: () => {
+        if (options.isStopping?.() || platform.deferredBy(source) || pauses.pausedUntil(family, clock()) !== null) return false;
+        if (!budget.isBudgeted(family)) return true;
+        reserved = budget.reserve(family, listPagesFor(source));
+        return reserved !== null;
+      },
+    }) : await runAttempt();
 
+    if (result === null) break;
     results.push(result);
-    if (reserved !== null && family) budget.settle(family, reserved, requestsMadeOf(result) ?? reserved);
-    platform.observe(source, result);
-    if (family && isPlatformThrottleSignature(result)) pauses.pause(family, clock() + pauseMs);
-    await recordSourceHealthOutcome(options, source.id, result, (options.now ?? new Date()).toISOString());
+    if (!options.detailBackfillOnly) await recordSourceHealthOutcome(options, source.id, result, (options.now ?? new Date()).toISOString());
   }
 
   for (const [family, counts] of skipped) {
     console.info(JSON.stringify({ event: "crawler_platform_sources_skipped", family, ...counts }));
   }
 
+  const includeDetailBackfill = options.includeDetailBackfill ?? process.env.CRAWLER_DETAIL_BACKFILL_ENABLED === "true";
+  if (!options.detailBackfillOnly && includeDetailBackfill) {
+    const historical = await runConfiguredCrawlerSourcesOnce({
+      ...options,
+      detailBackfillOnly: true,
+      automaticDetailBackfill: true,
+      includeDetailBackfill: false,
+      platformBudget: budget,
+      platformPauses: pauses,
+      platformTracker: platform,
+      matcher: async () => ({ evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0, matches: [] }),
+      notifier: async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 }),
+    });
+    results.push(...historical);
+  }
   return results;
 }
 
@@ -179,7 +287,7 @@ async function runStateSourceAndImport(
   taskOptions: CrawlTaskOptions,
   context?: CrawlerExecutionContext,
 ): Promise<CrawlTaskResult> {
-  const result = await runCrawlTask(source, taskOptions, context);
+  const result = await runCrawlTask(source, { ...taskOptions, historyStore: { database: options.database, mysql: options.mysql } }, context);
   await context?.assertLease();
   return persistCrawlTaskResult(options.database, options.mysql, source, result, context?.lease);
 }

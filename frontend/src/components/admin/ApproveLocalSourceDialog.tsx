@@ -38,12 +38,12 @@ export interface ApproveLocalSourceForm {
 
 /**
  * Jurisdiction levels the governance gate holds back. `blockedReasonFor()` requires explicit
- * approval for every level outside {federal, state}; legacy NULL rows are state portals.
+ * approval for every level outside {federal, state}; NULL levels use the registered issuer type.
  */
 export function isLocalJurisdictionSource(
   source: Pick<AdminDataSource, "jurisdictionLevel" | "issuerType">,
 ): boolean {
-  const level = source.jurisdictionLevel ?? (source.issuerType === "federal" ? "federal" : "state");
+  const level = source.jurisdictionLevel ?? source.issuerType;
   return level !== "federal" && level !== "state";
 }
 

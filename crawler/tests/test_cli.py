@@ -214,6 +214,8 @@ def test_fetch_sam_gov_writes_bids_and_crawler_log(tmp_path, monkeypatch):
             "50",
             "--max-records",
             "75",
+            "--max-descriptions",
+            "12",
         ]
     )
 
@@ -225,6 +227,7 @@ def test_fetch_sam_gov_writes_bids_and_crawler_log(tmp_path, monkeypatch):
     assert calls[0]["posted_to"] == "05/19/2026"
     assert calls[0]["limit"] == 50
     assert calls[0]["max_records"] == 75
+    assert calls[0]["max_descriptions"] == 12
     log = connection.execute(
         "SELECT source, status, fetched_count, inserted_count, updated_count FROM crawler_logs"
     ).fetchone()
@@ -252,7 +255,9 @@ def test_fetch_sam_gov_output_json_writes_success_payload(tmp_path, monkeypatch,
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 0
     assert_json_run_payload(payload, source="SAM.gov", status="success")
-    assert payload["metadata"] == {"posted_from": "05/01/2026", "posted_to": "05/19/2026", "limit": 100}
+    assert {key: value for key, value in payload["metadata"].items() if key != "dataQuality"} == {"posted_from": "05/01/2026", "posted_to": "05/19/2026", "limit": 100, "enrichment": {"attempted": 0, "enriched": 0, "valid_bodies": 0, "failed": 0, "skipped": 1}}
+    assert payload["metadata"]["dataQuality"]["acceptedCount"] == 1
+    assert payload["metadata"]["dataQuality"]["quarantinedCount"] == 0
     assert payload["bids"] == [normalized_bid()]
     assert payload["errorCode"] is None
     assert payload["errorMessage"] is None

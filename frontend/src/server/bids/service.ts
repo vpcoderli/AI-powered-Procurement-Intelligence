@@ -1,4 +1,5 @@
 import { STATE_FILTERS } from "@/lib/mock-data";
+import { getBidDescription } from "@/lib/bid-description";
 import { db } from "@/server/db/client";
 import type { AppDatabase } from "@/server/db/client";
 import { listWorkspaceMemberUserIds } from "@/server/account/workspace";
@@ -57,8 +58,7 @@ function matchesKeyword(bid: Bid, q: string) {
   return [
     bid.title,
     bid.solicitationNumber ?? "",
-    bid.description,
-    bid.fullDescription ?? "",
+    getBidDescription(bid),
     bid.issuerName,
     bid.originalCategory,
     ...bid.tags,
@@ -72,7 +72,10 @@ function matchesStates(bid: Bid, states: string[]) {
   if (states.length === 0) return true;
 
   const selectedFilters = STATE_FILTERS.filter((state) => states.includes(state.id));
+  const stateCode = bid.stateCode.trim().toUpperCase();
+  if (stateCode) return selectedFilters.some((filter) => filter.stateCode === stateCode);
 
+  // Legacy rows without geography may still be identified by their registered source label.
   return selectedFilters.some(
     (filter) =>
       filter.stateCode === bid.stateCode ||
@@ -127,9 +130,10 @@ async function savedBidsResponse(database: AppDatabase, userId: string): Promise
   const savedIds = await listSavedBidIds(database, userId, scopeUserIds);
   const savedIdSet = new Set(savedIds);
   const bids = await listBids(database, savedIds);
+  const visibleBidIds = new Set(bids.map((bid) => bid.id));
 
   return {
-    savedBidIds: savedIds,
+    savedBidIds: savedIds.filter((id) => visibleBidIds.has(id)),
     bids: bids.filter((bid) => savedIdSet.has(bid.id)),
   };
 }
@@ -212,9 +216,10 @@ async function savedBidsResponseFromMysql(mysql: MysqlBidsReader, userId: string
   const savedIds = await listSavedBidIdsFromMysql(mysql, userId);
   const savedIdSet = new Set(savedIds);
   const bids = await listBidsFromMysql(mysql, savedIds);
+  const visibleBidIds = new Set(bids.map((bid) => bid.id));
 
   return {
-    savedBidIds: savedIds,
+    savedBidIds: savedIds.filter((id) => visibleBidIds.has(id)),
     bids: bids.filter((bid) => savedIdSet.has(bid.id)),
   };
 }

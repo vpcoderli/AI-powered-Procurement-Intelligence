@@ -1,27 +1,18 @@
 import { createDatabase } from "../src/server/db/client";
 import { closeResolvedMysqlPool, isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "../src/server/db/mysql";
 import { runMigrations } from "../src/server/db/migrate";
-import { parseStateCrawlerLimit, runConfiguredCrawlerSourcesOnce } from "../src/server/crawler/configured-runner";
-import { PlatformPauseRegistry, PlatformTickBudget, platformBudgetsFromEnv } from "../src/server/crawler/platform-budget";
-import { PrecheckRetryRegistry, runQueuedPrechecksOnce } from "../src/server/crawler/precheck-queue-runner";
+import { parseStateCrawlerLimit } from "../src/server/crawler/configured-runner";
+import { createCrawlerWorkerTick } from "../src/server/crawler/worker-tick";
 import { createLogger } from "../src/lib/observability/logger";
 import { captureException } from "../src/lib/observability/sentry";
-
-const workerLogger = createLogger({ service: "worker:crawler" });
-import {
-  runCrawlerSourceOnce as defaultRunCrawlerSourceOnce,
-  type CrawlerNotifier,
-  type RunCrawlerSourceOnceOptions,
-  type RunCrawlerSourceOnceResult,
-} from "../src/server/crawler/orchestrator";
+import type { CrawlerNotifier } from "../src/server/crawler/orchestrator";
 import { sendMatchedAlertNotifications, sendMatchedAlertNotificationsFromMysql } from "../src/server/notifications/service";
 import { createNotificationProvider } from "../src/server/notifications/provider";
 import { createRetryingNotificationProvider } from "../src/server/notifications/retrying-provider";
-import { emitWorkerFailureAlert } from "../src/lib/resilience/failure-alerts";
-import { retryCrawlerSourceResult } from "../src/server/crawler/retrying-runner";
 import type { AppDatabase } from "../src/server/db/client";
 import type { MysqlCrawlerLockStore } from "../src/server/crawler/lock-repository";
 
+const workerLogger = createLogger({ service: "worker:crawler" });
 const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
 const PRODUCTION_LIKE_ENV_VALUES = new Set(["production", "prod", "staging"]);
 type WorkerEnv = NonNullable<Parameters<typeof isMysqlDatabaseUrlConfigured>[0]>;
@@ -67,91 +58,9 @@ function owner() {
   return process.env.CRAWLER_OWNER ?? `crawler-worker:${process.pid}`;
 }
 
-// A ref'd timer on purpose: it also paces the platform-spacing waits below, and a worker on SQLite has
-// no other handle to keep the event loop alive while it waits (an unref'd timer would let it exit 0).
+// A ref'd timer keeps a SQLite worker alive between ticks when no database socket is open.
 function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
-}
-
-function crawlerRetryMaxAttempts() {
-  return positiveIntegerEnv("CRAWLER_WORKER_RETRY_MAX_ATTEMPTS") ?? 3;
-}
-
-function crawlerRetryBaseDelayMs() {
-  return positiveIntegerEnv("CRAWLER_WORKER_RETRY_BASE_DELAY_MS") ?? 500;
-}
-
-function crawlerRetryMaxDelayMs() {
-  return positiveIntegerEnv("CRAWLER_WORKER_RETRY_MAX_DELAY_MS") ?? 30_000;
-}
-
-/**
- * Wraps the default `runCrawlerSourceOnce` (one crawler source: acquire crawlerLocks row,
- * run the crawler subprocess, match+notify, release lock) with retry+backoff, retried
- * per-source rather than for the whole tick, so one flaky state portal doesn't block or
- * repeat work for the other 50 configured sources. Each retry attempt re-runs the full
- * acquire-lock -> run -> release-lock cycle for that source; the crawlerLocks table (see
- * lock-repository.ts) already guarantees only one owner holds the lock at a time and the
- * lock is always released in a `finally`, so re-attempting is safe and does not risk a
- * stuck lock or duplicate concurrent runs of the same source.
- *
- * Only structured network failures are retried; persistence, parsing, empty-result and
- * lease failures are terminal, and so is a platform throttle signature (a challenge, or a
- * 403/429/202 answer): the platform pause answers that, not another request. Successful
- * ingestion remains terminal if matching or notification fails; "locked" (another owner is already running it), "disabled", and
- * "blocked" (governance/legal hold) are terminal for this tick and are returned as-is
- * without consuming a retry attempt, since retrying them cannot change the outcome.
- */
-function createRetryingRunCrawlerSourceOnce(runCrawlerSourceOnce: typeof defaultRunCrawlerSourceOnce) {
-  const maxAttempts = crawlerRetryMaxAttempts();
-  const baseDelayMs = crawlerRetryBaseDelayMs();
-  const maxDelayMs = crawlerRetryMaxDelayMs();
-
-  return async function retryingRunCrawlerSourceOnce<TOptions>(
-    db: Parameters<typeof defaultRunCrawlerSourceOnce>[0],
-    options: RunCrawlerSourceOnceOptions<TOptions>,
-  ): Promise<RunCrawlerSourceOnceResult> {
-    let attemptsMade = 0;
-
-    const result = await retryCrawlerSourceResult(
-      () => runCrawlerSourceOnce(db, options),
-      {
-        maxAttempts,
-        baseDelayMs,
-        maxDelayMs,
-        onAttemptFailure: ({ attempt, retryable }) => {
-          attemptsMade = attempt;
-          if (attempt < maxAttempts && retryable) {
-            console.warn(
-              JSON.stringify({
-                worker: "crawler-worker",
-                event: "source_retry",
-                source: options.source,
-                attempt,
-                maxAttempts,
-              }),
-            );
-          }
-        },
-      },
-    );
-
-    if (!result.ok && result.status === "failure") {
-      emitWorkerFailureAlert({
-        worker: "crawler-worker",
-        reason: "crawler_source_retries_exhausted",
-        itemId: options.source,
-        // `attemptsMade` reflects the actual number of run attempts made for this source —
-        // this is 1 when the first failure was already terminal, not the configured
-        // `maxAttempts`.
-        attempts: attemptsMade || maxAttempts,
-        error: result.runner.stderr || `Crawler source ${options.source} failed`,
-        context: { owner: options.owner, stdout: result.runner.stdout?.slice(0, 2000) },
-      });
-    }
-
-    return result;
-  };
 }
 
 /**
@@ -247,52 +156,31 @@ async function main() {
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
 
-  const retryingRunCrawlerSourceOnce = createRetryingRunCrawlerSourceOnce(defaultRunCrawlerSourceOnce);
   // Everything from the moment the shared pool is resolved sits inside this try/finally, so a worker that crashes
   // while starting (a bad notification provider config, say) still releases it: the pool's idle-connection timer
   // would otherwise keep the process alive and its supervisor would never restart it.
   try {
     const mysql = isMysqlDatabaseUrlConfigured() ? resolveMysqlPool() : undefined;
     const notifier = createRetryingCrawlerNotifier(db, mysql);
-    // One registry for the worker's whole lifetime: a platform pause (spec 2026-09-24 §5.5) must
-    // outlive the tick that observed the throttle signature.
-    const platformPauses = new PlatformPauseRegistry();
-    // Same lifetime for the retry state of challenged/errored prechecks: without it one broken source
-    // would head the queue, and re-pause its platform, on every tick.
-    const precheckRetries = new PrecheckRetryRegistry();
-    // The spacing waits between two requests of one platform (both steps) reuse the ref'd `sleep` above, so the
-    // worker keeps one timer. The tracker's own default is ref'd as well now (an unref'd timer would let a
-    // SQLite-topology worker exit 0 in the middle of a wait); injecting this one keeps that from depending on it.
-    const platformDeferral = { sleep };
+    const tick = createCrawlerWorkerTick({
+      database: db,
+      mysql,
+      owner: owner(),
+      stateRunnerOptions: { limit: parseStateCrawlerLimit() },
+      notifier,
+      tickMs: intervalMs(),
+      isStopping: () => stopping,
+    });
 
     while (!stopping) {
-      // One budget per tick: the daily lists spend first, the precheck queue gets what is left (spec §5.5).
-      const budget = new PlatformTickBudget(platformBudgetsFromEnv(), intervalMs());
-      const results = await runConfiguredCrawlerSourcesOnce({
-        database: db,
-        mysql,
-        owner: owner(),
-        stateRunnerOptions: { limit: parseStateCrawlerLimit() },
-        runCrawlerSourceOnce: retryingRunCrawlerSourceOnce,
-        notifier,
-        platformPauses,
-        platformBudget: budget,
-        platformDeferral,
-        tickMs: intervalMs(),
-      });
-      workerLogger.info("crawler_run_completed", { results });
-
-      // A shutdown requested during the crawl step must not start a new batch of platform requests;
-      // queued flags survive and the next worker start picks them up.
-      if (!stopping) {
-        try {
-          const prechecks = await runQueuedPrechecksOnce({ database: db, mysql, budget, pauses: platformPauses, retries: precheckRetries, platformDeferral });
-          workerLogger.info("crawler_precheck_queue_completed", { prechecks });
-        } catch (error) {
-          workerLogger.error("crawler_precheck_queue_failed", { error });
-          captureException(error, { worker: "crawler", step: "precheck_queue" });
-        }
+      const { lists, prechecks, backfill, precheckError } = await tick();
+      workerLogger.info("crawler_run_completed", { results: lists });
+      if (prechecks) workerLogger.info("crawler_precheck_queue_completed", { prechecks });
+      if (precheckError) {
+        workerLogger.error("crawler_precheck_queue_failed", { error: precheckError });
+        captureException(precheckError, { worker: "crawler", step: "precheck_queue" });
       }
+      if (backfill.length) workerLogger.info("crawler_detail_backfill_completed", { results: backfill });
 
       if (!stopping) {
         await sleep(intervalMs());

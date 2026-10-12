@@ -1,0 +1,223 @@
+{
+  "base": {
+    "id": "portal:1",
+    "title": "Road repairs",
+    "description": "Repair bridges.",
+    "issuer_name": "City procurement",
+    "issuer_type": "city",
+    "state_code": "IL",
+    "source_url": "https://procurement.example.gov/bids/1"
+  },
+  "cases": [
+    {
+      "name": "real short scope",
+      "override": {},
+      "coreIssues": [],
+      "bodyValid": true
+    },
+    {
+      "name": "missing identity",
+      "override": {
+        "id": null
+      },
+      "coreIssues": [
+        "missing_identity"
+      ],
+      "bodyValid": true
+    },
+    {
+      "name": "fabricated identity",
+      "override": {
+        "id": "portal:unknown"
+      },
+      "coreIssues": [
+        "missing_identity"
+      ],
+      "bodyValid": true
+    },
+    {
+      "name": "placeholder title",
+      "override": {
+        "title": "Untitled opportunity"
+      },
+      "coreIssues": [
+        "invalid_title"
+      ],
+      "bodyValid": true
+    },
+    {
+      "name": "placeholder issuer",
+      "override": {
+        "issuer_name": "Unknown state agency"
+      },
+      "coreIssues": [
+        "invalid_issuer"
+      ],
+      "bodyValid": true
+    },
+    {
+      "name": "invalid state",
+      "override": {
+        "state_code": "ZZ"
+      },
+      "coreIssues": [
+        "invalid_state_code"
+      ],
+      "bodyValid": true
+    },
+    {
+      "name": "federal US",
+      "override": {
+        "issuer_type": "federal",
+        "state_code": "US"
+      },
+      "coreIssues": [],
+      "bodyValid": true
+    },
+    {
+      "name": "DC state FIPS",
+      "override": {
+        "issuer_type": "state",
+        "state_code": "DC",
+        "fips_code": "11"
+      },
+      "coreIssues": [],
+      "bodyValid": true
+    },
+    {
+      "name": "local type conflict",
+      "override": {
+        "jurisdiction_level": "county"
+      },
+      "coreIssues": [
+        "jurisdiction_mismatch"
+      ],
+      "bodyValid": true
+    },
+    {
+      "name": "local FIPS wrong state",
+      "override": {
+        "fips_code": "0614000"
+      },
+      "coreIssues": [
+        "invalid_fips_code"
+      ],
+      "bodyValid": true
+    },
+    {
+      "name": "unsafe source URL",
+      "override": {
+        "source_url": "javascript:alert(1)"
+      },
+      "coreIssues": [
+        "invalid_source_url"
+      ],
+      "bodyValid": true
+    },
+    {
+      "name": "URL credentials",
+      "override": {
+        "source_url": "https://user@procurement.example.gov/bids/1"
+      },
+      "coreIssues": [
+        "invalid_source_url"
+      ],
+      "bodyValid": true
+    },
+    {
+      "name": "homepage fallback",
+      "override": {
+        "source_url": "https://procurement.example.gov/"
+      },
+      "coreIssues": [
+        "missing_source_locator"
+      ],
+      "bodyValid": true
+    },
+    {
+      "name": "homepage with actual source identity",
+      "override": {
+        "source_url": "https://procurement.example.gov/",
+        "source_bid_id": "1"
+      },
+      "coreIssues": [],
+      "bodyValid": true
+    },
+    {
+      "name": "title echo",
+      "override": {
+        "description": "Road repairs."
+      },
+      "coreIssues": [],
+      "bodyValid": false
+    },
+    {
+      "name": "portal label",
+      "override": {
+        "description": "Bulletin Desc:"
+      },
+      "coreIssues": [],
+      "bodyValid": false
+    },
+    {
+      "name": "misplaced purchase method",
+      "override": {
+        "description": "Purchase Method: Open Market"
+      },
+      "coreIssues": [],
+      "bodyValid": false
+    },
+    {
+      "name": "notice type",
+      "override": {
+        "description": "Solicitation"
+      },
+      "coreIssues": [],
+      "bodyValid": false
+    },
+    {
+      "name": "login page",
+      "override": {
+        "description": "Please sign in to view this opportunity"
+      },
+      "coreIssues": [],
+      "bodyValid": false
+    },
+    {
+      "name": "navigation newlines",
+      "override": {
+        "description": "Home\nPrivacy policy\nContact us"
+      },
+      "coreIssues": [],
+      "bodyValid": false
+    },
+    {
+      "name": "body endpoint URL",
+      "override": {
+        "description": "https://api.sam.gov/prod/opportunities/v1/noticedesc?noticeid=fixture"
+      },
+      "coreIssues": [],
+      "bodyValid": false
+    },
+    {
+      "name": "invalid secondary identity",
+      "override": {
+        "source_bid_id": "unknown"
+      },
+      "coreIssues": [
+        "missing_identity"
+      ],
+      "bodyValid": true
+    },
+    {
+      "name": "credential URL query",
+      "override": {
+        "source_url": "https://procurement.example.gov/bids/1?api_key=fixture"
+      },
+      "coreIssues": [
+        "invalid_source_url"
+      ],
+      "bodyValid": true
+    }
+  ]
+}

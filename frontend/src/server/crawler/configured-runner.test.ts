@@ -106,6 +106,82 @@ describe("runConfiguredCrawlerSourcesOnce reads sources from the database", () =
   const noopMatcher = async () => ({ matched: 0, matches: [] }) as never;
   const noopNotifier = async () => ({ queued: 0, sent: 0, skipped: 0, failed: 0 });
 
+  it("caps history-only details to the reserved platform budget without advancing list health", async () => {
+    insertSource("backlog_source", { lastSuccessAt: NOW, providerFamily: "bidnet", fetchConfig: JSON.stringify({ enrichment: { enabled: true, max_details_per_run: 25 } }) });
+    testDb.db.insert(bids).values({
+      id: "backlog_source:old", source: "backlog_source", sourceBidId: "old", dedupeKey: "backlog_source:old",
+      title: "Road repair", description: "Road repair", issuerName: "County", issuerType: "state", stateCode: "CA",
+      sourceUrl: "https://public.example/bid/old", firstSeenAt: NOW, lastSeenAt: NOW, createdAt: NOW, updatedAt: NOW,
+    }).run();
+    mockedRunCrawlTask.mockResolvedValue({ ok: true, source: "backlog_source", status: "success", stdout: "", stderr: "", fetchedCount: 0, errorCode: null, payload: null });
+    await runConfiguredCrawlerSourcesOnce({
+      database: testDb.db, owner: "backfill-test", now: new Date(NOW), detailBackfillOnly: true, sourceIds: ["backlog_source"],
+      platformBudgets: new Map([["bidnet", 4]]), tickMs: 3600000, platformDeferral: { minIntervalMs: 0 },
+      matcher: noopMatcher, notifier: noopNotifier,
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
+        await options.runner();
+        return { ok: true, source: options.source, status: "success" };
+      }) as never,
+    });
+    const [source, task] = mockedRunCrawlTask.mock.lastCall!;
+    expect(source.fetchConfig.enrichment).toMatchObject({ max_details_per_run: 4 });
+    expect(task.detailBackfillOnly).toBe(true);
+    expect(task.historyStore?.database).toBe(testDb.db);
+    expect(getSource("backlog_source")?.lastSuccessAt).toBe(NOW);
+    mockedRunCrawlTask.mockReset();
+  });
+
+  it("optionally retries historical bodies in the worker using the same remaining budget and spacing", async () => {
+    insertSource("worker_source", { providerFamily: "bidnet", fetchConfig: JSON.stringify({ enrichment: { enabled: true, max_details_per_run: 25 } }) });
+    insertSource("manual_source", { providerFamily: "bidnet", cadence: "manual", fetchConfig: JSON.stringify({ enrichment: { enabled: true } }) });
+    for (const id of ["worker_source", "manual_source"]) testDb.db.insert(bids).values({
+      id: `${id}:old`, source: id, sourceBidId: "old", dedupeKey: `${id}:old`, title: "Road repair", description: "Road repair",
+      issuerName: "County", issuerType: "state", stateCode: "CA", sourceUrl: "https://public.example/bid/old",
+      firstSeenAt: NOW, lastSeenAt: NOW, createdAt: NOW, updatedAt: NOW,
+    }).run();
+    const spacing: number[] = [];
+    mockedRunCrawlTask.mockReset();
+    mockedRunCrawlTask.mockResolvedValue({ ok: true, source: "worker_source", status: "success", stdout: "", stderr: "", fetchedCount: 0, errorCode: null, payload: null });
+    const options = {
+      database: testDb.db, owner: "automatic-backfill-test", now: new Date(NOW), includeDetailBackfill: true,
+      platformBudgets: new Map([["bidnet", 5]]), tickMs: 3600000,
+      platformDeferral: { minIntervalMs: 1, sleep: async (ms: number) => { spacing.push(ms); }, now: () => 0 },
+      matcher: noopMatcher, notifier: noopNotifier,
+      runCrawlerSourceOnce: (async (_db: AppDatabase, run: RunCrawlerSourceOnceOptions) => {
+        await run.runner();
+        return { ok: true, source: run.source, status: "success", runner: { ok: true, source: run.source, status: "success", stdout: "", stderr: "", payload: { metadata: { pagination: { requests_made: 1 } } } } };
+      }) as never,
+    };
+    await runConfiguredCrawlerSourcesOnce(options);
+    expect(mockedRunCrawlTask.mock.calls.map(([source]) => source.id)).toEqual(["worker_source", "worker_source"]);
+    expect(mockedRunCrawlTask.mock.calls[1][1].detailBackfillOnly).toBe(true);
+    expect(mockedRunCrawlTask.mock.calls[1][0].fetchConfig.enrichment).toMatchObject({ max_details_per_run: 4 });
+    expect(spacing).toEqual([1]);
+    mockedRunCrawlTask.mockReset();
+  });
+
+  it("does not let a paused old backlog consume the automatic source cap", async () => {
+    insertSource("old_paused", { providerFamily: "bidnet", fetchConfig: JSON.stringify({ enrichment: { enabled: true } }) });
+    insertSource("new_ready", { fetchConfig: JSON.stringify({ enrichment: { enabled: true } }) });
+    for (const [id, firstSeen] of [["old_paused", "2026-06-01T00:00:00Z"], ["new_ready", "2026-07-01T00:00:00Z"]]) testDb.db.insert(bids).values({
+      id: `${id}:old`, source: id, sourceBidId: "old", dedupeKey: `${id}:old`, title: "Road repair", description: "Road repair",
+      issuerName: "County", issuerType: "state", stateCode: "CA", sourceUrl: "https://public.example/bid/old",
+      firstSeenAt: firstSeen, lastSeenAt: NOW, createdAt: NOW, updatedAt: NOW,
+    }).run();
+    const pauses = new PlatformPauseRegistry();
+    pauses.pause("bidnet", 100000);
+    const attempted: string[] = [];
+    await runConfiguredCrawlerSourcesOnce({ database: testDb.db, owner: "fair-backfill", now: new Date(NOW), detailBackfillOnly: true,
+      automaticDetailBackfill: true, detailBackfillMaxSources: 1, platformPauses: pauses, clock: () => 0,
+      matcher: noopMatcher, notifier: noopNotifier,
+      runCrawlerSourceOnce: (async (_db: AppDatabase, options: RunCrawlerSourceOnceOptions) => {
+        attempted.push(options.source);
+        return { ok: true, source: options.source, status: "success" };
+      }) as never,
+    });
+    expect(attempted).toEqual(["new_ready"]);
+  });
+
   it("runs only sources that are due", async () => {
     insertSource("due_source", { lastSuccessAt: null });
     insertSource("not_due_source", { lastSuccessAt: NOW });
@@ -762,12 +838,14 @@ describe("runConfiguredCrawlerSourcesOnce threads stateRunnerOptions into state 
     });
 
     expect(mockedRunSamGovCrawler).toHaveBeenCalledTimes(1);
-    expect(mockedRunSamGovCrawler).toHaveBeenCalledWith(undefined, undefined);
+    expect(mockedRunSamGovCrawler).toHaveBeenCalledWith({ historyStore: { database: testDb.db, mysql: undefined }, detailBackfillOnly: undefined }, undefined);
 
     expect(mockedRunCrawlTask).toHaveBeenCalledTimes(1);
     const [sourceArg, taskOptions] = mockedRunCrawlTask.mock.calls[0];
     expect(sourceArg.id).toBe("state_source_with_limit");
     expect(taskOptions).toEqual({
+      historyStore: { database: testDb.db, mysql: undefined },
+      detailBackfillOnly: undefined,
       taskId: `tsk_state_source_with_limit_${new Date(NOW).getTime()}`,
       limit: 7,
       query: "roads",

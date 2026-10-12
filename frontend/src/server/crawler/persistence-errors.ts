@@ -1,5 +1,6 @@
 import type { CrawlerJsonRunPayload } from "./mysql-json-importer";
 import { CrawlerLeaseLostError } from "./execution-context";
+import { createImportQualityGate } from "./data-quality";
 
 export class CrawlerPersistenceError extends Error {
   failureLogged = false;
@@ -11,7 +12,7 @@ export class CrawlerPersistenceError extends Error {
 }
 
 export function persistenceFailurePayload(payload: CrawlerJsonRunPayload, error: unknown): CrawlerJsonRunPayload {
-  return {
+  const failed: CrawlerJsonRunPayload = {
     ...payload,
     status: "failure",
     finishedAt: new Date().toISOString(),
@@ -21,6 +22,9 @@ export function persistenceFailurePayload(payload: CrawlerJsonRunPayload, error:
     errorStack: error instanceof Error ? error.stack : null,
     metadata: { ...payload.metadata, persistence: { status: "failure", fetchedBeforePersistence: Array.isArray(payload.bids) ? payload.bids.length : 0 } },
   };
+  // A rolled-back batch committed no accepted candidates. Upstream/pre-rollback quality
+  // cannot describe the durable outcome shown by the run log or returned task result.
+  return createImportQualityGate(failed).finish();
 }
 
 /**

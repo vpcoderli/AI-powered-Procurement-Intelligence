@@ -198,7 +198,7 @@ def test_upsert_bid_writes_and_replaces_attachments_when_table_exists(tmp_path):
     ).fetchall()
     assert rows == [
         (
-            "il_bidbuy:IL-BIDBUY-2026-001:attachment:1",
+            "il_bidbuy:IL-BIDBUY-2026-001:attachment:2",
             "il_bidbuy:IL-BIDBUY-2026-001",
             "Pricing Sheet.xlsx",
             "https://www.bidbuy.illinois.gov/documents/pricing.xlsx",
