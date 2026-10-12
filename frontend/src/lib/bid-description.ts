@@ -29,7 +29,9 @@ const RESTRICTED_BODIES = [
   /^(?:access\s+denied|forbidden|unauthorized(?:\s+access)?|error\s+(?:401|403|404|500|502|503)(?:\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable))?|(?:401|403|404|500|502|503)\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable)|page\s+not\s+found)(?:\s*[.!:;,|(\-–—]|\s+you\s+(?:do\s+not|don't|don’t)\s+have\s+permission\b|$)/i,
   /^(?:checking\s+your\s+browser\b|just\s+a\s+moment(?:\s*(?:\.\.\.|…|[.!,])|$)|(?:please\s+)?enable\s+javascript(?:\s+(?:to|and)\b|\s+in\s+your\s+browser\b|\s*[.!]?$)|verify\s+(?:you\s+are|that\s+you\s+are|you're)\s+(?:a\s+)?human\b|attention\s+required!)/i,
 ];
-const METADATA_BODY = /^(?:purchase method|type code|bid type|informal bid flag|allow electronic quote)\s*(?::|：|$)/i;
+// Only a whole label/value cell: the value is up to four words, or a numeric code and up to six
+// ("55 - Amendment/Change Order (Increase or No Dollar)"), never a sentence.
+const METADATA_BODY = /^(?:purchase method|type code|bid type|informal bid flag|allow electronic quote)\s*(?:[:：]\s*(?:\d+\s*-\s*[\w&/()-]+(?:\s+[\w&/()-]+){0,5}|[\w&/()-]+(?:\s+[\w&/()-]+){0,3})?)?$/i;
 // A copyright footer carries ©, (c) or a year right after the word, or ends in "all rights
 // reserved"; "Copyright clearance services…" is procurement scope.
 const NAVIGATION_PART = /^(?:home|about(?: us)?|contact(?: us)?|privacy(?: policy)?|terms(?: of (?:use|service))?|copyright\s*(?:©|\(c\)|\d{4}\b).*|copyright\b.*\ball rights reserved\.?|all rights reserved|log\s*in|sign\s*in|sign\s*up|register)$/i;
