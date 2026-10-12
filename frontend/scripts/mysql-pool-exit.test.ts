@@ -119,6 +119,8 @@ describe("scripts that open the shared MySQL pool exit when MySQL refuses them",
     // One-shot writers: the close used to follow the write instead of sitting in a finally.
     { name: "migrate-source-registry", args: () => ["scripts/migrate-source-registry.ts"] },
     { name: "register-sources", args: () => ["scripts/register-sources.ts", "--file", candidatesFile] },
+    // A dry run by default: its first query is the one that fails here, and the pool must still be released.
+    { name: "purge-demo-bids", args: () => ["scripts/purge-demo-bids.ts"] },
     // Closes its own pool in a finally already; keeps this harness honest (it must see a script that does exit).
     { name: "migrate-mysql", args: () => ["scripts/migrate-mysql.ts"] },
   ];
