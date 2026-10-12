@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { linkSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -57,16 +57,37 @@ describe("purge-demo-bids arguments", () => {
     }
   });
 
-  it("tells the operator to stop the web app and every worker on MySQL, and why SQLite needs no such window", () => {
+  // What --help and the header of demo-purge.ts must both say about the maintenance window, wording and all.
+  const MAINTENANCE_WINDOW = [
+    "A maintenance window is required on MySQL: stop the web app AND every worker first.",
+    "MySQL has no foreign keys",
+    "(a save, an intent, a workspace edit)",
+    "would be an orphan",
+    "SQLite is protected by",
+    "BEGIN IMMEDIATE",
+    "plus the foreign keys the app enforces",
+  ];
+  // Wordings that made one of the two texts contradict the other: a window for everyone, or none for SQLite.
+  const CONTRADICTIONS = [
+    "Run it in a maintenance window", "RUN IT IN A MAINTENANCE WINDOW", "needs no such window", "Run it with the workers stopped",
+  ];
+
+  it("says in --help that a maintenance window is required on MySQL, and that SQLite is protected without one", () => {
     const help = formatPurgeDemoBidsHelp().replace(/\s+/g, " ");
-    for (const text of [
-      "maintenance window", "On MySQL stop the web app AND every worker first", "MySQL has no foreign keys",
-      "(a save, an intent, a workspace edit)", "orphan after the commit",
-      "On SQLite the purge holds the write lock for its whole transaction and the app enforces foreign keys",
-    ]) {
-      expect(help, text).toContain(text);
-    }
-    expect(help).not.toContain("Run it with the workers stopped");
+
+    for (const text of MAINTENANCE_WINDOW) expect(help, text).toContain(text);
+    for (const text of CONTRADICTIONS) expect(help, text).not.toContain(text);
+    expect(help).toContain("orphan after the commit");
+  });
+
+  it("says the same in the header of demo-purge.ts", () => {
+    const source = readFileSync(fileURLToPath(new URL("../src/server/integrity/demo-purge.ts", import.meta.url)), "utf8");
+    const header = source.slice(0, source.indexOf("*/")).replace(/\n \*[ ]?/g, " ").replace(/\s+/g, " ");
+
+    for (const text of MAINTENANCE_WINDOW) expect(header, text).toContain(text);
+    for (const text of CONTRADICTIONS) expect(header, text).not.toContain(text);
+    expect(header).toContain("`.immediate()`");
+    expect(header).toContain("would be an orphan once the purge commits");
   });
 });
 
@@ -349,7 +370,18 @@ describe("purge-demo-bids", () => {
 const frontendDir = fileURLToPath(new URL("..", import.meta.url));
 const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 
-function runScriptIn(cwd: string, args: string[], env: Record<string, string> = {}): Promise<{ status: number | null; output: string }> {
+/**
+ * What a process printed, one string per stream. The two pipes are read independently, so no order between them is
+ * defined: a test must never look at them as one text (a JSON document on stdout followed by the `Target:` line of
+ * stderr is not JSON, and neither is it when stderr is read first).
+ */
+interface ProcessRun {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+function runScriptIn(cwd: string, args: string[], env: Record<string, string> = {}): Promise<ProcessRun> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, ["--import", tsxLoader, path.join(frontendDir, "scripts", "purge-demo-bids.ts"), ...args], {
       cwd,
@@ -365,13 +397,17 @@ function runScriptIn(cwd: string, args: string[], env: Record<string, string> = 
         ...env,
       },
     });
-    let output = "";
-    child.stdout?.on("data", (chunk) => (output += chunk));
-    child.stderr?.on("data", (chunk) => (output += chunk));
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => (stdout += chunk));
+    child.stderr?.on("data", (chunk: string) => (stderr += chunk));
     const deadline = setTimeout(() => child.kill("SIGKILL"), 25_000);
+    // "close" comes after the process has exited and both pipes have ended, so both strings are complete.
     child.on("close", (status) => {
       clearTimeout(deadline);
-      resolve({ status, output });
+      resolve({ status, stdout, stderr });
     });
   });
 }
@@ -393,8 +429,9 @@ describe("purge-demo-bids as a process of its own", () => {
     // Importing the app's db/client would have created data/apsi.sqlite here by now.
     expect(readdirSync(workingDirectory)).toEqual([]);
     expect(run.status).toBe(2);
-    expect(run.output).toContain("SQLite database not found");
-    expect(run.output).not.toContain("no such table");
+    expect(run.stderr).toContain("SQLite database not found");
+    expect(run.stderr).not.toContain("no such table");
+    expect(run.stdout).toBe("");
   }, 40_000);
 
   it("leaves the working directory alone even when the database it was given exists", async () => {
@@ -409,9 +446,11 @@ describe("purge-demo-bids as a process of its own", () => {
 
       expect(readdirSync(workingDirectory)).toEqual([]);
       expect(run.status).toBe(0);
-      expect(run.output).toContain(`Target: sqlite ${testDb.databasePath}`);
-      const report = JSON.parse(run.output.slice(run.output.indexOf("{")));
+      // stdout alone is the report, one JSON document; the target is on stderr.
+      const report = JSON.parse(run.stdout);
       expect(report.bids).toHaveLength(4);
+      expect(report.target).toBe(`sqlite ${testDb.databasePath}`);
+      expect(run.stderr).toContain(`Target: sqlite ${testDb.databasePath}`);
     } finally {
       await testDb.cleanup();
     }

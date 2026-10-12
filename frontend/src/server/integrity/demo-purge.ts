@@ -34,12 +34,12 @@
  * `ai_call_logs.metadata_json` and `crawler_logs.metadata`. Files that deleted rows point at through `storage_path`
  * (artifact vault, response-package exports, archived attachments) are not removed either.
  *
- * RUN IT IN A MAINTENANCE WINDOW. On MySQL, stop the web app AND every worker first. MySQL has no foreign keys, so
- * nothing stops the web app from inserting a child row for a demo bid (a save, an intent, a workspace edit) while the
- * transaction runs; a row committed by another session after the transaction took its snapshot is invisible to the
- * checks above and would be an orphan once the purge commits. SQLite needs no such window: `.immediate()` takes the
- * write lock for the whole purge, and the app's connections enforce foreign keys, so a child row for a deleted bid is
- * refused.
+ * MAINTENANCE WINDOW. A maintenance window is required on MySQL: stop the web app AND every worker first. MySQL has
+ * no foreign keys, so nothing stops the web app from inserting a child row for a demo bid (a save, an intent, a
+ * workspace edit) while the transaction runs; a row committed by another session after the transaction took its
+ * snapshot is invisible to the checks above and would be an orphan once the purge commits. SQLite is protected by
+ * `.immediate()` (BEGIN IMMEDIATE: the write lock is taken up front and held for the whole purge) plus the foreign
+ * keys the app enforces, which refuse a child row for a deleted bid.
  */
 import type { AppDatabase } from "@/server/db/client";
 import { mysqlExecute, mysqlSelectMany, mysqlSelectOne, mysqlTransaction } from "@/server/db/mysql-runtime";
