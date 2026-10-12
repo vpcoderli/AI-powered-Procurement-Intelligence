@@ -112,6 +112,12 @@ export function snakeCaseRecord(row: JsonRecord): JsonRecord {
 }
 
 const archiveFields = ["storage_path", "byte_size", "content_type", "checksum_sha256", "fetched_at"];
+const repairFields = ["archive_status", "archive_error", "failure_kind", "repair_attempts", "next_repair_at"];
+
+/** Seen again without a new file: like the Python storage, an incoming not_archived is no archive news. */
+function reobservedOnly(attachment: JsonRecord) {
+  return !text(attachment.storage_path) && ["", "not_archived"].includes(text(attachment.archive_status));
+}
 
 function attachmentUrls(row: JsonRecord) {
   return [text(row.url), text(row.original_url)].filter(Boolean);
@@ -143,6 +149,11 @@ export function mergePersistedAttachments(existing: JsonRecord[], incoming: Json
       for (const field of archiveFields) row[field] = prior[field];
       row.archive_status = prior.archive_status;
       row.archive_error = prior.archive_error;
+    }
+    // Nor can it reset the repair worker's retry state: a failed or parked link keeps its
+    // status, failure kind and next attempt, or every re-crawl would make it due again.
+    if ((prior.archive_status === "failed" || prior.archive_status === "unavailable") && reobservedOnly(attachment)) {
+      for (const field of repairFields) row[field] = prior[field];
     }
     // Only persisted verification of the exact same archived bytes is authoritative.
     const sameArchive = ["storage_path", "byte_size", "content_type", "checksum_sha256"].every((field) => text(row[field]) === text(prior[field]));
