@@ -229,6 +229,23 @@
     {"name": "bid type ampersand word", "text": "Bid Type: R&D", "issue": "metadata_body"},
     {"name": "type code n/a", "text": "Type Code: N/A", "issue": "metadata_body"},
     {"name": "bid type parenthesized value", "text": "Bid Type: (RFQ)", "issue": "metadata_body"},
-    {"name": "purchase method slash and hyphen words", "text": "Purchase Method: State and/or Sole-Source", "issue": "metadata_body"}
+    {"name": "purchase method slash and hyphen words", "text": "Purchase Method: State and/or Sole-Source", "issue": "metadata_body"},
+    {"name": "unauthorized access comma list", "text": "Unauthorized access, theft, and vandalism prevention through CCTV installation.", "issue": null},
+    {"name": "unauthorized comma list", "text": "Unauthorized, abandoned and junk vehicle removal services.", "issue": null},
+    {"name": "unauthorized parenthetical", "text": "Unauthorized (private property) parking enforcement.", "issue": null},
+    {"name": "forbidden comma list", "text": "Forbidden, restricted, and hazardous items disposal.", "issue": null},
+    {"name": "forbidden semicolon list", "text": "Forbidden; restricted and hazardous items disposal services.", "issue": null},
+    {"name": "unauthorized access pipe", "text": "Unauthorized access | trespass signage for county parks", "issue": null},
+    {"name": "unauthorized period", "text": "Unauthorized.", "issue": "restricted_or_error_body"},
+    {"name": "forbidden exclamation", "text": "Forbidden!", "issue": "restricted_or_error_body"},
+    {"name": "unauthorized colon", "text": "Unauthorized: missing or invalid credentials", "issue": "restricted_or_error_body"},
+    {"name": "forbidden hyphen", "text": "Forbidden - you do not have access to this resource", "issue": "restricted_or_error_body"},
+    {"name": "unauthorized en dash", "text": "Unauthorized – please sign in", "issue": "restricted_or_error_body"},
+    {"name": "forbidden em dash", "text": "Forbidden — access is restricted", "issue": "restricted_or_error_body"},
+    {"name": "unauthorized with code", "text": "Unauthorized (401)", "issue": "restricted_or_error_body"},
+    {"name": "unauthorized access with code", "text": "Unauthorized Access (401)", "issue": "restricted_or_error_body"},
+    {"name": "apache forbidden page", "text": "Forbidden\nYou don't have permission to access this resource.", "issue": "restricted_or_error_body"},
+    {"name": "forbidden you do not have permission", "text": "Forbidden\nYou do not have permission to view this page.", "issue": "restricted_or_error_body"},
+    {"name": "unauthorized curly apostrophe", "text": "Unauthorized\nYou don’t have permission to view this directory or page.", "issue": "restricted_or_error_body"}
   ]
 }
