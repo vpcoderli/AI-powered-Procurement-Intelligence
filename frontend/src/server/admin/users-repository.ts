@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { isTokenUnexpired } from "@/lib/token-expiry";
 import { and, asc, desc, eq, isNotNull, like, or } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import { hashPassword } from "@/server/auth/password";
@@ -288,7 +289,7 @@ function normalizeFeatureOverrideExpiresAt(expiresAt: string | null | undefined)
 }
 
 function isExpired(expiresAt: string | null, now = new Date()) {
-  return expiresAt ? new Date(expiresAt).getTime() <= now.getTime() : false;
+  return expiresAt !== null && !isTokenUnexpired(expiresAt, now.getTime());
 }
 
 function toFeatureOverrideAuditState(row: { isEnabled: number; reason?: string | null; expiresAt?: string | null } | undefined | null) {

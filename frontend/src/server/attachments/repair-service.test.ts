@@ -371,7 +371,7 @@ describe("runAttachmentRepairOnce — failures and backoff", () => {
 });
 
 describe("runAttachmentRepairOnce — policy, limits and leases", () => {
-  it("skips a source whose policy disables archiving without marking any row", async () => {
+  it("leaves a source whose policy switches archiving off out of the run, without marking any row", async () => {
     insertSource("il_bidbuy", "Illinois BidBuy", { archive: false });
     insertBid("bid-1", "Illinois BidBuy");
     insertAttachment({ id: "att-1", bidId: "bid-1" });
@@ -386,17 +386,18 @@ describe("runAttachmentRepairOnce — policy, limits and leases", () => {
     });
 
     expect(runner).not.toHaveBeenCalled();
-    expect(result.skipped).toBe(1);
-    expect(result.bySource[0]).toMatchObject({ sourceId: "il_bidbuy", status: "skipped" });
+    expect(result.candidates).toBe(0);
+    expect(result.skipped).toBe(0);
+    expect(result.bySource).toEqual([]);
     expect(attachment("att-1")).toMatchObject({ archiveStatus: "not_archived", failureKind: null, repairAttempts: 0 });
   });
 
-  it("caps the batch at the per-source policy and at maxPerSource", async () => {
+  it("selects at most the per-source policy's batch and leaves the rest for a later run", async () => {
     insertSource("il_bidbuy", "Illinois BidBuy", { maxPerRun: 2 });
     insertBid("bid-1", "Illinois BidBuy");
     for (const id of ["att-1", "att-2", "att-3"]) insertAttachment({ id, bidId: "bid-1" });
 
-    const byPolicy = await runAttachmentRepairOnce({
+    const result = await runAttachmentRepairOnce({
       database: testDb.db,
       owner: "worker-1",
       now: () => NOW,
@@ -404,23 +405,76 @@ describe("runAttachmentRepairOnce — policy, limits and leases", () => {
       runner: async (request) => archivedResponse(request.items.map((item) => item.id)),
     });
 
-    expect(byPolicy.bySource[0].attempted).toBe(2);
-    expect(byPolicy.skipped).toBe(1);
+    expect(result.bySource[0].attempted).toBe(2);
+    expect(result.candidates).toBe(2);
+    expect(result.skipped).toBe(0);
+    expect(attachment("att-3")?.archiveStatus).toBe("not_archived");
+  });
+
+  it("lowers but never raises the per-source batch with maxPerSource", async () => {
+    insertSource("il_bidbuy", "Illinois BidBuy", { maxPerRun: 2 });
+    insertBid("bid-1", "Illinois BidBuy");
+    for (const id of ["att-1", "att-2", "att-3", "att-4"]) insertAttachment({ id, bidId: "bid-1" });
+
+    const batchSizes: number[] = [];
+    for (const maxPerSource of [1, 10]) {
+      await runAttachmentRepairOnce({
+        database: testDb.db,
+        owner: "worker-1",
+        now: () => NOW,
+        archiveRoot,
+        maxPerSource,
+        runner: async (request) => {
+          batchSizes.push(request.items.length);
+          return archivedResponse(request.items.map((item) => item.id));
+        },
+      });
+    }
+
+    expect(batchSizes).toEqual([1, 2]);
+  });
+
+  it("does not let one source's backlog crowd the sources after it out of the run", async () => {
+    insertSource("sam_gov", "SAM.gov", { maxPerRun: 3 });
+    insertSource("tx_esbd", "Texas ESBD");
+    insertBid("bid-sam", "SAM.gov");
+    insertBid("bid-tx", "Texas ESBD");
+    // More SAM.gov links than the run's whole candidate window, all of them due.
+    testDb.db.transaction((transaction) => {
+      for (let index = 1; index <= 5_001; index += 1) {
+        transaction
+          .insert(bidAttachments)
+          .values({
+            id: `att-sam-${String(index).padStart(5, "0")}`,
+            bidId: "bid-sam",
+            name: "Attachment.pdf",
+            url: `https://sam.gov/api/prod/opps/v3/opportunities/resources/files/${index}/download`,
+            archiveStatus: "not_archived",
+            createdAt: "2026-09-01T00:00:00.000Z",
+          })
+          .run();
+      }
+    });
+    insertAttachment({ id: "att-tx", bidId: "bid-tx" });
 
     const requests: ArchiveAttachmentsRequest[] = [];
-    await runAttachmentRepairOnce({
+    const result = await runAttachmentRepairOnce({
       database: testDb.db,
       owner: "worker-1",
       now: () => NOW,
       archiveRoot,
-      maxPerSource: 1,
       runner: async (request) => {
         requests.push(request);
         return archivedResponse(request.items.map((item) => item.id));
       },
     });
 
-    expect(requests[0].items).toHaveLength(1);
+    expect(requests.map((request) => [request.source.id, request.items.length])).toEqual([
+      ["sam_gov", 3],
+      ["tx_esbd", 1],
+    ]);
+    expect(attachment("att-tx")?.archiveStatus).toBe("archived");
+    expect(result.skipped).toBe(0);
   });
 
   it("skips a source another worker already holds", async () => {

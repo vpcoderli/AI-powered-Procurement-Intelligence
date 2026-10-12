@@ -100,7 +100,7 @@ describe("persistCrawlTaskResult", () => {
     expect(mockedImportSqlite).toHaveBeenCalledTimes(1);
     expect(mockedImportSqlite).toHaveBeenCalledWith(database, { ...result.payload, stamped: true }, undefined);
     expect(mockedImportMysql).not.toHaveBeenCalled();
-    expect(returned).toBe(result);
+    expect(returned).toEqual({ ...result, payload: { ...result.payload, stamped: true } });
   });
 
   it("stamps jurisdiction and imports via the MySQL importer when a MySQL store is provided", async () => {
@@ -113,7 +113,7 @@ describe("persistCrawlTaskResult", () => {
     expect(mockedImportMysql).toHaveBeenCalledTimes(1);
     expect(mockedImportMysql).toHaveBeenCalledWith(mysql, { ...result.payload, stamped: true }, undefined);
     expect(mockedImportSqlite).not.toHaveBeenCalled();
-    expect(returned).toBe(result);
+    expect(returned).toEqual({ ...result, payload: { ...result.payload, stamped: true } });
   });
 
   it("persists a failure payload too, not just success ones", async () => {
@@ -185,6 +185,21 @@ describe("persistCrawlTaskResult", () => {
     });
 
     consoleErrorSpy.mockRestore();
+  });
+
+  it("returns failure quality with zero accepted bids even when the importer already logged rollback", async () => {
+    const result = taskResult({ payload: payload({ metadata: { dataQuality: { execution: "success", contentStatus: "usable", acceptedCount: 9 } } }) });
+    const original = structuredClone(result.payload!.metadata);
+    mockedImportMysql.mockRejectedValueOnce(Object.assign(new Error("rollback"), { failureLogged: true }));
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const returned = await persistCrawlTaskResult(database, mysql, source(), result);
+      expect(mockedImportMysql).toHaveBeenCalledTimes(1);
+      expect(returned).toMatchObject({ ok: false, fetchedCount: 0, payload: { metadata: {
+        persistence: { fetchedBeforePersistence: 1 }, dataQuality: { execution: "failure", contentStatus: "unknown", acceptedCount: 0, acceptedIds: [] },
+      } } });
+      expect(result.payload!.metadata).toEqual(original);
+    } finally { consoleErrorSpy.mockRestore(); }
   });
 
   // Coordinator addendum to Task X7: as committed in f83ca11, the stampJurisdiction call sat

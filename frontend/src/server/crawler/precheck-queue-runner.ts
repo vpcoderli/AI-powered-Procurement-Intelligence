@@ -178,6 +178,9 @@ export interface RunQueuedPrechecksOnceOptions {
   robotsFetch?: typeof fetch;
   /** Spacing between two prechecks of one platform (CRAWLER_PLATFORM_MIN_INTERVAL_MS); tests pass { minIntervalMs: 0 }. */
   platformDeferral?: PlatformDeferralOptions;
+  /** Internal tick timeline, shared with lists and historical body work. */
+  platformTracker?: PlatformDeferralTracker;
+  isStopping?: () => boolean;
 }
 
 function errorMessage(error: unknown): string {
@@ -204,7 +207,7 @@ export async function runQueuedPrechecksOnce(options: RunQueuedPrechecksOnceOpti
   const scanCompliance: NonNullable<RunSourcePrecheckOptions["scanCompliance"]> = (inputs, scanOptions) =>
     scanSourceCompliance(inputs, { ...scanOptions, fetchImpl: robotsFetch });
   const maxStarted = options.maxPerTick ?? DEFAULT_PRECHECKS_PER_TICK;
-  const spacing = new PlatformDeferralTracker(options.platformDeferral);
+  const spacing = options.platformTracker ?? new PlatformDeferralTracker(options.platformDeferral);
 
   const queued = options.mysql
     ? await listQueuedPrechecksFromMysql(options.mysql, PRECHECK_LISTING_WINDOW)
@@ -223,7 +226,13 @@ export async function runQueuedPrechecksOnce(options: RunQueuedPrechecksOnceOpti
   /** One challenged or errored attempt: back the source off, stop its family, maybe give up. Never throws. */
   const failAttempt = async (entry: QueuedPrecheck, kind: "challenge" | "error", verdict: SourcePrecheckVerdict | null, reason: string): Promise<void> => {
     const family = entry.providerFamily;
-    if (kind === "challenge" && family) options.pauses.pause(family, clock() + pauseMs);
+    if (kind === "challenge" && family) {
+      options.pauses.pause(family, clock() + pauseMs);
+      spacing.observe({ id: entry.id, providerFamily: family }, {
+        ok: false, source: entry.id, status: "failure",
+        runner: { ok: false, source: entry.id, status: "failure", stdout: "", stderr: reason, errorCode: "PlatformChallengeError" },
+      });
+    }
     stopFamily(family);
     const attempts = retries.recordFailure(entry.id, clock() + pauseMs);
     if (attempts < PRECHECK_MAX_ATTEMPTS) {
@@ -249,11 +258,12 @@ export async function runQueuedPrechecksOnce(options: RunQueuedPrechecksOnceOpti
 
   let started = 0;
   for (const entry of queued) {
+    if (options.isStopping?.()) break;
     // maxPerTick counts prechecks actually started; the skips below are free, so a big backlog of
     // one family cannot use up the slots that another family's sources could have had.
     if (started >= maxStarted) break;
     const family = entry.providerFamily;
-    if (family && (result.stoppedFamilies.includes(family) || options.pauses.pausedUntil(family, clock()) !== null)) {
+    if (family && (spacing.deferredBy({ id: entry.id, providerFamily: family }) || result.stoppedFamilies.includes(family) || options.pauses.pausedUntil(family, clock()) !== null)) {
       result.skipped.paused += 1;
       continue;
     }
@@ -273,6 +283,10 @@ export async function runQueuedPrechecksOnce(options: RunQueuedPrechecksOnceOpti
     }
     // Same politeness as the crawl loop: never two requests of one platform back to back.
     await spacing.waitForPlatformSlot({ id: entry.id, providerFamily: family });
+    if (options.isStopping?.()) {
+      if (options.budget.isBudgeted(family)) options.budget.settle(family, reserved, 0);
+      break;
+    }
     started += 1;
 
     // runSourcePrecheck keeps only a summary of its crawl, and that summary cannot tell a crash from

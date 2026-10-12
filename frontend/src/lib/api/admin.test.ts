@@ -910,11 +910,23 @@ describe("admin API client", () => {
   });
 
   it("runs SAM.gov crawler now", async () => {
-    const body = { status: "success", source: "SAM.gov" };
+    const body = { status: "success", source: "sam_gov", ok: true };
     mockFetch.mockResolvedValueOnce(jsonResponse(body));
 
     await expect(runSamGovCrawlerNow()).resolves.toEqual(body);
     expect(mockFetch).toHaveBeenCalledWith("/api/crawler/sam-gov/run", { method: "POST" });
+  });
+
+  it.each(["blocked", "locked", "disabled", "deferred"])("preserves a SAM.gov %s response and its reason on HTTP 409", async (status) => {
+    const body = { source: "sam_gov", ok: false, status, reason: "Source governance has not approved ingestion." };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body, { status: 409 }));
+    await expect(runSamGovCrawlerNow()).resolves.toEqual(body);
+  });
+
+  it("preserves the SAM.gov runner failure on HTTP 500", async () => {
+    const body = { source: "sam_gov", ok: false, status: "failure", runner: { errorCode: "CRAWLER_FAILED" } };
+    mockFetch.mockResolvedValueOnce(jsonResponse(body, { status: 500 }));
+    await expect(runSamGovCrawlerNow()).resolves.toEqual(body);
   });
 
   it("runs state crawlers now", async () => {

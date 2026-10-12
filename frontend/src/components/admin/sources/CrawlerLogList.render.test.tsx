@@ -20,7 +20,7 @@ vi.mock("../use-admin-resource", () => ({
   },
 }));
 
-import { CrawlerLogList } from "./CrawlerLogList";
+import { CrawlerLogList, CrawlerLogRow } from "./CrawlerLogList";
 
 const admin = en.admin as Record<string, string>;
 
@@ -144,5 +144,31 @@ describe("CrawlerLogList after the source set changes", () => {
 
     expect(html).not.toContain("sam_gov");
     expect(loadMoreButton(html)).toBe("");
+  });
+});
+
+
+describe("CrawlerLogRow quality evidence", () => {
+  it("reports body evidence separately when the execution succeeded", () => {
+    const log = run("quality", "city_source");
+    log.metadata = JSON.stringify({ dataQuality: { schemaVersion: 1, execution: "success", listCoverage: "complete", contentStatus: "partial", receivedCount: 2, uniqueCount: 2, acceptedCount: 2, quarantinedCount: 0, duplicateCount: 0, validBodyCount: 1, retainedBodyCount: 1, analysisReadyCount: 1, reconciliation: { balanced: true } }, enrichment: { enriched: 2 } });
+    const html = renderToStaticMarkup(<LanguageProvider><CrawlerLogRow log={log} /></LanguageProvider>);
+    expect(html).toContain(admin.sourceQualityExecution);
+    expect(html).toContain(admin.sourceQualityCoverage);
+    expect(html).toContain(admin.sourceQualityContent_partial);
+    expect(html).toContain(admin.sourceQualityRetainedBodies);
+    expect(html).not.toContain("enriched");
+  });
+  it("labels detail backfill execution separately from list crawl execution", () => {
+    const log = run("backfill", "city_source");
+    log.metadata = JSON.stringify({ mode: "detail_backfill" });
+    const html = renderToStaticMarkup(<LanguageProvider><CrawlerLogRow log={log} /></LanguageProvider>);
+    expect(html).toContain("Mode: Detail backfill");
+    expect(html).not.toContain(admin.sourceQualityMode_list);
+  });
+  it("does not label legacy successes as usable content", () => {
+    const html = renderToStaticMarkup(<LanguageProvider><CrawlerLogRow log={run("legacy", "city_source")} /></LanguageProvider>);
+    expect(html).toContain(admin.sourceQualityContent_unknown);
+    expect(html).toContain("N/A");
   });
 });

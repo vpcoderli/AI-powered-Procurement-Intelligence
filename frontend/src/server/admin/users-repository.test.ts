@@ -319,6 +319,38 @@ describe("admin users repository", () => {
     }
   });
 
+  it.each(["", "not a date", "275760-09-14T00:00:00.000Z"])("labels a stored unreadable override expiry %j as expired", async (expiresAt) => {
+    const testDb = await createTestDatabase();
+    try {
+      testDb.db.insert(users).values({ id: "user-expiry", email: "expiry@example.com", role: "user", createdAt: NOW, updatedAt: NOW }).run();
+      testDb.db.insert(organizations).values({ id: "org-expiry", name: "Expiry Workspace", accountTier: "free", createdAt: NOW, updatedAt: NOW }).run();
+      testDb.db.insert(organizationMemberships).values({ organizationId: "org-expiry", userId: "user-expiry", role: "owner", status: "active", createdAt: NOW, updatedAt: NOW }).run();
+      testDb.db.insert(organizationFeatureOverrides).values({ organizationId: "org-expiry", featureKey: "knowledge_station", isEnabled: 1, expiresAt, createdAt: NOW, updatedAt: NOW }).run();
+
+      expect(listAdminUserFeatureOverrides(testDb.db, "user-expiry").overrides).toEqual([
+        expect.objectContaining({ featureKey: "knowledge_station", expiresAt, isExpired: true }),
+      ]);
+    } finally {
+      await testDb.cleanup();
+    }
+  });
+
+  it.each(["", "not a date", "275760-09-14T00:00:00.000Z"])("labels a MySQL override's unreadable expiry %j as expired", async (expiresAt) => {
+    const mysql = {
+      query: async (sql: string): Promise<[unknown[]]> => {
+        if (sql.includes("FROM users")) return [[{ email: "expiry@example.com" }]];
+        if (sql.includes("FROM organization_memberships")) return [[{ organizationId: "org-expiry", organizationName: "Expiry Workspace", role: "owner", tier: "free" }]];
+        if (sql.includes("FROM organization_feature_overrides")) return [[{ featureKey: "knowledge_station", isEnabled: 1, reason: null, expiresAt }]];
+        throw new Error(`Unexpected query: ${sql}`);
+      },
+      execute: async (): Promise<[unknown]> => { throw new Error("Listing existing overrides must not write"); },
+    };
+
+    expect((await listAdminUserFeatureOverridesFromMysql(mysql, "user-expiry")).overrides).toEqual([
+      expect.objectContaining({ featureKey: "knowledge_station", expiresAt, isExpired: true }),
+    ]);
+  });
+
   it("filters user audit logs by actor, action, target, and feature", async () => {
     const testDb = await createTestDatabase();
 

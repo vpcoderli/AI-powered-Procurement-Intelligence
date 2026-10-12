@@ -2,7 +2,7 @@
 
 ## 1. 范围与职责
 
-更新日期：2026-09-15。基于 `19286e8` 审查后修复的工作区版本。
+更新日期：2026-10-09。初始审查基于 `19286e8`，本文件包含后续完整性修复及本轮架构深化的工作区实现。
 
 Scrapling 负责解析 crawler 提供的 HTML；Python 负责列表和详情网络请求；Next.js 服务端负责入口授权、调度、持久化和提醒。数据复用 `data_sources`、`bids`、`bid_attachments`、`crawler_logs`，没有新业务表。SAM.gov 保留专用采集器，管理入口复用执行控制和 JSON 导入。
 
@@ -40,6 +40,10 @@ flowchart TD
 - `CrawlerConfigPanel` 和 `server/admin/crawler-config.ts` 共用配置校验。数据源 PATCH 要求 admin/operator；修改治理状态要求 admin。
 - `fetchConfig` **整体替换**；直接调用 API 时保留其他配置键。专用 adapter 可能有固定列表入口，`base_url` 并非所有源的统一 URL 开关。
 - `worker:crawler` 默认每批结束等待 15 分钟，运行到期源并按错误类别重试；`crawler:once` 运行一轮；手动 API 显式运行源，不受 cadence 筛选，但执行相同治理与健康回写。
+
+管理端三个手动入口通过 `lib/manual-crawl.ts` 的 `runManualCrawl` 执行：module 负责来源映射、顺序五源分批、UTC 发布日期窗口、state/SAM 日期转换及逐源状态。明确登记的地方辖区使用自身来源 ID，州来源保留 alias；联邦使用 SAM 专用入口。来源列表在传输失败后停止并保留已确认结果，辖区批次继续；缺项响应最终标未知，未发送项与已尝试失败区分。选择、确认、权限和刷新仍由各视图负责。
+
+worker 的完整轮次由 `worker-tick.ts` 的 `createCrawlerWorkerTick` 拥有：列表→预检队列→可选历史正文补采，共用本轮预算与平台联系时间线，暂停和预检冷却在 worker 生命周期内保留。重试的每次实际尝试独立预留、结算；未知请求成本保留预留，未联系来源的跳过项退款，额度耗尽返回最后真实失败。停止信号在间隔等待期间到达时不继续联系。独立 `crawler:once` 保留列表→可选补采兼容顺序，不执行预检队列。架构实施记录见[2026-10-08 深化报告](architecture-deepening-2026-10-08.md)。
 - `/api/crawler/state/run` 和 `/api/crawler/sam-gov/run` 接受有效 `CRAWLER_RUN_TOKEN` 或 admin/operator 会话。缺少 token 不自动放行。开发时可显式启用 `CRAWLER_ALLOW_UNAUTHENTICATED_LOCAL_RUN=true`，仅限 development/test 的回环请求；生产及 staging 禁止该例外。
 - county/city 等地方源必须显式通过审批和法律审核；历史 state/federal 源保留现有兼容规则。
 - 到期时间使用最近成功；连续失败时改用 `lastFailureAt`，按 cadence 指数退避，上限七天。manual 源不自动运行。
@@ -62,7 +66,9 @@ flowchart TD
 
 `state-runner.ts` 通过 stdin 启动 `python -m apsi_crawler.cli fetch-task`。adapter 优先按 source_id 匹配，再按 provider_family；没有适配器或原始列表为空时明确失败。stdout 只输出 JSON，诊断写 stderr。
 
-补全候选基于本次列表对象，尚不读取历史数据库。正文会排除标题回显和无意义副本；联系人按姓名、邮箱、电话分别判断；已有附件仍可补充新链接。
+标准化后的 `issuer_type` 来自数据源的 `jurisdiction_level`，地方 county / city / township / special_district 源不会被标成 state；列表行自行提供的机构级别不能覆盖已登记的源身份。两种 JSON 导入器沿用这一字段。
+
+补全读取持久化历史，按未取得正文、尝试次数与等待时间轮换，并记录逐条 outcome 与冷却时间。核心无效或注册身份不符的旧记录不占详情预算。正文会排除标题回显、字段标签、类别码、导航及登录/错误页，合法短正文可用；联系人按姓名、邮箱、电话分别判断；已有附件仍可补充新链接。历史窗口外回填与 worker 开关见[正文补采运维](../operations/detail-backfill.md)。
 
 详情必须是 HTTP(S)、HTTP 200、非空 HTML。抓取后检查 host、登录路径、路径身份和 `docId`/`SID` 等 query 身份，并检测同 URL 登录内容；超过 2 MiB 拒绝解析。不会执行网页 JavaScript或绕过登录。
 
@@ -80,6 +86,20 @@ flowchart TD
 | detail_fetched_at | 成功获取并解析的时间，不等同于补全有效 |
 
 例如，数据库已有完整正文和 A/B 附件，下次列表只返回简述及 A，原正文与 B 保留。解析成功但没有应用字段计 skipped；关闭补全后重抓仍保护旧详情和归档。
+
+SAM.gov 列表的 `description` 是正文接口地址时，专用采集器只向匹配 notice id 的 HTTPS `api.sam.gov` 正文接口发送 API key，不跟随重定向。正文解析与列表请求分别失败：正文失败仍返回该招标并记录质量标记，不把接口 URL 或错误响应当正文。默认每轮最多请求 25 条正文，`fetch-sam-gov --max-descriptions` 可设为 0–200；请求间隔默认 3 秒，429 后停止本轮后续正文请求。预算用尽的记录标记 `description_not_fetched`，需要后续受控补抓；预算按历史尝试与冷却轮换；独立回填可覆盖当前列表/日期窗口外的合格旧记录。搜索分页 `offset` 按页递增，遵循 [GSA Public API 契约](https://open.gsa.gov/api/get-opportunities-public-api/)。
+
+## 4a. 语义入库门禁与用途约束（2026-10-01）
+
+SQLite/MySQL JSON 导入器共享 `data-quality.ts`；独立 Python SQLite CLI 使用同语义核心规则，并由共享 fixture 验证跨语言契约。身份、标题、机构、州/辖区/FIPS 与原文定位无效的候选进入本轮日志的脱敏隔离清单；失败文档不导入条目。缺少正文允许基础检索，分析入口要求实际采购正文。
+
+Node 接纳、正文历史、用户读取和质量报告通过 `lib/source-identity.ts` 共享字段比较及登记归属。接纳先检查空 ID 的实际派生值，再在去重命中后检查实际存储主键，越出登记来源命名空间时在读取附件、写入和下架之前隔离。原候选证据保留；不能借由错误去重键覆盖另一来源的正文及附件。正文历史的精确 canonical ID、未知历史来源兼容、报告未归属和各场景的可选字段规则仍分别保留。
+
+`metadata.dataQuality` 记录原始候选数、唯一数、重复证据、接受 ID、隔离原因、有效/保留/新观察正文、能力与对账结果。缺身份的列表项保留为隔离候选，不再静默删除。只有列表范围可靠且没有未解决隔离项时，才允许关闭本轮未出现的旧招标。
+
+合并前对正文做语义检查；失败/占位结果不能覆盖旧好内容。`raw_payload.data_quality.body.verifiedAt` 跟随实际选中的正文；保留旧值时不使用本轮抓取或 DB 更新时间。失败解析中仍有旧正文不计新取得正文。附件验证只能沿用数据库里相同归档字节的证据；新文件或校验和变化需重新验证，下载入口检查真实文件类型、大小和校验和。
+
+管理端 `/admin/quality` 统一展示六类辖区，分开呈现执行、列表范围、内容、正文年龄及补采原因。历史回填不替换列表执行健康证据；历史缺少质量账时显示未知。报表说明见[全源质量运维](../operations/source-data-quality.md)。
 
 ## 4b. 列表解析、已验证空态与治理前置检查
 
@@ -105,9 +125,11 @@ BidNet 等自己会翻页的适配器还能在 `fetch-task` 请求里带上 `lis
 
 SQLite/MySQL 在同一事务写招标、附件和运行日志；MySQL 使用一个借用连接。任一写入失败回滚；释放连接后尽力写独立失败日志，因此单连接池不会等待自己。失败结果是 `CrawlerPersistenceError`，不更新成功时间、不发送本次成功提醒。数据库完全不可用时只能返回错误，不能保证错误日志入库。
 
+接纳顺序统一由 `bid-intake.ts` 拥有，两个 importer 提供数据库 adapter；同步 SQLite 和异步 MySQL 的调用约定保持。有效合并快照先用于质量能力评估，再用于招标及附件写入，metadata 仅在提交后公布。回滚后的失败 payload 重新生成失败质量账，不能沿用旧成功账本的“可用”及接纳数；原候选数保留于 `persistence.fetchedBeforePersistence`，已有成功数据继续保留。
+
 **招标生命周期与下架**同样在这个事务里完成：`bids` 新增 `lifecycle_status`（`open` / `closed` / `awarded`）、`awarded_date`、`solicitation_number` 三列，`is_active` 恒等于 `lifecycle_status = 'open'`。两个 JSON 导入器共用的 `persistence-merge.ts` 在合并每条招标时调用 `lifecycle.ts` 的 `mergeLifecycleFields` 做状态流转：已经是 `awarded` 的招标不会被本次的 `closed` 结果降级，其余情况以本次抓到的状态为准。只有当一次开放列表运行 `status = "success"` 且 `metadata.pagination.complete = true` 时（`lifecycle.ts` 的 `delistingApplies()`），导入器才会在同一个事务里把该源本次没有出现的其余 `open` 招标批量置为 `closed`（`raw_payload.lifecycle.closed_reason = "delisted"`），"该源"按招标 id 前缀 `<source_id>:` 圈定；失败、被截断、带日期窗口的运行一律不做这次下架。运维见[招标生命周期、BidNet 翻页与平台预算](../operations/bid-lifecycle-and-crawl-budget.md)。
 
-详情展示通过 `getBidDescription` 选择有效正文；搜索与提醒查询包含 full_description。Scrapling 发现远程附件链接不代表文件已经下载，附件归档仍由既有归档流程负责。
+详情展示通过 `getBidDescription` 选择有效正文，并隐藏尚未重抓的历史 SAM 正文接口 URL；搜索与提醒查询包含 full_description。地方机构类型在列表卡片、详情、筛选 API、搜索和订阅中使用相同的六级类型，不再统一显示为州。Scrapling 发现远程附件链接不代表文件已经下载，附件归档仍由既有归档流程负责。
 
 ### 指标口径
 
@@ -158,13 +180,13 @@ SQLite/MySQL 在同一事务写招标、附件和运行日志；MySQL 使用一�
 
 CI 已加入 Python crawler、extractor 和 SQLite/MySQL 集成 job。前端测试限定源目录，避免 Next standalone 复制的测试被重复执行。具体命令与运行结果见[修复验证记录](../operations/crawler-hardening-verification.md)。
 
-尚未实现历史数据库缺失队列、按 detail_fetched_at 的回填冷却、浏览器渲染和跨 worker 平台限流。历史 NY 登录描述、IL 误提取联系人不会自动清理。线上门户的 TLS、限流、登录和页面改版仍需按源小批次实测；离线测试不能证明所有外部站点当前可用。
+已实现逐记录持久化补采结果、冷却和公平轮换，并提供当前窗口外的历史回填。公开列表/附件可使用浏览器 sidecar；详情解析仍不执行 JavaScript。跨 worker 平台预算按现有预算服务约束，批次间隔和暂停状态仍由本 worker 追踪。历史 NY 登录描述、IL 误提取联系人会在读取时拒绝或重导入时纠正；未运行线上历史批次清理。线上门户的 TLS、限流、登录和页面改版仍需按源小批次实测；离线测试不能证明所有外部站点当前可用。
 
 2026-09-16 独立审查（Opus 5 三路并行）后确认修复：附件 URL 仅做大小写/端口/fragment 归一去重；apex→www 重定向不再判为脱靶；带站点级登录组件的公开详情页不再判为登录墙；`mm/dd/yyyy hh:mm AM/PM` 日期可解析；标题回显忽略首尾标点（Python 与 TS 同规则）；附件模板 `{source_bid_id}` 做百分号编码；两种数据库均按主键、再按 `dedupe_key` 定位既有行；MySQL 只在提交前短暂锁定租约行，避免阻塞心跳续租；锁丢失不计入源健康失败；子进程非零退出不会把 success 文档写成成功日志；SAM.gov 托管导入尊重 `DATABASE_PATH`；列表卡片、意向页与详情页共用 `getBidDescription`。
 
 审查后仍保留的已知边界（有意为之或需产品决策）：
 
-- 补全候选没有历史视角：列表描述缺失的源每次都会重新抓取前 `max_details_per_run` 条，之后的记录在该上限内永远轮不到；需要 Node 把 `detail_fetched_at` 注入任务或实现轮转/冷却。
+- 历史正文回填默认关闭自动扫尾，可手动运行；历史读取有上限（列表运行读本源最近一次出现之前 30 天内、最多 5,000 行；补采每页 200 行、最多 10 页），见[正文补采运维](../operations/detail-backfill.md)"历史读取上限"。
 - 附件只增不删：附件 URL 带会话/随机参数的门户会在每次运行追加整组附件；后续需要 URL 规范化键或 last-seen 清理。
 - 更新的详情可以替换旧详情：解析器返回更短的权威正文并显式清空 `full_description` 时，旧长正文会被替换（门户改版即如此），这不是列表降级，属于设计取舍。
 - 运行入口的本地放行以 `Host` 头判断回环；`NODE_ENV=development` 且 `ADMIN_UI_LOCAL_BYPASS=true` 的机器不应暴露到公网。

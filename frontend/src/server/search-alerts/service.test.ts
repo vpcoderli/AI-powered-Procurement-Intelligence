@@ -1,3 +1,5 @@
+import { eq } from "drizzle-orm";
+import { alerts } from "@/server/db/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { recordSearchAlertDigestRun } from "./digest-history";
@@ -21,6 +23,33 @@ describe("search alerts service", () => {
 
   afterEach(async () => {
     await testDb.cleanup();
+  });
+
+  it.each(["county", "city", "township", "special_district"] as const)("roundtrips %s queries and legacy issuer columns in SQLite", async (issuerType) => {
+    const created = await createSearchAlert(testDb.db, "anon_a", {
+      name: "Local bids", query: { states: ["CA"], issuerType }, frequency: "daily", isEnabled: true,
+    });
+    expect(created.query).toMatchObject({ states: ["CA"], issuerType });
+    expect((await listSearchAlerts(testDb.db, "anon_a"))[0].query.issuerType).toBe(issuerType);
+
+    testDb.db.update(alerts).set({ query: null }).where(eq(alerts.id, created.id)).run();
+    expect((await listSearchAlerts(testDb.db, "anon_a"))[0].query).toMatchObject({ states: ["CA"], issuerType });
+
+    const updated = await updateSearchAlert(testDb.db, "anon_a", created.id, { query: { issuerType } });
+    expect(updated.query.issuerType).toBe(issuerType);
+  });
+
+  it.each(["county", "city", "township", "special_district"] as const)("preserves %s queries and legacy issuer columns when listing MySQL alerts", async (issuerType) => {
+    const row = {
+      id: "mysql_local", userId: "user_mysql", name: "Local bids", query: JSON.stringify({ states: ["CA"], issuerType }) as string | null,
+      states: '["CA"]', issuerType, deadlinePreset: "any", publishedPreset: "any", frequency: "daily", isEnabled: 1,
+      lastMatchedAt: null, lastNotifiedAt: null, createdAt: "2026-06-01", updatedAt: "2026-06-01",
+    };
+    const mysql = { query: vi.fn(async (sql: string): Promise<[typeof row[], unknown]> => [sql.includes("FROM alerts") ? [row] : [], []]) };
+
+    expect((await listSearchAlertsFromMysql(mysql, "user_mysql"))[0].query).toMatchObject({ states: ["CA"], issuerType });
+    row.query = null;
+    expect((await listSearchAlertsFromMysql(mysql, "user_mysql"))[0].query).toMatchObject({ states: ["CA"], issuerType });
   });
 
   it("creates and lists alerts for one user", async () => {
@@ -142,7 +171,7 @@ describe("search alerts service", () => {
     ]);
   });
 
-  it("runs the MySQL alert create/list/update/delete lifecycle", async () => {
+  it.each(["state", "county", "city", "township", "special_district"] as const)("runs the MySQL %s alert create/list/update/delete lifecycle", async (issuerType) => {
     const rowsByAlertId = new Map<string, Record<string, unknown>>();
     const digestRows = [
       {
@@ -215,10 +244,11 @@ describe("search alerts service", () => {
 
     const created = await createSearchAlertFromMysql(mysql, "user_mysql", {
       name: "Cloud bids",
-      query: { q: "cloud", states: ["CA"], issuerType: "state", deadline: "next7" },
+      query: { q: "cloud", states: ["CA"], issuerType, deadline: "next7" },
       frequency: "daily",
       isEnabled: true,
     });
+    expect(created.query).toMatchObject({ states: ["CA"], issuerType });
     digestRows[0].alertId = created.id;
     const updated = await updateSearchAlertFromMysql(mysql, "user_mysql", created.id, {
       name: "Cloud bids updated",
@@ -227,6 +257,8 @@ describe("search alerts service", () => {
 
     const listed = await listSearchAlertsFromMysql(mysql, "user_mysql");
     expect(listed.map((alert) => alert.id)).toEqual([created.id]);
+    expect(listed[0].query.issuerType).toBe(issuerType);
+    expect(updated.query.issuerType).toBe(issuerType);
     expect(listed[0].digestHistory).toEqual([
       expect.objectContaining({
         id: "digest_run_mysql",

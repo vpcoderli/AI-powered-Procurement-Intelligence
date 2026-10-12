@@ -6,11 +6,16 @@ import { bids, crawlerLogs } from "@/server/db/schema";
 import { importCrawlerJsonRunIntoSqlite } from "./sqlite-json-importer";
 import { CrawlerLeaseLostError } from "./execution-context";
 import { importCrawlerJsonRunIntoMysql } from "./mysql-json-importer";
+import { loadDetailBackfillCandidates, loadDetailHistory } from "./detail-history";
 import { runSamGovCrawler } from "./sam-gov-runner";
 
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
 }));
+vi.mock("./detail-history", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./detail-history")>();
+  return { ...original, loadDetailHistory: vi.fn(async () => []), loadDetailBackfillCandidates: vi.fn(async () => []) };
+});
 vi.mock("./mysql-json-importer", () => ({
   importCrawlerJsonRunIntoMysql: vi.fn(async () => ({
     fetchedCount: 1,
@@ -22,6 +27,8 @@ vi.mock("./mysql-json-importer", () => ({
 
 const mockedExecFile = vi.mocked(execFile);
 const mockedImportCrawlerJsonRunIntoMysql = vi.mocked(importCrawlerJsonRunIntoMysql);
+const mockedLoadDetailHistory = vi.mocked(loadDetailHistory);
+const mockedLoadDetailBackfillCandidates = vi.mocked(loadDetailBackfillCandidates);
 
 const mysqlJsonPayload = JSON.stringify({
   source: "SAM.gov",
@@ -154,7 +161,7 @@ describe("SAM.gov crawler runner", () => {
 
   it("starts the Python crawler with documented date and pagination options", async () => {
     mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
-      callback(null, "imported 1", "");
+      callback(null, mysqlJsonPayload, "");
       return {} as ReturnType<typeof execFile>;
     }) as typeof execFile);
 
@@ -163,14 +170,16 @@ describe("SAM.gov crawler runner", () => {
       postedTo: "05/19/2026",
       limit: 50,
       maxRecords: 75,
+      maxDescriptions: 12,
+      outputJson: true,
       databasePath: "/tmp/apsi.sqlite",
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: true,
       source: "SAM.gov",
       status: "success",
-      stdout: "imported 1",
+      stdout: mysqlJsonPayload,
       stderr: "",
     });
     expect(mockedExecFile).toHaveBeenCalledWith(
@@ -179,8 +188,7 @@ describe("SAM.gov crawler runner", () => {
         "-m",
         "apsi_crawler.cli",
         "fetch-sam-gov",
-        "--database",
-        "/tmp/apsi.sqlite",
+        "--output-json",
         "--posted-from",
         "05/01/2026",
         "--posted-to",
@@ -189,9 +197,8 @@ describe("SAM.gov crawler runner", () => {
         "50",
         "--max-records",
         "75",
-        "--archive-documents",
-        "--archive-dir",
-        path.resolve(process.cwd(), "data", "attachments"),
+        "--max-descriptions",
+        "12",
       ],
       expect.objectContaining({
         cwd: path.resolve(process.cwd(), "..", "crawler"),
@@ -217,22 +224,20 @@ describe("SAM.gov crawler runner", () => {
     expect(result.stderr).toBe("trace");
   });
 
-  it("passes archive document options by default", async () => {
-    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
-      callback(null, "imported 1", "");
-      return {} as ReturnType<typeof execFile>;
-    }) as typeof execFile);
+  it("archives documents inside the run only when a caller asks for it", async () => {
+    for (let call = 0; call < 2; call += 1) {
+      mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+        callback(null, mysqlJsonPayload, "");
+        return {} as ReturnType<typeof execFile>;
+      }) as typeof execFile);
+    }
 
-    await runSamGovCrawler({
-      postedFrom: "05/01/2026",
-      postedTo: "05/19/2026",
-      databasePath: "/tmp/apsi.sqlite",
-      archiveDir: "/tmp/attachments",
-    });
+    await runSamGovCrawler({ postedFrom: "05/01/2026", postedTo: "05/19/2026", databasePath: "/tmp/apsi.sqlite", archiveDir: "/tmp/attachments", outputJson: true });
+    await runSamGovCrawler({ postedFrom: "05/01/2026", postedTo: "05/19/2026", databasePath: "/tmp/apsi.sqlite", archiveDir: "/tmp/attachments", outputJson: true, archiveDocuments: true });
 
-    expect(mockedExecFile.mock.calls[0][1]).toEqual(
-      expect.arrayContaining(["--archive-documents", "--archive-dir", "/tmp/attachments"]),
-    );
+    expect(mockedExecFile.mock.calls[0][1]).not.toContain("--archive-documents");
+    expect(mockedExecFile.mock.calls[0][1]).not.toContain("--archive-dir");
+    expect(mockedExecFile.mock.calls[1][1]).toEqual(expect.arrayContaining(["--archive-documents", "--archive-dir", "/tmp/attachments"]));
   });
 
   it("runs the Python crawler in JSON mode and imports directly into MySQL when MySQL is configured", async () => {
@@ -254,5 +259,81 @@ describe("SAM.gov crawler runner", () => {
     expect(args).toContain("--output-json");
     expect(args).not.toContain("--database");
     expect(mockedImportCrawlerJsonRunIntoMysql).toHaveBeenCalledWith(expect.anything(), JSON.parse(mysqlJsonPayload), undefined);
+  });
+});
+
+describe("SAM durable detail history", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+  it("sends persisted history through stdin and declares a history-only retry", async () => {
+    const history = [{ id: "sam_gov:old", source_bid_id: "old", raw_payload: { description: "https://api.sam.gov/prod/opportunities/v1/noticedesc?noticeid=old" } }];
+    const stdinEnd = vi.fn();
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+      callback(null, JSON.stringify({ status: "success", bids: [] }), "");
+      return { stdin: { end: stdinEnd } } as unknown as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+    const options = { outputJson: true, archiveDocuments: false, detailHistory: history, detailBackfillOnly: true };
+    await runSamGovCrawler(options);
+    expect(mockedExecFile.mock.lastCall?.[1]).toContain("--detail-history-stdin");
+    expect(mockedExecFile.mock.lastCall?.[1]).toContain("--detail-backfill-only");
+    expect(stdinEnd).toHaveBeenCalledWith(JSON.stringify(history));
+  });
+});
+
+describe("SAM history loader selection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // A bare store is enough: both loaders are mocked, so only what the runner asks of them matters.
+  const historyStore = { database: {} as never };
+
+  function finishChild() {
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+      callback(null, JSON.stringify({ status: "success", bids: [] }), "");
+      return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+  }
+
+  it("reads a backfill run's candidates up to fetch-sam-gov's own default of 25 descriptions", async () => {
+    finishChild();
+    await runSamGovCrawler({ historyStore, detailBackfillOnly: true, outputJson: true });
+    expect(mockedLoadDetailBackfillCandidates).toHaveBeenCalledTimes(1);
+    expect(mockedLoadDetailBackfillCandidates).toHaveBeenCalledWith(historyStore, "sam_gov", undefined, { limit: 25 });
+    expect(mockedLoadDetailHistory).not.toHaveBeenCalled();
+  });
+
+  it("limits a backfill run's candidates to its maxDescriptions", async () => {
+    finishChild();
+    await runSamGovCrawler({ historyStore, detailBackfillOnly: true, maxDescriptions: 7, outputJson: true });
+    expect(mockedLoadDetailBackfillCandidates).toHaveBeenCalledTimes(1);
+    expect(mockedLoadDetailBackfillCandidates).toHaveBeenCalledWith(historyStore, "sam_gov", undefined, { limit: 7 });
+    expect(mockedLoadDetailHistory).not.toHaveBeenCalled();
+  });
+
+  it("reads recent list history, not backfill candidates, for a list run", async () => {
+    finishChild();
+    await runSamGovCrawler({ historyStore, maxDescriptions: 7, outputJson: true });
+    expect(mockedLoadDetailHistory).toHaveBeenCalledTimes(1);
+    expect(mockedLoadDetailHistory).toHaveBeenCalledWith(historyStore, "sam_gov");
+    expect(mockedLoadDetailBackfillCandidates).not.toHaveBeenCalled();
+  });
+});
+
+describe("standalone SAM persistence gate", () => {
+  it("imports standalone SQLite output in the parent without exposing the live path", async () => {
+    const database = await createTestDatabase();
+    try {
+      mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+        callback(null, mysqlJsonPayload, "");
+        return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
+      }) as typeof execFile);
+      const result = await runSamGovCrawler({ databasePath: database.databasePath, archiveDocuments: false });
+      expect(mockedExecFile.mock.lastCall?.[1]).toContain("--output-json");
+      expect(mockedExecFile.mock.lastCall?.[1]).not.toContain("--database");
+      expect(result.ok).toBe(true);
+      expect(database.db.select().from(bids).all()).toHaveLength(1);
+    } finally {
+      await database.cleanup();
+    }
   });
 });

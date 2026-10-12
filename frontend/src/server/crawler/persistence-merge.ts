@@ -1,3 +1,4 @@
+import { getBidDescriptionIssue } from "@/lib/bid-description";
 import { mergeLifecycleFields } from "./lifecycle";
 
 type JsonRecord = Record<string, unknown>;
@@ -28,6 +29,10 @@ function sameText(left: unknown, right: unknown) {
 }
 
 function meaningful(row: JsonRecord, field: string) {
+  // Mirrors content_quality.is_contact_metadata. Historical heuristic values are portal
+  // labels, so provenance must not protect them from a valid contact or an empty refresh.
+  if (field === "contact_name" && /^(?:purchase method|type code|bid type|informal bid flag|allow electronic quote)\s*(?::|：|$)/i.test(text(row[field]))) return false;
+  if ((field === "description" || field === "full_description") && getBidDescriptionIssue(typeof row[field] === "string" ? row[field] as string : null, text(row.title))) return false;
   return Boolean(text(row[field])) && (!(field === "description" || field === "full_description") || !sameText(row[field], row.title));
 }
 
@@ -51,6 +56,9 @@ function detailProvenance(row: JsonRecord, persisted: boolean) {
 /** Shared snake_case merge for SQLite and MySQL, performed inside the write transaction. */
 export function mergePersistedBid(incoming: JsonRecord, existing: JsonRecord = {}): JsonRecord {
   const merged = { ...incoming };
+  for (const field of ["source_bid_id", "dedupe_key", "jurisdiction_level", "fips_code"]) {
+    if (!text(incoming[field]) && text(existing[field])) merged[field] = existing[field];
+  }
   const priorDetail = detailProvenance(existing, true);
   const incomingDetail = detailProvenance(incoming, false);
   for (const field of detailFields) {
@@ -104,6 +112,12 @@ export function snakeCaseRecord(row: JsonRecord): JsonRecord {
 }
 
 const archiveFields = ["storage_path", "byte_size", "content_type", "checksum_sha256", "fetched_at"];
+const repairFields = ["archive_status", "archive_error", "failure_kind", "repair_attempts", "next_repair_at"];
+
+/** Seen again without a new file: like the Python storage, an incoming not_archived is no archive news. */
+function reobservedOnly(attachment: JsonRecord) {
+  return !text(attachment.storage_path) && ["", "not_archived"].includes(text(attachment.archive_status));
+}
 
 function attachmentUrls(row: JsonRecord) {
   return [text(row.url), text(row.original_url)].filter(Boolean);
@@ -124,7 +138,7 @@ export function mergePersistedAttachments(existing: JsonRecord[], incoming: Json
         let suffix = merged.length + 1;
         do { id = `${bidId}:attachment:${suffix++}`; } while (merged.some((row) => row.id === id));
       }
-      merged.push({ ...attachment, id });
+      merged.push({ ...attachment, id, verified_at: null });
       continue;
     }
     const prior = merged[index];
@@ -136,6 +150,14 @@ export function mergePersistedAttachments(existing: JsonRecord[], incoming: Json
       row.archive_status = prior.archive_status;
       row.archive_error = prior.archive_error;
     }
+    // Nor can it reset the repair worker's retry state: a failed or parked link keeps its
+    // status, failure kind and next attempt, or every re-crawl would make it due again.
+    if ((prior.archive_status === "failed" || prior.archive_status === "unavailable") && reobservedOnly(attachment)) {
+      for (const field of repairFields) row[field] = prior[field];
+    }
+    // Only persisted verification of the exact same archived bytes is authoritative.
+    const sameArchive = ["storage_path", "byte_size", "content_type", "checksum_sha256"].every((field) => text(row[field]) === text(prior[field]));
+    row.verified_at = sameArchive ? prior.verified_at ?? null : null;
     merged[index] = row;
   }
   return merged;

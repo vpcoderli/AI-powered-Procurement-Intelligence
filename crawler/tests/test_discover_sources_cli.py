@@ -458,6 +458,22 @@ def test_a_root_alias_registration_deduplicates_the_group_scoped_directory_row(r
     assert response["review"][0]["reason"] == "already_registered"
 
 
+def test_root_and_group_aliases_in_one_discovery_produce_one_candidate():
+    aurora = agency("City of Aurora", "/colorado/city-of-aurora", group="colorado", state_code="CO")
+    alias = agency("City of Aurora", "/city-of-aurora", group=None, state_code="CO")
+    response = run(
+        {},
+        agencies=[aurora, alias],
+        levels={"City of Aurora": "city"},
+        rows={("city", "CO", "aurora"): {"status": "exact", "geoid": "0804000", "name": "Aurora city"}},
+    )
+
+    assert [candidate["id"] for candidate in response["candidates"]] == ["bidnet_co_aurora"]
+    assert response["stats"]["duplicates"] == 1
+    assert response["review"][0]["reason"] == "duplicate_tenant"
+    assert response["review"][0]["detail"] == "bidnet_co_aurora"
+
+
 def test_a_different_slug_under_the_same_group_is_a_different_tenant():
     response = run(
         {
@@ -888,6 +904,7 @@ def test_paging_defaults_and_clamps_match_the_spec():
         {"levels": ["special_district"]},
         {"levels": []},
         {"states": ["Ohio"]},
+        {"states": ["ZZ"]},
         {"states": []},
         {"existing_ids": "bidnet_oh_cuyahoga"},
         {"existing_base_urls": [7]},

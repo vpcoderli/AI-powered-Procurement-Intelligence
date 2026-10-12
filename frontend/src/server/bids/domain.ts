@@ -1,5 +1,9 @@
+import type { IssuerType } from "@/lib/issuer-types";
 import type { BidDetailAccess } from "@/lib/bid-access";
 import type { BidLifecycleStatus } from "@/lib/bid-lifecycle";
+import type { BidDataQuality } from "@/lib/bid-usability";
+
+export type { IssuerType } from "@/lib/issuer-types";
 
 export interface BidAttachment {
   name: string;
@@ -12,10 +16,9 @@ export interface BidAttachment {
   contentType: string;
   checksumSha256: string;
   fetchedAt: string;
+  verifiedAt?: string;
   archiveError: string;
 }
-
-export type IssuerType = "federal" | "state";
 
 export interface Bid {
   id: string;
@@ -51,5 +54,10 @@ export interface Bid {
   awardedDate: string;
   /** Platform-locked detail fields, e.g. BidNet members-only description/documents/contact. */
   detailAccess: BidDetailAccess | null;
+  dataQuality?: BidDataQuality | null;
+  sourceBidId?: string;
+  dedupeKey?: string;
+  jurisdictionLevel?: string;
+  fipsCode?: string;
   updatedAt?: string;
 }

@@ -485,3 +485,22 @@ def test_bidnet_list_html_fetcher_returns_html_final_url_and_status():
     assert html == BIDNET_ROW_HTML
     assert final_url == url
     assert status == 200
+
+
+def test_unresolved_list_item_is_retained_as_a_quarantine_candidate():
+    from apsi_crawler.list_extraction import normalize_list_items
+    from apsi_crawler.data_quality import core_issues
+    rows = normalize_list_items([
+        {"title": "Repair roads", "source_bid_id": "1", "url": "https://portal.example.gov/bids/1"},
+        {"title": "Procure pumps", "source_bid_id": None, "url": None},
+    ], _source())
+    assert len(rows) == 2
+    assert rows[1]["title"] == "Procure pumps"
+    assert "missing_identity" in core_issues(rows[1])
+    assert "normalization_error" in rows[1]["raw_payload"]
+
+
+def test_two_unresolved_page_candidates_are_not_deduplicated_as_one_null_id():
+    from apsi_crawler.list_extraction import _unseen_page_bids
+    rows = [{"source_bid_id": None, "title": "Pumps"}, {"source_bid_id": None, "title": "Valves"}]
+    assert _unseen_page_bids(rows, set()) == rows

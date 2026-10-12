@@ -69,6 +69,27 @@ export function parseAttachmentPolicy(fetchConfig: Record<string, unknown>): Att
   };
 }
 
+/** Reads the policy from a stored `fetch_config` JSON text; a missing or unreadable one is the default. */
+export function attachmentPolicyFromFetchConfig(fetchConfig: string | null | undefined): AttachmentPolicy {
+  if (!fetchConfig?.trim()) return DEFAULT_ATTACHMENT_POLICY;
+  try {
+    const parsed: unknown = JSON.parse(fetchConfig);
+    return isRecord(parsed) ? parseAttachmentPolicy(parsed) : DEFAULT_ATTACHMENT_POLICY;
+  } catch {
+    return DEFAULT_ATTACHMENT_POLICY;
+  }
+}
+
+/**
+ * How many attachments of one source a run may hand to the downloader: the policy's
+ * `max_per_run`, which the run-wide per-source cap can lower but never raise. Always a whole
+ * number of at least one, because the MySQL selection inlines it into its SQL.
+ */
+export function attachmentBatchLimit(policy: AttachmentPolicy, maxPerSource?: number): number {
+  const cap = typeof maxPerSource === "number" && Number.isFinite(maxPerSource) ? Math.trunc(maxPerSource) : policy.maxPerRun;
+  return Math.max(1, Math.min(policy.maxPerRun, cap));
+}
+
 /** Writes the snake_case `attachments` block stored on `fetch_config`. */
 export function serializeAttachmentPolicy(policy: AttachmentPolicy): Record<string, unknown> {
   return {

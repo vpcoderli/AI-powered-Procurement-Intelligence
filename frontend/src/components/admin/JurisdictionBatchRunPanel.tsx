@@ -4,231 +4,49 @@ import { useMemo, useState } from "react";
 import { Play } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { runSamGovCrawlerNow, runStateCrawlersNow, type StateCrawlerRunResultEntry } from "@/lib/api/admin";
+import {
+  BATCH_JURISDICTION_LEVELS,
+  BATCH_WINDOW_PRESETS,
+  batchSuccessKind,
+  blockedReasonHintKey,
+  buildBatchRunEntries,
+  countBatchEntriesByLevel,
+  deferredThrottleSourceId,
+  filterBatchEntries,
+  resolveBatchWindow,
+  runManualCrawl,
+  type BatchJurisdictionLevel,
+  type BatchRunEntryStatus,
+  type BatchRunSource,
+  type BatchWindowPreset,
+} from "@/lib/manual-crawl";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
-import type { AdminDataSourceIndexItem } from "@/server/admin/data-source-list-contract";
 
-/** What the panel reads from a source — satisfied by both the index API's items and AdminDataSource. */
-export type BatchRunSource = Pick<
-  AdminDataSourceIndexItem,
-  "id" | "label" | "stateCode" | "issuerType" | "jurisdictionLevel" | "isEnabled" | "crawlerSourceId"
->;
-
-/**
- * Jurisdiction batch run + date window panel (spec:
- * docs/superpowers/specs/2026-08-21-jurisdiction-batch-run-date-window-design.md).
- *
- * Reuses the existing manual run routes — /api/crawler/state/run for state/county/city/
- * special-district `data_sources` rows (chunked, sequential) and /api/crawler/sam-gov/run for
- * the synthetic federal SAM.gov entry — with an optional published-date window passed through
- * as postedFrom/postedTo. No new backend routes or queue infrastructure.
- */
-
-export const BATCH_JURISDICTION_LEVELS = ["federal", "state", "county", "city", "township", "special_district"] as const;
-export type BatchJurisdictionLevel = (typeof BATCH_JURISDICTION_LEVELS)[number];
-
-export const BATCH_WINDOW_PRESETS = ["all", "last7", "last30", "last90", "custom"] as const;
-export type BatchWindowPreset = (typeof BATCH_WINDOW_PRESETS)[number];
-
-export const BATCH_RUN_CHUNK_SIZE = 5;
-
-export const SAM_GOV_ENTRY_KEY = "sam_gov_federal";
-
-export interface BatchRunEntry {
-  /** Stable selection key: the runnable crawler source id, or SAM_GOV_ENTRY_KEY for federal. */
-  key: string;
-  kind: "state_task" | "sam_gov";
-  label: string;
-  level: BatchJurisdictionLevel;
-  stateCode: string | null;
-}
-
-export type BatchRunEntryStatus =
-  | { phase: "pending" }
-  | { phase: "running" }
-  | {
-      phase: "done";
-      status: "success" | "failure" | "blocked" | "locked" | "disabled" | "deferred" | "unknown";
-      fetchedCount?: number;
-      dateFilter?: { kept?: number; dropped?: number; unparsed?: number };
-      /**
-       * Orchestrator-provided reason: the blocked governance/legal sentence, or, for `deferred`,
-       * `platform_throttled:<sourceId>` (C7).
-       */
-      reason?: string;
-      /** Verified-empty-list marker from `metadata.emptyState` (C1), when the run reported one. */
-      emptyState?: { verified: boolean; marker: string | null };
-    };
-
-/**
- * How a zero-row success should read in the panel.
- *
- * - `verified_empty`: the crawler confirmed the tenant page and an explicit "no open bids"
- *   phrase, so zero rows is the correct answer, not a silent parse failure.
- * - `zero`: a success with nothing fetched and no empty-state evidence — still a success, but
- *   worth showing as such rather than hiding behind a bare "Success" badge.
- * - `rows`: the ordinary case.
- */
-export type BatchSuccessKind = "verified_empty" | "zero" | "rows";
-
-export function batchSuccessKind(status: BatchRunEntryStatus): BatchSuccessKind {
-  if (status.phase !== "done" || status.status !== "success") return "rows";
-  if (status.emptyState?.verified) return "verified_empty";
-  return status.fetchedCount === 0 ? "zero" : "rows";
-}
-
-/**
- * Maps the orchestrator's blocked `reason` sentence onto an i18n hint key, so the panel can
- * explain WHY a run was blocked (governance approval vs legal review) instead of leaving the
- * bare "blocked" badge ambiguous with a portal-side rejection. Unknown reasons fall back to
- * the raw text.
- */
-export function blockedReasonHintKey(reason: string | undefined): string | null {
-  if (!reason) return null;
-  if (reason.includes("legal review")) return "admin.batchRunBlockedLegal";
-  if (reason.includes("governance")) return "admin.batchRunBlockedApproval";
-  return null;
-}
-
-/**
- * Extracts the offending source id from the C7 deferral reason (`platform_throttled:<sourceId>`)
- * so the panel can name which source tripped the platform throttle. Returns null for any other
- * shape, and the raw reason is shown instead.
- */
-export function deferredThrottleSourceId(reason: string | undefined): string | null {
-  if (!reason) return null;
-  const match = /^platform_throttled:(.+)$/.exec(reason.trim());
-  return match ? match[1] : null;
-}
-
-export function batchJurisdictionLevelOf(source: Pick<BatchRunSource, "jurisdictionLevel" | "issuerType">): BatchJurisdictionLevel {
-  const level = source.jurisdictionLevel;
-  if (level && (BATCH_JURISDICTION_LEVELS as readonly string[]).includes(level)) {
-    return level as BatchJurisdictionLevel;
-  }
-  // Legacy rows (NULL jurisdiction) predate the registry's jurisdiction columns: federal issuer
-  // rows are federal, everything else in `data_sources` was a state portal.
-  return source.issuerType === "federal" ? "federal" : "state";
-}
-
-/**
- * Flattens the admin source list into runnable batch entries: every enabled non-federal row with
- * a resolvable crawler source id, plus one synthetic SAM.gov entry for the federal level (federal
- * rows are excluded from /api/crawler/state/run and run through /api/crawler/sam-gov/run instead).
- */
-export function buildBatchRunEntries(
-  sources: BatchRunSource[],
-  crawlerSourceIdFor: (source: BatchRunSource) => string | null,
-): BatchRunEntry[] {
-  const entries: BatchRunEntry[] = [
-    { key: SAM_GOV_ENTRY_KEY, kind: "sam_gov", label: "SAM.gov", level: "federal", stateCode: null },
-  ];
-
-  for (const source of sources) {
-    if (!source.isEnabled) continue;
-    const level = batchJurisdictionLevelOf(source);
-    if (level === "federal") continue;
-    const crawlerSourceId = crawlerSourceIdFor(source);
-    if (!crawlerSourceId) continue;
-    entries.push({
-      key: crawlerSourceId,
-      kind: "state_task",
-      label: source.label,
-      level,
-      stateCode: source.stateCode || null,
-    });
-  }
-
-  return entries;
-}
-
-export function filterBatchEntries(
-  entries: BatchRunEntry[],
-  levelFilter: BatchJurisdictionLevel | "all",
-  stateFilter: string | "all",
-): BatchRunEntry[] {
-  return entries.filter((entry) => {
-    if (levelFilter !== "all" && entry.level !== levelFilter) return false;
-    if (stateFilter !== "all" && entry.stateCode !== stateFilter) return false;
-    return true;
-  });
-}
-
-export function countBatchEntriesByLevel(entries: BatchRunEntry[]): Record<BatchJurisdictionLevel, number> {
-  const counts = { federal: 0, state: 0, county: 0, city: 0, township: 0, special_district: 0 };
-  for (const entry of entries) counts[entry.level] += 1;
-  return counts;
-}
-
-function isoDate(date: Date): string {
-  return date.toISOString().slice(0, 10);
-}
-
-const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-
-export type BatchWindow = { postedFrom?: string; postedTo?: string } | null;
-
-/**
- * Resolves the selected time window into postedFrom/postedTo (ISO yyyy-mm-dd, inclusive).
- * Returns null for "all" (no window) and the string "invalid" for an unusable custom window.
- * "lastN" spans exactly N calendar days ending today (UTC).
- */
-export function resolveBatchWindow(
-  preset: BatchWindowPreset,
-  custom: { from: string; to: string },
-  today: Date,
-): BatchWindow | "invalid" {
-  if (preset === "all") return null;
-
-  if (preset === "custom") {
-    const from = custom.from.trim();
-    const to = custom.to.trim();
-    if (!from && !to) return null;
-    if (from && !ISO_DATE_PATTERN.test(from)) return "invalid";
-    if (to && !ISO_DATE_PATTERN.test(to)) return "invalid";
-    if (from && to && from > to) return "invalid";
-    return { ...(from ? { postedFrom: from } : {}), ...(to ? { postedTo: to } : {}) };
-  }
-
-  const days = preset === "last7" ? 7 : preset === "last30" ? 30 : 90;
-  const from = new Date(today.getTime());
-  from.setUTCDate(from.getUTCDate() - (days - 1));
-  return { postedFrom: isoDate(from), postedTo: isoDate(today) };
-}
-
-/** "2026-08-01" -> "08/01/2026" (the SAM.gov API's MM/dd/yyyy format). */
-export function samGovDateFromIso(iso: string): string {
-  const [year, month, day] = iso.split("-");
-  return `${month}/${day}/${year}`;
-}
-
-export function chunkBatchKeys(keys: string[], size = BATCH_RUN_CHUNK_SIZE): string[][] {
-  const chunks: string[][] = [];
-  for (let index = 0; index < keys.length; index += size) {
-    chunks.push(keys.slice(index, index + size));
-  }
-  return chunks;
-}
-
-const BATCH_DONE_STATUSES = ["success", "failure", "blocked", "locked", "disabled", "deferred"] as const;
-
-export function batchStatusFromRunResult(entry: StateCrawlerRunResultEntry): BatchRunEntryStatus {
-  const status = (BATCH_DONE_STATUSES as readonly string[]).includes(entry.status)
-    ? (entry.status as (typeof BATCH_DONE_STATUSES)[number])
-    : "unknown";
-  const emptyState = entry.runner?.payload?.metadata?.emptyState;
-
-  return {
-    phase: "done",
-    status,
-    fetchedCount: entry.runner?.fetchedCount,
-    dateFilter: entry.runner?.payload?.metadata?.dateFilter,
-    ...(entry.reason ? { reason: entry.reason } : {}),
-    ...(emptyState
-      ? { emptyState: { verified: emptyState.verified === true, marker: emptyState.marker ?? null } }
-      : {}),
-  };
-}
+// Preserve helper imports used by existing admin consumers; execution lives in manual-crawl.
+export {
+  BATCH_JURISDICTION_LEVELS,
+  BATCH_RUN_CHUNK_SIZE,
+  BATCH_WINDOW_PRESETS,
+  SAM_GOV_ENTRY_KEY,
+  batchJurisdictionLevelOf,
+  batchStatusFromRunResult,
+  batchSuccessKind,
+  blockedReasonHintKey,
+  buildBatchRunEntries,
+  chunkBatchKeys,
+  countBatchEntriesByLevel,
+  deferredThrottleSourceId,
+  filterBatchEntries,
+  resolveBatchWindow,
+  samGovDateFromIso,
+  type BatchJurisdictionLevel,
+  type BatchRunEntry,
+  type BatchRunEntryStatus,
+  type BatchRunSource,
+  type BatchSuccessKind,
+  type BatchWindow,
+  type BatchWindowPreset,
+} from "@/lib/manual-crawl";
 
 export interface JurisdictionBatchRunPanelProps {
   sources: BatchRunSource[];
@@ -293,67 +111,20 @@ export function JurisdictionBatchRunPanel({
     });
   };
 
-  const markStatuses = (keys: string[], status: BatchRunEntryStatus) => {
-    setEntryStatuses((current) => {
-      const next = { ...current };
-      for (const key of keys) next[key] = status;
-      return next;
-    });
-  };
-
   const runBatch = async () => {
     if (windowInvalid || selectedKeys.size === 0 || isBatchRunning) return;
-
     const selectedEntries = entries.filter((entry) => selectedKeys.has(entry.key));
-    const stateKeys = selectedEntries.filter((entry) => entry.kind === "state_task").map((entry) => entry.key);
-    const includeSamGov = selectedEntries.some((entry) => entry.kind === "sam_gov");
-    const total = stateKeys.length + (includeSamGov ? 1 : 0);
-
     setIsBatchRunning(true);
-    setCompletedCount(0);
-    setRunTotal(total);
-    setEntryStatuses(Object.fromEntries(selectedEntries.map((entry) => [entry.key, { phase: "pending" }])));
-
-    // The guard above already returned when windowInvalid, so batchWindow is a usable window here.
-    const runWindow = batchWindow;
-
     try {
-      for (const chunk of chunkBatchKeys(stateKeys)) {
-        markStatuses(chunk, { phase: "running" });
-        try {
-          const response = await runStateCrawlersNow(chunk, {
-            ...(runWindow?.postedFrom ? { postedFrom: runWindow.postedFrom } : {}),
-            ...(runWindow?.postedTo ? { postedTo: runWindow.postedTo } : {}),
-          });
-          setEntryStatuses((current) => {
-            const next = { ...current };
-            for (const result of response.results) {
-              next[result.source] = batchStatusFromRunResult(result);
-            }
-            for (const error of response.errors ?? []) {
-              next[error.source] = { phase: "done", status: "unknown" };
-            }
-            return next;
-          });
-        } catch {
-          markStatuses(chunk, { phase: "done", status: "failure" });
-        }
-        setCompletedCount((current) => current + chunk.length);
-      }
-
-      if (includeSamGov) {
-        markStatuses([SAM_GOV_ENTRY_KEY], { phase: "running" });
-        try {
-          await runSamGovCrawlerNow({
-            ...(runWindow?.postedFrom ? { postedFrom: samGovDateFromIso(runWindow.postedFrom) } : {}),
-            ...(runWindow?.postedTo ? { postedTo: samGovDateFromIso(runWindow.postedTo) } : {}),
-          });
-          markStatuses([SAM_GOV_ENTRY_KEY], { phase: "done", status: "success" });
-        } catch {
-          markStatuses([SAM_GOV_ENTRY_KEY], { phase: "done", status: "failure" });
-        }
-        setCompletedCount((current) => current + 1);
-      }
+      await runManualCrawl({ entries: selectedEntries }, {
+        transportFailure: "continue",
+        window: batchWindow,
+        onProgress: (progress) => {
+          setEntryStatuses(progress.statuses);
+          setCompletedCount(progress.completedCount);
+          setRunTotal(progress.total);
+        },
+      });
     } finally {
       setIsBatchRunning(false);
       onCompleted?.();
@@ -489,6 +260,7 @@ export function JurisdictionBatchRunPanel({
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <span className="text-xs font-semibold uppercase text-slate-500">{t("admin.batchRunWindow")}</span>
         <select
+          aria-label={t("admin.batchRunWindow")}
           value={windowPreset}
           onChange={(event) => setWindowPreset(event.target.value as BatchWindowPreset)}
           className="h-7 rounded-lg border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 outline-none"
@@ -563,7 +335,7 @@ export function JurisdictionBatchRunPanel({
                   disabled={isBatchRunning}
                 />
                 <span className="truncate font-medium text-slate-700">{entry.label}</span>
-                {entry.stateCode && <span className="shrink-0 text-slate-400">{entry.stateCode}</span>}
+                {entry.stateCode && <span className="shrink-0 text-slate-500">{entry.stateCode}</span>}
                 <Badge variant="outline" className="shrink-0 border-slate-200 text-slate-500">
                   {levelLabel(entry.level)}
                 </Badge>

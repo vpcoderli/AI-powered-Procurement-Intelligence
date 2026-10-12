@@ -1,4 +1,6 @@
 import type { Bid } from "@/server/bids/domain";
+import { BidAnalysisUnavailableError, getBidUsability, isVerifiedBidAttachment } from "@/lib/bid-usability";
+import { getBidDescription } from "@/lib/bid-description";
 import type { SupplierProfile } from "@/server/profile/types";
 import { tierForScore } from "@/server/ai/confidence";
 import type { BidMatchResult } from "./types";
@@ -20,8 +22,7 @@ function bidSearchText(bid: Bid) {
   return normalize(
     [
       bid.title,
-      bid.description,
-      bid.fullDescription,
+      getBidDescription(bid),
       bid.originalCategory,
       bid.issuerName,
       bid.stateCode,
@@ -179,12 +180,15 @@ function riskNotes(bid: Bid, profile: SupplierProfile, components: BidMatchResul
 
   if (bid.attachments.length === 0) {
     notes.push("No attachments are listed for this bid.");
+  } else if (!bid.attachments.some(isVerifiedBidAttachment)) {
+    notes.push("Attachment links are listed, but no files have been verified.");
   }
 
   return notes;
 }
 
 export function calculateBidMatch(bid: Bid, profile: SupplierProfile): BidMatchResult {
+  if (!getBidUsability(bid).analysis) throw new BidAnalysisUnavailableError();
   const text = bidSearchText(bid);
   const components = {
     geography: scoreGeography(bid, profile),

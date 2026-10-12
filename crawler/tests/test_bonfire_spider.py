@@ -34,6 +34,7 @@ def test_parses_bonfire_fixture_into_normalized_bids():
     assert bids[0]["title"] == "Louisville Metro Road Resurfacing Program 2026"
     assert "bonfirehub.com/opportunities/300001" in bids[0]["source_url"]
     assert bids[0]["state_code"] == "KY"
+    assert bids[0]["issuer_type"] == "city"
 
 
 def test_respects_limit():

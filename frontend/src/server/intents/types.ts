@@ -48,6 +48,7 @@ export interface IntentApiErrorResponse {
   error: {
     code:
       | "BID_NOT_FOUND"
+      | "BID_ANALYSIS_UNAVAILABLE"
       | "AUTH_REQUIRED"
       | "FEATURE_NOT_AVAILABLE"
       | "INTENT_NOT_FOUND"

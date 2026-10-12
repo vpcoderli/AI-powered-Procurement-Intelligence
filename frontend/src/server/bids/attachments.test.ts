@@ -149,6 +149,19 @@ describe("bid attachment files", () => {
     });
   });
 
+  it("returns a status note when a failed archive still has an old local file", async () => {
+    const attachmentDir = path.join(path.dirname(testDb.databasePath), "attachments");
+    process.env.CRAWLER_ATTACHMENT_DIR = attachmentDir;
+    await mkdir(attachmentDir, { recursive: true });
+    await writeFile(path.join(attachmentDir, "failed.pdf"), "%PDF-1.7 old snapshot");
+    testDb.db.insert(bidAttachments).values({
+      id: "failed_local", bidId: "1", name: "Failed.pdf", url: "https://example.gov/failed.pdf",
+      storagePath: "failed.pdf", archiveStatus: "failed", archiveError: "archive_corrupt",
+      createdAt: "2026-05-28T00:00:00.000Z",
+    }).run();
+    expect(await getBidAttachmentDownload(testDb.db, "1", "failed_local")).toMatchObject({ kind: "fallback", availability: "archive_failed" });
+  });
+
   it("returns undefined for external URLs and paths outside allowed directories", async () => {
     const attachmentDir = path.join(path.dirname(testDb.databasePath), "attachments");
     const outsidePath = path.join(path.dirname(testDb.databasePath), "secret.pdf");

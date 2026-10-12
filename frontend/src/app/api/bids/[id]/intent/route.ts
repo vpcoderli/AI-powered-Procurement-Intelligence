@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { BidAnalysisUnavailableError } from "@/lib/bid-usability";
 import { resolvePrincipal, type RequestPrincipal } from "@/server/auth/principal";
 import { authRequiredResponse, isAuthenticatedPrincipal } from "@/server/auth/route-guards";
 import { UsageLimitError, enforceMysqlIntentUsageLimit, enforceUsageLimit } from "@/server/auth/usage-limits";
@@ -88,6 +89,9 @@ export async function POST(request: Request, context: RouteContext) {
 
     return jsonWithPrincipalCookie({ intent }, principal);
   } catch (error) {
+    if (error instanceof BidAnalysisUnavailableError) {
+      return jsonWithPrincipalCookie({ error: { code: error.code, message: error.message } }, principal, { status: 409 });
+    }
     if (error instanceof UsageLimitError) {
       return usageLimitError(error, principal);
     }

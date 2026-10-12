@@ -3,6 +3,7 @@ import {
   closeResolvedMysqlPool,
   createMysqlPool,
   isMysqlDatabaseUrlConfigured,
+  MYSQL_LOCAL_ISSUER_TYPE_BACKFILL,
   mysqlColumnMigrationStatements,
   mysqlDataMigrationStatements,
   mysqlIndexColumnModification,
@@ -334,10 +335,15 @@ describe("mysql migrations cover the bid lifecycle columns (2026-09-24 phase 1)"
     expect(joined).toContain("data_sources ADD COLUMN consecutive_empty_runs INT NOT NULL DEFAULT 0");
   });
 
-  it("backfills closed lifecycle for inactive rows", () => {
+  it("backfills closed lifecycle for inactive rows and local issuer types for legacy bids", () => {
     expect(mysqlDataMigrationStatements()).toEqual([
       "UPDATE bids SET lifecycle_status = 'closed' WHERE is_active = 0 AND lifecycle_status = 'open'",
+      MYSQL_LOCAL_ISSUER_TYPE_BACKFILL,
     ]);
+    expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("ON data_sources.id = SUBSTRING_INDEX(bids.id, ':', 1)");
+    expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("IN ('county', 'city', 'township', 'special_district')");
+    expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("bids.fips_code = data_sources.fips_code");
+    expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("data_sources.state_code COLLATE utf8mb4_bin = bids.state_code COLLATE utf8mb4_bin");
   });
 });
 

@@ -26,7 +26,7 @@ import requests
 
 from apsi_crawler.content_quality import detect_empty_list
 from apsi_crawler.errors import VerifiedEmptyListError
-from apsi_crawler.normalizers.state_bids import normalize_state_opportunity
+from apsi_crawler.normalizers.state_bids import StateBidNormalizationError, normalize_state_opportunity
 
 
 # C2 field set, in contract order.
@@ -219,8 +219,6 @@ def validate_list_extraction(payload):
 def _record_from_item(item, source):
     url = (item.get("url") or "").strip() or None
     source_bid_id = (item.get("source_bid_id") or "").strip() or url
-    if not source_bid_id:
-        return None
     return {
         "source_bid_id": source_bid_id,
         "title": item.get("title"),
@@ -233,6 +231,16 @@ def _record_from_item(item, source):
     }
 
 
+def _normalize_candidate(record, source):
+    try:
+        return normalize_state_opportunity(record, source)
+    except StateBidNormalizationError as error:
+        # Keep unresolved procurement rows for downstream semantic quarantine and accounting.
+        return {**record, "id": None, "dedupe_key": None, "source": source.source_label,
+                "issuer_type": source.jurisdiction, "state_code": source.state_code,
+                "raw_payload": {**record, "normalization_error": str(error)}}
+
+
 def normalize_list_items(items, source, query=None, limit=25):
     records = [record for record in (_record_from_item(item, source) for item in items) if record]
     if query:
@@ -242,7 +250,7 @@ def normalize_list_items(items, source, query=None, limit=25):
             for record in records
             if query_text in " ".join(str(value) for value in record.values()).lower()
         ]
-    return [normalize_state_opportunity(record, source) for record in records[: int(limit)]]
+    return [_normalize_candidate(record, source) for record in records[: int(limit)]]
 
 
 def _host(url):
@@ -533,7 +541,7 @@ def _overlay_reader_fields(record, reader_record, list_kind):
 def _page_bids(source, config, extractor, html, final_url, reading, list_kind):
     """Rows of one fetched page: `(bids, method, diagnostics, fallback_reason)`."""
     if config["mode"] != "scrapling":
-        return [normalize_state_opportunity(record, source) for record in reading.records], "adapter", {}, None
+        return [_normalize_candidate(record, source) for record in reading.records], "adapter", {}, None
     by_id = {record["source_bid_id"]: record for record in reading.records}
     try:
         payload = validate_list_extraction(
@@ -548,11 +556,11 @@ def _page_bids(source, config, extractor, html, final_url, reading, list_kind):
         records = [record for record in (_record_from_item(item, source) for item in payload["items"][: config["max_items"]]) if record]
         if records:
             merged = [_overlay_reader_fields(record, by_id.get(record["source_bid_id"]), list_kind) for record in records]
-            return [normalize_state_opportunity(record, source) for record in merged], "scrapling", payload.get("diagnostics", {}), None
+            return [_normalize_candidate(record, source) for record in merged], "scrapling", payload.get("diagnostics", {}), None
         reason = "no_items: extractor returned no usable rows"
     except ListExtractionError as error:
         reason = "{0}: {1}".format(getattr(error, "reason", "extractor_unreachable"), error)
-    return [normalize_state_opportunity(record, source) for record in reading.records], "adapter_fallback", {}, reason
+    return [_normalize_candidate(record, source) for record in reading.records], "adapter_fallback", {}, reason
 
 
 def _fetch_paginated_page(source, list_adapter, session, timeout, url):
@@ -566,6 +574,19 @@ def _fetch_paginated_page(source, list_adapter, session, timeout, url):
     """
     html, final_url, _status = list_adapter.fetch_list_html(source, url, session=session, timeout=timeout)
     return html, final_url
+
+
+def _unseen_page_bids(page_bids, seen_ids):
+    """Deduplicate within a page as well as across pages, retaining the first observed row."""
+    result = []
+    for bid in page_bids:
+        source_bid_id = bid["source_bid_id"]
+        if not source_bid_id:
+            result.append(bid)
+        elif source_bid_id not in seen_ids:
+            seen_ids.add(source_bid_id)
+            result.append(bid)
+    return result
 
 
 def _raise_empty_first_page(source, list_adapter, html, config, request, title, total):
@@ -727,8 +748,7 @@ def run_paginated_list_extraction(
             # instead of turning every run into a zero-row failure. They just can never make this
             # walk "complete" (adapter mode has no sidecar rows, so nothing changes there).
             stopped_reason = "unreadable_page"
-            new_bids = [bid for bid in page_bids if bid["source_bid_id"] not in seen_ids]
-            seen_ids.update(bid["source_bid_id"] for bid in new_bids)
+            new_bids = _unseen_page_bids(page_bids, seen_ids)
             bids.extend(new_bids)
             if limit is not None and query is None and len(bids) > int(limit):
                 bids = bids[: int(limit)]
@@ -742,8 +762,7 @@ def run_paginated_list_extraction(
             tenant_ok = _title_names_tenant(reading.title, label)
         totals_match = totals_match and reading.total is not None and reading.total == expected_total
 
-        new_bids = [bid for bid in page_bids if bid["source_bid_id"] not in seen_ids]
-        seen_ids.update(bid["source_bid_id"] for bid in new_bids)
+        new_bids = _unseen_page_bids(page_bids, seen_ids)
         bids.extend(new_bids)
 
         if limit is not None and query is None and len(bids) >= int(limit):

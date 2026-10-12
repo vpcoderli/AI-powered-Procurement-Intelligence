@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { crawlerRuntime, type CrawlerExecutionContext } from "./execution-context";
 import type { CrawlerJsonRunPayload } from "./mysql-json-importer";
 import type { CrawlableSource } from "./source-registry";
+import { detailAttemptBudget, fenceDetailBackfillPayload, loadDetailBackfillCandidates, loadDetailHistory, type DetailHistoryRecord, type DetailHistoryStore } from "./detail-history";
 
 export type CrawlTaskListKind = "open" | "closed" | "awarded";
 
@@ -36,6 +37,8 @@ export interface CrawlTaskPayload {
   max_pages: number;
   /** ISO yyyy-mm-dd: stop once a whole page is older (history backfill). */
   stop_before: string | null;
+  detail_history?: DetailHistoryRecord[];
+  detail_backfill_only?: boolean;
 }
 
 export interface CrawlTaskOptions {
@@ -48,6 +51,9 @@ export interface CrawlTaskOptions {
   startPage?: number;
   maxPages?: number;
   stopBefore?: string | null;
+  detailHistory?: DetailHistoryRecord[];
+  historyStore?: DetailHistoryStore;
+  detailBackfillOnly?: boolean;
 }
 
 export function buildCrawlTaskPayload(
@@ -68,7 +74,7 @@ export function buildCrawlTaskPayload(
     label: source.label,
     state_code: source.stateCode,
     provider_family: source.providerFamily,
-    jurisdiction_level: source.jurisdictionLevel,
+    jurisdiction_level: source.jurisdictionLevel ?? source.issuerType,
     fetch_config: fetchConfig,
     limit: options.limit ?? null,
     query: options.query ?? null,
@@ -77,6 +83,8 @@ export function buildCrawlTaskPayload(
     start_page: options.startPage ?? 1,
     max_pages: options.maxPages ?? listPagesFor(source),
     stop_before: options.stopBefore ?? null,
+    ...(options.detailHistory ? { detail_history: options.detailHistory } : {}),
+    ...(options.detailBackfillOnly ? { detail_backfill_only: true } : {}),
   };
 }
 
@@ -102,7 +110,13 @@ export async function runCrawlTask(
   options: CrawlTaskOptions,
   context?: CrawlerExecutionContext,
 ): Promise<CrawlTaskResult> {
-  const payload = buildCrawlTaskPayload(source, options);
+  // List runs reuse recent history; backfill runs read only their attempt budget of candidates.
+  const detailHistory = options.detailHistory ?? (options.historyStore
+    ? options.detailBackfillOnly
+      ? await loadDetailBackfillCandidates(options.historyStore, source.id, source, { limit: detailAttemptBudget(source) })
+      : await loadDetailHistory(options.historyStore, source.id, source)
+    : undefined);
+  const payload = buildCrawlTaskPayload(source, { ...options, detailHistory });
   const { python, ...runtime } = crawlerRuntime();
 
   return new Promise((resolve) => {
@@ -140,6 +154,7 @@ export async function runCrawlTask(
           !cancelled && !timedOut && typeof parsed.status === "string"
             ? (parsed as CrawlerJsonRunPayload)
             : null;
+        if (resultPayload && options.detailBackfillOnly) resultPayload = fenceDetailBackfillPayload(resultPayload);
         if (resultPayload && resultPayload.status === "success" && error) {
           // The child printed a success document but exited non-zero (or was killed by
           // maxBuffer). Never let the importer record that as a successful run.

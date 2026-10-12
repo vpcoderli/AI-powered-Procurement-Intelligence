@@ -1,22 +1,30 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
 import { CrawlerLeaseLostError, crawlerRuntime, type CrawlerExecutionContext } from "./execution-context";
 import { createDatabase } from "@/server/db/client";
 import { importCrawlerJsonRunIntoSqlite } from "./sqlite-json-importer";
 import { isMysqlDatabaseUrlConfigured, resolveMysqlPool } from "@/server/db/mysql";
 import { importCrawlerJsonRunIntoMysql, type CrawlerJsonRunPayload } from "./mysql-json-importer";
-import { prepareMysqlCrawlerRun } from "./mysql-runner";
+import { fenceDetailBackfillPayload, loadDetailBackfillCandidates, loadDetailHistory, type DetailHistoryRecord, type DetailHistoryStore } from "./detail-history";
+
+/** fetch-sam-gov's own `--max-descriptions` default. */
+const SAM_DEFAULT_MAX_DESCRIPTIONS = 25;
 
 export interface SamGovCrawlerRunOptions {
   postedFrom?: string;
   postedTo?: string;
   limit?: number;
   maxRecords?: number;
+  maxDescriptions?: number;
   databasePath?: string;
   archiveDocuments?: boolean;
   archiveDir?: string;
   archiveDetailPages?: boolean;
   outputJson?: boolean;
+  detailHistory?: DetailHistoryRecord[];
+  historyStore?: DetailHistoryStore;
+  detailBackfillOnly?: boolean;
 }
 
 export interface SamGovCrawlerRunResult {
@@ -61,11 +69,8 @@ function buildArgs(options: SamGovCrawlerRunOptions) {
     "fetch-sam-gov",
   ];
 
-  if (options.outputJson) {
-    args.push("--output-json");
-  } else {
-    args.push("--database", options.databasePath ?? defaultDatabasePath());
-  }
+  // All persistence happens through the parent's shared admission/merge gate.
+  args.push("--output-json");
 
   args.push(
     "--posted-from",
@@ -79,8 +84,16 @@ function buildArgs(options: SamGovCrawlerRunOptions) {
   if (options.maxRecords !== undefined) {
     args.push("--max-records", String(options.maxRecords));
   }
+  if (options.detailHistory) args.push("--detail-history-stdin");
+  if (options.detailBackfillOnly) args.push("--detail-backfill-only");
+  if (options.maxDescriptions !== undefined) {
+    args.push("--max-descriptions", String(options.maxDescriptions));
+  }
 
-  if (options.archiveDocuments !== false) {
+  // Inline archiving would download every resourceLink of every bid in the window, one after
+  // another, inside the run's time budget. Managed runs record the links; the attachment-repair
+  // worker archives them under the source's own limits. Only an explicit caller archives here.
+  if (options.archiveDocuments === true) {
     args.push("--archive-documents", "--archive-dir", options.archiveDir ?? defaultArchiveDir());
   }
 
@@ -105,17 +118,33 @@ export async function runSamGovCrawler(
   context?: CrawlerExecutionContext,
 ): Promise<SamGovCrawlerRunResult> {
   const { python, ...runtime } = crawlerRuntime();
-  const useDirectMysqlImport = !options.databasePath && isMysqlDatabaseUrlConfigured();
-  const useManagedSqliteImport = Boolean(context) && !useDirectMysqlImport && !options.outputJson;
-  const mysqlRun = useDirectMysqlImport ? null : prepareMysqlCrawlerRun(options.databasePath);
-  const databasePath = mysqlRun?.databasePath;
+  const useMysqlImport = !options.databasePath && isMysqlDatabaseUrlConfigured();
+  const databasePath = options.databasePath ?? defaultDatabasePath();
+  // List runs reuse recent history; backfill runs read only their attempt budget of candidates.
+  const loadHistory = (store: DetailHistoryStore) => options.detailBackfillOnly
+    ? loadDetailBackfillCandidates(store, "sam_gov", undefined, { limit: options.maxDescriptions ?? SAM_DEFAULT_MAX_DESCRIPTIONS })
+    : loadDetailHistory(store, "sam_gov");
+  let detailHistory = options.detailHistory;
+  if (!detailHistory && options.historyStore) {
+    detailHistory = await loadHistory(options.historyStore);
+  } else if (!detailHistory && !options.outputJson) {
+    if (useMysqlImport) {
+      detailHistory = await loadHistory({ mysql: resolveMysqlPool() });
+    } else if (existsSync(databasePath)) {
+      const database = createDatabase(databasePath);
+      try {
+        detailHistory = await loadHistory({ database });
+      } finally {
+        database.$client.close();
+      }
+    }
+  }
+  options = { ...options, detailHistory };
 
   return new Promise((resolve) => {
-    execFile(
+    const child = execFile(
       python,
-      buildArgs(useDirectMysqlImport || useManagedSqliteImport
-        ? { ...options, outputJson: true }
-        : { ...options, databasePath }),
+      buildArgs(options),
       {
         ...runtime,
         env: process.env,
@@ -128,18 +157,15 @@ export async function runSamGovCrawler(
           const timedOut = !cancelled && error?.killed === true && error.signal === "SIGKILL";
           let payload: CrawlerJsonRunPayload | null = null;
           try {
-            if (cancelled || timedOut) {
-              // Never import successful-looking stdout from a cancelled/killed subprocess.
-            } else if (useDirectMysqlImport || useManagedSqliteImport) {
+            if (!cancelled && !timedOut && (String(stdout ?? "").trim() || !error)) {
               payload = parseCrawlerJsonPayload(String(stdout ?? ""));
-              if (!error || payload.status === "failure") {
+              if (options.detailBackfillOnly) payload = fenceDetailBackfillPayload(payload);
+              if (!options.outputJson && (!error || payload.status === "failure")) {
                 await context?.assertLease();
-                if (useDirectMysqlImport) {
+                if (useMysqlImport) {
                   await importCrawlerJsonRunIntoMysql(resolveMysqlPool(), payload, context?.lease);
                 } else {
-                  // Managed children never receive the live SQLite path. Persistence starts
-                  // in the parent only after confirming the renewable lease is still ours.
-                  const database = createDatabase(databasePath ?? defaultDatabasePath());
+                  const database = createDatabase(databasePath);
                   try {
                     importCrawlerJsonRunIntoSqlite(database, payload, context?.lease);
                   } finally {
@@ -147,14 +173,9 @@ export async function runSamGovCrawler(
                   }
                 }
               }
-            } else if (!error && mysqlRun?.isMysqlImport) {
-              await context?.assertLease();
-              await mysqlRun.importIntoMysql();
             }
           } catch (caught) {
             importError = caught;
-          } finally {
-            mysqlRun?.cleanup();
           }
 
           const lostLease = cancelled || context?.signal.aborted === true || importError instanceof CrawlerLeaseLostError;
@@ -173,5 +194,6 @@ export async function runSamGovCrawler(
         })();
       },
     );
+    if (detailHistory) child.stdin?.end(JSON.stringify(detailHistory));
   });
 }

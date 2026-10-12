@@ -1,14 +1,13 @@
+import { ISSUER_TYPE_FILTERS } from "@/lib/issuer-types";
 import { NextResponse } from "next/server";
 import * as bidService from "@/server/bids/service";
 import type {
-  ApiIssuerType,
   BidQuery,
   DeadlinePreset,
   PublishedPreset,
   SortOption,
 } from "@/server/bids/types";
 
-const issuerTypes: ApiIssuerType[] = ["all", "federal", "state"];
 const deadlinePresets: DeadlinePreset[] = ["any", "next7", "next30"];
 const publishedPresets: PublishedPreset[] = ["any", "last24", "last7"];
 const sortOptions: SortOption[] = ["relevance", "newest", "deadline"];
@@ -45,7 +44,7 @@ export async function GET(request: Request) {
     const query: BidQuery = {
       q: firstParam(searchParams, "q"),
       states: stringListParam(searchParams, "states"),
-      issuerType: oneOf(firstParam(searchParams, "issuerType"), issuerTypes),
+      issuerType: oneOf(firstParam(searchParams, "issuerType"), ISSUER_TYPE_FILTERS),
       deadline: oneOf(firstParam(searchParams, "deadline"), deadlinePresets),
       published: oneOf(firstParam(searchParams, "published"), publishedPresets),
       sort: oneOf(firstParam(searchParams, "sort"), sortOptions),

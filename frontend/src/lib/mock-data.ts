@@ -1,8 +1,11 @@
+import type { IssuerType } from "@/lib/issuer-types";
+import type { BidDataQuality } from "@/lib/bid-usability";
 import { STATE_CRAWLER_SOURCE_DEFINITIONS } from "./state-crawler-sources";
+
+export type { IssuerType } from "@/lib/issuer-types";
 
 export const FEDERAL_SAM_OPPORTUNITIES_URL = "https://sam.gov/search/?index=opp&sort=-modifiedDate&page=1&pageSize=25";
 
-export type IssuerType = "federal" | "state";
 export type SortOption = "relevance" | "newest" | "deadline";
 export type DatePreset = "any" | "next7" | "next30" | "last24" | "last7";
 
@@ -13,6 +16,11 @@ export interface BidAttachment {
   archiveStatus?: string;
   archiveError?: string;
   storagePath?: string;
+  originalUrl?: string;
+  checksumSha256?: string;
+  byteSize?: number | null;
+  contentType?: string;
+  verifiedAt?: string;
 }
 
 export interface Bid {
@@ -40,6 +48,11 @@ export interface Bid {
   lifecycleStatus?: "open" | "closed" | "awarded";
   awardedDate?: string;
   detailAccess?: { platform: string; restricted: Array<"description" | "documents" | "contact"> } | null;
+  dataQuality?: BidDataQuality | null;
+  sourceBidId?: string;
+  dedupeKey?: string;
+  jurisdictionLevel?: string;
+  fipsCode?: string;
 }
 
 const US_STATE_NAMES_BY_CODE: Record<string, string> = {
@@ -51,6 +64,7 @@ const US_STATE_NAMES_BY_CODE: Record<string, string> = {
   CO: "Colorado",
   CT: "Connecticut",
   DE: "Delaware",
+  DC: "District of Columbia",
   FL: "Florida",
   GA: "Georgia",
   HI: "Hawaii",
@@ -104,6 +118,7 @@ const STATE_FILTER_ORDER = [
   "CO",
   "CT",
   "DE",
+  "DC",
   "FL",
   "GA",
   "HI",
@@ -152,7 +167,7 @@ const stateCrawlerSourceStates = new Set<string>(STATE_CRAWLER_SOURCE_DEFINITION
 
 export const STATE_FILTERS = [
   { id: "sam", label: "Federal (SAM.gov)", stateCode: "US", issuerType: "federal" as const },
-  ...STATE_FILTER_ORDER.filter((stateCode) => stateCrawlerSourceStates.has(stateCode)).map((stateCode) => ({
+  ...STATE_FILTER_ORDER.filter((stateCode) => stateCode === "DC" || stateCrawlerSourceStates.has(stateCode)).map((stateCode) => ({
     id: stateCode.toLowerCase(),
     label: `${US_STATE_NAMES_BY_CODE[stateCode]} (${stateCode})`,
     stateCode,

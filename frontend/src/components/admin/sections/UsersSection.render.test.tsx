@@ -7,6 +7,7 @@ import { zh } from "@/lib/i18n/dictionaries/zh";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 import { adminRoleFlags, type useAdminSession } from "../admin-session";
 import type { useAdminResource } from "../use-admin-resource";
+import { nextBusyIds } from "../busy-reporting";
 
 // The section reads the shell's session, one resource and the language. The two hooks are replaced with plain state,
 // typed against the real hooks' return types. English goes through the real LanguageProvider; Chinese cannot (a server
@@ -14,7 +15,7 @@ import type { useAdminResource } from "../use-admin-resource";
 // lookup.
 type SessionStub = ReturnType<typeof useAdminSession>;
 type ResourceStub = ReturnType<typeof useAdminResource<AdminUser[]>>;
-const stubs = vi.hoisted(() => ({ language: "en" as "en" | "zh", session: null as SessionStub | null, resource: null as ResourceStub | null }));
+const stubs = vi.hoisted(() => ({ language: "en" as "en" | "zh", session: null as SessionStub | null, resource: null as ResourceStub | null, busyIds: new Set<string>() as ReadonlySet<string> }));
 
 vi.mock("../admin-session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../admin-session")>()),
@@ -28,6 +29,10 @@ vi.mock("../use-admin-resource", () => ({
     if (!stubs.resource) throw new Error("resource was not set");
     return stubs.resource;
   },
+}));
+vi.mock("../busy-reporting", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../busy-reporting")>()),
+  useBusyIds: () => ({ busyIds: stubs.busyIds, setBusy: () => undefined }),
 }));
 vi.mock("@/lib/i18n/LanguageContext", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/i18n/LanguageContext")>();
@@ -60,6 +65,7 @@ const user = (overrides: Partial<AdminUser> = {}): AdminUser => ({
 });
 
 beforeEach(() => {
+  stubs.busyIds = new Set();
   stubs.session = {
     user: { id: "user-1", email: "admin@example.com", displayName: null, role: "admin", tier: "enterprise", features: [] },
     ...adminRoleFlags("admin"),
@@ -94,6 +100,36 @@ const headers = (html: string) => [...html.matchAll(/<th[^>]*>([^<]*)<\/th>/g)].
 
 /** The word beside the switch of the row for user `id` (the switch's label points at `user-<id>`). */
 const stateWord = (html: string, id: string) => new RegExp(`<label[^>]*for="user-${id}"[^>]*>([^<]*)</label>`).exec(html)?.[1];
+
+function accessControlsFor(html: string, email: string) {
+  const row = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].find((match) => match[1].includes(email));
+  if (!row) throw new Error(`no user row for ${email}`);
+  return [...row[1].matchAll(/<(?:select|span)\b[^>]*>/g)]
+    .map((match) => match[0])
+    .filter((tag) => tag.startsWith("<select") || tag.includes('role="switch"'));
+}
+
+describe("independent user writes", () => {
+  it("keeps both rows locked when two user updates are in flight", () => {
+    stubs.busyIds = nextBusyIds(nextBusyIds(stubs.busyIds, "on", true), "off", true);
+    const html = render("en");
+
+    for (const email of ["on@example.com", "off@example.com"]) {
+      const controls = accessControlsFor(html, email);
+      expect(controls).toHaveLength(3);
+      for (const control of controls) expect(control, email).toMatch(/(?:disabled|data-disabled)=""/);
+    }
+  });
+
+  it("settling one update leaves the other user's role, plan and status locked", () => {
+    stubs.busyIds = nextBusyIds(nextBusyIds(stubs.busyIds, "on", true), "off", true);
+    stubs.busyIds = nextBusyIds(stubs.busyIds, "on", false);
+    const html = render("en");
+
+    for (const control of accessControlsFor(html, "on@example.com")) expect(control).not.toMatch(/(?:disabled|data-disabled)=""/);
+    for (const control of accessControlsFor(html, "off@example.com")) expect(control).toMatch(/(?:disabled|data-disabled)=""/);
+  });
+});
 
 // `admin.enabled` / `admin.disabled` were the words of the status filter and of each row's switch, and `admin.enabled` was also the
 // header of the switch column, so one Chinese text (启用, the action's word) stood for a state and for the column, next to 已禁用,

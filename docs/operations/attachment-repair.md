@@ -24,7 +24,9 @@
 | `archive_missing` | 记为 `archived`，但文件不在任何允许根目录 | 重下 |
 | `archive_corrupt` | 文件存在但 0 字节 / checksum 不一致 / 魔数与 `content_type` 不符 / 内容其实是 HTML | 重下；重下仍是 HTML → `unavailable` |
 | `path_not_portable` | `archived`，`storage_path` 是绝对路径，但同一相对路径在允许根目录下可解析且 checksum 一致 | 只改元数据，把 `storage_path` 改写成相对路径（不发网络请求） |
-| `unavailable` | 链接非 http(s) / 站内相对链接 / 源策略 `archive=false` / 重试耗尽 | 记录原因，停止重试，30 天后允许再入队一次 |
+| `unavailable` | 链接非 http(s) / 站内相对链接 / 重试耗尽 | 记录原因，停止重试，30 天后允许再入队一次 |
+
+源策略 `archive: false` 不是一种异常：这样的源根本不进候选（见下文"候选选取"），它的附件行保持原样，不会被记成 `unavailable`。
 
 下载侧的失败原因（`bid_attachments.failure_kind`）：`network`、`timeout`、`http_4xx`、`http_5xx`、`html_response`、`login_wall`、`off_target`、`too_large`、`unsupported_type`、`unavailable`、`browser_unavailable`、`browser_error`、`link_not_found`。
 
@@ -36,6 +38,7 @@
 | --- | --- | --- |
 | 运行周期 | 6 小时 | `ATTACHMENT_WORKER_INTERVAL_MS`（毫秒，默认 `21600000`） |
 | 每源每轮条数 | 50 | 源策略 `attachments.max_per_run`；`ATTACHMENT_REPAIR_MAX_PER_SOURCE` 只能**向下**覆盖 |
+| 每轮候选总上限 | 5,000 | `repository.ts` / `mysql-repository.ts` 的 `DEFAULT_CANDIDATE_LIMIT`，只防单轮过大；按各源名次轮流截取，不会挤掉任何来源 |
 | 请求间隔 | 3 秒 | 源策略 `attachments.min_interval_seconds` |
 | 单文件上限 | 50 MB | 源策略 `attachments.max_bytes` |
 | 下载超时 | 30 秒 | 源策略 `attachments.timeout_seconds` |
@@ -45,6 +48,16 @@
 | 已归档文件复核间隔 | 7 天 | `repair-service.ts` |
 
 每源用 `crawler_locks` 的 `attachment_repair:<source_id>` 租约，与 `crawler-worker` 的采集任务互不阻塞；已被别人持有的源本轮记 `locked` 并跳过。
+
+### 候选选取
+
+候选按来源选取，SQLite 与 MySQL 都在 SQL 里完成（`listAttachmentRepairCandidates` / `listAttachmentRepairCandidatesFromMysql`）：
+
+1. 先读出每个数据源的附件策略（与 worker 用同一个解析函数，`fetch_config` 读不出来时按默认策略），`archive: false` 的源直接排除。
+2. 每个来源单独排名。来源指匹配到的 `data_sources.id`，匹配不到时用 `bids.source`。排名顺序是"已归档但缺失/损坏 → 从未归档 → 其余失败重试"，同级按附件 id。每个来源只取前 `max_per_run` 条（受 `ATTACHMENT_REPAIR_MAX_PER_SOURCE` 向下限制）。
+3. 全轮 5,000 条上限按名次轮流截取：先取每个来源的第 1 条，再取第 2 条，依此类推。只要有到期附件的来源少于 5,000 个，每个来源每轮至少有 1 条。
+
+所以积压再大的来源（例如 SAM.gov）每轮也只占自己的 `max_per_run`，排在它后面的来源照常处理。2026-10-12 在一次性 MySQL 8.4 上实测：103,300 条到期附件，其中 SAM 10 万条，另外 1,100 个来源各 3 条。旧查询用时约 6.1 s，取到的 5,000 条全是 SAM；新查询用时约 6.1 s，取到全部 1,101 个来源，SAM 50 条，其余各 3 条。两者的耗时都主要花在 `data_sources` 的 id/label 连接上。
 
 ## 每源策略
 
@@ -66,8 +79,23 @@
 
 - `mode: "direct"` 是默认；只有当门户的下载由表单 / JavaScript 驱动（直连 GET 拿不到文件）时才改成 `"browser"`。Illinois BidBuy 是已知的 `browser` 源：不带会话直接 GET `bidDetail.sdo?downloadFileNbr=…` 只会返回 `ERROR IN … session` 的 HTML。
 - `browser_link_selector` 只在 `browser` 模式生效，留空则按链接地址中的附件号或链接文本匹配下载控件。
-- `archive: false` 的源不下载，候选直接记 `unavailable`。
+- `archive: false` 的源在候选选取的 SQL 里直接排除：不下载，也不改它的附件行，附件保持原来的状态；改回 `true` 后下一轮照常选取。
 - 面板范围与服务端校验一致：`max_per_run` 1–200、`min_interval_seconds` 0–60、`timeout_seconds` 5–120、大小上限 1–200 MB（面板按 MB 编辑，落库是字节）。越界由 `validateAttachmentPolicyInput` 拒绝，面板原样显示服务端的报错。
+
+## SAM.gov 附件
+
+SAM.gov 运行把每条机会的 `resourceLinks` 记为附件链接（`archive_status = not_archived`），抓取进程内不下载。归档交给本 worker 尝试，按 `sam_gov` 源的 `fetch_config.attachments` 策略（默认 `archive: true`、`max_per_run` 50）限速、限量。只有调用方显式传 `archiveDocuments: true` 时，`runSamGovCrawler` 才在运行内下载，仅用于手工排查。SAM `resourceLinks` 能否不带 API key 直接下载，截至 2026-10-12 仍未验证：没有拿到真实链接，也就没有向 sam.gov 发过请求。原因如下：
+
+- 本地没有 SAM `resourceLinks`，也没有配置 `SAM_API_KEY`。
+- 公开资料里只查到路径模板 `https://sam.gov/api/prod/opps/v3/opportunities/resources/files/{resourceId}/download`。
+- [GSA 的 Get Opportunities 文档](https://open.gsa.gov/api/get-opportunities-public-api/)示例里 `resourceLinks` 为 `null`。文档只说描述链接要附上 API key，没说附件链接要不要。
+- 一个第三方抓取工具的 [README](https://github.com/IncrediblyHungie/sam-gov-scraper) 声称附件下载不需要 key，但说 SAM 会拦截来自数据中心 IP 的下载。这一点同样未经验证。
+
+所以不要假定这些附件会被归档，部署在云主机上的 worker 尤其可能被拦。被拦的下载会按失败分类记下并退避、停放，不影响抓取运行。
+
+要验证时：用 `SAM_API_KEY` 跑一次 SAM 抓取，拿到一条真实链接，再用 `archive-attachments` 按 worker 的方式下载一次，看结论（`archived` / `html_response` / `http_4xx` …）。
+
+每次 SAM 运行都会把 30 天窗口内的全部链接重新发送一遍。只是再次看到的链接（`not_archived`、没有 `storage_path`）不会改动附件已有的 `failed` / `unavailable` 状态、`archive_error`、`failure_kind`、`repair_attempts` 和 `next_repair_at`（`persistence-merge.ts`，与 Python 端 `storage/sqlite.py` 的规则一致），所以失败的链接会按退避和 30 天停放稳定下来，不会每次抓取后又到期。新下载到的归档文件（带 `storage_path`）照常覆盖。候选按来源选取（见"候选选取"），SAM 链接再多，每轮也只占 `sam_gov` 自己的 `max_per_run`。
 
 ## 运行
 
@@ -97,10 +125,10 @@ ATTACHMENT_REPAIR_MAX_PER_SOURCE=3 npm run attachments:repair:once
 | --- | --- |
 | `run_id` | 本轮 run id |
 | `status` | `success` / `failure` |
-| `fetched_count` | 本轮候选数 |
+| `fetched_count` | 本轮选中的候选数（每源最多 `max_per_run`） |
 | `inserted_count` | 成功归档（含重下）条数 |
 | `updated_count` | 只改元数据的条数（主要是 `path_not_portable` 改相对路径） |
-| `skipped_count` | 跳过（源被锁、策略关闭、未到 `next_repair_at`） |
+| `skipped_count` | 选中但本轮没有处理的条数（源被锁；下载器崩溃，整批不写回）。`archive: false` 的源、未到 `next_repair_at` 的附件、超出 `max_per_run` 的附件都不进候选，不计入 |
 | `failed_count` | 本轮失败条数 |
 | `metadata` | `{verified, unavailable, byKind, bySource}` |
 
@@ -167,4 +195,4 @@ FROM bid_attachments WHERE archive_status = 'failed' ORDER BY next_repair_at LIM
 
 首轮发现并修复的缺陷：浏览器下载的链接标识取的是 URL 中最后一个数字参数（IL 模板的 `currentPage=1`），导致同一招标的多个附件都下到第一份文件。修复为按参数名（`downloadFileNbr` 等）优先、其次最长数字值、排除分页参数；sidecar 侧改为整词匹配并在多个控件命中同一标识时按附件名消解，无法消解则返回 `LINK_NOT_FOUND`。选取顺序改为"已归档但缺失/损坏 → 从未归档 → 其余失败重试"。
 
-已知但保留：seed/demo 行的占位 https 链接会按退避重试 6 次后转 `unavailable`（约 63 小时）；SAM.gov 附件链接本身是 HTML 页面，两次 `html_response` 后转 `unavailable`；PNG/JPEG 等图片没有魔数白名单，按响应头类型归档（`application/octet-stream`）。
+已知但保留：seed/demo 行的占位 https 链接会按退避重试 6 次后转 `unavailable`（约 63 小时）；SAM.gov 附件链接本身是 HTML 页面，两次 `html_response` 后转 `unavailable`（这是 2026-09-16 对当时演示/`uiLink` 行的实测；2026-10 起 SAM 运行记录的是 `resourceLinks`，其可下载性仍未验证，见上文"SAM.gov 附件"）；PNG/JPEG 等图片没有魔数白名单，按响应头类型归档（`application/octet-stream`）。

@@ -20,7 +20,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { UniversalState } from "@/components/universal-state";
 import { BidCard } from "@/components/bids/BidCard";
 import { fetchBids } from "@/lib/api/bids";
-import { STATE_FILTERS, type Bid, type IssuerType, type SortOption } from "@/lib/mock-data";
+import { STATE_FILTERS, type Bid, type SortOption } from "@/lib/mock-data";
+import { ISSUER_TYPES, isIssuerTypeFilter, issuerTypeLabelKey, type IssuerTypeFilter } from "@/lib/issuer-types";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import type { DeadlinePreset, PublishedPreset } from "@/server/bids/types";
 
@@ -40,7 +41,7 @@ export default function Dashboard() {
   const { t } = useLanguage();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStates, setSelectedStates] = useState<string[]>([]);
-  const [issuerType, setIssuerType] = useState<"all" | IssuerType>("all");
+  const [issuerType, setIssuerType] = useState<IssuerTypeFilter>("all");
   const [deadlinePreset, setDeadlinePreset] = useState<DeadlinePreset>("any");
   const [publishedPreset, setPublishedPreset] = useState<PublishedPreset>("any");
   const [sortBy, setSortBy] = useState<SortOption>("relevance");
@@ -88,7 +89,7 @@ export default function Dashboard() {
     ...selectedStateLabels.map((label) => formatMessage("dashboard.filterRegion", { value: label })),
     issuerType !== "all"
       ? formatMessage("dashboard.filterIssuer", {
-        value: issuerType === "federal" ? t("dashboard.federal") : t("dashboard.state"),
+        value: t(issuerTypeLabelKey(issuerType)),
       })
       : null,
     deadlinePreset !== "any" && deadlineLabelKey
@@ -239,14 +240,20 @@ export default function Dashboard() {
 
         <div>
           <h4 className="font-medium text-sm text-slate-900 mb-3">{t("dashboard.issuerType")}</h4>
-          <Select value={issuerType} onValueChange={(value) => setIssuerType(value as "all" | IssuerType)}>
-            <SelectTrigger className="h-10 bg-white border-slate-200 rounded-lg shadow-sm focus:ring-slate-900">
+          <Select
+            value={issuerType}
+            onValueChange={(value) => {
+              if (isIssuerTypeFilter(value)) setIssuerType(value);
+            }}
+          >
+            <SelectTrigger aria-label={t("dashboard.issuerType")} className="h-10 bg-white border-slate-200 rounded-lg shadow-sm focus:ring-slate-900">
               <SelectValue />
             </SelectTrigger>
             <SelectContent className="rounded-lg border-slate-200 shadow-lg">
               <SelectItem value="all">{t("dashboard.allIssuerTypes")}</SelectItem>
-              <SelectItem value="federal">{t("dashboard.federal")}</SelectItem>
-              <SelectItem value="state">{t("dashboard.state")}</SelectItem>
+              {ISSUER_TYPES.map((value) => (
+                <SelectItem key={value} value={value}>{t(issuerTypeLabelKey(value))}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -310,7 +317,7 @@ export default function Dashboard() {
           <div className="flex items-center gap-3">
             <span className="text-sm font-medium text-slate-500">{t("dashboard.sortBy")}</span>
             <Select value={sortBy} onValueChange={(value) => setSortBy(value as SortOption)}>
-              <SelectTrigger className="w-[160px] h-10 bg-white border-slate-200 rounded-lg shadow-sm focus:ring-slate-900">
+              <SelectTrigger aria-label={t("dashboard.sortBy")} className="w-[160px] h-10 bg-white border-slate-200 rounded-lg shadow-sm focus:ring-slate-900">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent className="rounded-lg border-slate-200 shadow-lg">

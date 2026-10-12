@@ -54,7 +54,9 @@
 | `archive_missing` | `archived` 但文件不在任何允许根目录 | 重下 |
 | `archive_corrupt` | 文件存在但 0 字节 / checksum 不一致 / 魔数与 `content_type` 不符 / `content_type` 为 `text/html` 而扩展名不是 `.html` | 重下；若重下仍是 HTML → `unavailable` |
 | `path_not_portable` | `archived`，绝对路径但同一相对路径在允许根目录下能解析且 checksum 一致 | 只改元数据：`storage_path` 改为相对路径 |
-| `unavailable` | URL 非 http(s)、站内相对链接、源策略 `archive=false`、或重试耗尽 | 记录原因，不再重试（30 天后重新入队一次） |
+| `unavailable` | URL 非 http(s)、站内相对链接、或重试耗尽 | 记录原因，不再重试（30 天后重新入队一次） |
+
+2026-10-12 修订：源策略 `archive=false` 的源不参与候选选取，附件行保持原样，不记 `unavailable`；候选在 SQL 里按来源选取。见[运维文档](../../operations/attachment-repair.md)"候选选取"。
 
 ### 4.2 下载执行放在 Python（新增 CLI 子命令 `archive-attachments`）
 
@@ -72,7 +74,7 @@
 - `npm run worker:attachments`（循环，默认 6 h）、`--once`、`--check`；加入 `workers:check`；容器 worker 镜像可用命令覆盖运行；compose `workers` profile 增加 `attachment-worker`。
 - 每轮：(1) 本地复核阶段：对 `archived` 且 `verified_at` 超过 7 天的行做文件存在 + checksum + 魔数校验，产出 `archive_missing` / `archive_corrupt` / `path_not_portable`；(2) 选取阶段：按源分组，每源最多 `max_per_run`（默认 50），优先 `never_archived` 再 `archive_failed`；(3) 对每个源获取 `crawler_locks` 租约 `attachment_repair:<source_id>`（复用 `orchestrator.ts` 的续租机制），spawn Python 执行；(4) 事务写回（`bid_attachments` 更新 + 一条 `crawler_logs`，source=`attachment_repair`，metadata=`{verified, repaired, failed, unavailable, skipped, byKind}`）。
 - 退避：`next_repair_at = now + 1h × 2^attempts`，上限 7 天；`attempts ≥ 6` → `unavailable`（`failure_kind` 保留最后一次原因），30 天后允许再入队一次。`login_wall` / `html_response` 连续 2 次即判 `unavailable`（说明是站点机制，不是抖动）。
-- 每源策略：`data_sources.fetch_config.attachments = {archive: true|false, mode: "direct"|"browser", max_per_run, min_interval_seconds, timeout_seconds, max_bytes, browser_link_selector}`，在现有 Crawler config 面板上增加一组字段（校验函数由 `src/server/attachments/policy.ts` 提供，`crawler-config.ts` 调用）。Illinois BidBuy 初始设为 `browser`（实测直接 GET 与带 cookie GET 都只返回 "ERROR IN … session" HTML，下载由 `javascript:downloadFile('<nbr>')` 提交 `bidDetail` 表单触发），SAM.gov 沿用现有 `--archive-documents`。
+- 每源策略：`data_sources.fetch_config.attachments = {archive: true|false, mode: "direct"|"browser", max_per_run, min_interval_seconds, timeout_seconds, max_bytes, browser_link_selector}`，在现有 Crawler config 面板上增加一组字段（校验函数由 `src/server/attachments/policy.ts` 提供，`crawler-config.ts` 调用）。Illinois BidBuy 初始设为 `browser`（实测直接 GET 与带 cookie GET 都只返回 "ERROR IN … session" HTML，下载由 `javascript:downloadFile('<nbr>')` 提交 `bidDetail` 表单触发），SAM.gov 当时沿用 `--archive-documents`；2026-10-12 起 SAM 运行只记录链接，归档交给本 worker（P0-3）。
 
 ### 4.3b 交互式门户：headless 浏览器下载 sidecar（`services/browser-downloader`，用户决策）
 

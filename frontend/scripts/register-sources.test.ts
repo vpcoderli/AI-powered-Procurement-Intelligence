@@ -13,6 +13,7 @@ import {
   parseCandidateFile,
   partialDiscoveryRefusal,
   registerSources,
+  registerSourcesInMysql,
   splitSuggestedCandidates,
   validateCandidate,
 } from "./register-sources";
@@ -52,7 +53,53 @@ describe("validateCandidate", () => {
   });
 
   it("accepts the township level", () => {
-    expect(validateCandidate(candidate({ jurisdictionLevel: "township", issuerType: "township" }))).toEqual([]);
+    expect(validateCandidate(candidate({ jurisdictionLevel: "township", issuerType: "township", fipsCode: "0803199999" }))).toEqual([]);
+  });
+
+  it.each([
+    ["id", 7], ["label", []], ["stateCode", {}], ["baseUrl", null],
+    ["issuerType", false], ["jurisdictionName", []], ["fipsCode", 8031],
+    ["providerFamily", 7], ["fetchConfig", []],
+  ])("reports a malformed %s without throwing", (field, value) => {
+    const invalid = { ...candidate(), [field]: value } as unknown as SourceCandidate;
+    expect(validateCandidate(invalid)).toContainEqual(expect.stringContaining(field));
+  });
+
+  it.each([
+    [{ stateCode: "ZZ" }, "stateCode"],
+    [{ jurisdictionLevel: "special_district", issuerType: "special_district", stateCode: "constructor" }, "stateCode"],
+    [{ jurisdictionLevel: "special_district", issuerType: "special_district", stateCode: "toString" }, "stateCode"],
+    [{ stateCode: "CA" }, "fipsCode"],
+    [{ fipsCode: "0803100" }, "fipsCode"],
+    [{ jurisdictionLevel: "city", issuerType: "city" }, "fipsCode"],
+    [{ issuerType: "state" }, "issuerType"],
+    [{ baseUrl: "javascript:alert(1)" }, "baseUrl"],
+    [{ fetchConfig: { base_url: "https://www.bidnetdirect.com/other-tenant/solicitations/open-bids" } }, "fetchConfig.base_url"],
+  ])("rejects inconsistent source identity %j", (overrides, field) => {
+    expect(validateCandidate(candidate(overrides))).toContainEqual(expect.stringContaining(field));
+  });
+
+  it("supports District of Columbia jurisdiction identifiers", () => {
+    expect(validateCandidate(candidate({ stateCode: "DC", fipsCode: "11001" }))).toEqual([]);
+  });
+
+  it.each([undefined, "", 12, "boulder", "denver/path"])("rejects a missing or mismatched Bonfire tenant %j", (tenant) => {
+    expect(validateCandidate(candidate({
+      providerFamily: "bonfire", baseUrl: "https://denver.bonfirehub.com/portal/",
+      fetchConfig: { tenant },
+    }))).toContainEqual(expect.stringContaining("fetchConfig.tenant"));
+  });
+
+  it("accepts a Bonfire tenant matching the public portal", () => {
+    expect(validateCandidate(candidate({
+      providerFamily: "bonfire", baseUrl: "https://denver.bonfirehub.com/portal/",
+      fetchConfig: { tenant: "denver" },
+    }))).toEqual([]);
+  });
+
+  it("rejects BidNet without its required adapter base_url", () => {
+    expect(validateCandidate(candidate({ fetchConfig: {} })))
+      .toContainEqual(expect.stringContaining("fetchConfig.base_url"));
   });
 });
 
@@ -318,6 +365,14 @@ describe("register-sources CLI", () => {
     expect(result.stderr).not.toContain("TypeError");
   });
 
+  it("exits unsuccessfully when a dry run contains an invalid source", () => {
+    const result = dryRun([candidate({ stateCode: "CA" })]);
+
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("Dry run: 0 valid, 1 invalid");
+    expect(result.stdout).toContain("fipsCode");
+  });
+
   it("names the source to repoint instead of registering a suggested tenant", () => {
     const held = dryRun(laramieDocument());
     expect(held.status).toBe(0);
@@ -382,10 +437,52 @@ describe("registerSources", () => {
     expect(rows[0].approvalStatus).toBe("approved");
   });
 
+  it("refuses to repoint a registered local source while preserving its approval and identity", () => {
+    registerSources(testDb.db, [candidate()], NOW);
+    testDb.db.update(dataSources).set({ approvalStatus: "approved", approvedForIngestion: 1 })
+      .where(eq(dataSources.id, "bidnet_co_denver")).run();
+    const changedUrl = "https://www.bidnetdirect.com/other-county/solicitations/open-bids";
+
+    const result = registerSources(testDb.db, [candidate({ baseUrl: changedUrl, fetchConfig: { base_url: changedUrl } })], NOW);
+
+    expect(result.inserted).toBe(0);
+    expect(result.errors[0].errors.join(" ")).toContain("identity");
+    expect(testDb.db.select().from(dataSources).all()[0]).toMatchObject({
+      baseUrl: candidate().baseUrl, approvalStatus: "approved", approvedForIngestion: 1,
+    });
+  });
+
+  it("refuses to replace a registered local source's jurisdiction", () => {
+    registerSources(testDb.db, [candidate()], NOW);
+
+    const result = registerSources(testDb.db, [candidate({ jurisdictionName: "Boulder County", fipsCode: "08013" })], NOW);
+
+    expect(result.inserted).toBe(0);
+    expect(result.errors[0].errors.join(" ")).toContain("identity");
+    expect(testDb.db.select().from(dataSources).all()[0].fipsCode).toBe("08031");
+  });
+
+  it("does not register a second id for a BidNet tenant's root alias", () => {
+    const first = candidate();
+    const aliasUrl = "https://bidnetdirect.com/colorado/denver-county/solicitations/open-bids";
+
+    const result = registerSources(testDb.db, [first, candidate({
+      id: "bidnet_co_denver_2", baseUrl: aliasUrl, fetchConfig: { base_url: aliasUrl },
+    })], NOW);
+
+    expect(result.inserted).toBe(1);
+    expect(result.errors[0].errors.join(" ")).toContain("bidnet_co_denver");
+    expect(testDb.db.select().from(dataSources).all()).toHaveLength(1);
+  });
+
   it("handles multiple candidates in one call", () => {
     const candidates = [
       candidate({ id: "bidnet_co_denver" }),
-      candidate({ id: "bidnet_ca_la_county", stateCode: "CA", jurisdictionName: "Los Angeles County" }),
+      candidate({
+        id: "bidnet_ca_la_county", stateCode: "CA", jurisdictionName: "Los Angeles County", fipsCode: "06037",
+        baseUrl: "https://www.bidnetdirect.com/california/los-angeles-county/solicitations/open-bids",
+        fetchConfig: { base_url: "https://www.bidnetdirect.com/california/los-angeles-county/solicitations/open-bids" },
+      }),
     ];
     const result = registerSources(testDb.db, candidates, NOW);
     expect(result.inserted).toBe(2);
@@ -399,6 +496,88 @@ describe("registerSources", () => {
     const result = registerSources(testDb.db, candidates, NOW);
     expect(result.inserted).toBe(1);
     expect(result.errors).toHaveLength(1);
+  });
+});
+
+describe("registerSourcesInMysql", () => {
+  it("rejects an identity change before writing under the source's row lock", async () => {
+    const existing = { ...candidate(), fetchConfig: JSON.stringify(candidate().fetchConfig) };
+    const queries: string[] = [];
+    let writes = 0;
+    let committed = false;
+    let released = false;
+    const connection = {
+      beginTransaction: async () => {},
+      query: async (sql: string) => { queries.push(sql); return [[existing], []]; },
+      execute: async () => { writes++; return [{ affectedRows: 1 }, []]; },
+      commit: async () => { committed = true; },
+      rollback: async () => {},
+      release: () => { released = true; },
+    };
+    const pool = { getConnection: async () => connection, execute: connection.execute } as unknown as Parameters<typeof registerSourcesInMysql>[0];
+
+    const result = await registerSourcesInMysql(pool, [candidate({ fipsCode: "08013" })], NOW);
+
+    expect(result.inserted).toBe(0);
+    expect(result.errors[0].errors.join(" ")).toContain("identity");
+    expect(queries[0]).toContain("FOR UPDATE");
+    expect(writes).toBe(0);
+    expect(committed).toBe(true);
+    expect(released).toBe(true);
+  });
+
+  it("rejects a second source id for an existing tenant's alias", async () => {
+    const existing = { ...candidate(), fetchConfig: JSON.stringify(candidate().fetchConfig) };
+    let writes = 0;
+    const connection = {
+      beginTransaction: async () => {},
+      query: async () => [[existing], []],
+      execute: async () => { writes++; return [{ affectedRows: 1 }, []]; },
+      commit: async () => {}, rollback: async () => {}, release: () => {},
+    };
+    const pool = { getConnection: async () => connection } as unknown as Parameters<typeof registerSourcesInMysql>[0];
+    const aliasUrl = "https://bidnetdirect.com/colorado/denver-county/solicitations/open-bids";
+
+    const result = await registerSourcesInMysql(pool, [candidate({ id: "denver_alias", baseUrl: aliasUrl, fetchConfig: { base_url: aliasUrl } })], NOW);
+
+    expect(result).toMatchObject({ inserted: 0, errors: [{ id: "denver_alias" }] });
+    expect(result.errors[0].errors.join(" ")).toContain("bidnet_co_denver");
+    expect(writes).toBe(0);
+  });
+
+  it("creates a new pending source without writing governance columns", async () => {
+    const writes: string[] = [];
+    let committed = false;
+    let released = false;
+    const connection = {
+      beginTransaction: async () => {}, query: async () => [[], []],
+      execute: async (sql: string) => { writes.push(sql); return [{ affectedRows: 1 }, []]; },
+      commit: async () => { committed = true; }, rollback: async () => {},
+      release: () => { released = true; },
+    };
+    const pool = { getConnection: async () => connection } as unknown as Parameters<typeof registerSourcesInMysql>[0];
+
+    expect(await registerSourcesInMysql(pool, [candidate()], NOW)).toEqual({ inserted: 1, errors: [] });
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).not.toMatch(/approval_status|legal_review_status|approved_for_ingestion|compliance_/);
+    expect(committed).toBe(true);
+    expect(released).toBe(true);
+  });
+
+  it("rolls back and releases the connection when a registration write fails", async () => {
+    let rolledBack = false;
+    let released = false;
+    const connection = {
+      beginTransaction: async () => {}, query: async () => [[], []],
+      execute: async () => { throw new Error("database write failed"); },
+      commit: async () => {}, rollback: async () => { rolledBack = true; },
+      release: () => { released = true; },
+    };
+    const pool = { getConnection: async () => connection } as unknown as Parameters<typeof registerSourcesInMysql>[0];
+
+    await expect(registerSourcesInMysql(pool, [candidate()], NOW)).rejects.toThrow("database write failed");
+    expect(rolledBack).toBe(true);
+    expect(released).toBe(true);
   });
 });
 
@@ -443,6 +622,17 @@ describe("suggested tenants (spec 2026-09-24 §6.4)", () => {
     expect(split.heldBack).toEqual([
       { id: "bidnet_wy_laramie_county_wyoming_government", baseUrl: LARAMIE_TENANT, sourceId: "bidnet_wy_laramie" },
     ]);
+  });
+
+  it("holds back a root alias of a suggested group-scoped BidNet tenant", () => {
+    const document = laramieDocument();
+    const rootUrl = "https://bidnetdirect.com/laramiecountywyominggovernment/solicitations/open-bids";
+    document.candidates[0] = candidate({ ...document.candidates[0], baseUrl: rootUrl, fetchConfig: { base_url: rootUrl } });
+
+    const split = splitSuggestedCandidates(parseCandidateFile(document), false);
+
+    expect(split.register.map((c) => c.id)).toEqual(["bidnet_co_denver"]);
+    expect(split.heldBack[0].sourceId).toBe("bidnet_wy_laramie");
   });
 
   it("registers it anyway when the operator says the suggestion is wrong", () => {

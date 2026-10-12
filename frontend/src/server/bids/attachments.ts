@@ -25,6 +25,8 @@ export interface LocalBidAttachment {
   archiveError: string | null;
   storagePath: string | null;
   checksumSha256: string | null;
+  byteSize?: number | null;
+  verifiedAt?: string | null;
 }
 
 export interface FallbackBidAttachment {
@@ -60,6 +62,8 @@ interface MysqlBidAttachmentRow {
   checksumSha256: string | null;
   archiveStatus: string;
   archiveError: string | null;
+  byteSize?: number | null;
+  verifiedAt?: string | null;
 }
 
 export function isExternalAttachmentUrl(value: string) {
@@ -226,7 +230,8 @@ export async function getBidAttachmentDownload(
   if (!row) return undefined;
 
   const originalUrl = row.originalUrl ?? row.url;
-  const filePath = await resolveAllowedLocalPath(row.storagePath ?? row.url);
+  const filePath = row.archiveStatus === "failed" || row.archiveStatus === "unavailable"
+    ? undefined : await resolveAllowedLocalPath(row.storagePath ?? row.url);
   if (!filePath) {
     const availability = fallbackAvailability(row);
 
@@ -257,6 +262,8 @@ export async function getBidAttachmentDownload(
     archiveError: row.archiveError,
     storagePath: row.storagePath,
     checksumSha256: row.checksumSha256,
+    byteSize: row.byteSize,
+    verifiedAt: row.verifiedAt,
   };
 }
 
@@ -277,6 +284,8 @@ export async function getBidAttachmentDownloadFromMysql(
         content_type AS contentType,
         mime_type AS mimeType,
         checksum_sha256 AS checksumSha256,
+        byte_size AS byteSize,
+        verified_at AS verifiedAt,
         archive_status AS archiveStatus,
         archive_error AS archiveError
       FROM bid_attachments
@@ -290,7 +299,8 @@ export async function getBidAttachmentDownloadFromMysql(
   if (!row) return undefined;
 
   const originalUrl = row.originalUrl ?? row.url;
-  const filePath = await resolveAllowedLocalPath(row.storagePath ?? row.url);
+  const filePath = row.archiveStatus === "failed" || row.archiveStatus === "unavailable"
+    ? undefined : await resolveAllowedLocalPath(row.storagePath ?? row.url);
   if (!filePath) {
     const availability = fallbackAvailability(row);
 
@@ -321,5 +331,7 @@ export async function getBidAttachmentDownloadFromMysql(
     archiveError: row.archiveError,
     storagePath: row.storagePath,
     checksumSha256: row.checksumSha256,
+    byteSize: row.byteSize,
+    verifiedAt: row.verifiedAt,
   };
 }

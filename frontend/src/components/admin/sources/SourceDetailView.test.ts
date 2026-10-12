@@ -114,11 +114,10 @@ describe("source detail view", () => {
     expect(view.match(/setConfigFormRevision\(/g)).toHaveLength(1);
   });
 
-  it("puts the source's profile and governance card on the approval tab and reports a run by its own outcome", () => {
+  it("puts the source's profile and governance card on the approval tab", () => {
     const view = read("SourceDetailView.tsx");
 
     expect(view).toContain("<SourceProfileCard source={source} />");
-    expect(view).toContain("setNotice(singleRunReport(t, source.label, await runStateCrawlersNow([runId])))");
     expect(view).toContain("<AdminNotice message={notice?.message ?? null} tone={notice?.tone} />");
     // A blocked row is changed only through an explicit Approve or the ledgered form, never by Hold.
     expect(view).toContain('disabled={locked || source.approvalStatus === "needs_review" || source.approvalStatus === "blocked"}');

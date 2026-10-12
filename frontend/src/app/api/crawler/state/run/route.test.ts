@@ -625,6 +625,7 @@ describe("POST /api/crawler/state/run", () => {
     const [sourceArg, taskOptions] = mockedRunCrawlTask.mock.calls[0];
     expect(sourceArg.id).toBe("il_bidbuy");
     expect(taskOptions).toEqual({
+      historyStore: { database: testDb.db, mysql: undefined },
       taskId: `tsk_il_bidbuy_${now.getTime()}`,
       limit: 9,
       query: "roads",
@@ -693,6 +694,7 @@ describe("POST /api/crawler/state/run", () => {
       expect(mockedRunCrawlTask).toHaveBeenCalledTimes(1);
       const [, taskOptions] = mockedRunCrawlTask.mock.calls[0];
       expect(taskOptions).toEqual({
+        historyStore: { database: testDb.db, mysql: undefined },
         taskId: `tsk_il_bidbuy_${now.getTime()}`,
         limit: undefined,
         query: null,

@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loginUser, registerUser, WeakPasswordError } from "@/server/auth/service";
-import { passwordResetTokens, sessions } from "@/server/db/schema";
+import { passwordResetTokens, sessions, users } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
   ExpiredPasswordResetTokenError,
@@ -105,6 +105,35 @@ describe("password reset service", () => {
       resetPasswordWithToken(testDb.db, expired.resetToken ?? "", "another-strong-password"),
     ).rejects.toBeInstanceOf(ExpiredPasswordResetTokenError);
   });
+
+  it.each(["", "not a date", "275760-09-14T00:00:00.000Z"])(
+    "refuses a SQLite reset token with an unreadable expiry %j before changing credentials",
+    async (expiresAt) => {
+      const registered = await registerUser(testDb.db, { email: "expiry@example.com", password: "strong-password" });
+      const reset = await requestPasswordReset(testDb.db, "expiry@example.com");
+      const before = testDb.db.select().from(users).where(eq(users.id, registered.user.id)).get()?.passwordHash;
+      testDb.db.update(passwordResetTokens).set({ expiresAt }).where(eq(passwordResetTokens.userId, registered.user.id)).run();
+
+      await expect(resetPasswordWithToken(testDb.db, reset.resetToken ?? "", "new-strong-password")).rejects.toBeInstanceOf(ExpiredPasswordResetTokenError);
+      expect(testDb.db.select().from(users).where(eq(users.id, registered.user.id)).get()?.passwordHash).toBe(before);
+      expect(testDb.db.select().from(passwordResetTokens).where(eq(passwordResetTokens.userId, registered.user.id)).get()?.usedAt).toBeNull();
+      expect(testDb.db.select().from(sessions).where(eq(sessions.userId, registered.user.id)).all()).toHaveLength(1);
+    },
+  );
+
+  it.each(["", "not a date", "275760-09-14T00:00:00.000Z"])(
+    "refuses a MySQL reset token with an unreadable expiry %j without any write",
+    async (expiresAt) => {
+      const mysql = {
+        query: vi.fn(async () => [[{ id: "reset-expiry", userId: "expiry-user", expiresAt, usedAt: null, isDisabled: 0 }]] as [unknown[]]),
+        execute: vi.fn(async () => [{ affectedRows: 1 }]),
+      };
+
+      await expect(resetPasswordWithTokenFromMysql(mysql, "token", "new-strong-password")).rejects.toBeInstanceOf(ExpiredPasswordResetTokenError);
+      expect(mysql.execute).not.toHaveBeenCalled();
+      expect(mysql.query).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("runs the MySQL password reset request and confirm lifecycle", async () => {
     const tokenRows: Record<string, unknown>[] = [];

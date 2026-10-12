@@ -47,3 +47,43 @@ def test_buyspeed_javascript_attachment_links_are_reported_not_faked():
     assert all(a["url"] is None for a in javascript_links)
     assert javascript_links[0]["name"].lower().endswith(".pdf")
     assert javascript_links[0]["mime_type"] == "application/pdf"
+
+
+@pytest.mark.parametrize(
+    "fixture,title",
+    [
+        ("il_bidbuy_detail.html", "Changeorder Notice- JP - ISP Temporary Services for ISP Defined Positions IFB - JTR"),
+        ("or_oregonbuys_detail.html", "Medical Third-Party Administration Services"),
+    ],
+)
+def test_buyspeed_bulletin_survives_the_crawler_title_echo_gate(monkeypatch, fixture, title):
+    monkeypatch.syspath_prepend(str(pathlib.Path(__file__).resolve().parents[3] / "crawler"))
+    from apsi_crawler.enrichment import merge_enrichment
+
+    case = next(case for case in CASES if case["fixture"] == fixture)
+    result = extract((LIVE / fixture).read_text(encoding="utf-8"), case["url"], ["description"])
+    bid = {"title": title, "description": title, "full_description": None}
+    assert merge_enrichment(bid, result, None, ["description"]) is True
+    assert case["expect"]["description"] in bid["description"]
+    assert "description" in bid["raw_payload"]["enrichment"]["applied_fields"]
+
+
+def test_pa_reimport_keeps_body_and_attachment_urls_stable(monkeypatch):
+    monkeypatch.syspath_prepend(str(pathlib.Path(__file__).resolve().parents[3] / "crawler"))
+    from apsi_crawler.enrichment import merge_enrichment
+
+    case = next(case for case in CASES if case["fixture"] == "pa_emarketplace_detail.html")
+    html = (LIVE / case["fixture"]).read_text(encoding="utf-8")
+    fields = ["description", "attachments"]
+    result = extract(html, case["url"], fields)
+    bid = {"title": "Allegheny OVR Enhanced Driving and Ancillary Services", "description": None, "attachments": []}
+    assert merge_enrichment(bid, result, None, fields) is True
+    scope = bid["full_description"]
+    urls = [item["url"] for item in bid["attachments"]]
+    assert len(urls) == 16
+    assert all("file=6100066394-1/Solicitation_" in url for url in urls)
+
+    result = extract(html, case["url"], fields)
+    assert merge_enrichment(bid, result, None, fields) is False
+    assert bid["full_description"] == scope
+    assert [item["url"] for item in bid["attachments"]] == urls

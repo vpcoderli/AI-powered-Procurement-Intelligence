@@ -6,7 +6,13 @@
 
 import { expandMysqlInClause, mysqlSelectMany, mysqlTransaction } from "@/server/db/mysql-runtime";
 import { UNAVAILABLE_RETRY_MS } from "./anomaly";
-import { dedupeAttachmentRows, type ListAttachmentRepairCandidatesOptions, type ListAttachmentsForVerificationOptions } from "./repository";
+import {
+  attachmentCandidateQuotas,
+  dedupeAttachmentRows,
+  type AttachmentCandidateQuotas,
+  type ListAttachmentRepairCandidatesOptions,
+  type ListAttachmentsForVerificationOptions,
+} from "./repository";
 import {
   ATTACHMENT_REPAIR_LOG_SOURCE,
   ATTACHMENT_UPDATE_COLUMNS,
@@ -103,26 +109,72 @@ function sourceFilterClause(sourceIds: string[] | undefined) {
   };
 }
 
+function archivingEnabledClause(excludedSourceIds: string[]) {
+  if (excludedSourceIds.length === 0) return { clause: "", values: [] as unknown[] };
+  const { placeholders, values } = expandMysqlInClause(excludedSourceIds);
+  return { clause: ` AND (d.id IS NULL OR d.id NOT IN (${placeholders}))`, values };
+}
+
+/** Limits are whole numbers from `attachmentBatchLimit`, so they are inlined; source ids are bound. */
+function windowLimitExpression(quotas: AttachmentCandidateQuotas) {
+  if (quotas.sourceLimits.length === 0) return { sql: String(quotas.defaultLimit), values: [] as unknown[] };
+  return {
+    sql: `CASE ranked.dataSourceId ${quotas.sourceLimits
+      .map(({ limit }) => `WHEN ? THEN ${limit}`)
+      .join(" ")} ELSE ${quotas.defaultLimit} END`,
+    values: quotas.sourceLimits.map(({ sourceId }) => sourceId),
+  };
+}
+
 export async function listAttachmentRepairCandidatesFromMysql(
   mysql: MysqlAttachmentConnection,
   options: ListAttachmentRepairCandidatesOptions,
 ): Promise<AttachmentRepairRow[]> {
+  const sources = await mysqlSelectMany<RawMysqlRow>(
+    mysql,
+    "SELECT id, fetch_config AS fetchConfig FROM data_sources WHERE fetch_config IS NOT NULL",
+  );
+  const quotas = attachmentCandidateQuotas(
+    sources.map((row) => ({ id: String(row.id), fetchConfig: text(row.fetchConfig) })),
+    options.maxPerSource,
+  );
   const nowIso = options.now.toISOString();
   const reeligibleBefore = new Date(options.now.getTime() - UNAVAILABLE_RETRY_MS).toISOString();
   const filter = sourceFilterClause(options.sourceIds);
+  const archiving = archivingEnabledClause(quotas.excludedSourceIds);
+  const windowLimit = windowLimitExpression(quotas);
 
+  // Rank every eligible attachment inside its own source over ids and keys only; each source
+  // keeps its own window and the run-wide cap is cut in rank order, so every source's first
+  // candidate comes before any source's second. Full rows are read for the picked ones alone,
+  // joined to the data source each was ranked under.
   const rows = await mysqlSelectMany<RawMysqlRow>(
     mysql,
     `
-      SELECT${SELECT_COLUMNS}${FROM_CLAUSE}
-      WHERE (
-        (a.archive_status IN ('not_archived', 'failed') AND (a.next_repair_at IS NULL OR a.next_repair_at <= ?))
-        OR (a.archive_status = 'unavailable' AND a.next_repair_at IS NOT NULL AND a.next_repair_at <= ?)
-      )${filter.clause}
-      ORDER BY b.source ASC, CASE WHEN a.failure_kind IN ('archive_missing', 'archive_corrupt') THEN 0 WHEN a.archive_status = 'not_archived' THEN 1 ELSE 2 END ASC, a.id ASC
-      LIMIT ${Math.max(1, Math.trunc(options.limit ?? DEFAULT_CANDIDATE_LIMIT))}
+      SELECT${SELECT_COLUMNS}
+      FROM (
+        SELECT ranked.id, ranked.dataSourceId, ranked.sourceKey, ranked.sourceRank
+        FROM (
+          SELECT
+            a.id AS id,
+            d.id AS dataSourceId,
+            COALESCE(d.id, b.source) AS sourceKey,
+            ROW_NUMBER() OVER (PARTITION BY COALESCE(d.id, b.source) ORDER BY CASE WHEN a.failure_kind IN ('archive_missing', 'archive_corrupt') THEN 0 WHEN a.archive_status = 'not_archived' THEN 1 ELSE 2 END ASC, a.id ASC) AS sourceRank${FROM_CLAUSE}
+          WHERE (
+            (a.archive_status IN ('not_archived', 'failed') AND (a.next_repair_at IS NULL OR a.next_repair_at <= ?))
+            OR (a.archive_status = 'unavailable' AND a.next_repair_at IS NOT NULL AND a.next_repair_at <= ?)
+          )${filter.clause}${archiving.clause}
+        ) ranked
+        WHERE ranked.sourceRank <= ${windowLimit.sql}
+        ORDER BY ranked.sourceRank ASC, ranked.sourceKey ASC, ranked.id ASC
+        LIMIT ${Math.max(1, Math.trunc(options.limit ?? DEFAULT_CANDIDATE_LIMIT))}
+      ) picked
+      INNER JOIN bid_attachments a ON a.id = picked.id
+      INNER JOIN bids b ON b.id = a.bid_id
+      LEFT JOIN data_sources d ON d.id = picked.dataSourceId
+      ORDER BY picked.sourceRank ASC, picked.sourceKey ASC, a.id ASC
     `,
-    [nowIso, reeligibleBefore, ...filter.values],
+    [nowIso, reeligibleBefore, ...filter.values, ...archiving.values, ...windowLimit.values],
   );
 
   return dedupeAttachmentRows(rows.map(normalizeRow));

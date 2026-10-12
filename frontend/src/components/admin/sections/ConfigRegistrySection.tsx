@@ -11,6 +11,7 @@ import { listAdminConfigEntries, updateAdminConfigEntry, type AdminConfigRegistr
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { formatDate } from "../admin-format";
 import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
+import { useBusyIds } from "../busy-reporting";
 import { useAdminResource } from "../use-admin-resource";
 
 type ConfigEditDraft = {
@@ -57,7 +58,7 @@ export function ConfigRegistrySection() {
   const registry = useAdminResource(loadConfigEntries);
   const [notice, setNotice] = useState<string | null>(null);
   const [configEditDrafts, setConfigEditDrafts] = useState<Record<string, ConfigEditDraft>>({});
-  const [savingConfigEntryId, setSavingConfigEntryId] = useState<string | null>(null);
+  const { busyIds: savingConfigEntryIds, setBusy: setConfigBusy } = useBusyIds<string>();
   const configEntries = registry.data ?? [];
   const isLoading = registry.status === "loading";
   const onRefresh = () => void registry.reload();
@@ -90,7 +91,7 @@ export function ConfigRegistrySection() {
       return;
     }
 
-    setSavingConfigEntryId(entry.id);
+    setConfigBusy(entry.id, true);
     setNotice(null);
     updateAdminConfigEntry(entry.id, {
       configValue,
@@ -110,7 +111,7 @@ export function ConfigRegistrySection() {
         setNotice(t("admin.configRegistrySaveFailed"));
       })
       .finally(() => {
-        setSavingConfigEntryId(null);
+        setConfigBusy(entry.id, false);
       });
   };
 
@@ -214,7 +215,7 @@ export function ConfigRegistrySection() {
             <TableBody>
               {configEntries.map((entry) => {
                 const draft = configDraftFor(entry, configEditDrafts);
-                const isSaving = savingConfigEntryId === entry.id;
+                const isSaving = savingConfigEntryIds.has(entry.id);
 
                 return (
                   <TableRow key={entry.id} className="align-top">
@@ -236,6 +237,7 @@ export function ConfigRegistrySection() {
                         </Badge>
                         <select
                           value={draft.status}
+                          disabled={isSaving}
                           onChange={(event) =>
                             onDraftChange(entry.id, (current) => ({
                               ...current,
@@ -260,6 +262,7 @@ export function ConfigRegistrySection() {
                       <textarea
                         aria-label={`${entry.module}.${entry.configKey} ${t("admin.configRegistryConfigJson")}`}
                         value={draft.configValueJson}
+                        disabled={isSaving}
                         onChange={(event) =>
                           onDraftChange(entry.id, (current) => ({
                             ...current,
@@ -274,6 +277,7 @@ export function ConfigRegistrySection() {
                       <Input
                         aria-label={`${entry.module}.${entry.configKey} ${t("admin.configRegistryChangeReason")}`}
                         value={draft.changeReason}
+                        disabled={isSaving}
                         onChange={(event) =>
                           onDraftChange(entry.id, (current) => ({
                             ...current,

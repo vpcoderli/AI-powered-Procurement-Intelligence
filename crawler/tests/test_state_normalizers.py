@@ -1,10 +1,24 @@
 import pytest
 
+from apsi_crawler.adapters.task import task_source_from_payload
 from apsi_crawler.normalizers.state_bids import (
     StateBidNormalizationError,
     normalize_state_opportunity,
 )
 from apsi_crawler.sources.registry import get_source
+
+
+@pytest.mark.parametrize("level", ["county", "city", "township", "special_district"])
+def test_local_source_jurisdiction_survives_normalization(level):
+    source = task_source_from_payload({
+        "source_id": "local_source", "label": "Local Government", "state_code": "CO",
+        "jurisdiction_level": level, "fetch_config": {},
+    })
+
+    bid = normalize_state_opportunity({"id": "1", "title": "Road repair", "issuer_type": "state"}, source)
+
+    assert bid["issuer_type"] == level
+    assert bid["state_code"] == "CO"
 
 
 def test_normalize_state_opportunity_outputs_stable_bid_fields():
@@ -145,3 +159,10 @@ def test_an_unknown_lifecycle_value_is_treated_as_open():
         {"id": "X-2", "title": "Paving", "lifecycle_status": "pending"}, get_source("ca_caleprocure")
     )
     assert (bid["lifecycle_status"], bid["is_active"]) == ("open", 1)
+
+
+def test_category_is_not_used_as_a_procurement_body():
+    raw = {"id": "1", "title": "Road repair", "type": "Construction"}
+    bid = normalize_state_opportunity(raw, get_source("il_bidbuy"))
+    assert bid["description"] == bid["title"]
+    assert bid["original_category"] == "Construction"

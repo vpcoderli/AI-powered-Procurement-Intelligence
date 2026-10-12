@@ -25,6 +25,7 @@ import type { AccountTier, FeatureKey, UserRole } from "@/server/auth/entitlemen
 import { endOfDayIsoFromDateInput, formatDate, formatDateInputValue, isUnreadableDateInput, readDateInput } from "../admin-format";
 import { useAdminSession } from "../admin-session";
 import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
+import { useBusyIds } from "../busy-reporting";
 import { useAdminResource } from "../use-admin-resource";
 import { ACCOUNT_TIERS, OVERRIDABLE_FEATURES, USER_ROLES } from "./user-access-constants";
 
@@ -82,7 +83,7 @@ export function UsersSection() {
   const loadUsers = useCallback(() => listAdminUsers(userFilters).then((response) => response.users), [userFilters]);
   const users = useAdminResource(loadUsers);
   const [notice, setNotice] = useState<string | null>(null);
-  const [pendingUserId, setPendingUserId] = useState<string | null>(null);
+  const { busyIds: pendingUserIds, setBusy: setUserBusy } = useBusyIds<string>();
   const [invitationDraft, setInvitationDraft] = useState<InvitationDraft>(DEFAULT_INVITATION_DRAFT);
   const [invitedTemporaryPassword, setInvitedTemporaryPassword] = useState<string | null>(null);
   const [isInvitingUser, setIsInvitingUser] = useState(false);
@@ -109,7 +110,7 @@ export function UsersSection() {
   }, [featureOverrideFeature]);
 
   const updateUserAccess = (user: AdminUser, input: UpdateAdminUserInput) => {
-    setPendingUserId(user.id);
+    setUserBusy(user.id, true);
     updateAdminUserAccess(user.id, input)
       .then(({ user: updated }) => {
         users.setData((current) => current?.map((item) => (item.id === updated.id ? updated : item)) ?? null);
@@ -118,7 +119,7 @@ export function UsersSection() {
         setNotice(t("admin.userUpdateFailed"));
       })
       .finally(() => {
-        setPendingUserId(null);
+        setUserBusy(user.id, false);
       });
   };
 
@@ -453,7 +454,7 @@ export function UsersSection() {
               </TableRow>
             )}
             {userRows.map((user) => {
-              const isPending = pendingUserId === user.id;
+              const isPending = pendingUserIds.has(user.id);
 
               return (
                 <TableRow key={user.id}>

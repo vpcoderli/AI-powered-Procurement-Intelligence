@@ -26,6 +26,16 @@ describe("users section", () => {
     expect(source).not.toContain("listAdminUserAuditLogs");
   });
 
+  it("starts and settles each access write under its own user id", () => {
+    const source = readFileSync(new URL("UsersSection.tsx", import.meta.url), "utf8");
+    const update = source.slice(source.indexOf("const updateUserAccess"), source.indexOf("const syncFeatureOverrideForm"));
+
+    expect(update).toContain("setUserBusy(user.id, true);");
+    expect(update).toMatch(/\.finally\(\(\) => \{\s+setUserBusy\(user.id, false\);\s+\}\);/);
+    expect(source).toContain("const isPending = pendingUserIds.has(user.id);");
+    expect(source).not.toContain("setPendingUserId");
+  });
+
   // Moved from src/app/admin/page.test.ts ("renders user access controls alongside crawler operations").
   it("keeps the user access controls it took over from the dashboard page", () => {
     const source = readFileSync(new URL("UsersSection.tsx", import.meta.url), "utf8");

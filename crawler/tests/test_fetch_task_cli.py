@@ -214,7 +214,7 @@ def test_fetch_task_reports_disabled_enrichment_by_default(monkeypatch, capsys):
     monkeypatch.setitem(registry.DEDICATED_ADAPTERS, "plain_source", lambda source, **kwargs: [{"id": "plain_source:1", "title": "T", "source": "Plain"}])
     exit_code, result = _run({"task_id": "tsk_e1", "source_id": "plain_source", "label": "Plain", "state_code": "CA", "fetch_config": {}}, monkeypatch, capsys)
     assert exit_code == 0
-    assert result["metadata"]["enrichment"] == {"attempted": 0, "enriched": 0, "failed": 0, "skipped": 1, "reason": "disabled", "extractor": None}
+    assert result["metadata"]["enrichment"] == {"valid_bodies": 0, "attempted": 0, "enriched": 0, "failed": 0, "skipped": 1, "reason": "disabled", "extractor": None}
 
 
 def test_fetch_task_runs_enrichment_when_enabled(monkeypatch, capsys):
@@ -535,3 +535,21 @@ def test_non_paged_sources_keep_the_default_limit_and_report_no_pagination(monke
 
     assert seen == [25]
     assert "pagination" not in result["metadata"]
+
+
+def test_detail_only_task_uses_persisted_records_without_fetching_lists(monkeypatch, capsys):
+    row = {
+        "id": "old_source:old", "source_bid_id": "old", "dedupe_key": "old_source:old", "source": "Old Source", "issuer_name": "County Roads Agency",
+        "title": "Road repair", "description": "Road repair", "source_url": "https://public.example/bid/old",
+        "issuer_type": "county", "state_code": "CA", "lifecycle_status": "closed", "is_active": 0,
+        "raw_payload": {}, "attachments": [],
+    }
+    monkeypatch.setattr(cli, "resolve_adapter", lambda *args: (_ for _ in ()).throw(AssertionError("must not fetch list")))
+    request = {"task_id": "retry_old", "source_id": "old_source", "label": "Old Source", "state_code": "CA", "provider_family": "unknown", "jurisdiction_level": "county", "fetch_config": {}, "detail_history": [row], "detail_backfill_only": True}
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(request)))
+    assert cli.main(["fetch-task"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["metadata"]["pagination"]["complete"] is False
+    assert output["metadata"]["mode"] == "detail_backfill"
+    assert output["bids"][0]["lifecycle_status"] == "closed"
+    assert output["bids"][0]["raw_payload"]["enrichment"]["outcome"]["status"] == "disabled"

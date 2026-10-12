@@ -16,16 +16,18 @@ export async function persistCrawlTaskResult(
   result: CrawlTaskResult,
   lease?: CrawlerLeaseFence,
 ): Promise<CrawlTaskResult> {
-  if (result.payload) {
+  const originalPayload = result.payload;
+  if (originalPayload) {
     try {
-      const stamped = stampJurisdiction(result.payload, source);
+      const stamped = stampJurisdiction(originalPayload, source);
       if (mysql) {
         await importCrawlerJsonRunIntoMysql(mysql, stamped, lease);
       } else {
         importCrawlerJsonRunIntoSqlite(database, stamped, lease);
       }
+      result = { ...result, payload: stamped };
     } catch (error) {
-      const failurePayload = persistenceFailurePayload(result.payload, error);
+      const failurePayload = persistenceFailurePayload(originalPayload, error);
       if (!(error instanceof Error && "failureLogged" in error && error.failureLogged)) {
         try {
           if (mysql) await importCrawlerJsonRunIntoMysql(mysql, failurePayload);

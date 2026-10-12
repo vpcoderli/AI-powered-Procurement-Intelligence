@@ -130,6 +130,29 @@ def test_merge_only_fills_empty_values_and_keeps_existing_richer_data():
     }
 
 
+def test_merge_replaces_a_contact_name_that_is_portal_metadata():
+    bid = _bid(contact_name="Purchase Method: Open Market")
+    merge_enrichment(bid, ENRICHED, None)
+    assert bid["contact_name"] == "Jane"
+    assert "contact_name" in bid["raw_payload"]["enrichment"]["applied_fields"]
+
+
+@pytest.mark.parametrize("name", ["Purchase Method: Open Market", "Type Code: 01", "Bid Type: OPEN"])
+def test_merge_rejects_portal_metadata_as_an_incoming_contact_name(name):
+    bid = _bid()
+    result = {"fields": {"contact_name": name}, "attachments": [], "diagnostics": {"contact": "heuristic"}}
+    assert merge_enrichment(bid, result, None, ["contact"]) is False
+    assert bid["contact_name"] is None
+
+
+def test_successful_contact_parse_clears_an_existing_metadata_name_when_no_contact_exists():
+    bid = _bid(contact_name="Purchase Method: Open Market")
+    result = {"fields": {"contact_name": None}, "attachments": [], "diagnostics": {"contact": "not_found"}}
+    assert merge_enrichment(bid, result, None, ["contact"]) is True
+    assert bid["contact_name"] is None
+    assert bid["raw_payload"]["enrichment"]["applied_fields"] == ["contact_name"]
+
+
 def test_merge_resolves_javascript_attachment_through_template():
     bid = _bid()
     merge_enrichment(bid, ENRICHED, "https://x/download?f={id}&d={source_bid_id}")
@@ -147,7 +170,7 @@ def test_disabled_config_skips_everything():
     bids = [_bid()]
     out, stats = enrich_bids(bids, _source(), {"base_url": "https://x"}, extractor=FakeExtractor())
     assert out == bids
-    assert stats == {"attempted": 0, "enriched": 0, "failed": 0, "skipped": 1, "reason": "disabled", "extractor": None}
+    assert stats == {"valid_bodies": 0, "attempted": 0, "enriched": 0, "failed": 0, "skipped": 1, "reason": "disabled", "extractor": None}
 
 
 def test_missing_extractor_configuration_skips(monkeypatch):
@@ -197,7 +220,7 @@ def test_extractor_error_counts_failed_never_raises():
     extractor = FakeExtractor(error=ExtractorError("boom"))
     session = FakeSession({"https://portal.example.gov/bid/1": FakeResponse()})
     _, stats = enrich_bids([_bid()], _source(), {"enrichment": {"enabled": True, "min_interval_seconds": 0}}, extractor=extractor, session=session, sleep=lambda s: None)
-    assert stats == {"attempted": 1, "enriched": 0, "failed": 1, "skipped": 0, "reason": None, "extractor": "0.4.15"}
+    assert stats == {"valid_bodies": 0, "attempted": 1, "enriched": 0, "failed": 1, "skipped": 0, "reason": None, "extractor": "0.4.15"}
 
 
 def test_failed_record_emits_diagnostic_line_to_stderr_not_stdout(capsys):
@@ -222,7 +245,7 @@ def test_records_already_complete_for_requested_fields_are_skipped():
     extractor = FakeExtractor(result=ENRICHED)
     complete = _bid(description="Real scope text", full_description="Existing full statement of work and delivery milestones.", original_category="Construction")
     _, stats = enrich_bids([complete], _source(), {"enrichment": {"enabled": True, "fields": ["description", "category"]}}, extractor=extractor, session=FakeSession({}), sleep=lambda s: None)
-    assert stats == {"attempted": 0, "enriched": 0, "failed": 0, "skipped": 1, "reason": None, "extractor": "0.4.15"}
+    assert stats == {"valid_bodies": 0, "attempted": 0, "enriched": 0, "failed": 0, "skipped": 1, "reason": None, "extractor": "0.4.15"}
     assert extractor.calls == []
 
 
@@ -257,7 +280,7 @@ def test_redirect_to_login_page_counts_failed_without_calling_extractor(capsys):
     )
     bid = _bid(source_url=detail_url)
     out, stats = enrich_bids([bid], _source(), {"enrichment": {"enabled": True, "min_interval_seconds": 0}}, extractor=extractor, session=session, sleep=lambda s: None)
-    assert stats == {"attempted": 1, "enriched": 0, "failed": 1, "skipped": 0, "reason": None, "extractor": "0.4.15"}
+    assert stats == {"valid_bodies": 0, "attempted": 1, "enriched": 0, "failed": 1, "skipped": 0, "reason": None, "extractor": "0.4.15"}
     assert extractor.calls == []                       # the login page never reaches the extractor
     assert out[0]["description"] == "Road Repair"      # and nothing is merged
     assert "detail_fetched_at" not in out[0]
@@ -325,10 +348,12 @@ def test_extractor_success_that_writes_nothing_counts_skipped_not_enriched():
         [bid], _source(), {"enrichment": {"enabled": True, "min_interval_seconds": 0}},
         extractor=extractor, session=session, sleep=lambda s: None, now=lambda: "2026-09-15T00:00:00+00:00",
     )
-    assert stats == {"attempted": 1, "enriched": 0, "failed": 0, "skipped": 1, "reason": None, "extractor": "0.4.15"}
+    assert stats == {"valid_bodies": 1, "attempted": 1, "enriched": 0, "failed": 0, "skipped": 1, "reason": None, "extractor": "0.4.15"}
     assert extractor.calls != []                       # the extractor really ran (not the pre-fetch skip path)
     assert out[0]["detail_fetched_at"] == "2026-09-15T00:00:00+00:00"   # the page was fetched
-    assert out[0]["raw_payload"]["enrichment"] == {"fields": {"description": "selector", "contact": "not_found", "published_date": "not_found"}, "applied_fields": []}
+    assert out[0]["raw_payload"]["enrichment"]["applied_fields"] == []
+    assert out[0]["raw_payload"]["enrichment"]["fields"] == {"description": "selector", "contact": "not_found", "published_date": "not_found"}
+    assert out[0]["raw_payload"]["enrichment"]["outcome"]["verified_at"] == "2026-09-15T00:00:00+00:00"
 
 
 def test_extractor_client_posts_json_and_maps_errors():
@@ -415,3 +440,55 @@ def test_real_redirect_keeping_a_quoted_id_still_enriches():
         extractor=extractor, session=session, sleep=lambda s: None,
     )
     assert stats["enriched"] == 1 and stats["failed"] == 0
+
+
+BODY = "The contractor shall supply road repair equipment and trained personnel for the county. Work includes excavation, resurfacing, traffic controls, inspection, and a complete maintenance plan for the following year."
+
+
+def test_detail_budget_rotates_past_persisted_failures_with_cooldown():
+    first = _bid(raw_payload={"enrichment": {"outcome": {"attempt_count": 1, "attempted_at": "2026-10-01T00:00:00+00:00", "next_retry_at": "2026-10-01T01:00:00+00:00"}}})
+    second = _bid(id="il_bidbuy:2", source_bid_id="2", source_url="https://portal.example.gov/bid/2")
+    session = FakeSession({second["source_url"]: FakeResponse()})
+    _, stats = enrich_bids([first, second], _source(), {"enrichment": {"enabled": True, "max_details_per_run": 1, "min_interval_seconds": 0}}, extractor=FakeExtractor(result={"fields": {"description": BODY}, "attachments": []}), session=session, now=lambda: "2026-10-01T00:05:00+00:00")
+    assert [call["url"] for call in session.calls] == [second["source_url"]]
+    assert first["raw_payload"]["enrichment"]["outcome"]["status"] == "deferred"
+    assert first["raw_payload"]["enrichment"]["outcome"]["attempt_count"] == 1
+    assert stats["valid_bodies"] == 1
+    assert second["raw_payload"]["enrichment"]["outcome"]["verified_at"] == "2026-10-01T00:05:00+00:00"
+
+
+def test_enrichment_writes_do_not_claim_a_valid_body_or_refresh_reused_body():
+    bid = _bid(description=BODY, full_description=BODY, raw_payload={"enrichment": {"outcome": {"verified_at": "2026-09-01T00:00:00+00:00"}}})
+    _, stats = enrich_bids([bid], _source(), {"enrichment": {"enabled": True, "fields": ["category"], "min_interval_seconds": 0}}, extractor=FakeExtractor(result={"fields": {"original_category": "Construction"}, "attachments": []}), session=FakeSession({bid["source_url"]: FakeResponse()}), now=lambda: "2026-10-01T00:05:00+00:00")
+    assert stats["enriched"] == 1
+    assert stats["valid_bodies"] == 0
+    assert bid["raw_payload"]["enrichment"]["outcome"]["valid_body"] is True
+    assert bid["raw_payload"]["enrichment"]["outcome"]["verified_at"] == "2026-09-01T00:00:00+00:00"
+
+
+def test_disabled_enrichment_records_durable_per_bid_outcome():
+    bid = _bid()
+    enrich_bids([bid], _source(), {})
+    assert bid["raw_payload"]["enrichment"]["outcome"] == {
+        "status": "disabled", "reason": "disabled", "attempted": False,
+        "attempted_at": None, "attempt_count": 0, "valid_body": False,
+        "verified_at": None, "next_retry_at": None,
+    }
+
+
+def test_short_substantive_detail_counts_as_a_valid_body():
+    bid = _bid()
+    _, stats = enrich_bids([bid], _source(), {"enrichment": {"enabled": True, "fields": ["description"], "min_interval_seconds": 0}}, extractor=FakeExtractor(result={"fields": {"description": "Supply and install two backup generators."}, "attachments": []}), session=FakeSession({bid["source_url"]: FakeResponse()}))
+    assert stats["valid_bodies"] == 1
+    assert bid["raw_payload"]["enrichment"]["outcome"]["valid_body"] is True
+
+
+def test_reused_history_does_not_replay_old_applied_fields():
+    from apsi_crawler.detail_backfill import apply_detail_history
+    previous = _bid(dedupe_key="il_bidbuy:1", issuer_name="Illinois Roads Agency", issuer_type="state", state_code="IL", description=BODY, full_description=BODY, detail_fetched_at="2026-09-01T00:00:00Z", raw_payload={"enrichment": {"applied_fields": ["description", "full_description"], "persisted_fields": ["description", "full_description"], "outcome": {"verified_at": "2026-09-01T00:00:00Z", "attempt_count": 1}}})
+    current = _bid()
+    apply_detail_history([current], [previous], "il_bidbuy")
+    enrich_bids([current], _source(), {})
+    assert current["raw_payload"]["enrichment"]["applied_fields"] == []
+    assert current["raw_payload"]["enrichment"]["outcome"]["verified_at"] == "2026-09-01T00:00:00Z"
+    assert current["detail_fetched_at"] == "2026-09-01T00:00:00Z"

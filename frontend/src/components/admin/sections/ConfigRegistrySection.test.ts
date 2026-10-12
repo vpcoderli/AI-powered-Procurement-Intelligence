@@ -16,6 +16,14 @@ const literalKeys = [...new Set([...source.matchAll(/\bt\("admin\.([A-Za-z_]+)"\
 const statusKeys = ["active", "draft", "inactive"].map((status) => `configRegistryStatus_${status}`);
 
 describe("config registry section", () => {
+  it("starts and settles each config save under its own entry id", () => {
+    const save = source.slice(source.indexOf("const handleConfigRegistrySave"), source.indexOf("const onDraftChange"));
+
+    expect(save).toContain("setConfigBusy(entry.id, true);");
+    expect(save).toMatch(/\.finally\(\(\) => \{\s+setConfigBusy\(entry.id, false\);\s+\}\);/);
+    expect(source).toContain("const isSaving = savingConfigEntryIds.has(entry.id);");
+    expect(source).not.toContain("setSavingConfigEntryId");
+  });
   // Moved from src/app/admin/page.test.tsx ("loads and renders the config registry matrix with minimal states").
   it("loads and renders the config registry matrix with minimal states", () => {
     expect(source).toContain("listAdminConfigEntries");

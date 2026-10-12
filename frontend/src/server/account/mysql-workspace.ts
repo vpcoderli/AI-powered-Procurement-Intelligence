@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import type { Pool } from "mysql2/promise";
+import { isTokenUnexpired } from "@/lib/token-expiry";
 import { featuresForUser, normalizeAccountTier, normalizeUserRole } from "@/server/auth/entitlements";
 import { hashPassword } from "@/server/auth/password";
 import { createSessionToken, hashSessionToken, SESSION_MAX_AGE_SECONDS } from "@/server/auth/session";
@@ -630,7 +631,7 @@ export async function acceptMysqlWorkspaceInvitation(pool: Pool, input: AcceptWo
     !invitation ||
     invitation.acceptedAt ||
     invitation.revokedAt ||
-    new Date(invitation.expiresAt).getTime() <= Date.now()
+    !isTokenUnexpired(invitation.expiresAt)
   ) {
     throw new WorkspaceInvitationNotFoundError();
   }

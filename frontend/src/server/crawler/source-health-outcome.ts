@@ -1,4 +1,5 @@
 import type { AppDatabase } from "@/server/db/client";
+import { hasSourceWideVerifiedEmpty } from "@/lib/crawler-data-quality";
 import type { MysqlCrawlerLockStore } from "./lock-repository";
 import type { CrawlerRunResult, RunCrawlerSourceOnceResult } from "./orchestrator";
 import { classifyCrawlerFailure, type CrawlerFailureInput } from "./failure-classifier";
@@ -56,8 +57,7 @@ export async function recordSourceHealthOutcome(
 export function isVerifiedEmptyRun(result: RunCrawlerSourceOnceResult): boolean {
   if (!result.ok) return false;
   const metadata = result.runner?.payload?.metadata;
-  return result.runner?.fetchedCount === 0 &&
-    Boolean(metadata && typeof metadata === "object" && (metadata as Record<string, unknown>).emptyState);
+  return result.runner?.fetchedCount === 0 && hasSourceWideVerifiedEmpty(metadata);
 }
 
 /** Include structured Python failures even when stderr is empty. */

@@ -38,6 +38,7 @@ const consoleReadRoutes = [
   "../../app/api/admin/notifications/route.ts",
   "../../app/api/admin/overview/route.ts",
   "../../app/api/admin/risk-check/route.ts",
+  "../../app/api/admin/source-data-quality/route.ts",
 ] as const;
 
 function routeFiles(url: URL): URL[] {

@@ -23,7 +23,7 @@ import re
 from time import perf_counter
 from urllib.parse import urlsplit
 
-from apsi_crawler.us_states import strip_state_suffix
+from apsi_crawler.us_states import STATE_CODES, strip_state_suffix
 
 
 #: Platform id -> how its candidates are labelled and which `provider_family` they carry.
@@ -135,8 +135,13 @@ def _validate_request(request):
             raise InvalidSourceDiscoveryRequestError(
                 "states must be omitted (every state) or a non-empty list of two-letter codes"
             )
-        if any(not isinstance(code, str) or not _STATE_CODE_RE.match(code.strip()) for code in states):
-            raise InvalidSourceDiscoveryRequestError("every states entry must be a two-letter code")
+        if any(
+            not isinstance(code, str)
+            or not _STATE_CODE_RE.match(code.strip())
+            or code.strip().upper() not in STATE_CODES
+            for code in states
+        ):
+            raise InvalidSourceDiscoveryRequestError("every states entry must be a valid US state code")
         states = [code.strip().upper() for code in states]
 
     existing_sources = request.get("existing_sources")
@@ -435,6 +440,7 @@ def discover_sources(
     # An existing id is only a name this run must not hand out again.
     taken_ids = set(settings["existing_ids"])
     taken_ids.update(source["id"].strip() for source in settings["existing_sources"])
+    discovered_tenants = {}
 
     counts = dict((level, 0) for level in ALL_LEVELS)
     classified = []
@@ -487,10 +493,16 @@ def discover_sources(
             review.append(_review_entry(agency, "unusable_name"))
             continue
 
-        owner = registered.get(tenant_key(tenant_url))
+        identity = tenant_key(tenant_url)
+        owner = registered.get(identity)
         if owner is not None:
             duplicates += 1
             review.append(_review_entry(agency, "already_registered", owner))
+            continue
+        owner = discovered_tenants.get(identity)
+        if owner is not None:
+            duplicates += 1
+            review.append(_review_entry(agency, "duplicate_tenant", owner))
             continue
 
         matched = match(level, state_code, base_name, table=jurisdictions) or {"status": "not_found"}
@@ -516,6 +528,7 @@ def discover_sources(
             "{0}_{1}_{2}".format(platform, state_code.lower(), segment), taken_ids
         )
         taken_ids.add(source_id)
+        discovered_tenants[identity] = source_id
         candidates.append(
             {
                 # The eleven fields below are `SourceCandidate` in

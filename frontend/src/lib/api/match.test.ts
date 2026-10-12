@@ -30,6 +30,12 @@ const match = {
 } as const;
 
 describe("bid match API client", () => {
+  it("preserves pending-body errors instead of presenting them as internal failures", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ error: {
+      code: "BID_ANALYSIS_UNAVAILABLE", message: "A valid procurement description is required before analysis.",
+    } }, { status: 409 }));
+    await expect(fetchBidMatch("pending")).rejects.toMatchObject({ status: 409, code: "BID_ANALYSIS_UNAVAILABLE" });
+  });
   beforeEach(() => {
     mockFetch.mockReset();
     vi.stubGlobal("fetch", mockFetch);

@@ -28,6 +28,7 @@ def _first_present(raw, keys, default=None):
 
 
 _LIFECYCLE_STATUSES = ("open", "closed", "awarded")
+_ISSUER_TYPES = ("federal", "state", "county", "city", "township", "special_district")
 
 
 def _lifecycle_status(raw):
@@ -63,7 +64,7 @@ def normalize_state_opportunity(raw, source):
         f"Untitled {source.source_label} opportunity",
     )
 
-    description = _first_present(raw, ("description", "summary", "type"), title)
+    description = _first_present(raw, ("description", "summary"), title)
     full_description = _first_present(raw, ("full_description",))
     if not useful_text(full_description, title) or same_text(full_description, description):
         full_description = None
@@ -71,6 +72,9 @@ def normalize_state_opportunity(raw, source):
     deadline_date = _first_present(raw, ("deadline_date", "due_date", "response_deadline"))
     timestamp = now_iso()
     lifecycle_status = _lifecycle_status(raw)
+    issuer_type = getattr(source, "jurisdiction", "state")
+    if issuer_type not in _ISSUER_TYPES:
+        issuer_type = "state"
 
     return {
         "id": f"{source.id}:{source_bid_id}",
@@ -88,7 +92,7 @@ def normalize_state_opportunity(raw, source):
         "published_date": normalize_published_date(_first_present(raw, ("published_date", "posted_date", "postedDate"))),
         "deadline_date": deadline_date,
         "issuer_name": _first_present(raw, ("issuer_name", "agency", "department"), "Unknown state agency"),
-        "issuer_type": "state",
+        "issuer_type": issuer_type,
         "state_code": source.state_code,
         "contact_name": raw.get("contact_name"),
         "contact_email": raw.get("contact_email"),

@@ -6,7 +6,8 @@ import {
   acceptWorkspaceInvitation,
   inviteWorkspaceMember,
 } from "@/server/account/workspace";
-import { organizations, users } from "@/server/db/schema";
+import { organizations, sessions, users } from "@/server/db/schema";
+import { hashSessionToken } from "./session";
 import {
   upsertAccountSubscription,
 } from "@/server/billing/subscriptions";
@@ -65,6 +66,19 @@ describe("auth service", () => {
       features: expect.arrayContaining(["bid_search"]),
     });
   });
+
+  it.each(["", "not a date", "275760-09-14T00:00:00.000Z", "2000-01-01T00:00:00.000Z"])(
+    "rejects and removes a session whose expiry is invalid or past: %j",
+    async (expiresAt) => {
+      const timestamp = "2026-05-19T00:00:00.000Z";
+      const token = "invalid-expiry-session";
+      testDb.db.insert(users).values({ id: "expiry-user", email: "expiry@example.com", role: "user", createdAt: timestamp, updatedAt: timestamp }).run();
+      testDb.db.insert(sessions).values({ id: "expiry-session", userId: "expiry-user", tokenHash: hashSessionToken(token), expiresAt, createdAt: timestamp, lastSeenAt: timestamp }).run();
+
+      await expect(getSessionUser(testDb.db, token)).resolves.toBeNull();
+      expect(testDb.db.select().from(sessions).where(eq(sessions.id, "expiry-session")).all()).toEqual([]);
+    },
+  );
 
   it("uses the workspace organization tier for member session entitlements", async () => {
     const owner = await registerUser(testDb.db, {

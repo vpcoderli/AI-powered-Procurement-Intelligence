@@ -13,7 +13,9 @@ _EDGE_PUNCTUATION = " \t\r\n.,:;!?-–—_*/'\"()[]{}。，、：；！？"
 
 
 def comparable_text(value):
-    return " ".join(value.split()).casefold() if isinstance(value, str) else ""
+    # str.split() whitespace plus U+FEFF, which JavaScript's \s also matches: the same set as
+    # frontend/src/lib/bid-description.ts `comparable`.
+    return " ".join(value.replace("\ufeff", " ").split()).casefold() if isinstance(value, str) else ""
 
 
 def echo_key(value):
@@ -45,6 +47,17 @@ def has_full_body(bid):
         not same_text(full, description)
         and len(comparable_text(full)) > len(comparable_text(description))
     )
+
+
+_CONTACT_METADATA_RE = re.compile(
+    r"^(?:purchase method|type code|bid type|informal bid flag|allow electronic quote)\s*(?::|：|$)",
+    re.I,
+)
+
+
+def is_contact_metadata(value):
+    """Portal labels accidentally read after an empty contact cell are never contact names."""
+    return bool(isinstance(value, str) and _CONTACT_METADATA_RE.match(" ".join(value.split())))
 
 
 # Portals qualify the description label ("Solicitation Description", "Short Description",
@@ -319,3 +332,53 @@ def _normalize_block_text(value):
     text = (value or "").replace("\xa0", " ").replace("\r", "\n")
     text = re.sub(r"[^\S\n]+", " ", text)
     return re.sub(r" *\n[\s\n]*", "\n", text).strip()
+
+
+# Description classifier, mirrored rule for rule by frontend/src/lib/bid-description.ts
+# `getBidDescriptionIssue`; tests/fixtures/description_quality_contract.json is the shared
+# contract. re.ASCII keeps \w, \b and \d identical to JavaScript's.
+_HTML_BODY_RE = re.compile(r"(?:<!doctype\b|<html\b|<head\b|<body\b)", re.ASCII)
+_URL_BODY_RE = re.compile(r"https?://\S+", re.ASCII)
+_PLACEHOLDER_BODY_RES = tuple(re.compile(pattern, re.ASCII) for pattern in (
+    r"(?:(?:solicitation|short|full|bulletin|bid|project)\s+)?(?:description|desc|summary|scope of work|statement of work)[:\s]*",
+    r"(?:solicitation|presolicitation|combined synopsis\s*/\s*solicitation|sources sought|special notice|award notice|sale of surplus property|ifb|rfp|rfq|itb|rfi)[.:\s]*",
+    r"(?:n/a|none|null|not (?:available|provided)|no description(?: available)?|description (?:not available|pending)|tbd|待补|暂无(?:正文|描述))\.?",
+))
+_RESTRICTED_BODY_RES = tuple(re.compile(pattern, re.ASCII) for pattern in (
+    r"(?:please\s+)?(?:log\s*in|sign\s*in)(?:(?:\s+(?:to|with|on|at)\s+(?:the\s+)?[\w.]+(?:\s+[\w.]+){0,3})?\s+(?:or\s+register\s+)?to\s+(?:view|see|access|download|continue)\b|\s+to\s+(?:your|my)\s+account\b|\s+with\s+your\b|(?:\s+(?:(?:or|and)\s+)?|\s*/\s*)(?:register|sign\s*up)\s*[.!…]*$|\s+(?:is\s+)?required\b|\s*[.!…]*$)",
+    r"you\s+(?:must|need\s+to)\s+(?:be\s+)?(?:log(?:ged)?\s*in|sign(?:ed)?\s*in)(?:\s+(?:or\s+register\s+)?(?:to|in\s+order\s+to)\s+(?:view|see|access|download|continue)\b|\s+to\s+(?:your|my)\s+account\b|\s*[.!…]*$)",
+    r"(?:please\s+)?(?:register|create\s+an\s+account)(?:(?:\s+(?:with|on|at)\s+(?:the\s+)?[\w.]+(?:\s+[\w.]+){0,3})?\s+(?:or\s+(?:log\s*in|sign\s*in)\s+)?to\s+(?:view|see|access|download|continue)\b|(?:\s+(?:(?:or|and)\s+)?|\s*/\s*)(?:log\s*in|sign\s*in)\s*[.!…]*$|\s*[.!…]*$)",
+    r"(?:access\s+denied|error\s+(?:401|403|404|500|502|503)(?:\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable))?|(?:401|403|404|500|502|503)\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable)|page\s+not\s+found)(?:\s*[.!:;,|(\-–—]|\s+you\s+(?:do\s+not|don't|don’t)\s+have\s+permission\b|$)",
+    r"(?:forbidden|unauthorized(?:\s+access)?)(?:\s*[.!:\-–—]|\s*\(\d{3}\)|\s+you\s+(?:do\s+not|don't|don’t)\s+have\s+permission\b|$)",
+    r"(?:checking\s+your\s+browser\b|just\s+a\s+moment(?:\s*(?:\.\.\.|…|[.!,])|$)|(?:please\s+)?enable\s+javascript(?:\s+(?:to|and)\b|\s+in\s+your\s+browser\b|\s*[.!]?$)|verify\s+(?:you\s+are|that\s+you\s+are|you're)\s+(?:a\s+)?human\b|attention\s+required!\s*(?:\||$))",
+))
+_METADATA_BODY_RE = re.compile(r"(?:purchase method|type code|bid type|informal bid flag|allow electronic quote)\s*(?:[:：]\s*(?:\d+\s*-\s*[\w&/()-]+(?:\s+[\w&/()-]+){0,5}|[\w&/()-]+(?:\s+[\w&/()-]+){0,3})?)?", re.ASCII)
+_NAVIGATION_PART_RE = re.compile(r"(?:home|about(?: us)?|contact(?: us)?|privacy(?: policy)?|terms(?: of (?:use|service))?|copyright\s*(?:©|\(c\)|\d{4}\b).*|copyright\b.*\ball rights reserved\.?|all rights reserved|log\s*in|sign\s*in|sign\s*up|register)", re.ASCII)
+_ADDRESS_BODY_RE = re.compile(r"\d+[a-z]?\s+(?:[\w.'-]+\s+){0,5}(?:street|st|road|rd|avenue|ave|boulevard|blvd|lane|ln|drive|dr)\.?(?:\s*,?\s*(?:(?:suite|ste|unit|room|rm|floor|fl|building|bldg|apartment|apt)\.?\s*#?|#\s*)[\w-]+)?\s*,\s*[a-z][a-z .'-]*,?\s+[a-z]{2}\s+\d{5}(?:-\d{4})?\.?", re.ASCII)
+
+
+def body_issue(value, title):
+    """Why a description is not procurement content, or None when it is."""
+    identity = echo_key(value)
+    if not identity:
+        return "missing_body"
+    if identity == echo_key(title):
+        return "title_echo"
+    text = comparable_text(value)
+    if _HTML_BODY_RE.match(text):
+        return "restricted_or_error_body"
+    if _URL_BODY_RE.fullmatch(text):
+        return "body_url"
+    if any(pattern.fullmatch(text) for pattern in _PLACEHOLDER_BODY_RES):
+        return "placeholder_body"
+    if any(pattern.match(text) for pattern in _RESTRICTED_BODY_RES):
+        return "restricted_or_error_body"
+    if _METADATA_BODY_RE.fullmatch(text):
+        return "metadata_body"
+    # An empty list counts as navigation, exactly like JavaScript's [].every(...).
+    parts = [part for part in (comparable_text(piece) for piece in re.split(r"[|\n·]", value.strip())) if part]
+    if all(_NAVIGATION_PART_RE.fullmatch(part) for part in parts):
+        return "navigation_body"
+    if _ADDRESS_BODY_RE.fullmatch(text):
+        return "address_body"
+    return None

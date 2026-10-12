@@ -52,6 +52,31 @@ function bidById(id: string) {
 }
 
 describe("bid service", () => {
+  it.each(["sqlite", "mysql"])("filters DC local bids without accepting another state's District source in %s", async (database) => {
+    const fixture = toServerBidFixture(MOCK_BIDS[0]);
+    const bids: Bid[] = [
+      { ...fixture, id: "dc_local", issuerType: "county", stateCode: "DC", source: "District of Columbia procurement" },
+      { ...fixture, id: "ca_district", issuerType: "county", stateCode: "CA", source: "California School District procurement" },
+    ];
+    repositoryListBids.mockResolvedValue(bids);
+    repositoryListBidsFromMysql.mockResolvedValue(bids);
+    const result = database === "sqlite"
+      ? await queryBidsFromDatabase({} as never, { states: ["DC"], issuerType: "county" })
+      : await queryBidsFromMysql({} as never, { states: ["DC"], issuerType: "county" });
+    expect(result.bids.map((bid) => bid.id)).toEqual(["dc_local"]);
+  });
+
+  it.each(["sqlite", "mysql"])("uses registered geography over an agency name mentioning a different state in %s", async (database) => {
+    const fixture = toServerBidFixture(MOCK_BIDS[0]);
+    const bids: Bid[] = [{ ...fixture, id: "ny_local", issuerType: "city", stateCode: "NY", source: "California City Procurement" }];
+    repositoryListBids.mockResolvedValue(bids);
+    repositoryListBidsFromMysql.mockResolvedValue(bids);
+    const result = database === "sqlite"
+      ? await queryBidsFromDatabase({} as never, { states: ["CA"], issuerType: "city" })
+      : await queryBidsFromMysql({} as never, { states: ["CA"], issuerType: "city" });
+    expect(result.bids).toHaveLength(0);
+  });
+
   const referenceDate = new Date("2026-05-18T00:00:00");
   const query = (params: Parameters<typeof queryBids>[0]) =>
     queryBids(params, { referenceDate });
@@ -133,6 +158,27 @@ describe("bid service", () => {
     expect((await query({ states: ["CA"] })).bids.map((bid) => bid.id)).toEqual([
       "2",
     ]);
+  });
+
+  it.each(["county", "city", "township", "special_district"] as const)("filters %s precisely while retaining state geography in both database paths", async (issuerType) => {
+    const fixture = toServerBidFixture(MOCK_BIDS[1]);
+    const localBids: Bid[] = [
+      { ...fixture, id: "local_ca", source: "local_portal", issuerType, stateCode: "CA" },
+      { ...fixture, id: "local_ny", source: "local_portal", issuerType, stateCode: "NY" },
+      { ...fixture, id: "state_ca", source: "local_portal", issuerType: "state", stateCode: "CA" },
+    ];
+    repositoryListBids.mockResolvedValue(localBids);
+    repositoryListBidsFromMysql.mockResolvedValue(localBids);
+
+    for (const result of [
+      await queryBidsFromDatabase({} as never, { states: ["CA"], issuerType }),
+      await queryBidsFromMysql({ query: vi.fn() }, { states: ["CA"], issuerType }),
+    ]) {
+      expect(result.bids.map((bid) => bid.id)).toEqual(["local_ca"]);
+      expect(result.filters).toMatchObject({ states: ["ca"], issuerType });
+    }
+    expect((await query({ states: ["CA"], issuerType: "all" })).bids.map((bid) => bid.id)).toEqual(["local_ca", "state_ca"]);
+    expect((await query({ states: ["CA"], issuerType: "state" })).bids.map((bid) => bid.id)).toEqual(["state_ca"]);
   });
 
   it("filters bids by issuer type", async () => {

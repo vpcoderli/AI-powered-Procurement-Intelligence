@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { mysqlExecute, mysqlSelectMany, mysqlSelectOne } from "@/server/db/mysql-runtime";
 
-import { mergePersistedAttachments, mergePersistedBid } from "./persistence-merge";
+import { intakeCrawlerRunAsync, type CrawlerJsonImportResult, type CrawlerJsonRunPayload } from "./bid-intake";
+export type { CrawlerJsonImportResult, CrawlerJsonRunPayload } from "./bid-intake";
 import { CrawlerPersistenceError, persistenceFailurePayload, validateCrawlerImport } from "./persistence-errors";
 import { CrawlerLeaseLostError, type CrawlerLeaseFence } from "./execution-context";
 import { assertPersistenceLease } from "./persistence-lease";
-import { delistedRawPayload, delistingApplies, sourceBidIdLikePattern, withLifecycleMetadata } from "./lifecycle";
+import { delistedRawPayload, sourceBidIdLikePattern } from "./lifecycle";
 
 export interface MysqlCrawlerImportStore {
   query: (sql: string, values?: unknown[]) => Promise<[unknown[], unknown?]>;
@@ -23,29 +24,7 @@ export interface MysqlCrawlerImportConnection extends MysqlCrawlerImportStore {
   release?: () => void;
 }
 
-export interface CrawlerJsonImportResult {
-  fetchedCount: number;
-  insertedCount: number;
-  updatedCount: number;
-  logCount: number;
-  delistedCount?: number;
-}
-
 type JsonRecord = Record<string, unknown>;
-
-export interface CrawlerJsonRunPayload {
-  source: string;
-  runId: string;
-  status: "success" | "failure";
-  startedAt: string;
-  finishedAt?: string | null;
-  durationMs?: number | null;
-  metadata?: JsonRecord | null;
-  bids?: JsonRecord[];
-  errorCode?: string | null;
-  errorMessage?: string | null;
-  errorStack?: string | null;
-}
 
 const bidColumns = [
   "id",
@@ -119,6 +98,7 @@ const attachmentColumns = [
   "mime_type",
   "sort_order",
   "created_at",
+  "verified_at",
 ] as const;
 
 const crawlerLogColumns = [
@@ -165,12 +145,8 @@ function activeValue(value: unknown) {
   return 1;
 }
 
-function normalizedBidId(row: JsonRecord) {
-  return stringValue(row.id, `${stringValue(row.source, "crawler")}:${stringValue(row.source_bid_id ?? row.dedupe_key, "unknown")}`);
-}
-
 function valueByColumn(row: JsonRecord, column: typeof bidColumns[number], fallbackTimestamp: string) {
-  if (column === "id") return normalizedBidId(row);
+  if (column === "id") return stringValue(row.id);
   if (column === "source") return stringValue(row.source);
   if (column === "source_bid_id") return optionalString(row.source_bid_id);
   if (column === "dedupe_key") return stringValue(row.dedupe_key);
@@ -213,27 +189,19 @@ function valueByColumn(row: JsonRecord, column: typeof bidColumns[number], fallb
   return optionalString(row.solicitation_number);
 }
 
-async function upsertBid(mysql: MysqlCrawlerImportStore, row: JsonRecord, fallbackTimestamp: string) {
-  // Lock the persisted content before applying the shared merge rule. All reads and writes
-  // use the same transaction connection. Two pinpoint reads keep InnoDB on the unique
-  // indexes (an OR across two indexes can degrade to a scan and gap-lock far more rows).
-  const existing = await mysqlSelectOne<JsonRecord>(mysql,
-    "SELECT * FROM bids WHERE id = ? LIMIT 1 FOR UPDATE", [normalizedBidId(row)])
-    ?? (row.dedupe_key
-      ? await mysqlSelectOne<JsonRecord>(mysql, "SELECT * FROM bids WHERE dedupe_key = ? LIMIT 1 FOR UPDATE", [row.dedupe_key])
-      : null);
-  const merged = mergePersistedBid(row, existing ?? undefined);
-  await mysqlExecute(
-    mysql,
-    `
-      INSERT INTO bids (${bidColumns.join(", ")})
-      VALUES (${bidColumns.map(() => "?").join(", ")})
-      ON DUPLICATE KEY UPDATE
-        ${bidUpdateColumns.map((column) => `${column} = VALUES(${column})`).join(", ")}
-    `,
-    bidColumns.map((column) => valueByColumn(merged, column, fallbackTimestamp)),
-  );
-  return { id: String(existing?.id ?? normalizedBidId(row)), status: existing ? "updated" as const : "inserted" as const };
+async function existingBidFor(mysql: MysqlCrawlerImportStore, id: string, dedupeKey: string) {
+  // Pinpoint unique-index reads avoid a broad OR scan and hold content stable while merging.
+  return await mysqlSelectOne<JsonRecord>(mysql, "SELECT * FROM bids WHERE id = ? LIMIT 1 FOR UPDATE", [id])
+    ?? (dedupeKey ? await mysqlSelectOne<JsonRecord>(mysql, "SELECT * FROM bids WHERE dedupe_key = ? LIMIT 1 FOR UPDATE", [dedupeKey]) : null);
+}
+
+async function writeBid(mysql: MysqlCrawlerImportStore, row: JsonRecord, fallbackTimestamp: string) {
+  await mysqlExecute(mysql, `
+    INSERT INTO bids (${bidColumns.join(", ")})
+    VALUES (${bidColumns.map(() => "?").join(", ")})
+    ON DUPLICATE KEY UPDATE
+      ${bidUpdateColumns.map((column) => `${column} = VALUES(${column})`).join(", ")}
+  `, bidColumns.map((column) => valueByColumn(row, column, fallbackTimestamp)));
 }
 
 function attachmentRowsForBid(row: JsonRecord, mysqlBidId: string, fallbackTimestamp: string) {
@@ -255,14 +223,12 @@ function attachmentRowsForBid(row: JsonRecord, mysqlBidId: string, fallbackTimes
     mime_type: optionalString(attachment.mime_type),
     sort_order: optionalNumber(attachment.sort_order) ?? index,
     created_at: stringValue(attachment.created_at, fallbackTimestamp),
+    verified_at: optionalString(attachment.verified_at),
   }));
 }
 
-async function mergeAttachments(mysql: MysqlCrawlerImportStore, row: JsonRecord, bidId: string, fallbackTimestamp: string) {
-  if (!Array.isArray(row.attachments) || row.attachments.length === 0) return;
-  const existing = await mysqlSelectMany<JsonRecord>(mysql, "SELECT * FROM bid_attachments WHERE bid_id = ? FOR UPDATE", [bidId]);
-  const merged = mergePersistedAttachments(existing, row.attachments as JsonRecord[], bidId);
-  for (const attachment of attachmentRowsForBid({ attachments: merged }, bidId, fallbackTimestamp)) {
+async function writeAttachments(mysql: MysqlCrawlerImportStore, rows: JsonRecord[], existing: JsonRecord[], bidId: string, fallbackTimestamp: string) {
+  for (const attachment of attachmentRowsForBid({ attachments: rows }, bidId, fallbackTimestamp)) {
     const update = existing.some((row) => row.id === attachment.id)
       ? `ON DUPLICATE KEY UPDATE ${attachmentColumns.filter((column) => column !== "id" && column !== "bid_id" && column !== "created_at").map((column) => `${column} = VALUES(${column})`).join(", ")}`
       : "";
@@ -336,6 +302,7 @@ export async function importCrawlerJsonRunIntoMysql(
   let connection: MysqlCrawlerImportConnection | undefined;
   let began = false;
   try {
+    // Preserve rejection before transaction/lease acquisition; intake also validates direct callers.
     validateCrawlerImport(payload);
     const candidate = mysql.getConnection ? await mysql.getConnection() : mysql;
     connection = candidate as MysqlCrawlerImportConnection;
@@ -355,25 +322,19 @@ export async function importCrawlerJsonRunIntoMysql(
     // abort our own run. Only the final check locks the row, briefly, until commit.
     // Never use the pool for these reads: it may have one connection.
     await checkLease(false);
-    const bidRows = payload.bids ?? [];
-    let insertedCount = 0;
-    let updatedCount = 0;
-    const seen = new Set<string>();
-    for (const row of bidRows) {
-      const result = await upsertBid(connection, row, payload.startedAt);
-      if (result.status === "inserted") insertedCount += 1;
-      else updatedCount += 1;
-      seen.add(result.id);
-      await mergeAttachments(connection, row, result.id, payload.startedAt);
-    }
-    const delisted = delistingApplies(payload)
-      ? await delistMissingOpenBids(connection, payload.source, seen, payload.finishedAt ?? payload.startedAt)
-      : null;
-    const counts = { fetchedCount: bidRows.length, insertedCount, updatedCount };
-    await insertCrawlerLog(connection, delisted === null ? payload : withLifecycleMetadata(payload, delisted), counts);
+    const transaction = connection;
+    const outcome = await intakeCrawlerRunAsync(payload, {
+      findBid: (id, dedupeKey) => existingBidFor(transaction, id, dedupeKey),
+      readAttachments: (id) => mysqlSelectMany<JsonRecord>(transaction, "SELECT * FROM bid_attachments WHERE bid_id = ? FOR UPDATE", [id]),
+      writeBid: (row) => writeBid(transaction, row, payload.startedAt),
+      writeAttachments: (id, rows, existing) => writeAttachments(transaction, rows, existing, id, payload.startedAt),
+      delistMissingOpenBids: (source, seen, at) => delistMissingOpenBids(transaction, source, seen, at),
+      writeLog: (loggedPayload, counts) => insertCrawlerLog(transaction, loggedPayload, counts),
+    });
     await checkLease(true);
     await connection.commit();
-    return { ...counts, logCount: 1, ...(delisted === null ? {} : { delistedCount: delisted }) };
+    payload.metadata = outcome.metadata;
+    return outcome.result;
   } catch (error) {
     const failure = error instanceof CrawlerLeaseLostError ? error : new CrawlerPersistenceError(error);
     if (began && connection) {

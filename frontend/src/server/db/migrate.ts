@@ -1313,4 +1313,24 @@ export function runMigrations(db: AppDatabase) {
   // Precheck queue (spec 2026-09-24 §7.2).
   addDataSourceColumn("precheck_requested_at", "TEXT");
   sqlite.exec("CREATE INDEX IF NOT EXISTS idx_data_sources_jurisdiction ON data_sources(jurisdiction_level, state_code)");
+
+  // Bids stored before the data-usability change carry issuer_type 'state' even when their
+  // registered source is a county, city or township, so the publication gate hides them
+  // (bid-usability.ts, registered-source-identity.ts). Give them their source's level. A row
+  // whose stored state code (exact, case-sensitive) or FIPS disagrees with its source's is left
+  // alone, because re-typing would make it core-valid and the importer's identity check would
+  // then quarantine every corrected re-crawl. Idempotent; runs on every migration after the
+  // data_sources columns above exist.
+  // MySQL runs the same rule as MYSQL_LOCAL_ISSUER_TYPE_BACKFILL (mysql.ts).
+  sqlite.exec(`
+    UPDATE bids SET issuer_type = data_sources.jurisdiction_level
+    FROM data_sources
+    WHERE bids.issuer_type = 'state'
+      AND instr(bids.id, ':') > 1
+      AND data_sources.id = substr(bids.id, 1, instr(bids.id, ':') - 1)
+      AND data_sources.jurisdiction_level IN ('county', 'city', 'township', 'special_district')
+      AND data_sources.state_code = bids.state_code
+      AND (bids.jurisdiction_level IS NULL OR bids.jurisdiction_level = '' OR bids.jurisdiction_level = data_sources.jurisdiction_level)
+      AND (bids.fips_code IS NULL OR bids.fips_code = '' OR data_sources.fips_code IS NULL OR data_sources.fips_code = '' OR bids.fips_code = data_sources.fips_code)
+  `);
 }

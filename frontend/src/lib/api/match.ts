@@ -1,7 +1,7 @@
 import type { BidMatchResponse } from "@/server/match/types";
 import { ApiError } from "./bids";
 
-type MatchApiErrorCode = "BID_NOT_FOUND" | "INTERNAL_ERROR";
+type MatchApiErrorCode = "BID_NOT_FOUND" | "BID_ANALYSIS_UNAVAILABLE" | "INTERNAL_ERROR";
 
 interface MatchApiErrorResponse {
   error: {
@@ -23,7 +23,7 @@ function isApiErrorResponse(body: unknown): body is MatchApiErrorResponse {
 
   const { code, message } = error as { code?: unknown; message?: unknown };
 
-  return (code === "BID_NOT_FOUND" || code === "INTERNAL_ERROR") && typeof message === "string";
+  return (code === "BID_NOT_FOUND" || code === "BID_ANALYSIS_UNAVAILABLE" || code === "INTERNAL_ERROR") && typeof message === "string";
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {

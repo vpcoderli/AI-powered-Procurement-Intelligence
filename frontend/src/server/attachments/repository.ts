@@ -5,10 +5,11 @@
  * `repair-service.ts` can branch once and stay dialect-agnostic afterwards.
  */
 
-import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, lte, notInArray, or, sql } from "drizzle-orm";
 import type { AppDatabase } from "@/server/db/client";
 import { bidAttachments, bids, crawlerLogs, dataSources } from "@/server/db/schema";
 import { UNAVAILABLE_RETRY_MS } from "./anomaly";
+import { DEFAULT_ATTACHMENT_POLICY, attachmentBatchLimit, attachmentPolicyFromFetchConfig } from "./policy";
 import {
   ATTACHMENT_REPAIR_LOG_SOURCE,
   ATTACHMENT_UPDATE_COLUMNS,
@@ -91,10 +92,17 @@ export function dedupeAttachmentRows(rows: AttachmentRepairRow[]): AttachmentRep
 
 export interface ListAttachmentRepairCandidatesOptions {
   now: Date;
+  /** Run-wide cap, cut in per-source rank order so it can never crowd a source out. */
   limit?: number;
   sourceIds?: string[];
+  /** Lowers (never raises) every source's `max_per_run` for this run. */
+  maxPerSource?: number;
 }
 
+/**
+ * Memory and run-length guard over all sources together. Every source already has its own
+ * `max_per_run` window, and every source's first candidate comes before any source's second.
+ */
 export const DEFAULT_CANDIDATE_LIMIT = 5000;
 export const DEFAULT_VERIFY_LIMIT = 2000;
 
@@ -102,15 +110,75 @@ export function unavailableReeligibleBefore(now: Date) {
   return new Date(now.getTime() - UNAVAILABLE_RETRY_MS).toISOString();
 }
 
+/** One `data_sources` row's stored policy, as candidate selection reads it. */
+export interface AttachmentSourcePolicyRow {
+  id: string;
+  fetchConfig: string | null;
+}
+
+/**
+ * The per-source windows of one run. A bid source without a `data_sources` row, or with the
+ * default policy, takes `defaultLimit`; `sourceLimits` lists only the windows that differ from
+ * it, and `excludedSourceIds` the sources whose policy switches archiving off.
+ */
+export interface AttachmentCandidateQuotas {
+  defaultLimit: number;
+  excludedSourceIds: string[];
+  sourceLimits: Array<{ sourceId: string; limit: number }>;
+}
+
+/** Shared by both dialects, so the SQL windows follow exactly the policy rules the service applies. */
+export function attachmentCandidateQuotas(
+  sources: AttachmentSourcePolicyRow[],
+  maxPerSource?: number,
+): AttachmentCandidateQuotas {
+  const defaultLimit = attachmentBatchLimit(DEFAULT_ATTACHMENT_POLICY, maxPerSource);
+  const excludedSourceIds: string[] = [];
+  const sourceLimits: Array<{ sourceId: string; limit: number }> = [];
+  for (const source of sources) {
+    const policy = attachmentPolicyFromFetchConfig(source.fetchConfig);
+    if (!policy.archive) {
+      excludedSourceIds.push(source.id);
+      continue;
+    }
+    const limit = attachmentBatchLimit(policy, maxPerSource);
+    if (limit !== defaultLimit) sourceLimits.push({ sourceId: source.id, limit });
+  }
+  return { defaultLimit, excludedSourceIds, sourceLimits };
+}
+
 function sourceFilter(sourceIds: string[] | undefined) {
   if (!sourceIds?.length) return undefined;
   return or(inArray(bids.source, sourceIds), inArray(dataSources.id, sourceIds));
+}
+
+function archivingEnabled(excludedSourceIds: string[]) {
+  if (excludedSourceIds.length === 0) return undefined;
+  return or(isNull(dataSources.id), notInArray(dataSources.id, excludedSourceIds));
+}
+
+/**
+ * Repair order inside one source: previously archived files that went missing/corrupt are
+ * user-visible breakage, so they come before never-archived rows, then other failed retries.
+ */
+const REPAIR_PRIORITY = sql`CASE WHEN ${bidAttachments.failureKind} IN ('archive_missing', 'archive_corrupt') THEN 0 WHEN ${bidAttachments.archiveStatus} = 'not_archived' THEN 1 ELSE 2 END`;
+
+/** The key the service groups a run by: the matched data source, else the bid's own source. */
+const SOURCE_KEY = sql`COALESCE(${dataSources.id}, ${bids.source})`;
+
+function readSourcePolicies(db: AppDatabase): AttachmentSourcePolicyRow[] {
+  return db
+    .select({ id: dataSources.id, fetchConfig: dataSources.fetchConfig })
+    .from(dataSources)
+    .where(isNotNull(dataSources.fetchConfig))
+    .all();
 }
 
 export function listAttachmentRepairCandidates(
   db: AppDatabase,
   options: ListAttachmentRepairCandidatesOptions,
 ): AttachmentRepairRow[] {
+  const quotas = attachmentCandidateQuotas(readSourcePolicies(db), options.maxPerSource);
   const nowIso = options.now.toISOString();
   const due = or(isNull(bidAttachments.nextRepairAt), lte(bidAttachments.nextRepairAt, nowIso));
   const eligible = or(
@@ -121,20 +189,46 @@ export function listAttachmentRepairCandidates(
     ),
   );
 
-  const rows = db
-    .select(ROW_SELECTION)
+  // Rank every eligible attachment inside its own source. Only ids and keys travel through the
+  // window sort; the full rows are read for the picked ones alone.
+  const ranked = db
+    .select({
+      id: bidAttachments.id,
+      dataSourceId: sql<string | null>`${dataSources.id}`.as("data_source_id"),
+      sourceKey: sql<string>`${SOURCE_KEY}`.as("source_key"),
+      sourceRank: sql<number>`ROW_NUMBER() OVER (PARTITION BY ${SOURCE_KEY} ORDER BY ${REPAIR_PRIORITY}, ${bidAttachments.id})`.as("source_rank"),
+    })
     .from(bidAttachments)
     .innerJoin(bids, eq(bids.id, bidAttachments.bidId))
     .leftJoin(dataSources, DATA_SOURCE_JOIN)
-    .where(and(eligible, sourceFilter(options.sourceIds)))
-    .orderBy(
-      asc(bids.source),
-      // Previously archived files that went missing/corrupt are user-visible breakage: repair
-      // them before never-archived rows, then other failed retries.
-      sql`CASE WHEN ${bidAttachments.failureKind} IN ('archive_missing', 'archive_corrupt') THEN 0 WHEN ${bidAttachments.archiveStatus} = 'not_archived' THEN 1 ELSE 2 END`,
-      asc(bidAttachments.id),
-    )
+    .where(and(eligible, sourceFilter(options.sourceIds), archivingEnabled(quotas.excludedSourceIds)))
+    .as("ranked");
+
+  const windowLimit =
+    quotas.sourceLimits.length === 0
+      ? sql`${quotas.defaultLimit}`
+      : sql`CASE ${ranked.dataSourceId} ${sql.join(
+          quotas.sourceLimits.map(({ sourceId, limit }) => sql`WHEN ${sourceId} THEN ${limit}`),
+          sql` `,
+        )} ELSE ${quotas.defaultLimit} END`;
+
+  // Each source keeps its own window; the run-wide cap is cut in rank order.
+  const picked = db
+    .select({ id: ranked.id, dataSourceId: ranked.dataSourceId, sourceKey: ranked.sourceKey, sourceRank: ranked.sourceRank })
+    .from(ranked)
+    .where(lte(ranked.sourceRank, windowLimit))
+    .orderBy(asc(ranked.sourceRank), asc(ranked.sourceKey), asc(ranked.id))
     .limit(options.limit ?? DEFAULT_CANDIDATE_LIMIT)
+    .as("picked");
+
+  // Each row comes back with the data source it was ranked under, not every join match.
+  const rows = db
+    .select(ROW_SELECTION)
+    .from(picked)
+    .innerJoin(bidAttachments, eq(bidAttachments.id, picked.id))
+    .innerJoin(bids, eq(bids.id, bidAttachments.bidId))
+    .leftJoin(dataSources, eq(dataSources.id, picked.dataSourceId))
+    .orderBy(asc(picked.sourceRank), asc(picked.sourceKey), asc(bidAttachments.id))
     .all();
 
   return dedupeAttachmentRows(rows.map((row) => normalizeRow(row as RawRow)));

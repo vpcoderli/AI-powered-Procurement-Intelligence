@@ -68,6 +68,7 @@ export function TopbarAuthActions() {
       <Button
         type="button"
         variant="outline"
+        aria-label={t("common.logout")}
         className="h-8 border-slate-200 bg-white px-2 text-slate-700 hover:bg-slate-100 hover:text-slate-950"
         onClick={() => {
           void handleLogout();

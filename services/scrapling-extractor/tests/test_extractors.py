@@ -250,3 +250,91 @@ def test_public_prose_without_a_label_can_coexist_with_a_login_widget(monkeypatc
     html = f'<html><title>Public Bid Details</title><main><form id="bid"><p>{scope}</p></form></main><form action="/login"><input type="password"><button>Sign in</button></form></html>'
     assert extract(html, URL, ["description"])["fields"]["description"].startswith("The county seeks")
     assert is_login_html(html) is False
+
+
+@pytest.mark.parametrize("label", ["Info Contact:", "<strong>Info Contact:</strong>"])
+def test_empty_buyspeed_contact_does_not_read_the_next_metadata_row(label):
+    html = (
+        f"<table><tr><td>{label}</td><td>&nbsp;</td></tr>"
+        "<tr><td>Purchase Method:</td><td>Open Market</td></tr></table>"
+    )
+    result = extract(html, URL, ["contact"])
+    assert result["fields"]["contact_name"] is None
+    assert result["fields"]["contact_email"] is None
+    assert result["fields"]["contact_phone"] is None
+    assert result["diagnostics"]["contact"] == "not_found"
+
+
+def test_contact_label_ignores_help_copy_before_the_actual_label():
+    html = (
+        "<p>Contact our helpdesk.</p>"
+        "<table><tr><td>Info Contact:</td><td>Jane Buyer</td></tr></table>"
+    )
+    assert extract(html, URL, ["contact"])["fields"]["contact_name"] == "Jane Buyer"
+
+
+def test_description_label_ignores_short_copy_and_navigation_before_the_label():
+    body = "The agency requires extensive road pavement repairs."
+    html = (
+        "<nav><span>Description:</span><span>Portal information</span></nav>"
+        "<div>Description list</div>"
+        f"<table><tr><td><strong>Description:</strong></td><td>{body}</td></tr></table>"
+    )
+    assert extract(html, URL, ["description"])["fields"]["description"] == body
+
+
+def test_attachment_fallback_ignores_documents_in_site_chrome():
+    html = (
+        '<main><a href="/bids/spec.pdf">Spec.pdf</a></main>'
+        '<footer><div><a href="/site/privacy.pdf">Privacy policy.pdf</a></div></footer>'
+    )
+    attachments = extract(html, URL, ["attachments"])["attachments"]
+    assert [item["name"] for item in attachments] == ["Spec.pdf"]
+
+
+@pytest.mark.parametrize("label", ["Solicitation Description:", "Description of Services:", "Bulletin Desc:", "Project Summary:"])
+def test_qualified_description_labels_still_extract_short_public_scope(label):
+    body = "Replace the HVAC system in the county office."
+    html = f"<table><tr><td>{label}</td><td>{body}</td></tr></table>"
+    assert extract(html, URL, ["description"])["fields"]["description"] == body
+
+
+def test_buyspeed_bulletin_scope_wins_over_the_header_description_title():
+    body = "The agency requires a contractor to replace roadway surfaces and drainage structures."
+    html = (
+        "<table><tr><td>Description:</td><td>Road Repair</td></tr>"
+        f"<tr><td>Bulletin Desc:</td><td>{body}</td></tr></table>"
+    )
+    assert extract(html, URL, ["description"])["fields"]["description"] == body
+
+
+def test_empty_description_value_does_not_fall_back_to_unrelated_metadata():
+    metadata = "Contact the purchasing office for technical portal assistance. " * 4
+    html = (
+        "<table><tr><td>Bulletin Desc:</td><td>&nbsp;</td></tr></table>"
+        f"<div>{metadata}</div>"
+    )
+    result = extract(html, URL, ["description"])
+    assert result["fields"]["description"] is None
+    assert result["diagnostics"]["description"] == "not_found"
+
+
+def test_buyspeed_type_code_is_a_category_fallback_without_commodity_codes():
+    html = "<table><tr><td>Type Code:</td><td>01 - Open Market</td></tr></table>"
+    result = extract(html, URL, ["category"])
+    assert result["fields"]["original_category"] == "01 - Open Market"
+
+
+def test_description_label_wrapped_in_a_paragraph_reads_the_next_value_paragraph():
+    body = "Replace the county office HVAC system."
+    html = f"<div><p><strong>Description:</strong></p><p>{body}</p></div>"
+    assert extract(html, URL, ["description"])["fields"]["description"] == body
+
+
+@pytest.mark.parametrize("label", ["Category:", "NIGP Code:"])
+def test_empty_category_label_does_not_block_the_buyspeed_type_code_fallback(label):
+    html = (
+        f"<table><tr><td>{label}</td><td>&nbsp;</td></tr>"
+        "<tr><td>Type Code:</td><td>01 - Open Market</td></tr></table>"
+    )
+    assert extract(html, URL, ["category"])["fields"]["original_category"] == "01 - Open Market"

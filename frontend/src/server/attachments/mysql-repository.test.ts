@@ -10,14 +10,17 @@ import {
 
 const NOW = new Date("2026-09-16T00:00:00.000Z");
 
-function fakeReader(rows: Record<string, unknown>[] = []) {
+/** `rows` answers attachment reads; `sources` answers the data_sources policy read. */
+function fakeReader(rows: Record<string, unknown>[] = [], sources: Record<string, unknown>[] = []) {
   const calls: Array<{ sql: string; values: unknown[] }> = [];
   return {
     calls,
+    /** The attachment read (the policy read, when there is one, comes first). */
+    attachmentCall: () => calls.find((call) => call.sql.includes("FROM bid_attachments a"))!,
     store: {
       query: vi.fn(async (sql: string, values: unknown[] = []) => {
         calls.push({ sql, values });
-        return [rows] as [unknown[]];
+        return [sql.includes("bid_attachments") ? rows : sources] as [unknown[]];
       }),
       execute: vi.fn(async () => [{ affectedRows: 1 }] as [unknown]),
     },
@@ -53,7 +56,7 @@ describe("listAttachmentRepairCandidatesFromMysql", () => {
 
     await listAttachmentRepairCandidatesFromMysql(reader.store, { now: NOW, limit: 25 });
 
-    const [call] = reader.calls;
+    const call = reader.attachmentCall();
     expect(call.sql).toContain("INNER JOIN bids b ON b.id = a.bid_id");
     expect(call.sql).toContain("LEFT JOIN data_sources d ON d.id = b.source OR d.label = b.source");
     expect(call.sql).toContain("a.archive_status IN ('not_archived', 'failed')");
@@ -68,9 +71,44 @@ describe("listAttachmentRepairCandidatesFromMysql", () => {
 
     await listAttachmentRepairCandidatesFromMysql(reader.store, { now: NOW, sourceIds: ["il_bidbuy", "Missouri"] });
 
-    const [call] = reader.calls;
+    const call = reader.attachmentCall();
     expect(call.sql).toContain("AND (b.source IN (?, ?) OR d.id IN (?, ?))");
     expect(call.values.slice(2)).toEqual(["il_bidbuy", "Missouri", "il_bidbuy", "Missouri"]);
+  });
+
+  it("ranks candidates inside each source and keeps only that source's window", async () => {
+    const reader = fakeReader();
+
+    await listAttachmentRepairCandidatesFromMysql(reader.store, { now: NOW });
+
+    const call = reader.attachmentCall();
+    expect(call.sql).toContain(
+      "ROW_NUMBER() OVER (PARTITION BY COALESCE(d.id, b.source) ORDER BY CASE WHEN a.failure_kind IN ('archive_missing', 'archive_corrupt') THEN 0 WHEN a.archive_status = 'not_archived' THEN 1 ELSE 2 END ASC, a.id ASC) AS sourceRank",
+    );
+    expect(call.sql).toContain("WHERE ranked.sourceRank <= 50");
+    // Every source's first candidate comes before any source's second, so the run-wide cap cuts evenly.
+    expect(call.sql).toContain("ORDER BY ranked.sourceRank ASC, ranked.sourceKey ASC, ranked.id ASC");
+    expect(call.sql).toContain("LIMIT 5000");
+    // The data source a row was ranked under is the one it is returned with.
+    expect(call.sql).toContain("LEFT JOIN data_sources d ON d.id = picked.dataSourceId");
+    expect(call.sql).toContain("ORDER BY picked.sourceRank ASC, picked.sourceKey ASC, a.id ASC");
+    expect(call.values).toEqual([NOW.toISOString(), "2026-08-17T00:00:00.000Z"]);
+  });
+
+  it("reads every source's policy to drop archive-off sources and size each window", async () => {
+    const reader = fakeReader([], [
+      { id: "il_bidbuy", fetchConfig: JSON.stringify({ attachments: { archive: false } }) },
+      { id: "sam_gov", fetchConfig: JSON.stringify({ attachments: { max_per_run: 7 } }) },
+      { id: "broken", fetchConfig: "{not json" },
+    ]);
+
+    await listAttachmentRepairCandidatesFromMysql(reader.store, { now: NOW, maxPerSource: 10 });
+
+    expect(reader.calls[0].sql).toContain("SELECT id, fetch_config AS fetchConfig FROM data_sources WHERE fetch_config IS NOT NULL");
+    const call = reader.attachmentCall();
+    expect(call.sql).toContain("AND (d.id IS NULL OR d.id NOT IN (?))");
+    expect(call.sql).toContain("WHERE ranked.sourceRank <= CASE ranked.dataSourceId WHEN ? THEN 7 ELSE 10 END");
+    expect(call.values).toEqual([NOW.toISOString(), "2026-08-17T00:00:00.000Z", "il_bidbuy", "sam_gov"]);
   });
 
   it("normalizes rows and drops duplicates produced by the data_sources join", async () => {

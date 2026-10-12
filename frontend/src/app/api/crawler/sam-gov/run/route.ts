@@ -94,7 +94,7 @@ export function createSamGovRunPost(overrides: Partial<SamGovRunRouteDependencie
         mysql: dependencies.mysql,
         source: "sam_gov",
         owner: dependencies.owner,
-        runner: dependencies.runner,
+        runner: (runnerOptions, context) => dependencies.runner({ ...runnerOptions, historyStore: { database: dependencies.database, mysql: dependencies.mysql } }, context),
         runnerOptions: await parseOptions(request),
         matcher: dependencies.matcher,
         notifier: dependencies.notifier,

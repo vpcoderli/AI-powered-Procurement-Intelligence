@@ -29,6 +29,10 @@ function source(overrides: Partial<CrawlableSource> = {}): CrawlableSource {
 }
 
 describe("buildCrawlTaskPayload", () => {
+  it.each(["county", "city", "township", "special_district"])("preserves legacy %s identity when jurisdictionLevel is null", (issuerType) => {
+    expect(buildCrawlTaskPayload(source({ issuerType, jurisdictionLevel: null }), { taskId: "legacy-local" }).jurisdiction_level)
+      .toBe(issuerType);
+  });
   it("carries source identity and fetch config into the contract", () => {
     const payload = buildCrawlTaskPayload(source(), { taskId: "tsk_1" });
     expect(payload).toEqual({
@@ -413,5 +417,111 @@ describe("runCrawlTask", () => {
 
       expect(result).toMatchObject({ ok: false, errorCode: "CrawlerTaskTimeoutError", payload: null });
     });
+  });
+});
+
+describe("durable detail history contract", () => {
+  it("passes persisted records and an explicit detail-only mode through the child contract", () => {
+    const history = [{ id: "ca_caleprocure:old", source_bid_id: "old", raw_payload: { enrichment: { outcome: { attempted_at: "2026-09-01T00:00:00Z" } } } }];
+    const options = { taskId: "backfill", detailHistory: history, detailBackfillOnly: true };
+    expect(buildCrawlTaskPayload(source(), options)).toMatchObject({ detail_history: history, detail_backfill_only: true });
+  });
+});
+
+describe("history loaded from persisted records", () => {
+  it("loads only the exact canonical source namespace before launching Python", async () => {
+    const { createTestDatabase } = await import("@/server/db/test-utils");
+    const { bids } = await import("@/server/db/schema");
+    const database = await createTestDatabase();
+    try {
+      const stored = { source: "California Cal eProcure", sourceBidId: "old", title: "Repair county roads", description: "Repair county roads", issuerName: "County", issuerType: "state", stateCode: "CA", sourceUrl: "https://caleprocure.ca.gov/bid/old", firstSeenAt: "2026-08-01", lastSeenAt: "2026-08-01", createdAt: "2026-08-01", updatedAt: "2026-08-01", rawPayload: JSON.stringify({ enrichment: { outcome: { attempted_at: "2026-09-01T00:00:00Z", attempt_count: 2 } } }) };
+      database.db.insert(bids).values([
+        { ...stored, id: "ca_caleprocure:old", dedupeKey: "ca_caleprocure:old" },
+        { ...stored, source: "Other Source", id: "caXcaleprocure:old", dedupeKey: "caXcaleprocure:old" },
+        { ...stored, id: "ca_caleprocure:bad", sourceBidId: "bad", dedupeKey: "ca_caleprocure:bad", title: "Untitled old record", firstSeenAt: "2020-01-01" },
+        { ...stored, id: "ca_caleprocure:wrong", sourceBidId: "wrong", dedupeKey: "ca_caleprocure:wrong", stateCode: "NY" },
+      ]).run();
+      const stdinEnd = vi.fn();
+      mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+        callback(null, JSON.stringify({ status: "success", bids: [] }), "");
+        return { stdin: { end: stdinEnd } } as unknown as ReturnType<typeof execFile>;
+      }) as typeof execFile);
+      const options = { taskId: "persisted", historyStore: { database: database.db } };
+      await runCrawlTask(source(), options);
+      const payload = JSON.parse(stdinEnd.mock.calls[0][0]);
+      expect(payload.detail_history).toHaveLength(1);
+      expect(payload.detail_history[0]).toMatchObject({ id: "ca_caleprocure:old", source_bid_id: "old", source_url: stored.sourceUrl, raw_payload: { enrichment: { outcome: { attempt_count: 2 } } } });
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  /** Stubs the child so the task payload runCrawlTask writes to its stdin can be inspected. */
+  function captureChildStdin() {
+    const stdinEnd = vi.fn();
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+      callback(null, JSON.stringify({ status: "success", bids: [] }), "");
+      return { stdin: { end: stdinEnd } } as unknown as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+    return stdinEnd;
+  }
+
+  it("hands a backfill run only its attempt budget of the oldest due body-less rows", async () => {
+    const { createTestDatabase } = await import("@/server/db/test-utils");
+    const { bids } = await import("@/server/db/schema");
+    const database = await createTestDatabase();
+    try {
+      const bodyLess = (sourceBidId: string, firstSeenAt: string) => ({
+        id: `ca_caleprocure:${sourceBidId}`, dedupeKey: `ca_caleprocure:${sourceBidId}`, sourceBidId, source: "California Cal eProcure",
+        title: `Repair county roads ${sourceBidId}`, description: "", issuerName: "County", issuerType: "state", stateCode: "CA",
+        sourceUrl: `https://caleprocure.ca.gov/bid/${sourceBidId}`, firstSeenAt, lastSeenAt: "2026-09-30T00:00:00.000Z",
+        createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z",
+      });
+      // Neither insertion order nor id order is the oldest-first order the run must hand over.
+      database.db.insert(bids).values([
+        bodyLess("newest", "2026-08-03T00:00:00.000Z"), bodyLess("oldest", "2026-08-01T00:00:00.000Z"), bodyLess("middle", "2026-08-02T00:00:00.000Z"),
+      ]).run();
+      const stdinEnd = captureChildStdin();
+      const budgeted = source({ fetchConfig: { base_url: "https://caleprocure.ca.gov", enrichment: { max_details_per_run: 2 } } });
+      await runCrawlTask(budgeted, { taskId: "backfill-budget", historyStore: { database: database.db }, detailBackfillOnly: true });
+      const payload = JSON.parse(stdinEnd.mock.calls[0][0]);
+      expect(payload.detail_history.map((row: { id: string }) => row.id)).toEqual(["ca_caleprocure:oldest", "ca_caleprocure:middle"]);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("hands a list run only history seen within 30 days of the source's newest sighting", async () => {
+    const { createTestDatabase } = await import("@/server/db/test-utils");
+    const { bids } = await import("@/server/db/schema");
+    const database = await createTestDatabase();
+    try {
+      const newest = "2026-09-30T00:00:00.000Z";
+      const thirtyOneDaysEarlier = new Date(Date.parse(newest) - 31 * 86_400_000).toISOString();
+      const seen = (sourceBidId: string, lastSeenAt: string) => ({
+        id: `ca_caleprocure:${sourceBidId}`, dedupeKey: `ca_caleprocure:${sourceBidId}`, sourceBidId, source: "California Cal eProcure",
+        title: `Repair county roads ${sourceBidId}`, description: "Repair the county roads and clear the drainage ditches.", issuerName: "County",
+        issuerType: "state", stateCode: "CA", sourceUrl: `https://caleprocure.ca.gov/bid/${sourceBidId}`, firstSeenAt: "2026-07-01T00:00:00.000Z",
+        lastSeenAt, createdAt: "2026-07-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z",
+      });
+      database.db.insert(bids).values([seen("stale", thirtyOneDaysEarlier), seen("fresh", newest)]).run();
+      const stdinEnd = captureChildStdin();
+      await runCrawlTask(source(), { taskId: "list-window", historyStore: { database: database.db } });
+      const payload = JSON.parse(stdinEnd.mock.calls[0][0]);
+      expect(payload.detail_history.map((row: { id: string }) => row.id)).toEqual(["ca_caleprocure:fresh"]);
+    } finally {
+      await database.cleanup();
+    }
+  });
+});
+
+describe("detail retry coverage fence", () => {
+  it("forces partial coverage on a history-only child result", async () => {
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+      callback(null, JSON.stringify({ status: "success", bids: [], metadata: { pagination: { complete: true } } }), "");
+      return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+    const options = { taskId: "backfill-fenced", detailHistory: [], detailBackfillOnly: true };
+    expect((await runCrawlTask(source(), options)).payload?.metadata).toMatchObject({ mode: "detail_backfill", pagination: { complete: false } });
   });
 });

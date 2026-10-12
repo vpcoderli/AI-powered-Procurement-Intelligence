@@ -78,6 +78,17 @@ describe("GET /api/bids/[id]/match", () => {
     });
   });
 
+  it("withholds analysis until a valid description is available", async () => {
+    getBidById.mockResolvedValueOnce(toServerBidFixture({
+      ...MOCK_BIDS[1], description: "Please log in to view details.", fullDescription: "Description:",
+    }));
+    const response = await GET(new Request("http://localhost/api/bids/2/match"), { params: Promise.resolve({ id: "2" }) });
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.code).toBe("BID_ANALYSIS_UNAVAILABLE");
+    expect(calculateBidMatch).not.toHaveBeenCalled();
+    expect(getSupplierProfile).not.toHaveBeenCalled();
+  });
+
   it("returns a public anonymous match without reading or persisting a profile", async () => {
     const bid = toServerBidFixture(MOCK_BIDS[1]);
     getBidById.mockResolvedValueOnce(bid);

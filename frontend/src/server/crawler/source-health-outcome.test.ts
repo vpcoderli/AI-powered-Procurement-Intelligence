@@ -9,7 +9,7 @@ import { isVerifiedEmptyRun, recordSourceHealthOutcome } from "./source-health-o
 const NOW = "2026-09-16T00:00:00.000Z";
 const LATER = "2026-09-16T06:00:00.000Z";
 
-function successResult(metadata: Record<string, unknown>): RunCrawlerSourceOnceResult {
+function successResult(metadata: Record<string, unknown>): Extract<RunCrawlerSourceOnceResult, { ok: true }> {
   return {
     ok: true,
     source: "bidnet_ny_erie",
@@ -91,6 +91,13 @@ describe("recordSourceHealthOutcome", () => {
     );
 
     expect(readSource()).toMatchObject({ lastSuccessAt: LATER, consecutiveFailures: 0 });
+  });
+
+  it("keeps successful execution scheduling separate from unusable content", async () => {
+    const result = successResult({ dataQuality: { contentStatus: "unusable", validBodyCount: 0 } });
+    result.runner.fetchedCount = 2;
+    await recordSourceHealthOutcome({ database: testDb.db }, "bidnet_ny_erie", result, LATER);
+    expect(readSource()).toMatchObject({ lastSuccessAt: LATER, consecutiveFailures: 0, approvalStatus: "approved", consecutiveEmptyRuns: 0 });
   });
 
   it("ignores a platform deferral entirely — no success, no failure", async () => {
@@ -183,9 +190,14 @@ describe("recordSourceHealthOutcome on the MySQL path", () => {
 });
 
 describe("isVerifiedEmptyRun", () => {
-  const base = { ok: true as const, source: "s", status: "success" as const, alertMatching: { evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0 }, notification: { queued: 0, sent: 0, skipped: 0, failed: 0 } };
+  const base = { ok: true as const, source: "s", status: "success" as const, alertMatching: { evaluatedAlerts: 0, matchedAlerts: 0, updatedAlerts: 0, matches: [] }, notification: { queued: 0, sent: 0, skipped: 0, failed: 0 } };
+  it("rejects an unverified or wrong-tenant empty marker", () => {
+    for (const emptyState of [{}, { verified: false, tenant_confirmed: true }, { verified: true, tenant_confirmed: false }]) {
+      expect(isVerifiedEmptyRun(successResult({ emptyState }))).toBe(false);
+    }
+  });
   it("is true only for a zero-row success that carries a verified empty state", () => {
-    expect(isVerifiedEmptyRun({ ...base, runner: { ok: true, source: "s", status: "success", stdout: "", stderr: "", fetchedCount: 0, payload: { metadata: { emptyState: { verified: true } } } } })).toBe(true);
+    expect(isVerifiedEmptyRun({ ...base, runner: { ok: true, source: "s", status: "success", stdout: "", stderr: "", fetchedCount: 0, payload: { metadata: { emptyState: { verified: true, tenant_confirmed: true } } } } })).toBe(true);
     expect(isVerifiedEmptyRun({ ...base, runner: { ok: true, source: "s", status: "success", stdout: "", stderr: "", fetchedCount: 3, payload: { metadata: {} } } })).toBe(false);
     expect(isVerifiedEmptyRun({ ok: false, source: "s", status: "blocked", reason: "x" } as never)).toBe(false);
   });

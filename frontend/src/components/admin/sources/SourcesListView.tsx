@@ -7,14 +7,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { BATCH_RUN_CHUNK_SIZE } from "@/components/admin/JurisdictionBatchRunPanel";
+import { runManualCrawl } from "@/lib/manual-crawl";
 import { approvalReasonKey, chunkSourceIds, APPROVAL_BATCH_CHUNK_SIZE } from "@/components/admin/LedgeredApprovalPanel";
 import {
   batchUpdateAdminDataSources,
   listAdminDataSourceIndex,
   listAdminDataSourcesPage,
   requestAdminSourcePrechecks,
-  runStateCrawlersNow,
 } from "@/lib/api/admin";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import {
@@ -33,18 +32,15 @@ import {
   PRECHECK_REQUEST_CHUNK,
   RUN_NOW_LIMIT,
   addApprovalResponse,
-  addRunResponse,
   approvalReport,
   blockedLeftOutText,
   emptyApprovalTally,
-  emptyRunTally,
   failedReport,
   holdConfirmText,
   holdReport,
   precheckConfirmText,
   precheckReport,
   runReport,
-  runTargets,
   sendInChunks,
   splitApprovalTargets,
   splitPrecheckTargets,
@@ -259,16 +255,8 @@ export function SourcesListView() {
       return;
     }
     await runBulk(async () => {
-      const { runIds, skippedIds } = runTargets(selectedItems);
-      // A run request waits for its runs (BidNet's platform spacing included), so up to 20 at once could outlast a
-      // proxy's idle timeout while the runs went on. They go the batch run panel's 5 at a time, one after another.
-      const outcome = await sendInChunks(
-        chunkSourceIds(runIds, BATCH_RUN_CHUNK_SIZE),
-        (chunk) => runStateCrawlersNow(chunk),
-        addRunResponse,
-        emptyRunTally(),
-      );
-      return runReport(t, outcome, skippedIds.length);
+      const outcome = await runManualCrawl({ sources: selectedItems }, { transportFailure: "stop" });
+      return runReport(t, outcome, outcome.notRunnableIds.length);
     });
   };
 

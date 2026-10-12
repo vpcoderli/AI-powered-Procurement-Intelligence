@@ -287,7 +287,7 @@ describe("CrawlerLogRow", () => {
     const html = text(render(<CrawlerLogRow log={log} />));
 
     expect(html).toContain("bidnet_co_denver");
-    expect(html).toContain(">failure<");
+    expect(html).toContain(`>${admin.sourceQualityExecution}: failure<`);
     expect(html).toContain("25/3/2/1");
     expect(html).toContain("Portal answered 403");
     expect(html).toContain(`${admin.fallbackUsed}</span>: Live fetch blocked`);
@@ -296,7 +296,7 @@ describe("CrawlerLogRow", () => {
   it("renders a clean run without an error or fallback line", () => {
     const html = text(render(<CrawlerLogRow log={{ ...log, status: "success", failedCount: 0, errorMessage: null, fallbackSource: null, fallbackReason: null }} />));
 
-    expect(html).toContain(">success<");
+    expect(html).toContain(`>${admin.sourceQualityExecution}: success<`);
     expect(html).not.toContain("Portal answered 403");
     expect(html).not.toContain(admin.fallbackUsed);
   });

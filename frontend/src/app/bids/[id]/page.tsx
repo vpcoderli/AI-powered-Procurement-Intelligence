@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 import { useSavedBids } from "@/context/SavedBidsContext";
 import { BidAccessNotice } from "@/components/bids/BidAccessNotice";
+import { issuerTypeLabelKey } from "@/lib/issuer-types";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
 import { Button as BaseButton, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +18,7 @@ import { createIntent } from "@/lib/api/intents";
 import { fetchBidMatch } from "@/lib/api/match";
 import { bidIdFromRouteParam } from "@/lib/bid-routes";
 import { getBidDescription } from "@/lib/bid-description";
+import { getBidUsability, isVerifiedBidAttachment } from "@/lib/bid-usability";
 import type { Bid } from "@/lib/mock-data";
 import type { IntentDetail } from "@/server/intents/types";
 import type { BidMatchResult } from "@/server/match/types";
@@ -75,11 +77,7 @@ function scoreTone(score: number) {
 }
 
 function attachmentIsArchivedOpenable(file: DetailAttachment) {
-  return (
-    file.archiveStatus === "archived" &&
-    Boolean(file.storagePath?.trim()) &&
-    Boolean(file.checksumSha256?.trim())
-  );
+  return isVerifiedBidAttachment(file);
 }
 
 function archiveTone(status: string | undefined, isArchivedOpenable = false) {
@@ -155,6 +153,7 @@ export default function BidDetailsPage() {
   
   const saved = isSaved(bidId);
   const canCreateIntent = Boolean(user);
+  const usability = bid ? getBidUsability(bid) : null;
   const addToIntentLabel = fallbackLabel(t("detail.pursuitAddToIntent"), "detail.pursuitAddToIntent", ADD_TO_INTENT_FALLBACK);
   const pursuitMessage = pursuitError
     ? isAuthRequiredError(pursuitError)
@@ -194,6 +193,7 @@ export default function BidDetailsPage() {
 
         setBid(response.bid);
         setIsLoading(false);
+        if (!getBidUsability(response.bid).analysis) return;
         setIsMatchLoading(true);
 
         try {
@@ -222,7 +222,7 @@ export default function BidDetailsPage() {
   }, [bidId]);
 
   const handleCreateIntent = async () => {
-    if (!bidId || isCreatingIntent || !canCreateIntent) return;
+    if (!bidId || isCreatingIntent || !canCreateIntent || !usability?.analysis) return;
 
     const requestedBidId = bidId;
     const requestId = createIntentRequestRef.current + 1;
@@ -414,19 +414,19 @@ export default function BidDetailsPage() {
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
             <Building2 size={14}/> {t("bid.issuerType")}
           </span>
-          <span className="break-words font-medium text-slate-900 text-lg">{bid.issuerType === 'federal' ? t("dashboard.federal") : t("dashboard.state")}</span>
+          <span className="break-words font-medium text-slate-900 text-lg">{t(issuerTypeLabelKey(bid.issuerType))}</span>
         </div>
         <div className="min-w-0 flex flex-col gap-1.5">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
             <Calendar size={14}/> {t("dashboard.publishedDate")}
           </span>
-          <span className="break-words font-medium text-slate-900 text-lg">{bid.publishedDate}</span>
+          <span className="break-words font-medium text-slate-900 text-lg">{bid.publishedDate || t("detail.fieldPending")}</span>
         </div>
         <div className="min-w-0 flex flex-col gap-1.5">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
             <Clock size={14}/> {t("bid.deadline")}
           </span>
-          <span className="break-words font-medium text-slate-900 text-lg">{bid.deadlineDate}</span>
+          <span className="break-words font-medium text-slate-900 text-lg">{bid.deadlineDate || t("detail.fieldPending")}</span>
         </div>
         <div className="min-w-0 flex flex-col gap-1.5">
           <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1">
@@ -454,7 +454,12 @@ export default function BidDetailsPage() {
           </div>
         </CardHeader>
         <CardContent className="p-6 bg-slate-50/50">
-          {isMatchLoading ? (
+          {!usability?.analysis ? (
+            <div role="status" className="text-sm leading-6 text-slate-600">
+              <p className="font-semibold">{t("detail.analysisPending")}</p>
+              <p className="mt-1">{t("detail.bodyPending")}</p>
+            </div>
+          ) : isMatchLoading ? (
             <div className="grid gap-4 md:grid-cols-[0.7fr_1.3fr]">
               <Skeleton className="h-32 rounded-xl" />
               <div className="space-y-3">
@@ -621,8 +626,17 @@ export default function BidDetailsPage() {
             </div>
           ) : null}
           <div className="prose prose-slate max-w-none text-slate-700 whitespace-pre-wrap leading-relaxed">
-            {getBidDescription(bid)}
+            {getBidDescription(bid) || t("detail.bodyPending")}
           </div>
+          {usability?.body ? (
+            <div className="mt-4 space-y-1 text-xs leading-5 text-slate-500" role="status">
+              <p>{usability.bodyVerifiedAt
+                ? <>{t("detail.bodyVerifiedAt")}: <time dateTime={usability.bodyVerifiedAt}>{usability.bodyVerifiedAt}</time></>
+                : t("detail.bodyUnknownFreshness")}</p>
+              {usability.bodyReused ? <p>{t("detail.bodyReused")}</p> : null}
+              {bid.dataQuality?.body.reason.includes("stale") ? <p>{t("detail.bodyStale")}</p> : null}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -637,19 +651,19 @@ export default function BidDetailsPage() {
           <div className="grid gap-4 md:grid-cols-3">
             <div className="min-w-0 flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{t("bid.contact")}</span>
-              <span className="break-words font-medium text-slate-900">{bid.contactName}</span>
+              <span className="break-words font-medium text-slate-900">{bid.contactName || t("detail.fieldPending")}</span>
             </div>
             <div className="min-w-0 flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{t("bid.email")}</span>
-              <a href={`mailto:${bid.contactEmail}`} className="break-all font-medium text-slate-900 hover:text-slate-600">
+              {bid.contactEmail ? <a href={`mailto:${bid.contactEmail}`} className="break-all font-medium text-slate-900 hover:text-slate-600">
                 {bid.contactEmail}
-              </a>
+              </a> : <span>{t("detail.fieldPending")}</span>}
             </div>
             <div className="min-w-0 flex flex-col gap-1.5">
               <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{t("bid.phone")}</span>
-              <a href={`tel:${bid.contactPhone}`} className="break-words font-medium text-slate-900 hover:text-slate-600">
+              {bid.contactPhone ? <a href={`tel:${bid.contactPhone}`} className="break-words font-medium text-slate-900 hover:text-slate-600">
                 {bid.contactPhone}
-              </a>
+              </a> : <span>{t("detail.fieldPending")}</span>}
             </div>
           </div>
         </CardContent>

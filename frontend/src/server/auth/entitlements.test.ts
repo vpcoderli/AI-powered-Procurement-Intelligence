@@ -119,6 +119,20 @@ describe("auth entitlements", () => {
     ], now)).toContain("knowledge_station");
   });
 
+  it.each(["", "not a date", "275760-09-14T00:00:00.000Z", 123, {}])(
+    "ignores an override with a present but unreadable expiry %j",
+    (expiresAt) => {
+      const now = new Date("2026-10-01T00:00:00.000Z");
+
+      expect(applyFeatureOverrides([], [{ featureKey: "knowledge_station", isEnabled: true, expiresAt }], now)).not.toContain("knowledge_station");
+      expect(applyFeatureOverrides(["knowledge_station"], [{ featureKey: "knowledge_station", isEnabled: false, expiresAt }], now)).toContain("knowledge_station");
+    },
+  );
+
+  it.each([null, undefined])("keeps an override with no expiry %j", (expiresAt) => {
+    expect(applyFeatureOverrides([], [{ featureKey: "knowledge_station", isEnabled: true, expiresAt }])).toContain("knowledge_station");
+  });
+
   it("maps internal tiers to updated product-facing plan labels", () => {
     expect(ACCOUNT_TIER_LABELS).toMatchObject({
       free: "Free",

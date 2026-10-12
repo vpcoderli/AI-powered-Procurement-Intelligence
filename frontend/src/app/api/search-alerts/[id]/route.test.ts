@@ -45,7 +45,7 @@ const alert: SearchAlert & { digestHistory: SearchAlertDigestRun[] } = {
 
 describe("PATCH /api/search-alerts/[id]", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     resolvePrincipal.mockResolvedValue({
       kind: "anonymous",
       userId: "anon_existing",
@@ -53,6 +53,35 @@ describe("PATCH /api/search-alerts/[id]", () => {
       tier: "free",
       features: [],
     });
+  });
+
+  it.each(["county", "city", "township", "special_district"] as const)("accepts %s search alerts without widening the issuer filter", async (issuerType) => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "authenticated", userId: "user_1", role: "user", tier: "free", features: [],
+    });
+    updateSearchAlert.mockResolvedValueOnce(alert);
+    const query = { states: ["CA"], issuerType };
+    const input = { query };
+    const response = await PATCH(new Request("http://localhost/api/search-alerts/alert_1", {
+      method: "PATCH", body: JSON.stringify(input),
+    }), { params: Promise.resolve({ id: "alert_1" }) });
+
+    expect(response.status).toBe(200);
+    expect(updateSearchAlert).toHaveBeenCalledWith(expect.anything(), "user_1", "alert_1", input);
+  });
+
+  it.each(["bogus", "constructor", "City"])("rejects unknown issuer type %s", async (issuerType) => {
+    resolvePrincipal.mockResolvedValueOnce({
+      kind: "authenticated", userId: "user_1", role: "user", tier: "free", features: [],
+    });
+    const query = { issuerType };
+    const input = { query };
+    const response = await PATCH(new Request("http://localhost/api/search-alerts/alert_1", {
+      method: "PATCH", body: JSON.stringify(input),
+    }), { params: Promise.resolve({ id: "alert_1" }) });
+
+    expect(response.status).toBe(400);
+    expect(updateSearchAlert).not.toHaveBeenCalled();
   });
 
   it("requires an authenticated principal before updating alerts", async () => {
@@ -150,7 +179,7 @@ describe("PATCH /api/search-alerts/[id]", () => {
 
 describe("DELETE /api/search-alerts/[id]", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     resolvePrincipal.mockResolvedValue({
       kind: "anonymous",
       userId: "anon_existing",

@@ -6,18 +6,23 @@ import { en } from "@/lib/i18n/dictionaries/en";
 import { zh } from "@/lib/i18n/dictionaries/zh";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 import type { AdminResourceStatus, useAdminResource } from "../use-admin-resource";
+import { nextBusyIds } from "../busy-reporting";
 
 // The section reads one resource and the language. The resource hook is replaced with plain state, typed against the
 // real hook's return type. English goes through the real LanguageProvider; Chinese cannot (a server render always
 // resolves to English), so `useLanguage` answers with the real Chinese dictionary and the same dot-path lookup.
 type ResourceStub = ReturnType<typeof useAdminResource<AdminConfigRegistryEntry[]>>;
-const stubs = vi.hoisted(() => ({ language: "en" as "en" | "zh", resource: null as ResourceStub | null }));
+const stubs = vi.hoisted(() => ({ language: "en" as "en" | "zh", resource: null as ResourceStub | null, busyIds: new Set<string>() as ReadonlySet<string> }));
 
 vi.mock("../use-admin-resource", () => ({
   useAdminResource: (): ResourceStub => {
     if (!stubs.resource) throw new Error("load() was not called");
     return stubs.resource;
   },
+}));
+vi.mock("../busy-reporting", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../busy-reporting")>()),
+  useBusyIds: () => ({ busyIds: stubs.busyIds, setBusy: () => undefined }),
 }));
 vi.mock("@/lib/i18n/LanguageContext", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/lib/i18n/LanguageContext")>();
@@ -82,7 +87,38 @@ const textNodes = (html: string) => html.split(/<[^>]*>/).map((text) => text.tri
 const tagsCount = (html: string, text: string) => html.split(text).length - 1;
 
 beforeEach(() => {
+  stubs.busyIds = new Set();
   load({ status: "ready", data: [MARKETING, OTHER] });
+});
+
+function rowControlsFor(html: string, key: string) {
+  const row = [...html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/g)].find((match) => match[1].includes(key));
+  if (!row) throw new Error(`no config row for ${key}`);
+  return [...row[1].matchAll(/<(?:select|textarea|input|button)\b[^>]*>/g)].map((match) => match[0]);
+}
+
+describe("independent config writes", () => {
+  it("locks each saving row's status, JSON, reason and save button", () => {
+    stubs.busyIds = nextBusyIds(nextBusyIds(stubs.busyIds, MARKETING.id, true), OTHER.id, true);
+    const html = render("en");
+
+    for (const key of ["copy_library", "quote_workflow"]) {
+      const controls = rowControlsFor(html, key);
+      expect(controls).toHaveLength(4);
+      for (const control of controls) expect(control, key).toContain('disabled=""');
+    }
+  });
+
+  it("settling one config save keeps the other row's edits locked", () => {
+    stubs.busyIds = nextBusyIds(nextBusyIds(stubs.busyIds, MARKETING.id, true), OTHER.id, true);
+    stubs.busyIds = nextBusyIds(stubs.busyIds, MARKETING.id, false);
+    const html = render("en");
+
+    // With no change reason, the finished row's save button remains disabled by validation; its three fields are editable.
+    const completed = rowControlsFor(html, "copy_library").slice(0, 3);
+    for (const control of completed) expect(control).not.toContain('disabled=""');
+    for (const control of rowControlsFor(html, "quote_workflow")) expect(control).toContain('disabled=""');
+  });
 });
 
 describe.each<Language>(["en", "zh"])("config registry section in %s", (language) => {

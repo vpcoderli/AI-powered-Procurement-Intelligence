@@ -195,6 +195,7 @@ export function createStateCrawlerRunPost(overrides: Partial<StateCrawlerRunRout
             query: body.query ?? null,
             postedFrom: body.postedFrom ?? null,
             postedTo: body.postedTo ?? null,
+            historyStore: { database: dependencies.database, mysql: dependencies.mysql },
           }, context);
           await context?.assertLease();
           return persistCrawlTaskResult(dependencies.database, dependencies.mysql, source, taskResult, context?.lease);
