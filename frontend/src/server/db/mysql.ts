@@ -502,9 +502,23 @@ export function mysqlIndexMigrationStatements() {
   );
 }
 
+/**
+ * migrate.ts's last statement, for MySQL: bids stored before the data-usability change carry
+ * issuer_type 'state' even when their registered source is local; give them the source's level.
+ */
+export const MYSQL_LOCAL_ISSUER_TYPE_BACKFILL = "UPDATE bids JOIN data_sources ON data_sources.id = SUBSTRING_INDEX(bids.id, ':', 1)"
+  + " SET bids.issuer_type = data_sources.jurisdiction_level"
+  + " WHERE bids.issuer_type = 'state' AND LOCATE(':', bids.id) > 1"
+  + " AND data_sources.jurisdiction_level IN ('county', 'city', 'township', 'special_district')"
+  + " AND UPPER(data_sources.state_code) = UPPER(bids.state_code)"
+  + " AND (bids.jurisdiction_level IS NULL OR bids.jurisdiction_level = '' OR bids.jurisdiction_level = data_sources.jurisdiction_level)";
+
 /** Idempotent data fixes that run after every column and index migration. */
 export function mysqlDataMigrationStatements(): string[] {
-  return ["UPDATE bids SET lifecycle_status = 'closed' WHERE is_active = 0 AND lifecycle_status = 'open'"];
+  return [
+    "UPDATE bids SET lifecycle_status = 'closed' WHERE is_active = 0 AND lifecycle_status = 'open'",
+    MYSQL_LOCAL_ISSUER_TYPE_BACKFILL,
+  ];
 }
 
 function indexMigrationColumnNameSet() {
