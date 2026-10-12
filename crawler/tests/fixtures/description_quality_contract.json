@@ -221,6 +221,14 @@
     {"name": "purchase method label without colon", "text": "Purchase Method", "issue": "metadata_body"},
     {"name": "informal bid flag full-width colon", "text": "Informal Bid Flag：Yes", "issue": "metadata_body"},
     {"name": "purchase method with ampersand", "text": "Purchase Method: Professional & Technical Services", "issue": "metadata_body"},
-    {"name": "purchase method hyphenated value", "text": "Purchase Method: Sole-Source", "issue": "metadata_body"}
+    {"name": "purchase method hyphenated value", "text": "Purchase Method: Sole-Source", "issue": "metadata_body"},
+    {"name": "type code with an ampersand code word", "text": "Type Code: 12 - R&D Services and Supplies", "issue": "metadata_body"},
+    {"name": "type code with a parenthesized code word", "text": "Type Code: 9 - (Emergency) Purchase of Supplies", "issue": "metadata_body"},
+    {"name": "type code with a hyphenated code word", "text": "Type Code: 21 - Non-Construction Professional Services", "issue": "metadata_body"},
+    {"name": "type code with ampersand, slash and hyphen words", "text": "Type Code: 12 - Professional & Artistic and/or Non-Construction", "issue": "metadata_body"},
+    {"name": "bid type ampersand word", "text": "Bid Type: R&D", "issue": "metadata_body"},
+    {"name": "type code n/a", "text": "Type Code: N/A", "issue": "metadata_body"},
+    {"name": "bid type parenthesized value", "text": "Bid Type: (RFQ)", "issue": "metadata_body"},
+    {"name": "purchase method slash and hyphen words", "text": "Purchase Method: State and/or Sole-Source", "issue": "metadata_body"}
   ]
 }
