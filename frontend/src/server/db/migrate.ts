@@ -1317,9 +1317,10 @@ export function runMigrations(db: AppDatabase) {
   // Bids stored before the data-usability change carry issuer_type 'state' even when their
   // registered source is a county, city or township, so the publication gate hides them
   // (bid-usability.ts, registered-source-identity.ts). Give them their source's level. A row
-  // whose stored FIPS disagrees with its source's is left alone, because re-typing would make
-  // it core-valid and the importer's identity check would then quarantine every corrected
-  // re-crawl. Idempotent; runs on every migration after the data_sources columns above exist.
+  // whose stored state code (exact, case-sensitive) or FIPS disagrees with its source's is left
+  // alone, because re-typing would make it core-valid and the importer's identity check would
+  // then quarantine every corrected re-crawl. Idempotent; runs on every migration after the
+  // data_sources columns above exist.
   // MySQL runs the same rule as MYSQL_LOCAL_ISSUER_TYPE_BACKFILL (mysql.ts).
   sqlite.exec(`
     UPDATE bids SET issuer_type = data_sources.jurisdiction_level
@@ -1328,7 +1329,7 @@ export function runMigrations(db: AppDatabase) {
       AND instr(bids.id, ':') > 1
       AND data_sources.id = substr(bids.id, 1, instr(bids.id, ':') - 1)
       AND data_sources.jurisdiction_level IN ('county', 'city', 'township', 'special_district')
-      AND upper(data_sources.state_code) = upper(bids.state_code)
+      AND data_sources.state_code = bids.state_code
       AND (bids.jurisdiction_level IS NULL OR bids.jurisdiction_level = '' OR bids.jurisdiction_level = data_sources.jurisdiction_level)
       AND (bids.fips_code IS NULL OR bids.fips_code = '' OR data_sources.fips_code IS NULL OR data_sources.fips_code = '' OR bids.fips_code = data_sources.fips_code)
   `);

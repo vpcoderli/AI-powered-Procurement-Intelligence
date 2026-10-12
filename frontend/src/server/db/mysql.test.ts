@@ -343,6 +343,7 @@ describe("mysql migrations cover the bid lifecycle columns (2026-09-24 phase 1)"
     expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("ON data_sources.id = SUBSTRING_INDEX(bids.id, ':', 1)");
     expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("IN ('county', 'city', 'township', 'special_district')");
     expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("bids.fips_code = data_sources.fips_code");
+    expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("data_sources.state_code COLLATE utf8mb4_bin = bids.state_code COLLATE utf8mb4_bin");
   });
 });
 

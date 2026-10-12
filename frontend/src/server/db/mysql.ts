@@ -511,7 +511,7 @@ export const MYSQL_LOCAL_ISSUER_TYPE_BACKFILL = "UPDATE bids JOIN data_sources O
   + " SET bids.issuer_type = data_sources.jurisdiction_level"
   + " WHERE bids.issuer_type = 'state' AND LOCATE(':', bids.id) > 1"
   + " AND data_sources.jurisdiction_level IN ('county', 'city', 'township', 'special_district')"
-  + " AND UPPER(data_sources.state_code) = UPPER(bids.state_code)"
+  + " AND data_sources.state_code COLLATE utf8mb4_bin = bids.state_code COLLATE utf8mb4_bin"
   + " AND (bids.jurisdiction_level IS NULL OR bids.jurisdiction_level = '' OR bids.jurisdiction_level = data_sources.jurisdiction_level)"
   + " AND (bids.fips_code IS NULL OR bids.fips_code = '' OR data_sources.fips_code IS NULL OR data_sources.fips_code = '' OR bids.fips_code = data_sources.fips_code)";
 

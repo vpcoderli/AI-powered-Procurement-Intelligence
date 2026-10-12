@@ -77,7 +77,7 @@ describe("legacy local issuer_type backfill on SQLite", () => {
       legacyBid("bidnet_co_boulder:blanklevel", { jurisdictionLevel: "" }),
       legacyBid("bidnet_co_boulder:nullfips", { fipsCode: null }),
       legacyBid("bidnet_co_boulder:blankfips", { fipsCode: "" }),
-      // State codes compare case-insensitively.
+      // State codes compare exactly: a differently-cased code is left alone, like drifted FIPS, because the importer's identity check would quarantine every corrected re-crawl.
       legacyBid("bidnet_co_boulder:lowercase", { stateCode: "co" }),
       // Every local level, including sources without a usable GEOID (the bids keep theirs).
       legacyBid("bidnet_co_city_boulder:1", {
@@ -103,7 +103,7 @@ describe("legacy local issuer_type backfill on SQLite", () => {
       "bidnet_co_boulder:conflict": "state", "bidnet_co_boulder:elsewhere": "state", "legacy-without-namespace": "state",
       "bidnet_co_boulder:drift": "state",
       "bidnet_co_boulder:nulllevel": "county", "bidnet_co_boulder:blanklevel": "county",
-      "bidnet_co_boulder:nullfips": "county", "bidnet_co_boulder:blankfips": "county", "bidnet_co_boulder:lowercase": "county",
+      "bidnet_co_boulder:nullfips": "county", "bidnet_co_boulder:blankfips": "county", "bidnet_co_boulder:lowercase": "state",
       "bidnet_co_city_boulder:1": "city", "bidnet_co_metro_water:1": "special_district", "bidnet_co_fire_district:1": "special_district",
     });
     expect(testDb.db.select().from(bids).all()).toEqual(afterFirstRun);
