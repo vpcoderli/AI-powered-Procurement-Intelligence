@@ -6,6 +6,7 @@ import { bids, crawlerLogs } from "@/server/db/schema";
 import { importCrawlerJsonRunIntoSqlite } from "./sqlite-json-importer";
 import { CrawlerLeaseLostError } from "./execution-context";
 import { importCrawlerJsonRunIntoMysql } from "./mysql-json-importer";
+import { loadDetailBackfillCandidates, loadDetailHistory } from "./detail-history";
 import { runSamGovCrawler } from "./sam-gov-runner";
 
 vi.mock("node:child_process", () => ({
@@ -26,6 +27,8 @@ vi.mock("./mysql-json-importer", () => ({
 
 const mockedExecFile = vi.mocked(execFile);
 const mockedImportCrawlerJsonRunIntoMysql = vi.mocked(importCrawlerJsonRunIntoMysql);
+const mockedLoadDetailHistory = vi.mocked(loadDetailHistory);
+const mockedLoadDetailBackfillCandidates = vi.mocked(loadDetailBackfillCandidates);
 
 const mysqlJsonPayload = JSON.stringify({
   source: "SAM.gov",
@@ -273,6 +276,46 @@ describe("SAM durable detail history", () => {
     expect(mockedExecFile.mock.lastCall?.[1]).toContain("--detail-history-stdin");
     expect(mockedExecFile.mock.lastCall?.[1]).toContain("--detail-backfill-only");
     expect(stdinEnd).toHaveBeenCalledWith(JSON.stringify(history));
+  });
+});
+
+describe("SAM history loader selection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // A bare store is enough: both loaders are mocked, so only what the runner asks of them matters.
+  const historyStore = { database: {} as never };
+
+  function finishChild() {
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+      callback(null, JSON.stringify({ status: "success", bids: [] }), "");
+      return { stdin: { end: vi.fn() } } as unknown as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+  }
+
+  it("reads a backfill run's candidates up to fetch-sam-gov's own default of 25 descriptions", async () => {
+    finishChild();
+    await runSamGovCrawler({ historyStore, detailBackfillOnly: true, outputJson: true });
+    expect(mockedLoadDetailBackfillCandidates).toHaveBeenCalledTimes(1);
+    expect(mockedLoadDetailBackfillCandidates).toHaveBeenCalledWith(historyStore, "sam_gov", undefined, { limit: 25 });
+    expect(mockedLoadDetailHistory).not.toHaveBeenCalled();
+  });
+
+  it("limits a backfill run's candidates to its maxDescriptions", async () => {
+    finishChild();
+    await runSamGovCrawler({ historyStore, detailBackfillOnly: true, maxDescriptions: 7, outputJson: true });
+    expect(mockedLoadDetailBackfillCandidates).toHaveBeenCalledTimes(1);
+    expect(mockedLoadDetailBackfillCandidates).toHaveBeenCalledWith(historyStore, "sam_gov", undefined, { limit: 7 });
+    expect(mockedLoadDetailHistory).not.toHaveBeenCalled();
+  });
+
+  it("reads recent list history, not backfill candidates, for a list run", async () => {
+    finishChild();
+    await runSamGovCrawler({ historyStore, maxDescriptions: 7, outputJson: true });
+    expect(mockedLoadDetailHistory).toHaveBeenCalledTimes(1);
+    expect(mockedLoadDetailHistory).toHaveBeenCalledWith(historyStore, "sam_gov");
+    expect(mockedLoadDetailBackfillCandidates).not.toHaveBeenCalled();
   });
 });
 

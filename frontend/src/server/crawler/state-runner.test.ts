@@ -455,6 +455,64 @@ describe("history loaded from persisted records", () => {
       await database.cleanup();
     }
   });
+
+  /** Stubs the child so the task payload runCrawlTask writes to its stdin can be inspected. */
+  function captureChildStdin() {
+    const stdinEnd = vi.fn();
+    mockedExecFile.mockImplementationOnce(((_command: string, _args: readonly string[], _options: ExecFileOptions, callback: (error: ExecFileException | null, stdout: string, stderr: string) => void) => {
+      callback(null, JSON.stringify({ status: "success", bids: [] }), "");
+      return { stdin: { end: stdinEnd } } as unknown as ReturnType<typeof execFile>;
+    }) as typeof execFile);
+    return stdinEnd;
+  }
+
+  it("hands a backfill run only its attempt budget of the oldest due body-less rows", async () => {
+    const { createTestDatabase } = await import("@/server/db/test-utils");
+    const { bids } = await import("@/server/db/schema");
+    const database = await createTestDatabase();
+    try {
+      const bodyLess = (sourceBidId: string, firstSeenAt: string) => ({
+        id: `ca_caleprocure:${sourceBidId}`, dedupeKey: `ca_caleprocure:${sourceBidId}`, sourceBidId, source: "California Cal eProcure",
+        title: `Repair county roads ${sourceBidId}`, description: "", issuerName: "County", issuerType: "state", stateCode: "CA",
+        sourceUrl: `https://caleprocure.ca.gov/bid/${sourceBidId}`, firstSeenAt, lastSeenAt: "2026-09-30T00:00:00.000Z",
+        createdAt: "2026-08-01T00:00:00.000Z", updatedAt: "2026-08-01T00:00:00.000Z",
+      });
+      // Neither insertion order nor id order is the oldest-first order the run must hand over.
+      database.db.insert(bids).values([
+        bodyLess("newest", "2026-08-03T00:00:00.000Z"), bodyLess("oldest", "2026-08-01T00:00:00.000Z"), bodyLess("middle", "2026-08-02T00:00:00.000Z"),
+      ]).run();
+      const stdinEnd = captureChildStdin();
+      const budgeted = source({ fetchConfig: { base_url: "https://caleprocure.ca.gov", enrichment: { max_details_per_run: 2 } } });
+      await runCrawlTask(budgeted, { taskId: "backfill-budget", historyStore: { database: database.db }, detailBackfillOnly: true });
+      const payload = JSON.parse(stdinEnd.mock.calls[0][0]);
+      expect(payload.detail_history.map((row: { id: string }) => row.id)).toEqual(["ca_caleprocure:oldest", "ca_caleprocure:middle"]);
+    } finally {
+      await database.cleanup();
+    }
+  });
+
+  it("hands a list run only history seen within 30 days of the source's newest sighting", async () => {
+    const { createTestDatabase } = await import("@/server/db/test-utils");
+    const { bids } = await import("@/server/db/schema");
+    const database = await createTestDatabase();
+    try {
+      const newest = "2026-09-30T00:00:00.000Z";
+      const thirtyOneDaysEarlier = new Date(Date.parse(newest) - 31 * 86_400_000).toISOString();
+      const seen = (sourceBidId: string, lastSeenAt: string) => ({
+        id: `ca_caleprocure:${sourceBidId}`, dedupeKey: `ca_caleprocure:${sourceBidId}`, sourceBidId, source: "California Cal eProcure",
+        title: `Repair county roads ${sourceBidId}`, description: "Repair the county roads and clear the drainage ditches.", issuerName: "County",
+        issuerType: "state", stateCode: "CA", sourceUrl: `https://caleprocure.ca.gov/bid/${sourceBidId}`, firstSeenAt: "2026-07-01T00:00:00.000Z",
+        lastSeenAt, createdAt: "2026-07-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z",
+      });
+      database.db.insert(bids).values([seen("stale", thirtyOneDaysEarlier), seen("fresh", newest)]).run();
+      const stdinEnd = captureChildStdin();
+      await runCrawlTask(source(), { taskId: "list-window", historyStore: { database: database.db } });
+      const payload = JSON.parse(stdinEnd.mock.calls[0][0]);
+      expect(payload.detail_history.map((row: { id: string }) => row.id)).toEqual(["ca_caleprocure:fresh"]);
+    } finally {
+      await database.cleanup();
+    }
+  });
 });
 
 describe("detail retry coverage fence", () => {

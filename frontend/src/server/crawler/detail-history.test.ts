@@ -157,4 +157,34 @@ describe("detail backfill candidates", () => {
     expect(detailAttemptBudget({ fetchConfig: { enrichment: { max_details_per_run: 4 } } })).toBe(4);
     expect(detailAttemptBudget({ fetchConfig: { enrichment: { max_details_per_run: 999 } } })).toBe(200);
   });
+
+  it("reports a scan that read its whole page budget without reaching the limit", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      let queries = 0;
+      const mysql = {
+        // Full pages of ids the registry rejects: nothing is ever a candidate, and every page looks like there is more.
+        query: async (): Promise<[unknown[], unknown?]> => {
+          queries += 1;
+          return [Array.from({ length: DETAIL_BACKFILL_PAGE_SIZE }, () => ({ id: "other:1", source_bid_id: "1" }))];
+        },
+      };
+      expect(await loadDetailBackfillCandidates({ mysql }, source.id, source, { limit: 1, now })).toEqual([]);
+      expect(queries).toBe(10);
+      expect(warn).toHaveBeenCalledWith(JSON.stringify({ event: "crawler_detail_backfill_scan_capped", source: "city_portal", pages: 10, found: 0, limit: 1 }));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("stays silent when a short page ends the scan", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const mysql = { query: async (): Promise<[unknown[], unknown?]> => [[{ id: "other:1", source_bid_id: "1" }]] };
+      expect(await loadDetailBackfillCandidates({ mysql }, source.id, source, { limit: 1, now })).toEqual([]);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });

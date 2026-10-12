@@ -15,11 +15,11 @@ export interface DetailHistoryStore {
 
 type Dialect = "sqlite" | "mysql";
 
-/** A list run only returns bids its source showed recently; older rows cannot be reused. */
+/** Open-list runs return bids their source showed recently; older rows are not offered for reuse. */
 export const DETAIL_HISTORY_LIST_WINDOW_DAYS = 30;
 /** Safety cap for one list run's history, newest sighting first. */
 export const DETAIL_HISTORY_LIST_LIMIT = 5000;
-/** Backfill reads a page at a time so rows the registry no longer accepts cannot block valid ones. */
+/** Backfill reads a page at a time so rejected rows cannot block valid ones; after 10 full pages it stops and reports `crawler_detail_backfill_scan_capped`. */
 export const DETAIL_BACKFILL_PAGE_SIZE = 200;
 export const DETAIL_BACKFILL_MAX_PAGES = 10;
 /** crawler/apsi_crawler/enrichment.py: max_details_per_run defaults to 25 and is clamped to 1–200. */
@@ -107,6 +107,8 @@ async function selectRows(store: DetailHistoryStore, sql: string, values: unknow
  * History for a list run: this source's rows seen within 30 days of its newest sighting, newest
  * first, at most 5,000. Anchoring on the newest sighting rather than the clock keeps the window
  * full after a worker outage.
+ * Closed/awarded walks and SAM runs over an old posted window can return older bids; those run
+ * without reuse, bounded by the attempt budget, and keep their stored bodies.
  */
 export async function loadDetailHistory(store: DetailHistoryStore, sourceId: string, source?: CrawlableSource): Promise<DetailHistoryRecord[]> {
   const [scope, scopeValues] = sourceIdPredicate(store.mysql ? "mysql" : "sqlite", sourceId);
@@ -128,7 +130,13 @@ function outcomeText(dialect: Dialect, field: "attempted_at" | "next_retry_at"):
     : `(CASE WHEN json_valid(raw_payload) THEN json_extract(raw_payload, '$.enrichment.outcome.${field}') END)`;
 }
 
-/** No usable stored text: empty, the title again, or a bare SAM description link. */
+/**
+ * No usable stored text, as far as SQL can tell: empty, the title again (exact, case-insensitive),
+ * or a bare SAM description link. Deliberately narrower than `missingBody`: a legacy body holding
+ * other junk ("N/A", a title copy with extra punctuation, another bare URL) is not selected until
+ * an import rewrites the row — the importers blank such bodies on write. The JS re-check in
+ * `loadDetailBackfillCandidates` can only drop rows, never add them.
+ */
 function blankText(column: "description" | "full_description"): string {
   return `(TRIM(COALESCE(${column}, '')) = '' OR LOWER(TRIM(${column})) = LOWER(TRIM(title))`
     + ` OR ${column} LIKE 'https://api.sam.gov/%noticedesc%')`;
@@ -136,8 +144,8 @@ function blankText(column: "description" | "full_description"): string {
 
 /**
  * One page of backfill candidates: rows with no usable stored body that are due, oldest attempt
- * (else first sighting) first. It approximates `missingBody`/`historyDue`, which re-check every
- * row. MySQL compares the JSON text and the column under one binary collation.
+ * (else first sighting) first. It is narrower than `missingBody`/`historyDue` (see `blankText`),
+ * which re-check every row it returns. MySQL compares the JSON text and the column under one binary collation.
  */
 export function detailBackfillQuery(dialect: Dialect, sourceId: string, now: Date, page: number): { sql: string; values: unknown[] } {
   const [scope, scopeValues] = sourceIdPredicate(dialect, sourceId);
@@ -162,13 +170,21 @@ export async function loadDetailBackfillCandidates(
   const now = options.now ?? new Date();
   const dialect: Dialect = store.mysql ? "mysql" : "sqlite";
   const candidates: DetailHistoryRecord[] = [];
-  for (let page = 0; page < DETAIL_BACKFILL_MAX_PAGES && candidates.length < options.limit; page += 1) {
-    const { sql, values } = detailBackfillQuery(dialect, sourceId, now, page);
+  let pagesRead = 0;
+  let lastPageFull = false;
+  while (pagesRead < DETAIL_BACKFILL_MAX_PAGES && candidates.length < options.limit) {
+    const { sql, values } = detailBackfillQuery(dialect, sourceId, now, pagesRead);
     const rows = await selectRows(store, sql, values);
+    pagesRead += 1;
     for (const row of normalizedRows(rows, sourceId, source)) {
       if (candidates.length < options.limit && missingBody(row) && historyDue(row, now)) candidates.push(row);
     }
-    if (rows.length < DETAIL_BACKFILL_PAGE_SIZE) break;
+    lastPageFull = rows.length === DETAIL_BACKFILL_PAGE_SIZE;
+    if (!lastPageFull) break;
+  }
+  if (candidates.length < options.limit && pagesRead === DETAIL_BACKFILL_MAX_PAGES && lastPageFull) {
+    // More rejected rows sort first than the scan reads: report it rather than starve silently.
+    console.warn(JSON.stringify({ event: "crawler_detail_backfill_scan_capped", source: sourceId, pages: pagesRead, found: candidates.length, limit: options.limit }));
   }
   return candidates;
 }
