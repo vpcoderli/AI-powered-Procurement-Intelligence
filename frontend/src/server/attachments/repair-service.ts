@@ -4,7 +4,8 @@
  * One run does three things, in order:
  *   1. Verify pass (local IO only): re-check archived files, rewrite non-portable paths, and
  *      degrade missing/corrupt archives so they are repaired in this same run.
- *   2. Candidate selection: everything never archived, failed and due, or parked long enough.
+ *   2. Candidate selection: everything never archived, failed and due, or parked long enough,
+ *      chosen per source in SQL (at most the source's `max_per_run`; archive-off sources none).
  *   3. Per source: take the `attachment_repair:<id>` lease, hand the batch to the Python
  *      `archive-attachments` CLI, and write the results back in one transaction.
  *
@@ -30,7 +31,7 @@ import {
   listAttachmentsForVerificationFromMysql,
   type MysqlAttachmentStore,
 } from "./mysql-repository";
-import { DEFAULT_ATTACHMENT_POLICY, parseAttachmentPolicy, type AttachmentPolicy } from "./policy";
+import { attachmentBatchLimit, attachmentPolicyFromFetchConfig, type AttachmentPolicy } from "./policy";
 import {
   runArchiveAttachments,
   type ArchiveAttachmentsRequest,
@@ -106,15 +107,7 @@ function resolveMaxPerSource(explicit?: number) {
 }
 
 function policyForRow(row: AttachmentRepairRow): AttachmentPolicy {
-  if (!row.fetchConfig?.trim()) return DEFAULT_ATTACHMENT_POLICY;
-  try {
-    const parsed: unknown = JSON.parse(row.fetchConfig);
-    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parseAttachmentPolicy(parsed as Record<string, unknown>)
-      : DEFAULT_ATTACHMENT_POLICY;
-  } catch {
-    return DEFAULT_ATTACHMENT_POLICY;
-  }
+  return attachmentPolicyFromFetchConfig(row.fetchConfig);
 }
 
 function expectedExtension(name: string): string | null {
@@ -129,7 +122,7 @@ function sourceKey(row: AttachmentRepairRow) {
 interface Writer {
   apply: (input: { updates?: AttachmentRowUpdate[]; log?: AttachmentRepairLogRow }) => Promise<void>;
   listVerification: (input: { verifyBefore: Date; sourceIds?: string[] }) => Promise<AttachmentRepairRow[]>;
-  listCandidates: (input: { now: Date; sourceIds?: string[] }) => Promise<AttachmentRepairRow[]>;
+  listCandidates: (input: { now: Date; sourceIds?: string[]; maxPerSource?: number }) => Promise<AttachmentRepairRow[]>;
 }
 
 function createWriter(options: AttachmentRepairRunOptions): Writer {
@@ -238,7 +231,13 @@ export async function runAttachmentRepairOnce(
     }
 
     // ---- 2. Candidate selection ----------------------------------------------------------
-    const candidateRows = await writer.listCandidates({ now: now(), sourceIds: options.sourceIds });
+    // Per source in SQL: archive-off sources are never read, and each source brings at most
+    // its own batch, so one source's backlog cannot crowd the others out of the run.
+    const candidateRows = await writer.listCandidates({
+      now: now(),
+      sourceIds: options.sourceIds,
+      maxPerSource: maxPerSourceOverride,
+    });
 
     // Seed/demo rows point at in-app relative links; they are parked without ever being fetched.
     const seedUpdates: AttachmentRowUpdate[] = [];
@@ -285,14 +284,16 @@ export async function runAttachmentRepairOnce(
       };
 
       if (!policy.archive) {
-        // Archiving is switched off for this source: rows are left untouched, never marked.
+        // Selection already leaves archive-off sources out; this only catches a policy switched
+        // off between the two reads. Rows are left untouched, never marked.
         summary.status = "skipped";
         skipped += rows.length;
         bySource.push(summary);
         continue;
       }
 
-      const limit = Math.max(1, Math.min(policy.maxPerRun, maxPerSourceOverride ?? policy.maxPerRun));
+      // Selection already capped this source; the slice only guards a policy changed in between.
+      const limit = attachmentBatchLimit(policy, maxPerSourceOverride);
       const batch = rows.slice(0, limit);
       skipped += rows.length - batch.length;
 
