@@ -30,7 +30,7 @@ const RESTRICTED_BODIES = [
   /^(?:please\s+)?(?:register|create\s+an\s+account)(?:(?:\s+(?:with|on|at)\s+(?:the\s+)?[\w.]+(?:\s+[\w.]+){0,3})?\s+(?:or\s+(?:log\s*in|sign\s*in)\s+)?to\s+(?:view|see|access|download|continue)\b|(?:\s+(?:(?:or|and)\s+)?|\s*\/\s*)(?:log\s*in|sign\s*in)\s*[.!…]*$|\s*[.!…]*$)/i,
   /^(?:access\s+denied|error\s+(?:401|403|404|500|502|503)(?:\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable))?|(?:401|403|404|500|502|503)\s+(?:not\s+found|forbidden|unauthorized|internal\s+server\s+error|bad\s+gateway|service\s+unavailable)|page\s+not\s+found)(?:\s*[.!:;,|(\-–—]|\s+you\s+(?:do\s+not|don't|don’t)\s+have\s+permission\b|$)/i,
   /^(?:forbidden|unauthorized(?:\s+access)?)(?:\s*[.!:\-–—]|\s*\(\d{3}\)|\s+you\s+(?:do\s+not|don't|don’t)\s+have\s+permission\b|$)/i,
-  /^(?:checking\s+your\s+browser\b|just\s+a\s+moment(?:\s*(?:\.\.\.|…|[.!,])|$)|(?:please\s+)?enable\s+javascript(?:\s+(?:to|and)\b|\s+in\s+your\s+browser\b|\s*[.!]?$)|verify\s+(?:you\s+are|that\s+you\s+are|you're)\s+(?:a\s+)?human\b|attention\s+required!)/i,
+  /^(?:checking\s+your\s+browser\b|just\s+a\s+moment(?:\s*(?:\.\.\.|…|[.!,])|$)|(?:please\s+)?enable\s+javascript(?:\s+(?:to|and)\b|\s+in\s+your\s+browser\b|\s*[.!]?$)|verify\s+(?:you\s+are|that\s+you\s+are|you're)\s+(?:a\s+)?human\b|attention\s+required!\s*(?:\||$))/i,
 ];
 // Only a whole label/value cell: the value is up to four words, or a numeric code and up to six
 // ("55 - Amendment/Change Order (Increase or No Dollar)"), never a sentence.
