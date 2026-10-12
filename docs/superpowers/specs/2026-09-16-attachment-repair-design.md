@@ -54,7 +54,9 @@
 | `archive_missing` | `archived` 但文件不在任何允许根目录 | 重下 |
 | `archive_corrupt` | 文件存在但 0 字节 / checksum 不一致 / 魔数与 `content_type` 不符 / `content_type` 为 `text/html` 而扩展名不是 `.html` | 重下；若重下仍是 HTML → `unavailable` |
 | `path_not_portable` | `archived`，绝对路径但同一相对路径在允许根目录下能解析且 checksum 一致 | 只改元数据：`storage_path` 改为相对路径 |
-| `unavailable` | URL 非 http(s)、站内相对链接、源策略 `archive=false`、或重试耗尽 | 记录原因，不再重试（30 天后重新入队一次） |
+| `unavailable` | URL 非 http(s)、站内相对链接、或重试耗尽 | 记录原因，不再重试（30 天后重新入队一次） |
+
+2026-10-12 修订：源策略 `archive=false` 的源不参与候选选取，附件行保持原样，不记 `unavailable`；候选在 SQL 里按来源选取。见[运维文档](../../operations/attachment-repair.md)"候选选取"。
 
 ### 4.2 下载执行放在 Python（新增 CLI 子命令 `archive-attachments`）
 
