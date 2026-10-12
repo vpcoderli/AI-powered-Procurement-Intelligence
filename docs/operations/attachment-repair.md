@@ -71,7 +71,7 @@
 
 ## SAM.gov 附件
 
-SAM.gov 运行把每条机会的 `resourceLinks` 记为附件链接（`archive_status = not_archived`），抓取进程内不下载。归档交给本 worker 尝试，按 `sam_gov` 源的 `fetch_config.attachments` 策略（默认 `archive: true`、`max_per_run` 50）限速、限量。只有调用方显式传 `archiveDocuments: true` 时，`runSamGovCrawler` 才在运行内下载，仅用于手工排查。SAM `resourceLinks` 能否不带 API key 直接下载，还没有用真实链接验证过；验证之前，不要假定这些附件会被归档。下载失败由本 worker 的失败分类和退避处理，不影响抓取运行。另有一个已知问题：每次 SAM 运行都会重新发送链接，导入会把已判定失败或不可用的附件重置为 `not_archived`，于是这些附件会提前重试。这个问题在本次修复之前就存在，留待后续处理。
+SAM.gov 运行把每条机会的 `resourceLinks` 记为附件链接（`archive_status = not_archived`），抓取进程内不下载。归档交给本 worker 尝试，按 `sam_gov` 源的 `fetch_config.attachments` 策略（默认 `archive: true`、`max_per_run` 50）限速、限量。只有调用方显式传 `archiveDocuments: true` 时，`runSamGovCrawler` 才在运行内下载，仅用于手工排查。SAM `resourceLinks` 能否不带 API key 直接下载，还没有用真实链接验证过；验证之前，不要假定这些附件会被归档。下载失败由本 worker 的失败分类和退避处理，不影响抓取运行。另有一个已知问题：每次 SAM 运行都会重新发送链接，导入会把已判定失败或不可用的附件重置为 `not_archived`，于是这些附件会提前重试。这个问题在本次修复之前就存在，留待后续处理。在候选选取改为按来源限量、状态重置修好之前，生产环境不要开启本 worker：它目前全局只取 5,000 条候选（按 `bids.source` 排序）再按来源限量，SAM 链接多时会挤占排在它后面的来源。
 
 ## 运行
 
