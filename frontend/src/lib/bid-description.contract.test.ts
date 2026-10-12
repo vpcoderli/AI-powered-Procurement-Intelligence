@@ -1,9 +1,8 @@
 import { readFileSync } from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { getBidDescription, getBidDescriptionIssue } from "./bid-description";
 
-const contract = JSON.parse(readFileSync(path.resolve("../crawler/tests/fixtures/description_quality_contract.json"), "utf8")) as {
+const contract = JSON.parse(readFileSync(new URL("../../../crawler/tests/fixtures/description_quality_contract.json", import.meta.url), "utf8")) as {
   title: string;
   cases: Array<{ name: string; text: string; issue: string | null }>;
 };
