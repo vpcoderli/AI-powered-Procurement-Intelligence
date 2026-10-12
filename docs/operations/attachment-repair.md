@@ -71,7 +71,7 @@
 
 ## SAM.gov 附件
 
-SAM.gov 运行把每条机会的 `resourceLinks` 记为附件链接（`archive_status = not_archived`），抓取进程内不下载。归档由本 worker 完成，按 `sam_gov` 源的 `fetch_config.attachments` 策略（默认 `archive: true`、`max_per_run` 50）限速、限量。只有调用方显式传 `archiveDocuments: true` 时，`runSamGovCrawler` 才在运行内下载，仅用于手工排查。如果某类 SAM 链接必须带 API key 才能下载，下载失败由本 worker 的失败分类和退避处理，不影响抓取运行。
+SAM.gov 运行把每条机会的 `resourceLinks` 记为附件链接（`archive_status = not_archived`），抓取进程内不下载。归档交给本 worker 尝试，按 `sam_gov` 源的 `fetch_config.attachments` 策略（默认 `archive: true`、`max_per_run` 50）限速、限量。只有调用方显式传 `archiveDocuments: true` 时，`runSamGovCrawler` 才在运行内下载，仅用于手工排查。SAM `resourceLinks` 能否不带 API key 直接下载，还没有用真实链接验证过；验证之前，不要假定这些附件会被归档。下载失败由本 worker 的失败分类和退避处理，不影响抓取运行。另有一个已知问题：每次 SAM 运行都会重新发送链接，导入会把已判定失败或不可用的附件重置为 `not_archived`，于是这些附件会提前重试。这个问题在本次修复之前就存在，留待后续处理。
 
 ## 运行
 
@@ -171,4 +171,4 @@ FROM bid_attachments WHERE archive_status = 'failed' ORDER BY next_repair_at LIM
 
 首轮发现并修复的缺陷：浏览器下载的链接标识取的是 URL 中最后一个数字参数（IL 模板的 `currentPage=1`），导致同一招标的多个附件都下到第一份文件。修复为按参数名（`downloadFileNbr` 等）优先、其次最长数字值、排除分页参数；sidecar 侧改为整词匹配并在多个控件命中同一标识时按附件名消解，无法消解则返回 `LINK_NOT_FOUND`。选取顺序改为"已归档但缺失/损坏 → 从未归档 → 其余失败重试"。
 
-已知但保留：seed/demo 行的占位 https 链接会按退避重试 6 次后转 `unavailable`（约 63 小时）；SAM.gov 附件链接本身是 HTML 页面，两次 `html_response` 后转 `unavailable`；PNG/JPEG 等图片没有魔数白名单，按响应头类型归档（`application/octet-stream`）。
+已知但保留：seed/demo 行的占位 https 链接会按退避重试 6 次后转 `unavailable`（约 63 小时）；SAM.gov 附件链接本身是 HTML 页面，两次 `html_response` 后转 `unavailable`（这是 2026-09-16 对当时演示/`uiLink` 行的实测；2026-10 起 SAM 运行记录的是 `resourceLinks`，其可下载性尚未复测）；PNG/JPEG 等图片没有魔数白名单，按响应头类型归档（`application/octet-stream`）。
