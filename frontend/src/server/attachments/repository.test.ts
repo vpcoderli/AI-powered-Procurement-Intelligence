@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { bidAttachments, bids, crawlerLogs, dataSources } from "@/server/db/schema";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
-import { serializeAttachmentPolicy } from "./policy";
+import { DEFAULT_ATTACHMENT_POLICY, serializeAttachmentPolicy, type AttachmentPolicy } from "./policy";
 import {
   applyAttachmentRepairWrites,
+  attachmentCandidateQuotas,
   listAttachmentRepairCandidates,
   listAttachmentsForVerification,
 } from "./repository";
@@ -14,7 +15,7 @@ const NOW = new Date("2026-09-16T00:00:00.000Z");
 
 let testDb: TestDatabase;
 
-function insertSource(id: string, label: string, fetchConfig: Record<string, unknown> | null) {
+function insertSource(id: string, label: string, fetchConfig: Record<string, unknown> | string | null) {
   testDb.db
     .insert(dataSources)
     .values({
@@ -22,11 +23,19 @@ function insertSource(id: string, label: string, fetchConfig: Record<string, unk
       label,
       issuerType: "state",
       stateCode: "IL",
-      fetchConfig: fetchConfig ? JSON.stringify(fetchConfig) : null,
+      fetchConfig: typeof fetchConfig === "string" || fetchConfig === null ? fetchConfig : JSON.stringify(fetchConfig),
       createdAt: "2026-09-01T00:00:00.000Z",
       updatedAt: "2026-09-01T00:00:00.000Z",
     })
     .run();
+}
+
+function policy(overrides: Partial<AttachmentPolicy>) {
+  return serializeAttachmentPolicy({ ...DEFAULT_ATTACHMENT_POLICY, ...overrides });
+}
+
+function candidateIds(options: { limit?: number; maxPerSource?: number } = {}) {
+  return listAttachmentRepairCandidates(testDb.db, { now: NOW, ...options }).map((row) => row.id);
 }
 
 function insertBid(id: string, source: string) {
@@ -148,6 +157,102 @@ describe("listAttachmentRepairCandidates", () => {
     insertAttachment({ id: "att-b", bidId: "bid-7" });
 
     expect(listAttachmentRepairCandidates(testDb.db, { now: NOW, limit: 1 })).toHaveLength(1);
+  });
+});
+
+describe("listAttachmentRepairCandidates — one window per source", () => {
+  it("returns at most a source's max_per_run, highest repair priority first", () => {
+    insertSource("il_bidbuy", "Illinois BidBuy", policy({ maxPerRun: 2 }));
+    insertBid("bid-1", "Illinois BidBuy");
+    insertAttachment({ id: "att-a-failed", bidId: "bid-1", archiveStatus: "failed", nextRepairAt: "2026-09-15T00:00:00.000Z" });
+    insertAttachment({ id: "att-b-new", bidId: "bid-1" });
+    insertAttachment({ id: "att-c-new", bidId: "bid-1" });
+    insertAttachment({ id: "att-d-missing", bidId: "bid-1", archiveStatus: "failed", failureKind: "archive_missing", nextRepairAt: "2026-09-15T00:00:00.000Z" });
+
+    expect(candidateIds()).toEqual(["att-d-missing", "att-b-new"]);
+  });
+
+  it("keeps one source's backlog from crowding out the sources that sort after it", () => {
+    insertSource("sam_gov", "SAM.gov", null);
+    insertSource("tx_esbd", "Texas ESBD", null);
+    insertBid("bid-sam", "SAM.gov");
+    insertBid("bid-tx", "Texas ESBD");
+    for (const index of [1, 2, 3, 4]) insertAttachment({ id: `att-sam-${index}`, bidId: "bid-sam" });
+    insertAttachment({ id: "att-tx", bidId: "bid-tx" });
+
+    // The run-wide cap is smaller than SAM's backlog: every source gets its first candidate
+    // before any source gets its second.
+    expect(candidateIds({ limit: 3 })).toEqual(["att-sam-1", "att-tx", "att-sam-2"]);
+  });
+
+  it("leaves a source whose policy switches archiving off out of the selection", () => {
+    insertSource("il_bidbuy", "Illinois BidBuy", policy({ archive: false }));
+    insertSource("mo_missouri", "Missouri MissouriBUYS", null);
+    insertBid("bid-il", "Illinois BidBuy");
+    insertBid("bid-mo", "mo_missouri");
+    insertAttachment({ id: "att-il", bidId: "bid-il" });
+    insertAttachment({ id: "att-mo", bidId: "bid-mo" });
+
+    expect(candidateIds()).toEqual(["att-mo"]);
+  });
+
+  it("lowers but never raises a source's max_per_run with the run's maxPerSource", () => {
+    insertSource("il_bidbuy", "Illinois BidBuy", policy({ maxPerRun: 2 }));
+    insertSource("mo_missouri", "Missouri MissouriBUYS", null);
+    insertBid("bid-il", "Illinois BidBuy");
+    insertBid("bid-mo", "mo_missouri");
+    for (const id of ["att-il-1", "att-il-2", "att-il-3"]) insertAttachment({ id, bidId: "bid-il" });
+    for (const id of ["att-mo-1", "att-mo-2", "att-mo-3", "att-mo-4"]) insertAttachment({ id, bidId: "bid-mo" });
+
+    expect(candidateIds({ maxPerSource: 3 }).sort()).toEqual(["att-il-1", "att-il-2", "att-mo-1", "att-mo-2", "att-mo-3"]);
+    expect(candidateIds({ maxPerSource: 1 }).sort()).toEqual(["att-il-1", "att-mo-1"]);
+  });
+
+  it("gives every bid source without a data_sources row its own default window", () => {
+    insertBid("bid-a", "Legacy Portal A");
+    insertBid("bid-b", "Legacy Portal B");
+    insertAttachment({ id: "att-a-1", bidId: "bid-a" });
+    insertAttachment({ id: "att-a-2", bidId: "bid-a" });
+    insertAttachment({ id: "att-b-1", bidId: "bid-b" });
+
+    expect(candidateIds({ maxPerSource: 1 })).toEqual(["att-a-1", "att-b-1"]);
+  });
+
+  it("reads an unreadable fetch_config as the default policy", () => {
+    insertSource("broken", "Broken Portal", "{not json");
+    insertBid("bid-1", "broken");
+    insertAttachment({ id: "att-1", bidId: "bid-1" });
+
+    const rows = listAttachmentRepairCandidates(testDb.db, { now: NOW });
+
+    expect(rows.map((row) => row.id)).toEqual(["att-1"]);
+    expect(rows[0]).toMatchObject({ sourceId: "broken", fetchConfig: "{not json" });
+  });
+});
+
+describe("attachmentCandidateQuotas", () => {
+  it("excludes archive-off sources and lists only the windows that differ from the default", () => {
+    expect(
+      attachmentCandidateQuotas([
+        { id: "il_bidbuy", fetchConfig: JSON.stringify({ attachments: { archive: false } }) },
+        { id: "sam_gov", fetchConfig: JSON.stringify({ attachments: { max_per_run: 7 } }) },
+        { id: "tx_esbd", fetchConfig: JSON.stringify({ attachments: { max_per_run: 50 } }) },
+        { id: "broken", fetchConfig: "{not json" },
+        { id: "plain", fetchConfig: null },
+      ]),
+    ).toEqual({ defaultLimit: 50, excludedSourceIds: ["il_bidbuy"], sourceLimits: [{ sourceId: "sam_gov", limit: 7 }] });
+  });
+
+  it("applies the run's maxPerSource downward to the default and to every source", () => {
+    expect(
+      attachmentCandidateQuotas(
+        [
+          { id: "sam_gov", fetchConfig: JSON.stringify({ attachments: { max_per_run: 7 } }) },
+          { id: "big", fetchConfig: JSON.stringify({ attachments: { max_per_run: 200 } }) },
+        ],
+        10,
+      ),
+    ).toEqual({ defaultLimit: 10, excludedSourceIds: [], sourceLimits: [{ sourceId: "sam_gov", limit: 7 }] });
   });
 });
 

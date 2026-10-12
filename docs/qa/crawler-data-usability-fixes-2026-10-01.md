@@ -64,7 +64,6 @@
 上线注意：
 
 - **迁移顺序：** MySQL 先跑 `npm run db:mysql:migrate`；SQLite/compose 的 web 镜像不会自动迁移，先跑 `npm run db:migrate`（启动 crawler worker 也会迁移）。迁移前最好先停掉旧版爬虫：迁移后旧代码若再爬一次，会把开放的地方招标重新写成 `state`，要等新代码下次爬取才恢复。
-- **附件修复 worker 先不要在生产开启。** 它目前全局只取 5,000 条候选（按 `bids.source` 排序）再按来源限量，每次 SAM 运行又会把失败、不可用的附件重置为 `not_archived`。开启后 SAM 链接可能挤占排在它后面的来源，SAM 的失败也永远稳定不下来。改好候选选取和状态重置之前保持关闭。
 - **行为变化：** `fetch_config.enrichment.fields` 不含 `attachments` 的来源，复用历史时如果只有列表摘要，会触发详情复查（受 7 天冷却和每轮预算约束）。
 - **回滚：** 回滚到数据可用性改动之前的版本前，要先把地方招标的 `issuer_type` 改回 `'state'`，因为旧代码只认 `federal` / `state`。
 

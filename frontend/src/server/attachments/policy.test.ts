@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   ATTACHMENT_MODES,
   DEFAULT_ATTACHMENT_POLICY,
+  attachmentBatchLimit,
+  attachmentPolicyFromFetchConfig,
   parseAttachmentPolicy,
   serializeAttachmentPolicy,
   validateAttachmentPolicyInput,
@@ -62,6 +64,39 @@ describe("parseAttachmentPolicy", () => {
     expect(parseAttachmentPolicy({ attachments: { archive: false } }).archive).toBe(false);
     expect(parseAttachmentPolicy({ attachments: { archive: "yes" } }).archive).toBe(false);
     expect(parseAttachmentPolicy({ attachments: { mode: "direct" } }).archive).toBe(true);
+  });
+});
+
+describe("attachmentPolicyFromFetchConfig", () => {
+  it("reads the policy from the stored fetch_config JSON text", () => {
+    expect(
+      attachmentPolicyFromFetchConfig(JSON.stringify({ attachments: { archive: false, max_per_run: 7 } })),
+    ).toMatchObject({ archive: false, maxPerRun: 7 });
+  });
+
+  it("falls back to the defaults for a missing, unreadable or non-object fetch_config", () => {
+    for (const value of [null, undefined, "", "   ", "{not json", "[]", "42", "null"]) {
+      expect(attachmentPolicyFromFetchConfig(value)).toEqual(DEFAULT_ATTACHMENT_POLICY);
+    }
+  });
+});
+
+describe("attachmentBatchLimit", () => {
+  it("is the policy's max_per_run, lowered but never raised by the run's per-source cap", () => {
+    const policy = { ...DEFAULT_ATTACHMENT_POLICY, maxPerRun: 20 };
+
+    expect(attachmentBatchLimit(policy)).toBe(20);
+    expect(attachmentBatchLimit(policy, 5)).toBe(5);
+    expect(attachmentBatchLimit(policy, 500)).toBe(20);
+  });
+
+  it("always answers a whole number of at least one, whatever cap it is handed", () => {
+    const policy = { ...DEFAULT_ATTACHMENT_POLICY, maxPerRun: 20 };
+
+    expect(attachmentBatchLimit(policy, 2.7)).toBe(2);
+    expect(attachmentBatchLimit(policy, 0.5)).toBe(1);
+    expect(attachmentBatchLimit(policy, Number.NaN)).toBe(20);
+    expect(attachmentBatchLimit(policy, Number.POSITIVE_INFINITY)).toBe(20);
   });
 });
 
