@@ -6,7 +6,9 @@ type BidDescription = {
 
 // Same edge-punctuation set as crawler/apsi_crawler/content_quality.py `echo_key`, so a legacy
 // row holding "Road repair." under the title "Road repair" is still recognized as an echo.
-const EDGE_PUNCTUATION = /^[\s.,:;!?\-\u2013\u2014_*/'"()\[\]{}\u3002\uFF0C\u3001\uFF1A\uFF1B\uFF01\uFF1F]+|[\s.,:;!?\-\u2013\u2014_*/'"()\[\]{}\u3002\uFF0C\u3001\uFF1A\uFF1B\uFF01\uFF1F]+$/g;
+const EDGE_PUNCTUATION = /[\s.,:;!?\-\u2013\u2014_*/'"()\[\]{}\u3002\uFF0C\u3001\uFF1A\uFF1B\uFF01\uFF1F]/;
+// Python's str.split() whitespace: \s plus U+001C–U+001F and U+0085 (Python adds U+FEFF to it).
+const WHITESPACE = /[\s\u001c-\u001f\u0085]+/g;
 
 // Mirrored rule for rule by crawler/apsi_crawler/content_quality.py `body_issue`;
 // crawler/tests/fixtures/description_quality_contract.json is the shared contract.
@@ -46,15 +48,25 @@ export function isSamDescriptionLink(value: string): boolean {
 }
 
 function comparable(value: string | null | undefined) {
-  return value?.trim().replace(/\s+/g, " ").toLowerCase() || "";
+  return value?.replace(WHITESPACE, " ").trim().toLowerCase() || "";
+}
+
+// One pass from each end: a [...]+$ regex is retried from every character of a punctuation
+// run that stops short of the end, which is quadratic in the run's length.
+function trimEdgePunctuation(text: string) {
+  let start = 0;
+  let end = text.length;
+  while (start < end && EDGE_PUNCTUATION.test(text[start])) start += 1;
+  while (end > start && EDGE_PUNCTUATION.test(text[end - 1])) end -= 1;
+  return text.slice(start, end);
 }
 
 /** Reject known portal placeholders, not short procurement scope. Length is not a quality gate. */
 export function getBidDescriptionIssue(value: string | null | undefined, title?: string | null): string | null {
   const text = comparable(value);
-  const identity = text.replace(EDGE_PUNCTUATION, "");
+  const identity = trimEdgePunctuation(text);
   if (!identity) return "missing_body";
-  if (identity === comparable(title).replace(EDGE_PUNCTUATION, "")) return "title_echo";
+  if (identity === trimEdgePunctuation(comparable(title))) return "title_echo";
   if (HTML_BODY.test(text)) return "restricted_or_error_body";
   if (URL_BODY.test(text)) return "body_url";
   if (PLACEHOLDER_BODIES.some((pattern) => pattern.test(text))) return "placeholder_body";

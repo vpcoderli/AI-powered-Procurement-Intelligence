@@ -13,7 +13,9 @@ _EDGE_PUNCTUATION = " \t\r\n.,:;!?-–—_*/'\"()[]{}。，、：；！？"
 
 
 def comparable_text(value):
-    return " ".join(value.split()).casefold() if isinstance(value, str) else ""
+    # str.split() whitespace plus U+FEFF, which JavaScript's \s also matches: the same set as
+    # frontend/src/lib/bid-description.ts `comparable`.
+    return " ".join(value.replace("\ufeff", " ").split()).casefold() if isinstance(value, str) else ""
 
 
 def echo_key(value):
