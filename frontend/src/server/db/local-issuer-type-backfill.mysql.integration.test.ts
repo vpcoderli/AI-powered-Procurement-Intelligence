@@ -37,14 +37,16 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("legacy local
         "co_state", "Colorado State Procurement", "state", "state", "CO", "08", NOW, NOW],
     );
     // (source, source_bid_id) is unique, and co_state:1 and unknown_portal:1 share source_bid_id "1", so the state row needs its own source label.
-    const legacy = (id: string, jurisdictionLevel: string, fipsCode = "08013", source = "Boulder County, CO (BidNet)") => {
+    const legacy = (id: string, jurisdictionLevel: string | null, fipsCode = "08013", source = "Boulder County, CO (BidNet)") => {
       const sourceBidId = id.slice(id.indexOf(":") + 1);
       return [id, source, sourceBidId, id, "Road repairs",
         "Resurface county roads and provide traffic management.", "Boulder County", "state", jurisdictionLevel, "CO", fipsCode,
         `https://www.bidnetdirect.com/colorado/bouldercounty/bid/${sourceBidId}`, NOW, NOW, NOW, NOW];
     };
+    // drift: the stored FIPS disagrees with the source's, so the row must stay as it is. nulllevel: a missing level does not conflict.
     for (const values of [legacy("bidnet_co_boulder:legacy", "county"), legacy("bidnet_co_boulder:conflict", "city"),
-      legacy("co_state:1", "state", "08", "Colorado State Procurement"), legacy("unknown_portal:1", "county")]) {
+      legacy("co_state:1", "state", "08", "Colorado State Procurement"), legacy("unknown_portal:1", "county"),
+      legacy("bidnet_co_boulder:drift", "county", "08014"), legacy("bidnet_co_boulder:nulllevel", null)]) {
       await mysql.query(
         "INSERT INTO bids (id, source, source_bid_id, dedupe_key, title, description, issuer_name, issuer_type, jurisdiction_level, state_code, fips_code, source_url, first_seen_at, last_seen_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         values,
@@ -58,7 +60,8 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("legacy local
     const [rows] = await mysql.query("SELECT id, issuer_type FROM bids");
     expect(Object.fromEntries((rows as Array<{ id: string; issuer_type: string }>).map((row) => [row.id, row.issuer_type]))).toEqual({
       "bidnet_co_boulder:legacy": "county", "bidnet_co_boulder:conflict": "state", "co_state:1": "state", "unknown_portal:1": "state",
+      "bidnet_co_boulder:drift": "state", "bidnet_co_boulder:nulllevel": "county",
     });
     expect(await getBidByIdFromMysql(mysql, "bidnet_co_boulder:legacy")).toBeDefined();
-  });
+  }, 30_000);
 });

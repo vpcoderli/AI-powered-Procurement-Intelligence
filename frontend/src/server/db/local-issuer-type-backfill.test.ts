@@ -9,6 +9,10 @@ const sources = [
   { id: "bidnet_co_boulder", label: "Boulder County, CO (BidNet)", issuerType: "county", jurisdictionLevel: "county", stateCode: "CO", fipsCode: "08013", createdAt: NOW, updatedAt: NOW },
   { id: "bidnet_mi_canton_township", label: "Canton Township, MI (BidNet)", issuerType: "township", jurisdictionLevel: "township", stateCode: "MI", fipsCode: "2616312860", createdAt: NOW, updatedAt: NOW },
   { id: "co_state", label: "Colorado State Procurement", issuerType: "state", jurisdictionLevel: "state", stateCode: "CO", fipsCode: "08", createdAt: NOW, updatedAt: NOW },
+  { id: "bidnet_co_city_boulder", label: "City of Boulder, CO (BidNet)", issuerType: "city", jurisdictionLevel: "city", stateCode: "CO", fipsCode: "0807850", createdAt: NOW, updatedAt: NOW },
+  // A special district may have no GEOID at all, or an empty one.
+  { id: "bidnet_co_metro_water", label: "Metro Water District, CO (BidNet)", issuerType: "special_district", jurisdictionLevel: "special_district", stateCode: "CO", fipsCode: null, createdAt: NOW, updatedAt: NOW },
+  { id: "bidnet_co_fire_district", label: "Fire Protection District, CO (BidNet)", issuerType: "special_district", jurisdictionLevel: "special_district", stateCode: "CO", fipsCode: "", createdAt: NOW, updatedAt: NOW },
 ];
 
 /** The shape every county/city/township bid was stored in before the data-usability change. */
@@ -57,7 +61,7 @@ describe("legacy local issuer_type backfill on SQLite", () => {
     });
   });
 
-  it("changes nothing it cannot attribute to a registered local source, and is idempotent", () => {
+  it("re-types what it can attribute to a registered local source, changes nothing else, and is idempotent", () => {
     testDb.db.insert(bids).values([
       legacyBid("bidnet_co_boulder:open"),
       legacyBid("co_state:1", { source: "Colorado State Procurement", issuerName: "State of Colorado", jurisdictionLevel: "state", fipsCode: "08" }),
@@ -65,6 +69,29 @@ describe("legacy local issuer_type backfill on SQLite", () => {
       legacyBid("bidnet_co_boulder:conflict", { jurisdictionLevel: "city" }),
       legacyBid("bidnet_co_boulder:elsewhere", { stateCode: "WY" }),
       legacyBid("legacy-without-namespace"),
+      // The stored FIPS disagrees with the source's: re-typing would make the row core-valid, and the
+      // importer's identity check would then quarantine every corrected re-crawl. Left alone.
+      legacyBid("bidnet_co_boulder:drift", { fipsCode: "08014" }),
+      // Missing optional identity fields (the gate does not count them as a conflict) still attribute.
+      legacyBid("bidnet_co_boulder:nulllevel", { jurisdictionLevel: null }),
+      legacyBid("bidnet_co_boulder:blanklevel", { jurisdictionLevel: "" }),
+      legacyBid("bidnet_co_boulder:nullfips", { fipsCode: null }),
+      legacyBid("bidnet_co_boulder:blankfips", { fipsCode: "" }),
+      // State codes compare case-insensitively.
+      legacyBid("bidnet_co_boulder:lowercase", { stateCode: "co" }),
+      // Every local level, including sources without a usable GEOID (the bids keep theirs).
+      legacyBid("bidnet_co_city_boulder:1", {
+        source: "City of Boulder, CO (BidNet)", issuerName: "City of Boulder", jurisdictionLevel: "city", fipsCode: "0807850",
+        sourceUrl: "https://www.bidnetdirect.com/colorado/city-of-boulder/bid/1",
+      }),
+      legacyBid("bidnet_co_metro_water:1", {
+        source: "Metro Water District, CO (BidNet)", issuerName: "Metro Water District", jurisdictionLevel: "special_district",
+        sourceUrl: "https://www.bidnetdirect.com/colorado/metro-water-district/bid/1",
+      }),
+      legacyBid("bidnet_co_fire_district:1", {
+        source: "Fire Protection District, CO (BidNet)", issuerName: "Fire Protection District", jurisdictionLevel: "special_district",
+        sourceUrl: "https://www.bidnetdirect.com/colorado/fire-protection-district/bid/1",
+      }),
     ]).run();
 
     runMigrations(testDb.db);
@@ -74,6 +101,10 @@ describe("legacy local issuer_type backfill on SQLite", () => {
     expect(issuerTypes()).toEqual({
       "bidnet_co_boulder:open": "county", "co_state:1": "state", "unknown_portal:1": "state",
       "bidnet_co_boulder:conflict": "state", "bidnet_co_boulder:elsewhere": "state", "legacy-without-namespace": "state",
+      "bidnet_co_boulder:drift": "state",
+      "bidnet_co_boulder:nulllevel": "county", "bidnet_co_boulder:blanklevel": "county",
+      "bidnet_co_boulder:nullfips": "county", "bidnet_co_boulder:blankfips": "county", "bidnet_co_boulder:lowercase": "county",
+      "bidnet_co_city_boulder:1": "city", "bidnet_co_metro_water:1": "special_district", "bidnet_co_fire_district:1": "special_district",
     });
     expect(testDb.db.select().from(bids).all()).toEqual(afterFirstRun);
   });
