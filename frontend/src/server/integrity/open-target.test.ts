@@ -158,14 +158,20 @@ describe("openResolvedTarget on MySQL", () => {
 });
 
 /* A fresh process in a directory of its own: loading the app's db/client creates <cwd>/data/apsi.sqlite when
- * process.env does not select MySQL, and only a real process can show that opening a MySQL target does not load it. */
+ * process.env does not select MySQL, and only a real process can show that opening a MySQL target does not load it.
+ *
+ * The process runs a script file with a static import (scripts/fixtures/open-integrity-target.ts) through
+ * `node --import tsx`, as the integrity scripts themselves run. It must not be given code to `import()` from `-e`: on
+ * Node 20 that import of a TypeScript module has no named exports (only `default`), which Node 24 does list. */
 
 const frontendDir = fileURLToPath(new URL("../../..", import.meta.url));
 const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
+const openTargetScript = path.join(frontendDir, "scripts", "fixtures", "open-integrity-target.ts");
 
-function runModuleCode(cwd: string, code: string): Promise<{ status: number | null; stdout: string; stderr: string }> {
+/** Opens the target of `openerEnv` (the environment handed to the opener, not the process's own) in a process run from `cwd`. */
+function openTargetInProcess(cwd: string, openerEnv: NodeJS.ProcessEnv): Promise<{ status: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, ["--import", tsxLoader, "--input-type=module", "-e", code], {
+    const child = spawn(process.execPath, ["--import", tsxLoader, openTargetScript, JSON.stringify(openerEnv)], {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, NODE_ENV: "test", DATABASE_URL: "", MYSQL_DATABASE_URL: "", TSX_TSCONFIG_PATH: path.join(frontendDir, "tsconfig.json") },
@@ -198,15 +204,7 @@ describe("opening a MySQL target in a process of its own", () => {
   it("creates nothing in the working directory, even when the environment it was given is not the process environment", async () => {
     // process.env selects SQLite (no MySQL URL); the environment handed to the opener selects MySQL. Loading db/client
     // under the first would create <cwd>/data/apsi.sqlite.
-    const modulePath = pathToFileURL(path.join(frontendDir, "src", "server", "integrity", "open-target.ts")).href;
-    const code = `
-      const { openIntegrityTarget } = await import(${JSON.stringify(modulePath)});
-      const opened = await openIntegrityTarget({ NODE_ENV: "test", DATABASE_URL: "mysql://user:secret@127.0.0.1:1/none" }, { readonly: true });
-      console.log(opened.description);
-      await opened.close();
-    `;
-
-    const run = await runModuleCode(workingDirectory, code);
+    const run = await openTargetInProcess(workingDirectory, { NODE_ENV: "test", DATABASE_URL: "mysql://user:secret@127.0.0.1:1/none" });
 
     expect(run.stderr).toBe("");
     expect(run.stdout.trim()).toBe("mysql mysql://user:***@127.0.0.1:1/none");
@@ -218,14 +216,7 @@ describe("opening a MySQL target in a process of its own", () => {
     const testDb = await createTestDatabase();
     try {
       writeFileSync(path.join(workingDirectory, "decoy.sqlite"), "");
-      const modulePath = pathToFileURL(path.join(frontendDir, "src", "server", "integrity", "open-target.ts")).href;
       const relative = path.relative(frontendDir, testDb.databasePath);
-      const code = `
-        const { openIntegrityTarget } = await import(${JSON.stringify(modulePath)});
-        const opened = await openIntegrityTarget({ NODE_ENV: "test", DATABASE_PATH: ${JSON.stringify(relative)} }, { readonly: true });
-        console.log(opened.description);
-        await opened.close();
-      `;
 
       // Run from a directory deeper than the frontend directory: the ".." segments of the relative path then cannot climb
       // out of it onto the right file by luck (they stop at the root), as they could from a shallow one.
@@ -234,7 +225,7 @@ describe("opening a MySQL target in a process of its own", () => {
       mkdirSync(deep, { recursive: true });
       expect(path.resolve(deep, relative)).not.toBe(testDb.databasePath);
 
-      const run = await runModuleCode(deep, code);
+      const run = await openTargetInProcess(deep, { NODE_ENV: "test", DATABASE_PATH: relative });
 
       expect(run.stderr).toBe("");
       expect(run.stdout.trim()).toBe(`sqlite ${testDb.databasePath}`);
