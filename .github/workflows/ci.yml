@@ -175,11 +175,15 @@ jobs:
       # RISK_CHECK_SEED_DATA is set on this step and on no other. The throwaway database holds the demo bids: a state bid
       # in each of CA, FL, IL, NY and TX and none in the other 45 states. Whether all 50 states have an active bid is a
       # property of the business database, which CI never reads, and no record may be invented to satisfy it. So the
-      # checklist cannot pass 50-state coverage here, and with this variable it does not claim to: state coverage, and
-      # the missing-bid reason of the 50-state data quality gate, are reported NOT RUN (never PASS, with the real counts),
-      # the report reads INCOMPLETE rather than PASS, and every other check still has to pass for the step to exit 0.
-      # NODE_ENV=production ignores the variable and requires all 50 states, so the release checklist keeps verifying them
-      # against the real database (docs/operations/aws-deployment-runbook.md). Do not copy this variable anywhere else.
+      # checklist cannot pass 50-state coverage here, and with this variable it does not claim to: for a state the
+      # database holds no bid row of any kind for, state coverage and the missing-bid reason of the 50-state data quality
+      # gate are reported NOT RUN (never PASS, with the real counts). A state that has rows but no active state-level bid,
+      # or a database in which no required state has one, still fails. The report reads INCOMPLETE rather than PASS, the
+      # step exits 0 only if nothing failed, and the NOT RUN checks also show as a warning annotation in the check summary.
+      # What keeps a release off this opt-out is not this file: the runbook's release invocations unset the variable
+      # (env -u RISK_CHECK_SEED_DATA) and accept only a report headed "Risk checklist PASS", since INCOMPLETE exits 0
+      # (docs/operations/aws-deployment-runbook.md); and a process whose NODE_ENV, APP_ENV, DEPLOY_ENV, VERCEL_ENV or
+      # RUNTIME_ENV names production or staging ignores the variable. Do not copy this variable anywhere else.
       - name: Risk check
         run: npm run risk:check
         env:

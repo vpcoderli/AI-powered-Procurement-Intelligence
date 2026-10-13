@@ -96,7 +96,7 @@ Recommended evidence ledger:
 | RDS/MySQL migration | `03-mysql-migrate.log`, `04-mysql-smoke.log` | Data owner | Migration and smoke exit 0 against staging MySQL. | SQLite target, migration error, failed smoke domain. |
 | Workers check | `05-workers-check.log` | Operations owner | `workers:check` exits 0 in production-like worker env. | SQLite runtime or local notification provider in staging/production mode. |
 | Source health report-only | `06-source-health-report-only.log` | Source owner | Report is generated and access failures are classified. | Command crash, missing report, unclassified source failures. |
-| Demo/risk smoke | `07-demo-check.log`, `08-risk-check.log` | QA/release owner | Demo readiness and risk gate exit 0. | Missing demo data, unsafe attachment, risk/audit blocker. |
+| Demo/risk smoke | `07-demo-check.log`, `08-risk-check.log` | QA/release owner | Demo readiness exits 0. The risk gate exits 0 AND its report in `08-risk-check.log` is headed `Risk checklist PASS` (a report headed `Risk checklist INCOMPLETE` exits 0 too). | Missing demo data, unsafe attachment, risk/audit blocker, a risk report that is not headed `Risk checklist PASS`. |
 | Backup snapshot | `09-backup-snapshot.log`, `10-logical-dump.log` | Backup owner | Snapshot id and logical dump checksum recorded. | No snapshot id, dump failed, checksum missing. |
 | Restore rehearsal | `11-restore-rehearsal.log`, `12-restored-db-smoke.log` | Backup/data owner | Restored staging DB migrates/smokes cleanly. | Restore target unavailable or restored DB fails smoke. |
 | Rollback decision | `13-rollback-decision.txt` | Deploy owner | Proceed/rollback decision and owner recorded. | No named decision owner or no previous revision/restore target. |
@@ -193,10 +193,12 @@ Pass if the report is produced and every 403, CAPTCHA/login, timeout, 404/410, T
 
 ```bash
 npm run demo:check 2>&1 | tee "$EVIDENCE_DIR/07-demo-check.log"
-npm run risk:check 2>&1 | tee "$EVIDENCE_DIR/08-risk-check.log"
+env -u RISK_CHECK_SEED_DATA npm run risk:check 2>&1 | tee "$EVIDENCE_DIR/08-risk-check.log"
+# A report headed INCOMPLETE exits 0 as well, so the exit status alone cannot tell it from a PASS: the headline does.
+grep -q '^Risk checklist PASS' "$EVIDENCE_DIR/08-risk-check.log"
 ```
 
-Pass if both exit 0 and the report in `08-risk-check.log` is headed `Risk checklist PASS`. A report headed `Risk checklist INCOMPLETE`, or with a `NOT RUN` line, set a check aside (`RISK_CHECK_SEED_DATA`, which CI sets on seed data and `NODE_ENV=production` ignores): it is not release evidence. Fail if demo data is incomplete, source placeholders appear, attachment checks fail, or risk/audit gates block the release.
+Pass if both commands exit 0 and the `grep` exits 0, that is, the report in `08-risk-check.log` is headed `Risk checklist PASS`. A report headed `Risk checklist INCOMPLETE`, or with a `NOT RUN` line, set a check aside: it is not release evidence, whatever the exit status. What sets a check aside is `RISK_CHECK_SEED_DATA`, which CI sets on seed data; `env -u` makes sure it is not set for this run, and a process whose `NODE_ENV`, `APP_ENV`, `DEPLOY_ENV`, `VERCEL_ENV` or `RUNTIME_ENV` names production or staging ignores it as well. Do not run this with `NODE_ENV=production` instead of unsetting the variable: that also turns on the source-approval requirement of the checklist, which is the source owner's decision. Fail if demo data is incomplete, source placeholders appear, attachment checks fail, or risk/audit gates block the release.
 
 ### 7. Backup Snapshot
 
@@ -264,7 +266,7 @@ npm test
 npm run lint
 npm run build
 npm run db:migrate
-npm run risk:check
+env -u RISK_CHECK_SEED_DATA npm run risk:check   # the report must be headed "Risk checklist PASS"
 npm audit --omit=dev --audit-level=high
 git diff --check
 ```
@@ -310,7 +312,7 @@ The report covers six launch tracks:
 | AWS staging dry run | `AWS_STAGING_OWNER`, `AWS_STAGING_DRY_RUN_EVIDENCE_URL`, `AWS_STAGING_DEPLOYMENT_URL`, `AWS_STAGING_RELEASE_SHA` |
 | Live source health operations | `SOURCE_HEALTH_OWNER`, `SOURCE_HEALTH_OPS_EVIDENCE_URL` or `SOURCE_HEALTH_OPS_EVIDENCE_FILE`, plus `SOURCE_HEALTH_ACCESS_REVIEW_URL` or `SOURCE_HEALTH_ACCESS_REVIEW_FILE` |
 | Browser demo evidence | `DEMO_BROWSER_EVIDENCE_URL` or `DEMO_BROWSER_EVIDENCE_FILE` |
-| Risk gate | `RISK_CHECK_EVIDENCE_URL` or `RISK_CHECK_EVIDENCE_FILE` |
+| Risk gate | `RISK_CHECK_EVIDENCE_URL` or `RISK_CHECK_EVIDENCE_FILE`: a report headed `Risk checklist PASS`, not just a run that exited 0 |
 
 Do not put raw secret values into these evidence variables. Use internal evidence URLs, sanitized log paths, or artifact references. For source-health handoff, generate the local evidence bundle with `npm run source:health:evidence -- --format=json --output=../ops-evidence/source-health/source-health-evidence.json` after running `npm run source:health:ops`, then generate the access-review packet with `npm run source:health:access-review -- --format=json --output=../ops-evidence/source-health/source-health-access-review.json`. When `SOURCE_HEALTH_OPS_EVIDENCE_FILE` is set, `ops:launch-handoff` reads the JSON file and requires `ok=true`, full expected state coverage, a non-stale snapshot, zero critical unhealthy sources, and no missing owner/disposition/next-review blockers. Set `SOURCE_HEALTH_ACCESS_REVIEW_URL` or `SOURCE_HEALTH_ACCESS_REVIEW_FILE` as well; local access-review JSON is validated for review coverage, `reviewMode`, and `requiredEvidence`.
 The handoff report prints configured markers and blocker names only; it must not be used as a secret inventory.
@@ -590,11 +592,11 @@ Classify results:
 | `403`, login, CAPTCHA, bot-check | Access review required; do not bypass restrictions. |
 | Timeout / DNS / TLS / fetch failed | Network retry or AWS egress review. |
 
-Then run:
+Then run (the report must be headed `Risk checklist PASS`; an INCOMPLETE report exits 0 and does not count):
 
 ```bash
 cd frontend
-npm run risk:check
+env -u RISK_CHECK_SEED_DATA npm run risk:check
 ```
 
 ## Smoke Test After AWS Deploy
@@ -623,7 +625,7 @@ API/ops checks:
 cd frontend
 NODE_ENV=production npm run ops:production:check
 NODE_ENV=production npm run workers:check
-npm run risk:check
+env -u RISK_CHECK_SEED_DATA npm run risk:check   # not under NODE_ENV=production: that also requires source approval. The report must be headed "Risk checklist PASS"
 ```
 
 ## Backup And Restore
@@ -663,7 +665,7 @@ Restore drill:
 cd frontend
 npm run db:mysql:migrate
 npm run db:mysql:smoke
-npm run risk:check
+env -u RISK_CHECK_SEED_DATA npm run risk:check   # the report must be headed "Risk checklist PASS"
 ```
 
 4. Record drill result, owner, timestamp, restored endpoint, and evidence URL.
@@ -714,7 +716,7 @@ Use this table before switching real users to the AWS environment.
 | Billing | Stripe live endpoint configured and preflight passed. | Billing owner |
 | Workers | Worker preflight passed; schedules are documented. | Operations owner |
 | Source health | Live source health report reviewed. | Source owner |
-| Risk | `npm run risk:check` passed. | Release owner |
+| Risk | `env -u RISK_CHECK_SEED_DATA npm run risk:check` passed and its report is headed `Risk checklist PASS`. | Release owner |
 | Rollback | Previous revision and restore target are known. | Deploy owner |
 
 ## Open Production Gaps
