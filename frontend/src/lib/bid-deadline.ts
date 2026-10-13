@@ -5,21 +5,25 @@
  * abbreviation they append cannot be trusted. Everything without an explicit offset is therefore read
  * on one clock, UTC-10 (Hawaii, the last end of day among the US states): a bid is never closed before
  * its own deadline in any US zone, and a date-only deadline is good through the end of that day.
- * A deadline with an explicit `Z` or offset is exact. Text that is not a plausible date reads as
- * `null`, and a deadline we cannot read never expires a bid. That includes every instant outside the
- * years 2000 to 2100: the dates portals print for "no date" (0001-01-01, 1970-01-01, .NET's
- * /Date(-62135596800000)/) are placeholders, and closing a bid on one would hide a bid that may be open.
+ * An epoch number, or a time with an explicit `Z` or offset, names an exact instant. Text that is not a
+ * plausible date reads as `null`, and a deadline we cannot read never expires a bid. That includes every
+ * instant outside the years 2000 to 2100: the dates portals print for "no date" (0001-01-01, 1970-01-01,
+ * .NET's /Date(-62135596800000)/) are placeholders, and closing a bid on one would hide a bid that may be open.
  *
  * Where the text can be read more than one way, the bid stays open until the latest reading: closing a bid
  * late is acceptable, closing it early is not. `parseBidDeadline` gives the literal reading;
- * `bidDeadlineExpiresAtMs` and `bidDeadlinePassed` give the latest one:
+ * `bidDeadlineExpiresAtMs` and `bidDeadlinePassed` give the latest one, which is never earlier than the literal:
  *
  * - A date-only deadline is good through the end of its day, the next midnight in UTC-10.
- * - A time of exactly midnight (00:00 with seconds 0, written 0:00, 00:00, 00:00:00, 12:00 AM or 12:00:00 AM)
- *   is how many portals write a date-only deadline, so it expires like one, at the end of its stated day, in
- *   every form but the epoch ones. For an ISO time with a `Z` or an offset the stated day is the date as
- *   written, not the date in UTC. Read as the start of that day, the bid would close up to a day early
- *   (34 hours early for `2026-10-13T00:00:00Z`).
+ * - A clock that stands for a whole day is good through the end of its stated day the same way: exactly midnight
+ *   (00:00:00, written 0:00, 00:00, 12:00 AM or 12:00:00 AM; many portals write a date-only deadline so),
+ *   24:00 (the end of the day, read literally as 00:00 of the next one), and, with a `Z` or an offset, 23:59:59.
+ *   For an ISO time with a `Z` or an offset the stated day is the date as written, not the date in UTC. Read as
+ *   the start of that day, a midnight would close up to a day early (34 hours early for `2026-10-13T00:00:00Z`).
+ * - An exact instant (an epoch number, `/Date(ms)/` with or without an offset after the milliseconds, an ISO
+ *   time with a `Z` or an offset) may be a US date converted to an instant. Wherever its wall clock in a US
+ *   offset, UTC-4 to UTC-10, or in the offset a .NET date states, reads 00:00:00 or 23:59:59 to the second, it
+ *   is good through that local day; when more than one day qualifies, through the latest.
  * - In the US numeric and month-name forms a time with no AM/PM ("10/13/2026 2:00", "Oct 13, 2026 at 12:00")
  *   may come from a 12-hour portal that dropped it. An hour from 1 to 11 is held open to its PM reading,
  *   twelve hours later. A bare 12:00 (seconds 0) may be 12:00 AM, a midnight, so it is good through its stated
@@ -27,7 +31,8 @@
  *   it would be twelve hours earlier), and hour 0 and hours 13 to 23 are not hours of a 12-hour clock. A lone
  *   "A" or "P" after the time is read as a zone word and ignored, which covers it: every reading of it as an
  *   AM or PM is one of those already allowed for.
- * - A time with an AM/PM is taken as it says (12:00 PM is noon); ISO times are 24-hour, and epoch numbers exact.
+ * - ISO times are 24-hour, except that a one-digit hour from 1 to 9 ("2026-10-13 2:00") is hand-formatted and
+ *   is held open to its PM reading too. A time with an AM/PM is taken as it says (12:00 PM is noon).
  * - The literal reading of an ISO time leaves out a fraction of a second; the expiry keeps it, rounded up to the
  *   millisecond, so the bid is never closed before the instant the text states.
  *
@@ -38,34 +43,40 @@
 export const DEADLINE_ZONE_OFFSET_MINUTES = -600;
 
 export interface ParsedBidDeadline {
-  /** The deadline instant as the text reads literally; for a date-only deadline, the start of that day in the deadline zone. */
+  /**
+   * The deadline instant as the text reads literally; for a date-only deadline, the start of that day in the deadline zone;
+   * for 24:00, 00:00 of the next day.
+   */
   instantMs: number;
   dateOnly: boolean;
 }
 
-/** A deadline as read from its text, with how long past its instant the bid stays open. Not exported: callers see `ParsedBidDeadline`. */
+/** A deadline as read from its text, with the instant from which the bid counts as expired. Not exported: callers see `ParsedBidDeadline`. */
 interface BidDeadlineReading extends ParsedBidDeadline {
-  /**
-   * Milliseconds after `instantMs` before the bid counts as expired, so that the expiry is the latest reading of the text:
-   * up to the end of the stated day for a date-only deadline, a time of exactly midnight, or a bare 12:00 written without
-   * an AM/PM (it may be 12:00 AM); twelve hours for an hour from 1 to 11 written without an AM/PM (it may be a PM hour);
-   * the fraction of a second the literal reading of an ISO time leaves out; none otherwise.
-   */
-  graceMs: number;
+  /** The latest reading of the text: never before `instantMs`, nor before a fraction of a second the literal reading leaves out. */
+  expiresAtMs: number;
 }
 
 /** What a written time may mean besides its literal reading, as far as it moves the expiry later. */
 interface Leeway {
-  /** A bare 12:00 with no AM/PM, which may be 12:00 AM: a midnight, good through the stated day. */
-  mayBeMidnight?: boolean;
-  /** An hour from 1 to 11 with no AM/PM, which may be a PM hour, twelve hours later. */
+  /** The clock stands for the whole stated day: a bare 12:00 with no AM/PM (it may be 12:00 AM), or 23:59:59 in an explicit zone. */
+  wholeDay?: boolean;
+  /** The hour may be a PM hour, twelve hours later: 1 to 11 with no AM/PM, or a one-digit ISO hour from 1 to 9. */
   mayBePm?: boolean;
   /** Milliseconds of the stated instant that the literal reading leaves out (an ISO fraction of a second, rounded up). */
   droppedMs?: number;
+  /** The text is an exact instant (an ISO time with a `Z` or an offset), which may be a US date converted to an instant. */
+  exactInstant?: boolean;
 }
 
+const SECOND_MS = 1_000;
 const MINUTE_MS = 60_000;
 const HALF_DAY_MS = 43_200_000;
+const DAY_MS = 86_400_000;
+/** The US offsets, UTC-4 (EDT) to UTC-10 (HST), in minutes ahead of UTC: the zones in which a US date may have become an instant. */
+const US_OFFSETS_MINUTES: readonly number[] = [-240, -300, -360, -420, -480, -540, -600];
+/** 23:59:59, the last second of a day, counted in seconds from its start. */
+const LAST_SECOND_OF_DAY = 86_399;
 /** Longest text a deadline can be; it bounds the work the patterns below can be made to do. */
 const MAX_DEADLINE_TEXT_LENGTH = 64;
 /** A deadline lies in these years (the UTC year of its instant, inclusive); a date outside them is a placeholder or a typo. */
@@ -73,7 +84,8 @@ const MIN_DEADLINE_YEAR = 2000;
 const MAX_DEADLINE_YEAR = 2100;
 const MONTH_PREFIXES = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
-const DOT_NET_DATE = /^\/Date\((-?\d+)\)\/$/;
+// .NET may write the offset of the zone it was in after the milliseconds ("/Date(1791892800000-0500)/").
+const DOT_NET_DATE = /^\/Date\((-?\d+)([+-]\d{4})?\)\/$/;
 const EPOCH_MILLISECONDS = /^\d{13}$/;
 const EPOCH_SECONDS = /^\d{10}$/;
 const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -104,15 +116,23 @@ function utcMs(year: number, month: number, day: number, clock: Clock | null): n
   return date.getTime();
 }
 
-/** A valid time of day, or null. With a meridiem the hour is 1-12 (12 AM is hour 0, 12 PM hour 12), else 0-23. */
+/**
+ * A valid time of day, or null. With a meridiem the hour is 1-12 (12 AM is hour 0, 12 PM hour 12). Without one it is 0-23,
+ * or exactly 24:00:00, the end of the day, which reads as 00:00 of the next one.
+ */
 function readClock(hourText: string, minuteText: string, secondText: string | undefined, meridiem: string | undefined): Clock | null {
   const hour = Number(hourText);
   const minute = Number(minuteText);
   const second = secondText === undefined ? 0 : Number(secondText);
   if (minute > 59 || second > 59) return null;
-  if (meridiem === undefined) return hour <= 23 ? { hour, minute, second } : null;
+  if (meridiem === undefined) return hour <= 23 || (hour === 24 && minute === 0 && second === 0) ? { hour, minute, second } : null;
   if (hour < 1 || hour > 12) return null;
   return { hour: (hour % 12) + (meridiem.toLowerCase() === "pm" ? 12 : 0), minute, second };
+}
+
+/** 00:00:00 or 24:00:00 as written: the start or the end of the stated day, either of which stands for the whole day. */
+function isDayBoundary(clock: Clock): boolean {
+  return (clock.hour === 0 || clock.hour === 24) && clock.minute === 0 && clock.second === 0;
 }
 
 /**
@@ -125,7 +145,7 @@ function readClock(hourText: string, minuteText: string, secondText: string | un
 function missingMeridiemLeeway(clock: Clock | null, meridiem: string | undefined): Leeway {
   if (clock === null || meridiem !== undefined) return {};
   if (clock.hour >= 1 && clock.hour <= 11) return { mayBePm: true };
-  return { mayBeMidnight: clock.hour === 12 && clock.minute === 0 && clock.second === 0 };
+  return { wholeDay: clock.hour === 12 && clock.minute === 0 && clock.second === 0 };
 }
 
 /** A fraction of a second, as its digits ("5", "250", "9999999"), in milliseconds rounded up: the first whole millisecond at or after it. */
@@ -141,28 +161,60 @@ function endOfDayMs(year: number, month: number, day: number): number {
 }
 
 /**
- * The deadline for a calendar day (and time of day, when there is one) read on a clock `zoneOffsetMinutes` ahead of UTC.
- * A date-only deadline, a time of exactly 00:00 and a time that may be 12:00 AM are good through their stated day (for a
- * zoned ISO time, the day as written); a time that may be a PM hour, for twelve hours past the literal reading; and an ISO
- * time keeps the fraction of a second its literal reading leaves out.
+ * For an exact instant, the end (in the deadline zone) of the latest day it may stand for, or null. A date that became an
+ * instant lands on 00:00:00 (the start of the day) or 23:59:59 (its end) in the zone it was converted in, so in each of
+ * `offsetsMinutes` where the instant's wall clock reads one of those, to the second, the bid is good through that local day.
+ */
+function convertedDayEndMs(instantMs: number, offsetsMinutes: readonly number[]): number | null {
+  let latest: number | null = null;
+  for (const offsetMinutes of offsetsMinutes) {
+    const localMs = instantMs + offsetMinutes * MINUTE_MS;
+    const localDay = Math.floor(localMs / DAY_MS);
+    const secondOfDay = Math.floor((localMs - localDay * DAY_MS) / SECOND_MS);
+    if (secondOfDay !== 0 && secondOfDay !== LAST_SECOND_OF_DAY) continue;
+    const endMs = (localDay + 1) * DAY_MS - DEADLINE_ZONE_OFFSET_MINUTES * MINUTE_MS;
+    if (latest === null || endMs > latest) latest = endMs;
+  }
+  return latest;
+}
+
+/**
+ * The deadline for a calendar day (and time of day, when there is one) read on a clock `zoneOffsetMinutes` ahead of UTC,
+ * expiring at the latest of its readings: the instant it states (an ISO fraction of a second included); the end of the
+ * stated day for a date-only deadline, a clock of 00:00:00 or 24:00:00, or a `leeway.wholeDay` one (for a zoned ISO time,
+ * the day as written); twelve hours later for a time that may be a PM hour; and, for an exact instant, the latest US day
+ * it may have been converted from.
  */
 function fromCalendar(year: number, month: number, day: number, clock: Clock | null, zoneOffsetMinutes: number, leeway: Leeway = {}): BidDeadlineReading | null {
   if (month < 1 || month > 12 || day < 1 || day > daysInMonth(year, month)) return null;
   const instantMs = utcMs(year, month, day, clock) - zoneOffsetMinutes * MINUTE_MS;
-  const midnight = clock !== null && clock.hour === 0 && clock.minute === 0 && clock.second === 0;
-  const wholeDay = clock === null || midnight || leeway.mayBeMidnight === true;
-  return {
-    instantMs,
-    dateOnly: clock === null,
-    graceMs: wholeDay ? endOfDayMs(year, month, day) - instantMs : leeway.mayBePm === true ? HALF_DAY_MS : leeway.droppedMs ?? 0,
-  };
+  const statedMs = instantMs + (leeway.droppedMs ?? 0);
+  let expiresAtMs = statedMs;
+  if (clock === null || isDayBoundary(clock) || leeway.wholeDay === true) expiresAtMs = Math.max(expiresAtMs, endOfDayMs(year, month, day));
+  if (leeway.mayBePm === true) expiresAtMs = Math.max(expiresAtMs, statedMs + HALF_DAY_MS);
+  if (leeway.exactInstant === true) expiresAtMs = Math.max(expiresAtMs, convertedDayEndMs(instantMs, US_OFFSETS_MINUTES) ?? expiresAtMs);
+  return { instantMs, dateOnly: clock === null, expiresAtMs };
+}
+
+/**
+ * An exact instant written as an epoch number. It may be a US date converted to an instant, in a US offset or in the offset
+ * a .NET date states after its milliseconds (`writtenOffsetMinutes`), which is the zone it was written in.
+ */
+function fromInstant(instantMs: number, writtenOffsetMinutes: number | null): BidDeadlineReading {
+  const offsets = writtenOffsetMinutes === null ? US_OFFSETS_MINUTES : [...US_OFFSETS_MINUTES, writtenOffsetMinutes];
+  return { instantMs, dateOnly: false, expiresAtMs: Math.max(instantMs, convertedDayEndMs(instantMs, offsets) ?? instantMs) };
 }
 
 function parseEpoch(value: string): BidDeadlineReading | null {
   const dotNet = DOT_NET_DATE.exec(value);
-  if (dotNet) return { instantMs: Number(dotNet[1]), dateOnly: false, graceMs: 0 };
-  if (EPOCH_MILLISECONDS.test(value)) return { instantMs: Number(value), dateOnly: false, graceMs: 0 };
-  if (EPOCH_SECONDS.test(value)) return { instantMs: Number(value) * 1000, dateOnly: false, graceMs: 0 };
+  if (dotNet) {
+    // The milliseconds are the instant whatever offset follows them; an offset no clock has makes the text unreadable.
+    const writtenOffsetMinutes = dotNet[2] === undefined ? null : zoneOffsetMinutes(dotNet[2]);
+    if (dotNet[2] !== undefined && writtenOffsetMinutes === null) return null;
+    return fromInstant(Number(dotNet[1]), writtenOffsetMinutes);
+  }
+  if (EPOCH_MILLISECONDS.test(value)) return fromInstant(Number(value), null);
+  if (EPOCH_SECONDS.test(value)) return fromInstant(Number(value) * 1000, null);
   return null;
 }
 
@@ -181,10 +233,20 @@ function parseIso(value: string): BidDeadlineReading | null {
   const dateTime = ISO_DATE_TIME.exec(value);
   if (!dateTime) return null;
   const clock = readClock(dateTime[4], dateTime[5], dateTime[6], undefined);
-  const offset = dateTime[8] === undefined ? DEADLINE_ZONE_OFFSET_MINUTES : zoneOffsetMinutes(dateTime[8]);
+  const zoned = dateTime[8] !== undefined;
+  const offset = zoned ? zoneOffsetMinutes(dateTime[8]) : DEADLINE_ZONE_OFFSET_MINUTES;
   if (!clock || offset === null) return null;
-  // ISO is a 24-hour clock, so its hours have no AM/PM leeway; the literal reading leaves out the fraction of a second.
-  return fromCalendar(Number(dateTime[1]), Number(dateTime[2]), Number(dateTime[3]), clock, offset, { droppedMs: fractionCeilMs(dateTime[7]) });
+  // 24:00 is the end of the day only exactly: 24:00:00.5 is no time of day.
+  if (clock.hour === 24 && /[1-9]/.test(dateTime[7] ?? "")) return null;
+  return fromCalendar(Number(dateTime[1]), Number(dateTime[2]), Number(dateTime[3]), clock, offset, {
+    // The literal reading leaves out the fraction of a second.
+    droppedMs: fractionCeilMs(dateTime[7]),
+    // ISO is a 24-hour clock, but a one-digit hour ("2026-10-13 2:00") is hand-formatted and may be a PM hour.
+    mayBePm: dateTime[4].length === 1 && clock.hour >= 1 && clock.hour <= 9,
+    // With a Z or an offset, 23:59:59 as written is the end of the stated day, and the instant may be a US date converted to it.
+    wholeDay: zoned && clock.hour === 23 && clock.minute === 59 && clock.second === 59,
+    exactInstant: zoned,
+  });
 }
 
 function parseUsNumeric(value: string): BidDeadlineReading | null {
@@ -212,21 +274,21 @@ function inDeadlineYears(instantMs: number): boolean {
   return year >= MIN_DEADLINE_YEAR && year <= MAX_DEADLINE_YEAR;
 }
 
-/** The deadline a text names, with its grace; null when it is blank, not a date this module can read, or outside the years 2000 to 2100. */
+/** The deadline a text names, with its expiry; null when it is blank, not a date this module can read, or outside the years 2000 to 2100. */
 function readBidDeadline(text: string | null | undefined): BidDeadlineReading | null {
   if (typeof text !== "string") return null;
   const value = text.trim();
   if (!value || value.length > MAX_DEADLINE_TEXT_LENGTH) return null;
   const reading = parseEpoch(value) ?? parseIso(value) ?? parseUsNumeric(value) ?? parseMonthName(value);
-  // The window is judged on the literal instant, whatever grace the text gets.
+  // The window is judged on the literal instant, however late the text expires.
   return reading !== null && inDeadlineYears(reading.instantMs) ? reading : null;
 }
 
 /**
  * The instant a deadline text names, read literally (an hour with no AM/PM is taken as written, a fraction of a second is
- * left out), or null when it is blank, not a date this module can read, or a date outside the years 2000 to 2100
- * (whatever form it is written in). To ask when a bid expires, use `bidDeadlineExpiresAtMs` or `bidDeadlinePassed`,
- * which take the latest reading of the text.
+ * left out, 24:00 is 00:00 of the next day, an offset after a .NET date's milliseconds changes nothing), or null when it
+ * is blank, not a date this module can read, or a date outside the years 2000 to 2100 (whatever form it is written in).
+ * To ask when a bid expires, use `bidDeadlineExpiresAtMs` or `bidDeadlinePassed`, which take the latest reading of the text.
  */
 export function parseBidDeadline(text: string | null | undefined): ParsedBidDeadline | null {
   const reading = readBidDeadline(text);
@@ -235,13 +297,14 @@ export function parseBidDeadline(text: string | null | undefined): ParsedBidDead
 
 /**
  * Instant (ms) from which the bid counts as expired, the latest reading of the text; null when unparseable. A date-only
- * deadline, a time of exactly midnight and a bare 12:00 with no AM/PM are good through their whole stated day; an hour
- * from 1 to 11 with no AM/PM is good until its PM reading, twelve hours after the literal one; an ISO time is good until
- * the instant it states, fraction of a second included.
+ * deadline, and a clock that stands for a whole day (midnight, 24:00, a bare 12:00 with no AM/PM, 23:59:59 in an explicit
+ * zone), are good through their whole stated day; an exact instant that reads 00:00:00 or 23:59:59 in a US offset is good
+ * through that local day; an hour that may be a PM hour is good until its PM reading, twelve hours after the literal one;
+ * an ISO time is good until the instant it states, fraction of a second included.
  */
 export function bidDeadlineExpiresAtMs(text: string | null | undefined): number | null {
   const reading = readBidDeadline(text);
-  return reading === null ? null : reading.instantMs + reading.graceMs;
+  return reading === null ? null : reading.expiresAtMs;
 }
 
 /** True once `nowMs` has reached the deadline's expiry; a deadline that cannot be read has not passed. */

@@ -151,10 +151,10 @@ describe("parseBidDeadline", () => {
 
     it("rejects an impossible time, offset or calendar day", () => {
       for (const text of [
-        "2026-10-13T24:00:00", "2026-10-13T12:60", "2026-10-13T12:00:60", "2026-13-01", "2026-00-10", "2026-04-31",
+        "2026-10-13T12:60", "2026-10-13T12:00:60", "2026-13-01", "2026-00-10", "2026-04-31",
         "2026-10-13T12:00:00+25:00", "2026-10-13T12:00:00+05:61", "2026-10-13T", "2026-10-13T12", "26-10-13",
-        // 24:00, ISO's end of the day, is not read: unreadable never expires, which is later than any reading of it.
-        "2026-10-13T24:00:00Z", "2026-10-13T24:00:00.000Z", "2026-10-13 24:00", "2026-10-13T24:00:00-05:00",
+        // 24:00 is read only as exactly 24:00:00 (the end of the day); anything past it is no time of day.
+        "2026-10-13T24:30", "2026-10-13T24:00:01Z", "2026-10-13T24:00:00.5Z", "2026-10-13T25:00:00",
       ]) expect(parseBidDeadline(text)).toBeNull();
     });
   });
@@ -195,9 +195,9 @@ describe("parseBidDeadline", () => {
     it("rejects an impossible calendar day or clock", () => {
       for (const text of [
         "02/30/2026", "13/01/2026", "00/10/2026", "10/00/2026", "04/31/2026", "02/29/2026", "02/29/2100", "10/32/2026",
-        "10/12/2026 25:00", "10/12/2026 24:00", "10/12/2026 13:00 PM", "10/12/2026 0:30 AM", "10/12/2026 12:60 PM",
+        "10/12/2026 25:00", "10/12/2026 13:00 PM", "10/12/2026 0:30 AM", "10/12/2026 12:60 PM",
         "10/12/2026 12:00:60", "10/12/202", "10/12/20266", "10/12", "10-12-2026",
-        "10/12/2026 24:00:00", "10/12/2026 at 24:00", "10/12/2026 24:00 CST", "10/12/26 24:00",
+        "10/12/2026 24:30", "10/12/2026 24:00:01", "10/12/2026 24:00 PM", "10/12/2026 24:00 AM", "02/30/2026 24:00",
       ]) expect(parseBidDeadline(text)).toBeNull();
     });
 
@@ -239,7 +239,7 @@ describe("parseBidDeadline", () => {
     it("rejects an impossible day or clock and an unknown month", () => {
       for (const text of [
         "Feb 30, 2026", "Feb 29, 2026", "Apr 31, 2026", "Oct 0, 2026", "Oct 32, 2026", "Aug 21, 2026 13:00 PM", "Aug 21, 2026 25:00",
-        "Aug 21, 2026 24:00", "Aug 21, 2026 at 24:00:00", "Aug 21, 2026 @ 24:00",
+        "Aug 21, 2026 24:01", "Aug 21, 2026 at 24:00 PM", "Aug 21, 2026 @ 24:00:30",
         "Octember 5, 2026", "Oct 5", "5 Oct 2026", "Tuesday, October 13, 2026",
       ]) expect(parseBidDeadline(text)).toBeNull();
     });
@@ -337,11 +337,12 @@ describe("a time with no AM/PM", () => {
     }
   });
 
-  it("does not touch ISO times or epoch numbers, which are 24-hour by construction", () => {
+  it("does not touch two-digit ISO hours or epoch numbers, which are 24-hour by construction", () => {
     expect(bidDeadlineExpiresAtMs("2026-10-13 02:00")).toBe(Date.UTC(2026, 9, 13, 12));
     expect(bidDeadlineExpiresAtMs("2026-10-13T02:00:00")).toBe(Date.UTC(2026, 9, 13, 12));
     expect(bidDeadlineExpiresAtMs("2026-10-13T02:00:00Z")).toBe(Date.UTC(2026, 9, 13, 2));
-    expect(bidDeadlineExpiresAtMs("2026-10-13T02:00:00-05:00")).toBe(Date.UTC(2026, 9, 13, 7));
+    // (02:00 at -05:00 would be 07:00Z, a midnight in UTC-7, which the converted-date rule holds through that day.)
+    expect(bidDeadlineExpiresAtMs("2026-10-13T02:00:00-01:00")).toBe(Date.UTC(2026, 9, 13, 3));
     expect(bidDeadlineExpiresAtMs("1761757200000")).toBe(1_761_757_200_000);
     expect(bidDeadlineExpiresAtMs("/Date(1893456000000)/")).toBe(1_893_456_000_000);
   });
@@ -438,11 +439,12 @@ describe("a time of exactly midnight", () => {
     expect(bidDeadlineExpiresAtMs("2026-10-13T00:00:01Z")).toBe(Date.UTC(2026, 9, 13, 0, 0, 1));
     expect(bidDeadlineExpiresAtMs("2026-10-13T00:01:00Z")).toBe(Date.UTC(2026, 9, 13, 0, 1));
     expect(bidDeadlineExpiresAtMs("2026-10-13T12:00:00Z")).toBe(Date.UTC(2026, 9, 13, 12));
-    expect(bidDeadlineExpiresAtMs("2026-10-13T23:59:59-05:00")).toBe(Date.UTC(2026, 9, 14, 4, 59, 59));
+    // (23:59:59 with an offset is the end of its stated day: see the converted-date tests.)
+    expect(bidDeadlineExpiresAtMs("2026-10-13T23:59:58-05:00")).toBe(Date.UTC(2026, 9, 14, 4, 59, 58));
     expect(bidDeadlineExpiresAtMs("2026-10-13T01:00:00Z")).toBe(Date.UTC(2026, 9, 13, 1));
   });
 
-  it("does not touch the epoch forms, even at a UTC midnight", () => {
+  it("does not touch the epoch forms at a UTC midnight, which is no US local midnight", () => {
     const midnight = Date.UTC(2026, 9, 13);
     for (const text of [String(midnight), String(midnight / 1000), `/Date(${midnight})/`]) {
       expect(bidDeadlineExpiresAtMs(text), text).toBe(midnight);
@@ -579,6 +581,180 @@ describe("a fraction of a second in an ISO time", () => {
       expect(bidDeadlinePassed(text, expiresAt), text).toBe(true);
     }
     expect(bidDeadlinePassed("2026-10-13T12:00:00.0001Z", NOW)).toBe(false);
+  });
+});
+
+describe("an exact instant that may be a US date converted to an instant", () => {
+  /** The end of 13 October in UTC-10. */
+  const END_OF_THE_13TH = Date.UTC(2026, 9, 14, 10);
+  /** The end of 12 October in UTC-10. */
+  const END_OF_THE_12TH = Date.UTC(2026, 9, 13, 10);
+  /** The epoch spellings of an instant: milliseconds, .NET, and seconds when it is a whole second. */
+  const epochForms = (ms: number) => [String(ms), `/Date(${ms})/`, ...(ms % 1000 === 0 ? [String(ms / 1000)] : [])];
+
+  it("keeps an epoch that reads 00:00:00 in a US offset (UTC-4 to UTC-10) open through that local day, and no other", () => {
+    // 04:00Z is midnight in UTC-4 (EDT), 05:00Z in UTC-5, ..., 10:00Z in UTC-10 (HST): each starts 13 October there.
+    for (let hour = 4; hour <= 10; hour += 1) {
+      for (const text of epochForms(Date.UTC(2026, 9, 13, hour))) {
+        expect(bidDeadlineExpiresAtMs(text), text).toBe(END_OF_THE_13TH);
+        expect(bidDeadlinePassed(text, NOW), text).toBe(false);
+        expect(parseBidDeadline(text), text).toEqual({ instantMs: Date.UTC(2026, 9, 13, hour), dateOnly: false });
+      }
+    }
+    // A winter midnight in UTC-5, the way CT's epoch deadlines fall: 05:00Z starts 1 December in EST.
+    expect(bidDeadlineExpiresAtMs(String(Date.UTC(2026, 11, 1, 5)))).toBe(Date.UTC(2026, 11, 2, 10));
+    // The wall clock is read to the second: half a second past midnight still reads 00:00:00.
+    expect(bidDeadlineExpiresAtMs(String(Date.UTC(2026, 9, 13, 4, 0, 0, 500)))).toBe(END_OF_THE_13TH);
+    // Every other instant stays exact: 15:00Z, a second past 04:00Z, 23:00 in UTC-4, 01:00 in UTC-10, a UTC midnight, noon.
+    for (const ms of [
+      Date.UTC(2026, 9, 13, 15), Date.UTC(2026, 9, 13, 4, 0, 1), Date.UTC(2026, 9, 13, 3), Date.UTC(2026, 9, 13, 11),
+      Date.UTC(2026, 9, 13), Date.UTC(2026, 9, 13, 9, 59, 58), Date.UTC(2026, 9, 13, 12),
+    ]) {
+      for (const text of epochForms(ms)) expect(bidDeadlineExpiresAtMs(text), text).toBe(ms);
+    }
+  });
+
+  it("keeps an epoch that reads 23:59:59 in a US offset open through the day it ends, to the second", () => {
+    // 09:59:59Z is 23:59:59 on 12 October in UTC-10; 03:59:59Z is the same in UTC-4, with or without its .999.
+    for (const ms of [Date.UTC(2026, 9, 13, 9, 59, 59), Date.UTC(2026, 9, 13, 3, 59, 59), Date.UTC(2026, 9, 13, 3, 59, 59, 999)]) {
+      for (const text of epochForms(ms)) expect(bidDeadlineExpiresAtMs(text), text).toBe(END_OF_THE_12TH);
+    }
+    expect(bidDeadlinePassed(String(Date.UTC(2026, 9, 13, 9, 59, 59)), Date.UTC(2026, 9, 13, 9, 59, 59))).toBe(false);
+    expect(bidDeadlinePassed(String(Date.UTC(2026, 9, 13, 9, 59, 59)), END_OF_THE_12TH)).toBe(true);
+  });
+
+  it("keeps an ISO time with a Z or an offset that reads 00:00:00 in a US offset open through that local day", () => {
+    for (const text of ["2026-10-13T10:00:00Z", "2026-10-13T04:00:00Z", "2026-10-13T10:00:00.000Z", "2026-10-13T05:00:00+01:00", "2026-10-13T07:00:00-03:00", "2026-10-13T06:00Z"]) {
+      expect(bidDeadlineExpiresAtMs(text), text).toBe(END_OF_THE_13TH);
+      expect(bidDeadlinePassed(text, NOW), text).toBe(false);
+    }
+    // A second past is exact, as are other hours; without a zone the time is a UTC-10 wall clock and not an instant.
+    expect(bidDeadlineExpiresAtMs("2026-10-13T10:00:01Z")).toBe(Date.UTC(2026, 9, 13, 10, 0, 1));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T15:00:00Z")).toBe(Date.UTC(2026, 9, 13, 15));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T11:00:00Z")).toBe(Date.UTC(2026, 9, 13, 11));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T04:00:00")).toBe(Date.UTC(2026, 9, 13, 14));
+  });
+
+  it("keeps an ISO time that reads 23:59:59 as written, with a Z or an offset, open through its stated day", () => {
+    for (const text of ["2026-10-13T23:59:59Z", "2026-10-13T23:59:59-05:00", "2026-10-13T23:59:59.000Z", "2026-10-13T23:59:59.999Z", "2026-10-13T23:59:59+05:30", "2026-10-13T23:59:59+0000"]) {
+      expect(bidDeadlineExpiresAtMs(text), text).toBe(END_OF_THE_13TH);
+    }
+    // The admin console saves a corrected deadline date D as D at 23:59:59.000 UTC.
+    expect(bidDeadlinePassed("2026-10-13T23:59:59.000Z", END_OF_THE_13TH - 1)).toBe(false);
+    expect(bidDeadlinePassed("2026-10-12T23:59:59.000Z", NOW)).toBe(true);
+    // A second short, and a minute-only 23:59, are exact; without a zone 23:59:59 is UTC-10's own, a second before the day ends.
+    expect(bidDeadlineExpiresAtMs("2026-10-13T23:59:58Z")).toBe(Date.UTC(2026, 9, 13, 23, 59, 58));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T23:59Z")).toBe(Date.UTC(2026, 9, 13, 23, 59));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T23:59:59")).toBe(Date.UTC(2026, 9, 14, 9, 59, 59));
+  });
+
+  it("takes the latest day when more than one reading qualifies, and never moves an expiry earlier", () => {
+    // 23:59:59 on the 13th as written in UTC+14 is 23:59:59 on the 12th in UTC-10: the 13th is the later day.
+    expect(bidDeadlineExpiresAtMs("2026-10-13T23:59:59+14:00")).toBe(END_OF_THE_13TH);
+    // West of UTC-10 the end of the stated day in UTC-10 comes before the instant itself, so the instant stands.
+    expect(bidDeadlineExpiresAtMs("2026-10-13T23:59:59-11:00")).toBe(Date.UTC(2026, 9, 14, 10, 59, 59));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T23:59:59-12:00")).toBe(Date.UTC(2026, 9, 14, 11, 59, 59));
+    // A midnight as written keeps its stated day.
+    expect(bidDeadlineExpiresAtMs("2026-10-13T00:00:00-04:00")).toBe(END_OF_THE_13TH);
+  });
+
+  it("keeps parseBidDeadline literal, and the year window on the literal instant", () => {
+    expect(parseBidDeadline("2026-10-13T23:59:59Z")).toEqual({ instantMs: Date.UTC(2026, 9, 13, 23, 59, 59), dateOnly: false });
+    expect(parseBidDeadline("2026-10-13T10:00:00Z")).toEqual({ instantMs: Date.UTC(2026, 9, 13, 10), dateOnly: false });
+    // 10:00Z on 31 December 1999 is midnight in UTC-10, but the instant is outside the window: unreadable, never closed.
+    expect(parseBidDeadline(`/Date(${Date.UTC(1999, 11, 31, 10)})/`)).toBeNull();
+    expect(bidDeadlineExpiresAtMs(`/Date(${Date.UTC(1999, 11, 31, 10)})/`)).toBeNull();
+    // 23:59:59 on 31 December 2100 in UTC is inside it; the expiry, 10:00Z on 1 January 2101, may lie past it.
+    expect(bidDeadlineExpiresAtMs("2100-12-31T23:59:59Z")).toBe(Date.UTC(2101, 0, 1, 10));
+  });
+});
+
+describe("a one-digit hour in an ISO-shaped time", () => {
+  it("holds a hand-formatted hour from 1 to 9 open to its PM reading; a two-digit hour and hour 0 stay 24-hour", () => {
+    expect(bidDeadlineExpiresAtMs("2026-10-13 2:00")).toBe(Date.UTC(2026, 9, 14, 0));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T2:00")).toBe(Date.UTC(2026, 9, 14, 0));
+    expect(bidDeadlinePassed("2026-10-13 2:00", NOW)).toBe(false);
+    expect(bidDeadlineExpiresAtMs("2026-10-13T9:30:15.5")).toBe(Date.UTC(2026, 9, 14, 7, 30, 15, 500));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T2:00:00Z")).toBe(Date.UTC(2026, 9, 13, 14));
+    for (let hour = 1; hour <= 9; hour += 1) {
+      expect(bidDeadlineExpiresAtMs(`2026-10-13 ${hour}:15`), `${hour}:15`).toBe(Date.UTC(2026, 9, 13, hour + 22, 15));
+      expect(bidDeadlineExpiresAtMs(`2026-10-13 0${hour}:15`), `0${hour}:15`).toBe(Date.UTC(2026, 9, 13, hour + 10, 15));
+    }
+    expect(bidDeadlineExpiresAtMs("2026-10-13T0:30")).toBe(Date.UTC(2026, 9, 13, 10, 30));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T10:00")).toBe(Date.UTC(2026, 9, 13, 20));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T02:00:00Z")).toBe(Date.UTC(2026, 9, 13, 2));
+    expect(parseBidDeadline("2026-10-13 2:00")).toEqual({ instantMs: NOW, dateOnly: false });
+  });
+});
+
+describe("24:00, the end of the stated day", () => {
+  /** 00:00 on 14 October in UTC-10, which is 24:00 on the 13th and the end of the 13th. */
+  const END_OF_THE_13TH = Date.UTC(2026, 9, 14, 10);
+
+  it("reads 24:00 in every form with a clock as 00:00 of the next day, which is the end of the stated day", () => {
+    for (const text of [
+      "10/13/2026 24:00", "10/13/2026 24:00:00", "10/13/2026 at 24:00", "10/13/2026 @ 24:00 CST", "10/13/26 24:00", "10/13/2026 24:00 P",
+      "Oct 13, 2026 24:00", "Oct 13, 2026 @ 24:00:00", "Oct 13, 2026 at 24:00 EST",
+      "2026-10-13T24:00", "2026-10-13T24:00:00", "2026-10-13 24:00:00.000", "2026-10-13T24:00:00.0000000",
+    ]) {
+      expect(parseBidDeadline(text), text).toEqual({ instantMs: END_OF_THE_13TH, dateOnly: false });
+      expect(bidDeadlineExpiresAtMs(text), text).toBe(END_OF_THE_13TH);
+      expect(bidDeadlinePassed(text, END_OF_THE_13TH - 1), text).toBe(false);
+    }
+    expect(bidDeadlinePassed("10/12/2026 24:00", NOW)).toBe(true);
+  });
+
+  it("keeps the stated day for an ISO 24:00 with a Z or an offset, or the later day when the instant is a US midnight", () => {
+    expect(parseBidDeadline("2026-10-13T24:00:00Z")).toEqual({ instantMs: Date.UTC(2026, 9, 14), dateOnly: false });
+    expect(bidDeadlineExpiresAtMs("2026-10-13T24:00:00Z")).toBe(END_OF_THE_13TH);
+    expect(parseBidDeadline("2026-10-13T24:00:00.000+05:30")?.instantMs).toBe(Date.UTC(2026, 9, 13, 18, 30));
+    expect(bidDeadlineExpiresAtMs("2026-10-13T24:00:00.000+05:30")).toBe(END_OF_THE_13TH);
+    // 24:00 on the 13th in UTC-4 is 00:00 on the 14th there, which the converted-date rule reads as the 14th: the later day wins.
+    expect(bidDeadlineExpiresAtMs("2026-10-13T24:00:00-04:00")).toBe(Date.UTC(2026, 9, 15, 10));
+    // West of UTC-10 the instant itself is later than the end of the stated day in UTC-10.
+    expect(bidDeadlineExpiresAtMs("2026-10-13T24:00:00-12:00")).toBe(Date.UTC(2026, 9, 14, 12));
+  });
+
+  it("is the end of the stated day, not the whole of the next one", () => {
+    expect(parseBidDeadline("10/13/2026 24:00")?.instantMs).toBe(parseBidDeadline("10/14/2026 00:00")?.instantMs);
+    expect(bidDeadlineExpiresAtMs("10/13/2026 24:00")).toBe(END_OF_THE_13TH);
+    expect(bidDeadlineExpiresAtMs("10/14/2026 00:00")).toBe(Date.UTC(2026, 9, 15, 10));
+  });
+
+  it("reads only exactly 24:00:00 without an AM/PM, and keeps the year window on the literal instant", () => {
+    for (const text of [
+      "10/13/2026 24:30", "10/13/2026 24:00:01", "10/13/2026 24:00 PM", "10/13/2026 24:00 AM", "Oct 13, 2026 24:00 PM", "2026-10-13T24:00:00.5Z",
+      "2026-10-13T24:01", "02/30/2026 24:00", "12/31/2100 24:00", "2100-12-31T24:00:00Z",
+    ]) {
+      expect(parseBidDeadline(text), text).toBeNull();
+    }
+    // The literal instant of 24:00 on 31 December 1999 is 10:00Z on 1 January 2000, inside the window.
+    expect(parseBidDeadline("12/31/1999 24:00")).toEqual({ instantMs: Date.UTC(2000, 0, 1, 10), dateOnly: false });
+  });
+});
+
+describe("a .NET date with an offset", () => {
+  it("reads /Date(ms-0500)/ and /Date(ms+0530)/ as the instant the milliseconds give, and rejects an offset no clock has", () => {
+    for (const text of ["/Date(1791892800000-0500)/", "/Date(1791892800000+0530)/", "/Date(1791892800000+0000)/"]) {
+      expect(parseBidDeadline(text), text).toEqual({ instantMs: 1_791_892_800_000, dateOnly: false });
+      expect(bidDeadlineExpiresAtMs(text), text).toBe(Date.UTC(2026, 9, 13, 12));
+    }
+    expect(bidDeadlinePassed("/Date(1791892800000-0500)/", NOW)).toBe(true);
+    for (const text of [
+      "/Date(1791892800000+2400)/", "/Date(1791892800000+0560)/", "/Date(1791892800000+05:30)/", "/Date(1791892800000-05)/",
+      "/Date(1791892800000+05300)/", "/Date(-62135596800000+0000)/", "/Date(4133980800000-0500)/",
+    ]) {
+      expect(parseBidDeadline(text), text).toBeNull();
+    }
+  });
+
+  it("applies the converted-date rule to it, in the US offsets and in the offset it states", () => {
+    // 04:00Z is midnight in UTC-4.
+    expect(bidDeadlineExpiresAtMs(`/Date(${Date.UTC(2026, 9, 13, 4)}-0400)/`)).toBe(Date.UTC(2026, 9, 14, 10));
+    // 18:30Z on the 12th is 00:00 on the 13th in UTC+5:30, as the ISO text of the same instant says.
+    const indianMidnight = `/Date(${Date.UTC(2026, 9, 12, 18, 30)}+0530)/`;
+    expect(bidDeadlineExpiresAtMs(indianMidnight)).toBe(Date.UTC(2026, 9, 14, 10));
+    expect(bidDeadlineExpiresAtMs(indianMidnight)).toBe(bidDeadlineExpiresAtMs("2026-10-13T00:00:00+05:30"));
   });
 });
 

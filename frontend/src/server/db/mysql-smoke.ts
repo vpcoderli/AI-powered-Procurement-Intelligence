@@ -120,7 +120,7 @@ import {
   updateResponseWorkspaceItem,
 } from "@/server/response-workspace/service";
 import { createDatabase, type AppDatabase } from "./client";
-import { createMysqlPool, requireMysqlDatabaseUrl, runMysqlMigrations } from "./mysql";
+import { createMysqlPool, redactMysqlDatabaseUrl, requireMysqlDatabaseUrl, runMysqlMigrations } from "./mysql";
 import { runMigrations } from "./migrate";
 
 const MYSQL_SMOKE_SOURCE_URL = "https://sam.gov/search/?index=opp&sort=-modifiedDate&page=1&pageSize=25";
@@ -183,17 +183,8 @@ export interface MysqlSmokeInspection {
   authSessionVerified: boolean;
 }
 
-export function redactMysqlDatabaseUrl(databaseUrl: string) {
-  try {
-    const url = new URL(databaseUrl);
-    if (url.password) {
-      url.password = "***";
-    }
-    return url.toString();
-  } catch {
-    return databaseUrl.replace(/:\/\/([^:@/]+):([^@/]+)@/, "://$1:***@");
-  }
-}
+// Moved to ./mysql (see there); exported from here as well for the callers that import it from the smoke verifier.
+export { redactMysqlDatabaseUrl };
 
 export function buildMysqlSmokeBid(now = new Date().toISOString()): MysqlSmokeBid {
   const safeTimestamp = now.replace(/[^0-9A-Za-z]/g, "");

@@ -25,6 +25,18 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -f frontend/Dockerfile --target worker -t apsi-crawler-check .
       - run: docker run --rm -w /crawler apsi-crawler-check python -m apsi_crawler.cli --help
+      # discover-sources reads the Census jurisdiction table from /crawler/data. It sits beside the apsi_crawler package, not
+      # inside it, so an image that forgets to copy it only fails when someone runs discovery. The table is a file read,
+      # so the probe runs with no network. The worker and the runner image both inherit the table from the crawler-runtime
+      # stage (frontend/dockerfile.test.ts pins that), so the worker image stands for both.
+      - name: Worker image carries the jurisdiction table
+        run: |
+          docker run --rm --network none -w /crawler apsi-crawler-check python -c '
+          from apsi_crawler.jurisdictions import load_jurisdictions, match_jurisdiction
+          assert load_jurisdictions()["place"], "the jurisdiction table has no place rows"
+          match = match_jurisdiction("city", "CA", "City of Los Angeles")
+          assert match["status"] == "exact" and match["geoid"] == "0644000", match
+          print(match)'
       - run: docker run --rm -e NODE_ENV=development -e APP_ENV=development apsi-crawler-check npm run worker:crawler:check
       # The attachment repair worker ships in the same image and is started by compose with a
       # command override, so prove its environment preflight runs there too.

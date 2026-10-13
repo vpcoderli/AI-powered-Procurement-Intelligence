@@ -16,6 +16,7 @@ import {
   mysqlIndexMigrationStatements,
   mysqlMigrationStatements,
   mysqlPoolSizing,
+  redactMysqlDatabaseUrl,
   requireMysqlDatabaseUrl,
   resetMysqlPoolForTests,
   resolveMysqlPool,
@@ -84,6 +85,29 @@ describe("mysql database foundation", () => {
     expect(bidsTable).toContain("quality_flags_json LONGTEXT NOT NULL DEFAULT ('[]')");
     expect(overridesTable).toContain("organization_id VARCHAR(191) NOT NULL");
     expect(overridesTable).toContain("feature_key VARCHAR(191) NOT NULL");
+  });
+});
+
+describe("redactMysqlDatabaseUrl", () => {
+  it("masks the password and keeps the rest of the URL", () => {
+    expect(redactMysqlDatabaseUrl("mysql://user:secret@localhost:3306/winbids")).toBe("mysql://user:***@localhost:3306/winbids");
+    expect(redactMysqlDatabaseUrl("mysql://root:s3cr3t@127.0.0.1:55381/apsi_db")).toBe("mysql://root:***@127.0.0.1:55381/apsi_db");
+  });
+
+  it("leaves a URL with no password as it is", () => {
+    expect(redactMysqlDatabaseUrl("mysql://localhost:3306/winbids")).toBe("mysql://localhost:3306/winbids");
+    expect(redactMysqlDatabaseUrl("mysql://user@localhost:3306/winbids")).toBe("mysql://user@localhost:3306/winbids");
+  });
+
+  it("masks the password of a URL that cannot be parsed, too", () => {
+    expect(redactMysqlDatabaseUrl("not a url://user:secret@host/db")).toBe("not a url://user:***@host/db");
+  });
+
+  it("does not load the app's database client: it lives with the pool code, so a script can print its target without opening a database", async () => {
+    const source = (await import("node:fs")).readFileSync(new URL("./mysql.ts", import.meta.url), "utf8");
+
+    expect(source).not.toMatch(/from ["']\.\/client["']/);
+    expect(source).not.toContain("mysql-smoke");
   });
 });
 

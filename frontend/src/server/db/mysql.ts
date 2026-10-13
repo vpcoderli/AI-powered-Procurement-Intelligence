@@ -40,6 +40,23 @@ export function isMysqlDatabaseUrlConfigured(env = process.env) {
   return Boolean(value && (value.startsWith("mysql://") || value.startsWith("mysql2://")));
 }
 
+/**
+ * The URL with its password masked, for a log line or a "Target:" line. It lives here, with the pool code, and not with the
+ * smoke verifier (which re-exports it): a script that only needs to name its target must not load the server's whole module
+ * graph, `db/client` included, which opens `<cwd>/data/apsi.sqlite` when the process environment does not select MySQL.
+ */
+export function redactMysqlDatabaseUrl(databaseUrl: string) {
+  try {
+    const url = new URL(databaseUrl);
+    if (url.password) {
+      url.password = "***";
+    }
+    return url.toString();
+  } catch {
+    return databaseUrl.replace(/:\/\/([^:@/]+):([^@/]+)@/, "://$1:***@");
+  }
+}
+
 export interface MysqlPoolSizing {
   connectionLimit: number;
   maxIdle: number;
