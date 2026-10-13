@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
-import { linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDatabase, type TestDatabase } from "../src/server/db/test-utils";
 import { DEMO_PURGE_TABLES } from "../src/server/integrity/demo-purge";
 import {
@@ -16,6 +17,7 @@ import {
   insertStatement,
   seedTag,
 } from "../src/server/integrity/demo-purge.fixtures";
+import { openResolvedTarget } from "../src/server/integrity/open-target";
 import {
   PurgeDemoBidsUsageError,
   backupFileProblem,
@@ -23,6 +25,14 @@ import {
   parsePurgeDemoBidsArgs,
   runPurgeDemoBids,
 } from "./purge-demo-bids";
+
+// The real opener, watched: how the script opens the database (read-only for a dry run) is part of its promise.
+vi.mock("../src/server/integrity/open-target", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/server/integrity/open-target")>();
+  return { ...actual, openResolvedTarget: vi.fn(actual.openResolvedTarget) };
+});
+
+const sha256 = (file: string) => createHash("sha256").update(readFileSync(file)).digest("hex");
 
 describe("purge-demo-bids arguments", () => {
   it("is a dry run by default", () => {
@@ -221,6 +231,47 @@ describe("purge-demo-bids", () => {
     expect(text).toContain("notification_outbox.matched_bid_ids");
     expect(err).toEqual([`Target: sqlite ${testDb.databasePath}`]);
     expect(bidIds()).toEqual(before);
+  });
+
+  it("opens the SQLite file read-only for a dry run, and writable only for --apply", async () => {
+    vi.mocked(openResolvedTarget).mockClear();
+
+    expect(await runPurgeDemoBids([], env(), io())).toBe(0);
+    expect(await runPurgeDemoBids(["--json"], env(), io())).toBe(0);
+    expect(await runPurgeDemoBids(["--apply", "--backup-file", backup()], env(), io())).toBe(0);
+
+    expect(vi.mocked(openResolvedTarget).mock.calls).toEqual([
+      [{ kind: "sqlite", databasePath: testDb.databasePath }, { readonly: true }],
+      [{ kind: "sqlite", databasePath: testDb.databasePath }, { readonly: true }],
+      [{ kind: "sqlite", databasePath: testDb.databasePath }, { readonly: false }],
+    ]);
+  });
+
+  it("leaves a WAL-mode database and its -wal byte-identical on a dry run", async () => {
+    // A hot copy of a WAL database: committed frames still in the -wal, no -shm, and no connection left open on it. A writable
+    // connection that opens it replays the log and, when it closes as the last one, writes the frames into the database file and
+    // removes the -wal; a read-only one does neither.
+    testDb.db.$client.prepare("UPDATE bids SET title = title || ' ' WHERE id = '1'").run();
+    const original = testDb.databasePath;
+    expect(statSync(`${original}-wal`).size).toBeGreaterThan(0);
+    const copy = path.join(mkdtempSync(path.join(directory, "hot-copy-")), "apsi.sqlite");
+    copyFileSync(original, copy);
+    copyFileSync(`${original}-wal`, `${copy}-wal`);
+    const before = { database: sha256(copy), wal: sha256(`${copy}-wal`), walSize: statSync(`${copy}-wal`).size };
+
+    expect(await runPurgeDemoBids([], testEnv(copy), io())).toBe(0);
+    expect(await runPurgeDemoBids(["--json"], testEnv(copy), io())).toBe(0);
+
+    expect(out.join("\n")).toContain("Demo bids: 4");
+    expect(existsSync(`${copy}-wal`)).toBe(true);
+    expect({ database: sha256(copy), wal: sha256(`${copy}-wal`), walSize: statSync(`${copy}-wal`).size }).toEqual(before);
+  });
+
+  it("says in --help that a dry run opens the SQLite file read-only", () => {
+    const help = formatPurgeDemoBidsHelp().replace(/\s+/g, " ");
+
+    expect(help).toContain("A dry run opens the SQLite file read-only");
+    expect(help).toContain("the database file itself is not touched");
   });
 
   /** A kept award outcome that borrowed a demo artifact as its tabulation sheet. */

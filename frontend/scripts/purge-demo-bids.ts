@@ -62,6 +62,9 @@ export function formatPurgeDemoBidsHelp() {
     "must exist: nothing is created). The process environment is used as it is; .env.local is not read. The target is printed to",
     "stderr as soon as it is opened.",
     "",
+    "A dry run opens the SQLite file read-only (which can leave an empty -wal and a -shm file beside a WAL-mode database; the",
+    "database file itself is not touched) and, on MySQL, sends only SELECT statements. Only --apply writes.",
+    "",
     "A maintenance window is required on MySQL: stop the web app AND every worker first. MySQL has no foreign keys, so the",
     "web app can insert a child row for a demo bid (a save, an intent, a workspace edit) while the purge runs, and that row",
     "would be an orphan after the commit. SQLite is protected by BEGIN IMMEDIATE (the purge takes the write lock up front",
@@ -215,8 +218,9 @@ export async function runPurgeDemoBids(
 
   let opened: OpenedIntegrityTarget | undefined;
   try {
-    // The purge writes, so its SQLite handle is a writable one.
-    opened = await openResolvedTarget(resolved, { readonly: false });
+    // Only --apply writes. A dry run's SQLite handle is a read-only one, so the connection itself refuses a write; a writable
+    // handle would, as the last connection to a WAL-mode database, write the log into the database file when it closes.
+    opened = await openResolvedTarget(resolved, { readonly: !options.apply });
     // Before anything is planned or written: a run that fails or rolls back still says which database it hit. It goes
     // to stderr, so that --json leaves stdout as one JSON document.
     io.stderr(`Target: ${opened.description}`);
