@@ -23,6 +23,7 @@ import { createCrawlerWorkerTick } from "@/server/crawler/worker-tick";
 import { createDatabase } from "@/server/db/client";
 import { runMigrations } from "@/server/db/migrate";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
+import { buildIntegrityReport } from "@/server/integrity/data-integrity";
 import { findDemoBids, planDemoPurge, purgeDemoBids } from "@/server/integrity/demo-purge";
 import {
   BID_GRAPH_RELATIONSHIPS,
@@ -1158,11 +1159,7 @@ describe("Task 5 — data:integrity report (module, in process)", () => {
     try {
       const expected = await seedIntegrityScenario(sqliteRunner(testDb.db.$client), Date.now());
       const changes = count(testDb.db.$client, "SELECT total_changes() AS n");
-      // The module is named by the plan (Task 5) and may not be integrated yet; a computed specifier keeps a missing
-      // module a test failure ("pending integration") rather than a type error in this file.
-      const specifier = "../server/integrity/data-integrity";
-      const integrityModule = (await import(/* @vite-ignore */ specifier)) as Record<string, unknown>;
-      const build = integrityModule.buildIntegrityReport as (target: unknown, options: { now: Date }) => Promise<unknown>;
+      const build = buildIntegrityReport as (target: unknown, options: { now: Date }) => Promise<unknown>;
       expect(typeof build).toBe("function");
       const report = await build({ database: testDb.db }, { now: new Date() });
       expect(count(testDb.db.$client, "SELECT total_changes() AS n")).toBe(changes);

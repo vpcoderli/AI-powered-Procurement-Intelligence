@@ -1,7 +1,7 @@
 /**
- * Which database an integrity tool works on, and how it is opened: the one opener of `purge-demo-bids` and
- * `data-integrity`. The two run around the same change (purge, then prove nothing else moved), so they must always agree
- * on what "the database" is; a fix made to one copy of this logic could otherwise leave the other on a different file.
+ * Which database an integrity tool works on, and how it is opened: the one opener of `purge-demo-bids`, `data-integrity`
+ * and `sweep-bid-lifecycle`. The three run around the same change (purge, sweep, then prove nothing else moved), so they must
+ * always agree on what "the database" is; a fix made to one copy of this logic could otherwise leave another on a different file.
  *
  * WHICH DATABASE. A `mysql://` URL in `DATABASE_URL` (else `MYSQL_DATABASE_URL`) selects MySQL; otherwise the SQLite file
  * `DATABASE_PATH` names, default `data/apsi.sqlite`. A relative path is read from the `frontend/` directory, whatever
@@ -31,7 +31,7 @@ import type { DemoPurgeTarget } from "./demo-purge";
 /** `frontend/`: three levels above `src/server/integrity/`. */
 export const FRONTEND_DIRECTORY = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 
-/** A bad command line, or a target or file that cannot be used: reported, then exit code 2. Both scripts' usage errors extend it. */
+/** A bad command line, or a target or file that cannot be used: reported, then exit code 2. The usage errors of all three scripts extend it. */
 export class IntegrityUsageError extends Error {}
 
 export type ResolvedTarget = { kind: "mysql"; databaseUrl: string } | { kind: "sqlite"; databasePath: string };
