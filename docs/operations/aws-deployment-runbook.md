@@ -73,6 +73,7 @@ Every staging dry-run must create an evidence folder before commands start. Keep
 export DRY_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-aws-staging"
 export EVIDENCE_ROOT="${EVIDENCE_ROOT:-../ops-evidence/aws-staging-dry-run}"
 export EVIDENCE_DIR="$EVIDENCE_ROOT/$DRY_RUN_ID"
+set -o pipefail   # every `| tee` step below then answers with the command's own status, not tee's (bash and zsh); run the whole protocol in this shell
 mkdir -p "$EVIDENCE_DIR"
 printf "dry_run_id=%s\nstarted_at=%s\nrelease_sha=%s\noperator=%s\n" \
   "$DRY_RUN_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(git rev-parse HEAD)" "${USER:-unknown}" \
@@ -81,7 +82,7 @@ printf "dry_run_id=%s\nstarted_at=%s\nrelease_sha=%s\noperator=%s\n" \
 
 Evidence rules:
 
-- Save every command output with `2>&1 | tee "$EVIDENCE_DIR/<step>.log"`.
+- Save every command output with `2>&1 | tee "$EVIDENCE_DIR/<step>.log"`, in the shell where the block above set `pipefail`. Without it a `| tee` pipeline answers with tee's own status, which is always 0, and a command that failed looks like one that passed; a new shell needs `set -o pipefail` again. `echo "<step> exit=$?"` right after the pipeline records the status for the dry-run notes, as section 6 does.
 - Each evidence file needs owner, UTC timestamp, command, exit status, and pass/fail decision in the dry-run notes.
 - Do not save raw secret values, `.env.local`, AWS keys, Stripe secrets, webhook payload signatures, OpenAI keys, RDS passwords, or notification tokens.
 - If a command must run with real provider secrets, capture only sanitized output and store it in the internal artifact store. Put the internal evidence URL in the readiness environment, not the secret itself.
@@ -192,7 +193,7 @@ Pass if the report is produced and every 403, CAPTCHA/login, timeout, 404/410, T
 ### 6. Demo And Risk Smoke
 
 ```bash
-set -o pipefail   # a `| tee` pipeline then answers with the command's own status, not tee's (bash and zsh); it stays on for the rest of the session
+set -o pipefail   # already set by the protocol preamble; repeated so that this step also stands alone in a fresh shell
 npm run demo:check 2>&1 | tee "$EVIDENCE_DIR/07-demo-check.log"; echo "demo:check exit=$?"
 env -u RISK_CHECK_SEED_DATA npm run risk:check 2>&1 | tee "$EVIDENCE_DIR/08-risk-check.log"; echo "risk:check exit=$?"
 # A report headed INCOMPLETE exits 0 as well, so the exit status alone cannot tell it from a PASS: the headline does. The headline
@@ -200,7 +201,7 @@ env -u RISK_CHECK_SEED_DATA npm run risk:check 2>&1 | tee "$EVIDENCE_DIR/08-risk
 grep -q '^Risk checklist PASS' "$EVIDENCE_DIR/08-risk-check.log"; echo "PASS headline exit=$?"
 ```
 
-Pass if all three lines print `exit=0`: `demo:check`, `risk:check` (the whole command, so a failing `secrets:scan` or `npm audit` after the headline fails it) and the headline `grep`, that is, the report in `08-risk-check.log` is headed `Risk checklist PASS`. Without `pipefail` a `tee` pipeline answers with tee's own status, which is always 0, and would let such a failure through; that is the first line. A report headed `Risk checklist INCOMPLETE`, or with a `NOT RUN` line, set a check aside: it is not release evidence, whatever the exit status. What sets a check aside is `RISK_CHECK_SEED_DATA`, which CI sets on seed data; `env -u` makes sure it is not set for this run, and a process whose `NODE_ENV`, `APP_ENV`, `DEPLOY_ENV`, `VERCEL_ENV` or `RUNTIME_ENV` names production or staging ignores it as well. Do not run this with `NODE_ENV=production` instead of unsetting the variable: that also turns on the source-approval requirement of the checklist, which is the source owner's decision. Fail if demo data is incomplete, source placeholders appear, attachment checks fail, or risk/audit gates block the release.
+Pass if all three lines print `exit=0`: `demo:check`, `risk:check` (the whole command, so a failing `secrets:scan` or `npm audit` after the headline fails it) and the headline `grep`, that is, the report in `08-risk-check.log` is headed `Risk checklist PASS`. Without `pipefail` a `tee` pipeline answers with tee's own status, which is always 0, and would let such a failure through; that is the first line (set once for the whole protocol in its preamble, and repeated here). A report headed `Risk checklist INCOMPLETE`, or with a `NOT RUN` line, set a check aside: it is not release evidence, whatever the exit status. What sets a check aside is `RISK_CHECK_SEED_DATA`, which CI sets on seed data; `env -u` makes sure it is not set for this run, and a process whose `NODE_ENV`, `APP_ENV`, `DEPLOY_ENV`, `VERCEL_ENV` or `RUNTIME_ENV` names production or staging ignores it as well. Do not run this with `NODE_ENV=production` instead of unsetting the variable: that also turns on the source-approval requirement of the checklist, which is the source owner's decision. Fail if demo data is incomplete, source placeholders appear, attachment checks fail, or risk/audit gates block the release.
 
 ### 7. Backup Snapshot
 
