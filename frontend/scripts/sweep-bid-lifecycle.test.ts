@@ -256,6 +256,11 @@ describe("the sweep script, run in this process", () => {
         expect(result.status).toBe(2);
         expect(result.stderr).toContain("npm run db:migrate");
         expect(result.stderr).toContain("never migrates");
+        // npm run db:migrate migrates <working directory>/data/apsi.sqlite and ignores DATABASE_PATH, so the message must not send
+        // anyone to it for a file they named: any other SQLite file has to be migrated separately.
+        expect(result.stderr).toContain("ignores DATABASE_PATH");
+        expect(result.stderr).toContain("data/apsi.sqlite");
+        expect(result.stderr).toContain("migrated separately");
         expect(result.stdout).toBe("");
         expect({ hash: sha256(file), size: statSync(file).size, files: readdirSync(directory) }).toEqual(before);
       }
@@ -361,7 +366,7 @@ describe("the sweep script, run in this process", () => {
     const usage = formatSweepUsage().replace(/\s+/g, " ");
 
     for (const text of ["--dry-run", "--json", "read-only", "only SELECT", "never migrates", "npm run db:migrate", "npm run db:mysql:migrate",
-      "frontend/", "Exit codes: 0", "1 ", "2 "]) {
+      "ignores DATABASE_PATH", "migrated separately", "frontend/", "Exit codes: 0", "1 ", "2 "]) {
       expect(usage, text).toContain(text);
     }
   });

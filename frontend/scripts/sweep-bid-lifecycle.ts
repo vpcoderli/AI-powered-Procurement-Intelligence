@@ -23,7 +23,8 @@ import {
  * The target is chosen by the opener of data:integrity and bids:purge-demo (src/server/integrity/open-target.ts): a mysql://
  * DATABASE_URL, else the SQLite file DATABASE_PATH, a relative path read from frontend/ and the default data/apsi.sqlite there.
  * The file must exist, and nothing is created: importing the app's db/client would open <cwd>/data/apsi.sqlite, so this
- * script never does. It never migrates either: a schema that lacks what the sweep reads is refused, untouched.
+ * script never does. It never migrates either: a schema that lacks what the sweep reads is refused, untouched (npm run db:migrate
+ * migrates <cwd>/data/apsi.sqlite and ignores DATABASE_PATH, so a SQLite file elsewhere has to be migrated separately).
  *
  * Exit codes: 0 when the sweep ran, 1 when it failed (a mistyped option included), 2 when the target cannot be used: a SQLite
  * file that is not there or is a directory, or a schema that is not migrated.
@@ -60,7 +61,8 @@ export function formatSweepUsage() {
     "used as it is; .env.local is not read. The target is printed to stderr as soon as it is opened.",
     "",
     "The sweep never migrates. A SQLite file or a MySQL schema that lacks what the sweep reads is refused, untouched: run",
-    "npm run db:migrate (SQLite) or npm run db:mysql:migrate (MySQL) first.",
+    "npm run db:migrate (SQLite) or npm run db:mysql:migrate (MySQL) first. npm run db:migrate migrates data/apsi.sqlite in its",
+    "working directory and ignores DATABASE_PATH, so a SQLite file anywhere else has to be migrated separately.",
     "",
     "Exit codes: 0 the sweep ran; 1 it failed (a mistyped option, a refused MySQL connection, any other error); 2 the target cannot",
     "be used (a SQLite file that is not there or is a directory, or a schema that is not migrated).",
@@ -96,9 +98,13 @@ function assertSqliteMigrated(sqlite: BetterSqlite3.Database, description: strin
   const present = new Set((sqlite.prepare("PRAGMA table_info(bids)").all() as Array<{ name: string }>).map((column) => column.name));
   const missing = SWEEP_COLUMNS.filter((column) => !present.has(column));
   if (missing.length === 0) return;
+  // npm run db:migrate opens <working directory>/data/apsi.sqlite whatever DATABASE_PATH says (scripts/migrate-db.ts), so it only
+  // helps when that is the file refused here; naming it as the cure for any other file would migrate the wrong database.
   throw new IntegrityUsageError(
     `${present.size === 0 ? `${description} has no bids table` : `The bids table of ${description} has no ${missing.join(", ")}`}. ` +
-      "The sweep never migrates: run npm run db:migrate first. Nothing was changed.",
+      "The sweep never migrates. npm run db:migrate migrates data/apsi.sqlite in its working directory and ignores DATABASE_PATH: " +
+      "run it (from frontend/) first only when that is this file; a SQLite file anywhere else has to be migrated separately. " +
+      "Nothing was changed.",
   );
 }
 
