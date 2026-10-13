@@ -271,7 +271,7 @@ Legacy NY ids (ny_contract_reporter:% Company:%) still in the data: 2
    - 旧快照没有 `u`、`p`：见第 3 项的 `untracked_hashes_missing`。
 8. `Metrics that moved`：每个层级、每个指标的前后值和差。
 
-一次干净的比对：没有未解释的删除，没有可见性回归，`identityMismatch` 没有上升，`Changed bids` 里出现的每一组都能对应到这次改动本来要做的事。几类计划内改动在比对里长什么样：
+一次干净的比对：没有未解释的删除，没有可见性回归，没有 `early_close`，`identityMismatch` 没有上升，`Changed bids` 里出现的每一组都能对应到这次改动本来要做的事，`Changed outside the tracked columns` 恰好是预期的那几行。几类计划内改动在比对里长什么样：
 
 | 改动 | 比对里应该看到 |
 | --- | --- |
