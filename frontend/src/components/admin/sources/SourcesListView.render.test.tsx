@@ -29,6 +29,8 @@ vi.mock("next/navigation", async (importOriginal) => {
   return {
     useRouter: (): RouterStub => ({
       back: () => undefined, forward: () => undefined, refresh: () => undefined, push: () => undefined, replace: () => undefined, prefetch: () => undefined,
+      // Required by AppRouterInstance since Next 16.3 (a React key that resets state on fresh navigations); the view never reads it.
+      bfcacheId: "",
     }),
     usePathname: (): PathnameStub => "/admin/sources",
     useSearchParams: (): SearchParamsStub => new ReadonlyURLSearchParams(stubs.search),
