@@ -258,4 +258,61 @@ describe("dashboard summary", () => {
     ]);
     expect(summary.notifications.map((notification) => notification.count)).toEqual([2, 3, 1, 9]);
   });
+
+  // Seed data runs the checklist with state coverage NOT RUN (RISK_CHECK_SEED_DATA): it has the real count in its summary
+  // and no verdict. The Data Trust panel prints that count and wording as they are, and must never report it as ok.
+  it("reports state coverage that was not run as not ok, with its own wording", async () => {
+    const summary = await createDashboardSummary(
+      {},
+      { userId: "user_1", role: "user", tier: "business" },
+      new Date("2026-06-02T00:00:00.000Z"),
+      {
+        queryBids: async () => bidResponse(0),
+        listIntents: async () => [],
+        getSavedBids: async () => ({ savedBidIds: [], bids: [] }),
+        createRiskReport: async () => ({
+          ok: false,
+          checkedAt: "2026-06-02T00:00:00.000Z",
+          checks: [
+            {
+              id: "state-coverage",
+              label: "50 state data coverage",
+              ok: false,
+              status: "not_run",
+              summary: "not evaluated on seed data: 5/50 required states have at least one active bid",
+              details: ["missing state AK"],
+            },
+            {
+              id: "state-content",
+              label: "State bid content is non-empty",
+              ok: true,
+              status: "pass",
+              summary: "5 state bids checked for title, issuer, URL, state, and description",
+            },
+          ],
+        }),
+        listNotificationInsights: async () => ({
+          failedNotifications: 0,
+          pendingNotifications: 0,
+          failedDigestRuns: 0,
+          recentDigestMatches: 0,
+        }),
+        listPipelineInsights: async () => ({
+          workspaceItems: 0,
+          blockedItems: 0,
+          openItems: 0,
+          missingArtifactLinks: 0,
+          readyPackages: 0,
+          exportedPackages: 0,
+        }),
+      },
+    );
+
+    expect(summary.dataTrust.stateCoverage).toEqual({
+      value: "5/50",
+      ok: false,
+      summary: "not evaluated on seed data: 5/50 required states have at least one active bid",
+    });
+    expect(summary.dataTrust.emptyRuns).toMatchObject({ ok: true, value: 0 });
+  });
 });

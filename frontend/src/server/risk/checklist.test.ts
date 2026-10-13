@@ -1,15 +1,19 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { en } from "@/lib/i18n/dictionaries/en";
+import { riskCheckStatus, riskChecklistOutcome } from "@/lib/risk-check-status";
 import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
 import { bidAttachments, bids, dataSources } from "@/server/db/schema";
 import type { AppDatabase } from "@/server/db/client";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import {
+  assertRiskChecklistReport,
   createRiskChecklistReport,
   createRiskChecklistReportFromMysql,
   formatRiskChecklistReport,
   RISK_CHECK_IDS,
+  stateCoverageCheck,
+  type RiskChecklistReport,
 } from "./checklist";
 
 let testDb: TestDatabase | null = null;
@@ -73,6 +77,7 @@ function approveAllStateSourcesForProduction(db: AppDatabase) {
 }
 
 afterEach(async () => {
+  vi.unstubAllEnvs();
   await testDb?.cleanup();
   testDb = null;
 });
@@ -267,5 +272,234 @@ describe("risk checklist MySQL source governance query", () => {
     expect(capturedDataSourcesSql).toContain("jurisdiction_name AS jurisdictionName");
     expect(capturedDataSourcesSql).toContain("fips_code AS fipsCode");
     expect(capturedDataSourcesSql).toContain("fetch_config AS fetchConfig");
+  });
+});
+
+/**
+ * The data CI seeds before `npm run risk:check` (`npm run db:seed`): the demo bids only. Five of them are state bids
+ * (CA, FL, IL, NY, TX), so 45 states have no bid, and the 50-state results cannot be verified from it.
+ */
+async function seedOnlyDatabase() {
+  testDb = await createTestDatabase({ seed: true });
+  return testDb.db;
+}
+
+const NOW = new Date("2026-05-31T00:00:00.000Z");
+const SEED_DATA_ONLY_STATE_COUNT = 5;
+
+function checkOf(report: RiskChecklistReport, id: string) {
+  const found = report.checks.find((entry) => entry.id === id);
+  if (!found) throw new Error(`the report has no ${id} check`);
+  return found;
+}
+
+describe("risk checklist on seed data", () => {
+  // The two checks whose result is a property of the business database, not of the code: neither can be judged from a
+  // seed that holds five states.
+  const DATA_CHECKS = ["state-coverage", "state-data-quality-gate"];
+
+  it("reports the 50-state checks as NOT RUN, never PASS, with the real numbers, when the run says it is on seed data", async () => {
+    const db = await seedOnlyDatabase();
+
+    const report = await createRiskChecklistReport(db, NOW, { seedData: true });
+
+    expect(checkOf(report, "state-coverage")).toMatchObject({ status: "not_run", ok: false });
+    expect(checkOf(report, "state-coverage").summary).toBe(
+      `not evaluated on seed data: ${SEED_DATA_ONLY_STATE_COUNT}/50 required states have at least one active bid`,
+    );
+    // Which states are missing stays on record, as it does for a failure.
+    expect((checkOf(report, "state-coverage").details ?? []).filter((detail) => detail.startsWith("missing state "))).toHaveLength(
+      50 - SEED_DATA_ONLY_STATE_COUNT,
+    );
+    expect(checkOf(report, "state-data-quality-gate")).toMatchObject({ status: "not_run", ok: false });
+    expect(checkOf(report, "state-data-quality-gate").summary).toContain(`${50 - SEED_DATA_ONLY_STATE_COUNT}/50 states have no active bid`);
+    // Nothing else is waived: every other check ran, and passed.
+    for (const entry of report.checks.filter((candidate) => !DATA_CHECKS.includes(candidate.id))) {
+      expect(entry, entry.id).toMatchObject({ ok: true, status: "pass" });
+    }
+  });
+
+  it("is not ok, since not every check passed, and not failed either: assert lets it through and says what did not run", async () => {
+    const db = await seedOnlyDatabase();
+
+    const report = await createRiskChecklistReport(db, NOW, { seedData: true });
+    const text = formatRiskChecklistReport(report);
+
+    expect(report.ok).toBe(false);
+    expect(riskChecklistOutcome(report)).toBe("incomplete");
+    expect(() => assertRiskChecklistReport(report)).not.toThrow();
+    // NOT RUN is its own word, on the headline and on the check's line, and nothing is called PASS that was not run.
+    expect(text).toContain(`Risk checklist INCOMPLETE at ${NOW.toISOString()} (NOT RUN: state-coverage, state-data-quality-gate)`);
+    expect(text).toContain("NOT RUN state-coverage: not evaluated on seed data: 5/50 required states have at least one active bid");
+    expect(text).toContain("NOT RUN state-data-quality-gate:");
+    expect(text).not.toContain("PASS state-coverage");
+    expect(text).not.toContain("PASS state-data-quality-gate");
+    expect(text).not.toContain("Risk checklist PASS");
+    expect(text).not.toContain("FAIL");
+    expect(text).toContain("PASS state-content:");
+  });
+
+  it("says why the checks were not run, on the check itself", async () => {
+    const db = await seedOnlyDatabase();
+
+    const report = await createRiskChecklistReport(db, NOW, { seedData: true });
+
+    for (const id of DATA_CHECKS) {
+      expect((checkOf(report, id).details ?? [])[0], id).toMatch(/seed data/i);
+    }
+  });
+
+  it("fails the same data without the opt-out, as before", async () => {
+    const db = await seedOnlyDatabase();
+
+    const report = await createRiskChecklistReport(db, NOW);
+
+    expect(checkOf(report, "state-coverage")).toMatchObject({ status: "fail", ok: false });
+    expect(checkOf(report, "state-coverage").summary).toBe("5/50 required states have at least one active bid");
+    expect(checkOf(report, "state-data-quality-gate")).toMatchObject({ status: "fail", ok: false });
+    expect(report.ok).toBe(false);
+    expect(riskChecklistOutcome(report)).toBe("fail");
+    expect(() => assertRiskChecklistReport(report)).toThrow(/FAIL state-coverage/);
+    const text = formatRiskChecklistReport(report);
+    expect(text).toContain("Risk checklist FAIL");
+    expect(text).not.toContain("NOT RUN");
+  });
+
+  it("takes the opt-out from RISK_CHECK_SEED_DATA=true, and from no other value", async () => {
+    const db = await seedOnlyDatabase();
+
+    vi.stubEnv("RISK_CHECK_SEED_DATA", "true");
+    const optedOut = await createRiskChecklistReport(db, NOW);
+    expect(checkOf(optedOut, "state-coverage").status).toBe("not_run");
+    expect(() => assertRiskChecklistReport(optedOut)).not.toThrow();
+
+    for (const value of ["1", "yes", "TRUE", "false", ""]) {
+      vi.stubEnv("RISK_CHECK_SEED_DATA", value);
+      const report = await createRiskChecklistReport(db, NOW);
+      expect(checkOf(report, "state-coverage").status, `RISK_CHECK_SEED_DATA=${value}`).toBe("fail");
+    }
+  });
+
+  it("lets the option beat the variable, in both directions", async () => {
+    const db = await seedOnlyDatabase();
+
+    vi.stubEnv("RISK_CHECK_SEED_DATA", "true");
+    expect(checkOf(await createRiskChecklistReport(db, NOW, { seedData: false }), "state-coverage").status).toBe("fail");
+
+    vi.stubEnv("RISK_CHECK_SEED_DATA", "");
+    expect(checkOf(await createRiskChecklistReport(db, NOW, { seedData: true }), "state-coverage").status).toBe("not_run");
+  });
+
+  it("ignores the opt-out in production, whichever way it was given: all 50 states are required there", async () => {
+    const db = await seedOnlyDatabase();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("RISK_CHECK_SEED_DATA", "true");
+
+    for (const options of [{}, { seedData: true }]) {
+      const report = await createRiskChecklistReport(db, NOW, options);
+
+      expect(checkOf(report, "state-coverage"), JSON.stringify(options)).toMatchObject({ status: "fail", ok: false });
+      expect(checkOf(report, "state-coverage").summary).toBe("5/50 required states have at least one active bid");
+      expect(checkOf(report, "state-data-quality-gate"), JSON.stringify(options)).toMatchObject({ status: "fail", ok: false });
+      expect(riskChecklistOutcome(report)).toBe("fail");
+      expect(() => assertRiskChecklistReport(report)).toThrow(/FAIL state-coverage/);
+      expect(formatRiskChecklistReport(report)).not.toContain("NOT RUN");
+    }
+  });
+
+  it("passes full 50-state coverage with or without the opt-out: the opt-out never turns a result into a non-result", async () => {
+    const db = await seededDatabase();
+
+    for (const options of [{}, { seedData: true }, { seedData: false }]) {
+      const report = await createRiskChecklistReport(db, NOW, options);
+
+      expect(report.ok, JSON.stringify(options)).toBe(true);
+      expect(riskChecklistOutcome(report)).toBe("pass");
+      expect(checkOf(report, "state-coverage")).toMatchObject({ status: "pass", ok: true, summary: "50/50 required states have at least one active bid" });
+      expect(checkOf(report, "state-data-quality-gate")).toMatchObject({ status: "pass", ok: true });
+      expect(report.checks.every((entry) => riskCheckStatus(entry) === "pass")).toBe(true);
+      const text = formatRiskChecklistReport(report);
+      expect(text).toContain("Risk checklist PASS");
+      expect(text).not.toContain("NOT RUN");
+    }
+  });
+
+  it("does not excuse another failure: a P0 reason other than a missing bid still fails the gate", async () => {
+    const db = await seedOnlyDatabase();
+    db.update(bids).set({ description: "", fullDescription: "" }).where(eq(bids.stateCode, "CA")).run();
+
+    const report = await createRiskChecklistReport(db, NOW, { seedData: true });
+
+    expect(checkOf(report, "state-content")).toMatchObject({ status: "fail" });
+    expect(checkOf(report, "state-data-quality-gate")).toMatchObject({ status: "fail", ok: false });
+    const gateDetails = (checkOf(report, "state-data-quality-gate").details ?? []).join("\n");
+    expect(gateDetails).toContain("empty_core_field");
+    // What the opt-out sets aside is not reported as a failure.
+    expect(gateDetails).not.toContain("missing_state_bid");
+    // The coverage check still did not run, and the report says both.
+    expect(checkOf(report, "state-coverage").status).toBe("not_run");
+    expect(riskChecklistOutcome(report)).toBe("fail");
+    expect(() => assertRiskChecklistReport(report)).toThrow(/FAIL state-data-quality-gate/);
+    expect(formatRiskChecklistReport(report)).toContain("Risk checklist FAIL");
+    expect(formatRiskChecklistReport(report)).toContain("NOT RUN state-coverage");
+  });
+
+  it("does not excuse a failing check that has nothing to do with the states", async () => {
+    const db = await seedOnlyDatabase();
+    db.update(bids).set({ sourceUrl: "https://sam.gov/opp/12345" }).where(eq(bids.id, "1")).run();
+
+    const report = await createRiskChecklistReport(db, NOW, { seedData: true });
+
+    expect(checkOf(report, "global-url-validity")).toMatchObject({ status: "fail" });
+    expect(() => assertRiskChecklistReport(report)).toThrow(/FAIL global-url-validity/);
+  });
+});
+
+describe("stateCoverageCheck", () => {
+  const fifty = Array.from({ length: 50 }, (_, index) => `S${String(index).padStart(2, "0")}`);
+
+  it("passes when every required state has a bid, and fails with the missing ones named when one has not", () => {
+    expect(stateCoverageCheck({ requiredStates: fifty, availableStates: fifty, seedData: false })).toMatchObject({
+      id: "state-coverage",
+      ok: true,
+      status: "pass",
+      summary: "50/50 required states have at least one active bid",
+    });
+    const missing = stateCoverageCheck({ requiredStates: fifty, availableStates: fifty.slice(2), seedData: false });
+    expect(missing).toMatchObject({ ok: false, status: "fail", summary: "48/50 required states have at least one active bid" });
+    expect(missing.details).toEqual(["missing state S00", "missing state S01"]);
+  });
+
+  it("is NOT RUN, with the real count and the missing states, when seed data has not got them all", () => {
+    const check = stateCoverageCheck({ requiredStates: fifty, availableStates: fifty.slice(0, 5), seedData: true });
+
+    expect(check).toMatchObject({
+      id: "state-coverage",
+      ok: false,
+      status: "not_run",
+      summary: "not evaluated on seed data: 5/50 required states have at least one active bid",
+    });
+    expect((check.details ?? []).filter((detail) => detail.startsWith("missing state "))).toHaveLength(45);
+  });
+
+  it("passes on seed data that has them all", () => {
+    expect(stateCoverageCheck({ requiredStates: fifty, availableStates: fifty, seedData: true })).toMatchObject({
+      ok: true,
+      status: "pass",
+      summary: "50/50 required states have at least one active bid",
+    });
+  });
+
+  it("fails on seed data when the registry does not list 50 states: that is the code's problem, not the data's", () => {
+    const registry = fifty.slice(0, 49);
+
+    expect(stateCoverageCheck({ requiredStates: registry, availableStates: registry.slice(0, 5), seedData: true })).toMatchObject({
+      ok: false,
+      status: "fail",
+    });
+    expect(stateCoverageCheck({ requiredStates: registry, availableStates: registry, seedData: true })).toMatchObject({
+      ok: false,
+      status: "fail",
+    });
   });
 });

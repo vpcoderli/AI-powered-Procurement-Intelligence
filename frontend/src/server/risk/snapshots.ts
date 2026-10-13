@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { desc } from "drizzle-orm";
+import { riskCheckStatus } from "@/lib/risk-check-status";
 import type { AppDatabase } from "@/server/db/client";
 import { mysqlExecute, mysqlSelectMany } from "@/server/db/mysql-runtime";
 import { riskCheckSnapshots } from "@/server/db/schema";
-import type { RiskChecklistReport } from "./checklist";
+import type { RiskChecklistCheck, RiskChecklistReport } from "./checklist";
 import type { Pool } from "mysql2/promise";
 
 export interface RiskChecklistSnapshot {
@@ -40,6 +41,15 @@ function leadingCount(value: string | undefined) {
   if (!value) return null;
   const match = value.match(/^(\d+)/);
   return match ? Number(match[1]) : null;
+}
+
+/**
+ * The count a check opens its summary with, unless the check did not run: the count of a check that was not evaluated
+ * (the real 5 of 50 on seed data) belongs to no verdict, so a trend must not compare it with a measured one.
+ */
+function evaluatedCount(check: RiskChecklistCheck | null) {
+  if (!check || riskCheckStatus(check) === "not_run") return null;
+  return leadingCount(check.summary);
 }
 
 function parseReport(value: string): RiskChecklistReport {
@@ -147,10 +157,10 @@ export function summarizeRiskChecklistTrend(history: RiskChecklistSnapshot[]): R
   const latestAttachment = latest ? checkById(latest.report, "attachment-downloads") : null;
   const oldestStateCoverage = oldest ? checkById(oldest.report, "state-coverage") : null;
   const oldestAttachment = oldest ? checkById(oldest.report, "attachment-downloads") : null;
-  const latestStateCount = leadingCount(latestStateCoverage?.summary);
-  const oldestStateCount = leadingCount(oldestStateCoverage?.summary);
-  const latestAttachmentCount = leadingCount(latestAttachment?.summary);
-  const oldestAttachmentCount = leadingCount(oldestAttachment?.summary);
+  const latestStateCount = evaluatedCount(latestStateCoverage);
+  const oldestStateCount = evaluatedCount(oldestStateCoverage);
+  const latestAttachmentCount = evaluatedCount(latestAttachment);
+  const oldestAttachmentCount = evaluatedCount(oldestAttachment);
 
   return {
     snapshotCount: history.length,
