@@ -89,13 +89,13 @@ function blankDeploymentEnvironment() {
   for (const key of ["APP_ENV", "DEPLOY_ENV", "VERCEL_ENV", "RUNTIME_ENV"]) vi.stubEnv(key, "");
 }
 
-function useNeutralRiskCheckEnvironment() {
+function resetRiskCheckEnvironment() {
   blankDeploymentEnvironment();
   vi.stubEnv("RISK_CHECK_SEED_DATA", "");
 }
 
 beforeEach(() => {
-  useNeutralRiskCheckEnvironment();
+  resetRiskCheckEnvironment();
   bidRowStates = [];
 });
 

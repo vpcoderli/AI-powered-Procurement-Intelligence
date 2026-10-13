@@ -88,13 +88,13 @@ function blankDeploymentEnvironment() {
   for (const key of ["APP_ENV", "DEPLOY_ENV", "VERCEL_ENV", "RUNTIME_ENV"]) vi.stubEnv(key, "");
 }
 
-function useNeutralRiskCheckEnvironment() {
+function resetRiskCheckEnvironment() {
   blankDeploymentEnvironment();
   vi.stubEnv("RISK_CHECK_SEED_DATA", "");
 }
 
 beforeEach(() => {
-  useNeutralRiskCheckEnvironment();
+  resetRiskCheckEnvironment();
 });
 
 afterEach(async () => {
@@ -686,7 +686,7 @@ describe("the seed-data opt-out in a production-like environment", () => {
       vi.stubEnv(key, value);
       const report = await createRiskChecklistReport(db, NOW, { seedData: true });
       expect(checkOf(report, "state-coverage").status, `${key}=${JSON.stringify(value)}`).toBe("not_run");
-      useNeutralRiskCheckEnvironment();
+      resetRiskCheckEnvironment();
     }
   });
 });
