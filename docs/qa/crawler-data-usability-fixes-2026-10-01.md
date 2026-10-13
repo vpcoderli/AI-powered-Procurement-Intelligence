@@ -91,7 +91,7 @@ P0-5 终审列出的剩余误杀在 `classifier-followup` 分支（基于 `fix/d
 | 22 条 NY Contract Reporter 转包卡片：id 里粘着 `Company: …`，发布方是 "Unknown state agency" | **已修复**。爬虫认 `Company:` 标签，把转包标记句 "This is a subcontracting opportunity" 从标题里剥掉，新 id 是干净的 `ny_contract_reporter:<CR#>`，承包商记在 `contractor_company`。迁移把库里已有的遗留行重键（无子表数据、无冲突的）：发布方换成公司名，清掉标题回显的正文和占位发布方时算出的质量结论；有子表数据的行不动，计入 `malformedNyIds` | Python 单测与夹具 `ny_ads_search_subcontract.html`；SQLite 单测；MySQL 集成测试（`ny-subcontract-rekey.mysql.integration.test.ts`）。业务库上的结果待演练确认 |
 | 56 条演示/种子招标（`demo:prepare` 的 50 条 demo-readiness + `db:seed` 的 6 条 mock）混在业务数据里 | **清理命令已就绪**：`npm run bids:purge-demo`，默认预演；`--apply --backup-file` 才在一个事务里删除这些招标和全部依赖行，`knowledge_items` 保留、链接置空。**尚未在业务库执行** | 单测；MySQL 集成测试（每条关系零孤儿）；一次性库上预演与执行 |
 | 截止日已过的招标仍是 `open` | **截止日规则**（`frontend/src/lib/bid-deadline.ts`，宁可晚关，不可早关）：导入时关闭；`crawler-worker` 每个 tick 清扫库里已有的 open 招标，`npm run bids:lifecycle:sweep` 是一次性命令；原因记 `closed_reason = deadline_passed`。MySQL 清扫要求 MySQL ≥ 8.0.1。规则全文见[生命周期运维第 8 节](../operations/bid-lifecycle-and-crawl-budget.md) | 解析器、导入、清扫单测；MySQL 集成测试 |
-| 改动前后无法证明没丢、没藏、没串类型 | **`npm run data:integrity`**：按 state / county / city / township / special_district / federal / other 分层的报告，加逐行快照与比对（未解释的删除、可见性回归、`identityMismatch` 上升都退出码 1）。它不写库 | SQLite 单测、CLI 单测；MySQL 集成测试要求两种数据库对同一份夹具给出同样的报告 |
+| 改动前后无法证明没丢、没藏、没串类型 | **`npm run data:integrity`**：按 state / county / city / township / special_district / federal / other 分层的报告，加逐行快照与比对（未解释的删除、可见性回归、关早了的截止日关闭（`early_close`）、`identityMismatch` 上升都退出码 1；跟踪列之外的改动按层级列出，只报告不失败）。它不写库 | SQLite 单测、CLI 单测；MySQL 集成测试要求两种数据库对同一份夹具给出同样的报告 |
 | 容器镜像缺 Census 地域表：`discover-sources` 在 worker 和 runner 镜像里报 `JurisdictionTableError`（[全量测试](skill-assisted-full-test-2026-10-12.md) ISSUE-001） | `frontend/Dockerfile` 的 `crawler-runtime` 阶段把 `crawler/data/us_jurisdictions.tsv` 复制到 `/crawler/data/`，两个镜像都继承；CI 的 `crawler-runtime` 任务在 worker 镜像里加了 `--network none` 的离线探针 | `frontend/dockerfile.test.ts` 钉住这一行；真实构建见下 |
 
 另外，`test:crawler-integration` 现在列出仓库里全部 `*.integration.test.ts`（Tasks 1–6 合并时是 11 个，此前漏了 5 个，其中 4 个是本次新增的；并入独立验收套件后是 12 个），`frontend/package-scripts.test.ts` 在有新的集成测试没被列入时失败；`bid-references-agree.test.ts` 要求迁移用的 `BID_CHILD_REFERENCES` 与演示清理的关系表对 `bids` 的引用是同一组列。
@@ -106,20 +106,20 @@ P0-5 终审列出的剩余误杀在 `classifier-followup` 分支（基于 `fix/d
 | 前端全量 Vitest | 415 个文件 / 4,451 项 | 416 个文件 / 4,584 项 | 416 个文件通过、11 个按环境条件跳过；4,603 项通过、81 项跳过（含 `src/__acceptance__`） |
 | `npm run test:crawler-integration`，指向一次性 MySQL 8.4.9 容器（随机密码，跑完即停），含 Python 爬虫 → HTTP extractor → 两个导入器的跨语言链路 | 11 个文件 / 114 项通过 | 12 个文件 / 120 项通过 | 12 个文件 / 120 项通过 |
 | 独立验收套件（黑盒，只按计划写成） | 尚未并入 | 146/146 通过 | 146/146 通过：`src/__acceptance__` 2 个文件 139 项（SQLite 与 MySQL 各一个文件），加 Python 的 7 项 |
-| ESLint | — | — | 通过 |
-| `tsc --noEmit` | — | — | 仍报既有的类型诊断（276 条）；出错的文件集合与基线（78 个文件）完全相同，没有新增 |
+| ESLint | 通过（退出码 0） | 通过（退出码 0） | 通过 |
+| `tsc --noEmit` | 出错的文件集合与基线（78 个文件）完全相同 | 出错的文件集合与基线（78 个文件）完全相同 | 仍报既有的类型诊断（276 条）；出错的文件集合与基线（78 个文件）完全相同，没有新增 |
 
 本轮修复（评审意见 I-1 与次要项）之后，把手册里的流程在一次性 SQLite 库和 MySQL 8.4.9 库上重新走了一遍。数据是夹具数据加上遗留行：1 条旧 FIPS 的 Aurora、23 条旧 id 的 NY、54 条演示/种子招标（48 条 demo-readiness、6 条 mock）。结果：
 
-- 清扫在还没迁移的库上只关闭了 2 条过期招标，23 条遗留 NY id、旧 FIPS 的 Aurora 行和 `is_active = 0` 的 open 行原样不动（它不迁移）；`--dry-run` 前后 SQLite 主文件的 SHA-256 相同、`-wal` 大小不变；
-- 在 MySQL 上打开服务器的 general log，`--dry-run` 期间服务器收到的只有一条 `SELECT id, deadline_date, issuer_type FROM bids …`（外加驱动握手时的 `select @@version_comment`），没有 `START TRANSACTION`，没有 `UPDATE`；真跑时才出现 `START TRANSACTION`、`SELECT … FOR UPDATE SKIP LOCKED`、两条 `UPDATE`、`COMMIT`；
-- 空文件、不存在的文件、没迁移的 MySQL 库，清扫都退出码 2，库不变，什么也没建；
+- 清扫在结构已就绪、但数据迁移（FIPS 校正、NY 重键、把 `is_active = 0` 的 open 行改成 closed）还没跑过的库上，只关闭了 2 条过期招标，23 条遗留 NY id、旧 FIPS 的 Aurora 行和 `is_active = 0` 的 open 行原样不动（它不迁移）；`--dry-run` 前后 SQLite 主文件的 SHA-256 相同、`-wal` 大小不变；
+- 在 MySQL 上打开服务器的 general log，`--dry-run` 期间服务器收到的只有一条 `SELECT id, deadline_date, issuer_type FROM bids …`（外加 `mysql` 命令行会话自己连上时发的 `select @@version_comment`，不是 mysql2 驱动握手发的），没有 `START TRANSACTION`，没有 `UPDATE`；真跑时才出现 `START TRANSACTION`、`SELECT … FOR UPDATE SKIP LOCKED`、两条 `UPDATE`、`COMMIT`；
+- 空文件、不存在的文件、结构没迁移的库（没有 `bids` 表，或缺清扫要读写的列；MySQL 上同样），清扫都退出码 2，库不变，什么也没建；
 - 迁移、清理（SQLite 用 `db:backup` 的备份，MySQL 用容器里 `mysqldump` 的备份）之后，带三条 `--allow-removed` 的比对退出码 0：删除 77 条、全部被放行（23 条 NY + 54 条演示），新增 23 条（重键后的 NY id），没有未解释的删除；文本输出每份 id 列表只列 20 个，`--json` 里 `comparison.removed.allowed` 是全部 77 个。两种数据库的结论一致。
 
 | 检查 | 结果 |
 | --- | --- |
 | 镜像 | 在 Dockerfile 修复提交（aa30802）的内容上，于仓库根目录构建 `--target worker`，`docker run --rm --network none` 运行 CI 的探针：`load_jurisdictions()` 载入成功，`match_jurisdiction("city", "CA", "City of Los Angeles")` 返回 `{'status': 'exact', 'geoid': '0644000', 'name': 'Los Angeles city'}`；镜像里的表与仓库文件的 SHA-256 相同。ISSUE-001 的原命令（`discover-sources`，关闭网络）在修复前的镜像里报 `JurisdictionTableError`，在新镜像里越过了读表一步（因没有网络而以 `fetch_failed` 停止）。验证后镜像已删除；runner 镜像没有单独构建，它与 worker 共用同一个阶段；此后 Dockerfile 没有再改动 |
-| `winbids` 备份上的数据演练（备份 → 快照 → `db:mysql:migrate` → 清理 → 清扫 → 比对） | **未验证**：属于独立测试阶段，尚未执行 |
+| `winbids` 备份上的数据演练（备份 → 快照 → `db:mysql:migrate` → 清理 → 清扫 → 比对） | **通过 @9675c8d**：在一次性 MySQL 上，用 2026-10-13 01:49Z 的转储恢复出来的库演练；证据在 `ops-evidence/data-integrity-rehearsal-2026-10-13/REPORT.md`（git 忽略，不在仓库里）。演练跑在 9675c8d 上，早于后来对比较逻辑的改动（跟踪列之外改动的名单 `changedOutsideTracked`、`early_close` 失败），这两项没有被它演练过 |
 | 业务库上执行迁移、清理、清扫 | **未验证**：尚未执行 |
 
 ### 州、市、县／郡数据完整性
