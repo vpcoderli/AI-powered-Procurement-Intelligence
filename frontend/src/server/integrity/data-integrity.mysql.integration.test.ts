@@ -10,6 +10,7 @@ import {
   INTEGRITY_LEVELS,
   buildIntegrityReport,
   buildIntegritySnapshot,
+  hashPayload,
   parseIntegritySnapshot,
   serializeIntegritySnapshot,
   type IntegrityReport,
@@ -171,10 +172,13 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data:integri
         expect(viaMysql.rows[id].p, `${id}.p`).toMatch(/^[0-9a-f]{64}$/);
         expect(viaMysql.rows[id], id).toEqual(viaSqlite.rows[id]);
       }
-      // The lifecycle key is not part of p, and the way the text is spaced is not either.
-      expect(viaMysql.rows["ca_caleprocure:p-spaced"].p).toBe(
-        (await buildIntegritySnapshot({ database: testDb.db }, { now: INTEGRITY_NOW })).rows["ca_caleprocure:p-spaced"].p,
-      );
+      // The lifecycle key is not part of p, and neither is the way the text is spaced or its keys are ordered.
+      expect(viaMysql.rows["ca_caleprocure:p-lifecycle"].p).toBe(hashPayload('{"agency":"x"}'));
+      expect(viaMysql.rows["ca_caleprocure:p-spaced"].p).toBe(hashPayload('{"a":[1,2],"b":1}'));
+      // Not a JSON object: hashed as it is, and NULL is not the text "null".
+      expect(viaMysql.rows["ca_caleprocure:p-text"].p).toBe(hashPayload("plain text, not JSON"));
+      expect(viaMysql.rows["ca_caleprocure:p-null"].p).toBe(hashPayload(null));
+      expect(viaMysql.rows["ca_caleprocure:p-null"].p).not.toBe(hashPayload("null"));
     } finally {
       await testDb.cleanup();
     }
