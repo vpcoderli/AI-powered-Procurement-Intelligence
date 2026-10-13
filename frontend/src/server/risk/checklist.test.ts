@@ -13,6 +13,7 @@ import {
   formatRiskChecklistReport,
   RISK_CHECK_IDS,
   stateCoverageCheck,
+  type RiskCheckId,
   type RiskChecklistReport,
 } from "./checklist";
 
@@ -299,10 +300,75 @@ function checkOf(report: RiskChecklistReport, id: string) {
   return found;
 }
 
+/**
+ * Every check of the checklist, one by one, against the seeded throwaway database CI runs it on: what its verdict is a
+ * claim about, and so whether the seed-data opt-out sets it aside. A check is set aside only when its verdict is about
+ * the coverage of the business database, which seed data cannot satisfy by construction; a check about code, config or
+ * the rows that are present runs, and must pass, on seed data too (what it says is scoped by the count in its summary).
+ * Keyed by the ids the checklist is made of, so a new check does not compile until someone has decided which it is.
+ */
+const SEED_DATA_TREATMENT: Record<RiskCheckId, { setAside: boolean; reason: string }> = {
+  "state-coverage": {
+    setAside: true,
+    reason: "every one of the 50 states has an active bid: a completeness claim about the business database that five seeded states can never satisfy",
+  },
+  "state-data-quality-gate": {
+    setAside: true,
+    reason:
+      "no P0 reason across the 50 state rows. Its missing_state_bid reason is the same coverage claim and is set aside, so the gate is NOT RUN while a state has no bid; " +
+      "its other P0 reasons (empty core field, bad detail route or archive, placeholder URL, registry metadata, duplicate enabled source, a crawler success with zero rows) are code, config or rows that are present, and still fail it",
+  },
+  "state-content": {
+    setAside: false,
+    reason: "every state bid that is present has a title, issuer, URL, state and description: a claim about those rows (5 on seed data), which seed data can satisfy and a broken demo row still fails",
+  },
+  "bid-detail-routes": {
+    setAside: false,
+    reason: "the id of every state bid that is present survives route encoding and is found by detail lookup: code run over the rows present",
+  },
+  "attachment-downloads": {
+    setAside: false,
+    reason: "every attachment of a state bid that is present uses the internal download route and would not 404: code run over the rows present",
+  },
+  "account-tier-separation": {
+    setAside: false,
+    reason: "the free, pro, business and admin entitlement matrix: code, no data at all",
+  },
+  "source-ingestion-governance": {
+    setAside: false,
+    reason: "registry governance metadata, restricted-source blocks and local ingestion readiness: code and config (real-world approval is the separate, production-only requireSourceApproval)",
+  },
+  "source-validity-metadata": {
+    setAside: false,
+    reason: "authority, trust, evidence mode and notes of the 50 registry sources: code, no data at all",
+  },
+  "state-url-validity": {
+    setAside: false,
+    reason: "no state bid that is present has a placeholder source URL or an unsafe attachment URL: a claim about those rows",
+  },
+  "global-url-validity": {
+    setAside: false,
+    reason: "no active bid that is present has a placeholder source URL or an unsafe attachment URL: a claim about those rows",
+  },
+};
+
 describe("risk checklist on seed data", () => {
-  // The two checks whose result is a property of the business database, not of the code: neither can be judged from a
-  // seed that holds five states.
-  const DATA_CHECKS = ["state-coverage", "state-data-quality-gate"];
+  const DATA_CHECKS = RISK_CHECK_IDS.filter((id) => SEED_DATA_TREATMENT[id].setAside);
+
+  it("decides, for every check the checklist is made of, whether the opt-out sets it aside", async () => {
+    // The table covers exactly the checks the report is made of, so none was left undecided or kept after it was dropped.
+    expect(Object.keys(SEED_DATA_TREATMENT).sort()).toEqual([...RISK_CHECK_IDS].sort());
+    expect(DATA_CHECKS).toEqual(["state-coverage", "state-data-quality-gate"]);
+
+    const db = await seedOnlyDatabase();
+    const report = await createRiskChecklistReport(db, NOW, { seedData: true });
+
+    expect(report.checks.map((entry) => entry.id)).toEqual([...RISK_CHECK_IDS]);
+    for (const entry of report.checks) {
+      const treatment = SEED_DATA_TREATMENT[entry.id as RiskCheckId];
+      expect(riskCheckStatus(entry), `${entry.id} verdict: ${treatment.reason}`).toBe(treatment.setAside ? "not_run" : "pass");
+    }
+  });
 
   it("reports the 50-state checks as NOT RUN, never PASS, with the real numbers, when the run says it is on seed data", async () => {
     const db = await seedOnlyDatabase();
@@ -320,7 +386,7 @@ describe("risk checklist on seed data", () => {
     expect(checkOf(report, "state-data-quality-gate")).toMatchObject({ status: "not_run", ok: false });
     expect(checkOf(report, "state-data-quality-gate").summary).toContain(`${50 - SEED_DATA_ONLY_STATE_COUNT}/50 states have no active bid`);
     // Nothing else is waived: every other check ran, and passed.
-    for (const entry of report.checks.filter((candidate) => !DATA_CHECKS.includes(candidate.id))) {
+    for (const entry of report.checks.filter((candidate) => !DATA_CHECKS.includes(candidate.id as RiskCheckId))) {
       expect(entry, entry.id).toMatchObject({ ok: true, status: "pass" });
     }
   });

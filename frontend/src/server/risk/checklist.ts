@@ -71,8 +71,10 @@ export interface RiskChecklistOptions {
   /**
    * The database is seed (demo) data, so the 50-state results cannot be judged from it: which states have an active bid
    * is a property of the business database, not of the code. The state coverage check, and the missing-bid reason of the
-   * state data quality gate, are then reported as NOT RUN, with their real numbers, instead of failed. Defaults to
-   * RISK_CHECK_SEED_DATA=true. Never honoured when NODE_ENV is production, where all 50 states are always required.
+   * state data quality gate, are then reported as NOT RUN, with their real numbers, instead of failed. Nothing else is
+   * set aside: the other eight checks are about code, config or the rows that are present, so they run on the seeded
+   * rows and must pass. Defaults to RISK_CHECK_SEED_DATA=true. Never honoured when NODE_ENV is production, where all 50
+   * states are always required.
    */
   seedData?: boolean;
 }
@@ -243,6 +245,13 @@ function accountFeatureMatrixCheck() {
  * Whether this run is on seed data, so that the 50-state results are set aside instead of judged. Like
  * shouldRequireSourceApproval it takes an explicit option first and RISK_CHECK_SEED_DATA=true after it, except that
  * production wins over both: neither is read there, so a production run can never skip the 50-state requirement.
+ *
+ * What is set aside is a verdict about the coverage of the business database, which seed data cannot satisfy by
+ * construction: `state-coverage`, and the `missing_state_bid` reason of `state-data-quality-gate`. A verdict about code,
+ * config or the rows that are present can be satisfied by seed data, so it is still judged: state-content,
+ * bid-detail-routes, attachment-downloads, state-url-validity and global-url-validity (each scoped by the number of rows
+ * in its summary), account-tier-separation, source-ingestion-governance and source-validity-metadata. The table in
+ * checklist.test.ts decides every check by id, with the reason.
  */
 function isSeedDataRun(options: RiskChecklistOptions) {
   if (process.env.NODE_ENV === "production") return false;
