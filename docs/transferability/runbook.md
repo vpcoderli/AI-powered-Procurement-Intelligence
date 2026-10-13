@@ -9,8 +9,10 @@ cd frontend
 npm test
 npm run lint
 npm run build
-npm run risk:check
+env -u RISK_CHECK_SEED_DATA npm run risk:check   # the report must be headed "Risk checklist PASS"
 ```
+
+`risk:check` passes only when it exits 0 **and** its report is headed `Risk checklist PASS`. A report headed `Risk checklist INCOMPLETE` also exits 0, but it means a check was set aside (`RISK_CHECK_SEED_DATA`, which CI sets on a seeded throwaway database): it is not a pass, and `env -u` makes sure the variable is not set for this run. A local database that only holds the seed (`npm run db:seed`, demo bids in five states) cannot pass 50-state coverage; for that developer run use `RISK_CHECK_SEED_DATA=true npm run risk:check` and expect exit 0 with a report headed `Risk checklist INCOMPLETE`, exactly `state-coverage` and `state-data-quality-gate` `NOT RUN` and every other line `PASS`. That seeded run is a local health signal, never release evidence.
 
 Worker checks:
 
@@ -47,7 +49,7 @@ Until a dedicated observability stack exists, use:
 - Stripe webhook delivery logs for billing.
 - Notification provider dashboard/logs for outbound delivery.
 - Application database tables for notification outbox, billing events, crawler logs, and source status.
-- `npm run risk:check` for local P0 guardrail drift.
+- `env -u RISK_CHECK_SEED_DATA npm run risk:check` for local P0 guardrail drift (a report headed `Risk checklist PASS`; for a local database that only holds the seed, see the Daily Local Health Check above).
 
 Production should add centralized logs, metrics, uptime checks, alert routing, and dashboard ownership before high-volume launch.
 

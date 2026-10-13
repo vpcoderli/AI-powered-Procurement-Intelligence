@@ -100,8 +100,8 @@ SELECT * FROM mysql_migrations;
 
 The migration entry point alone does not switch the app runtime. Complete these before declaring MySQL as the active database:
 
-0. Before import or browser smoke, create a timestamped SQLite backup in `frontend/data/backups/` and keep `frontend/data/apsi.sqlite*` until MySQL browser smoke, `npm run db:mysql:smoke`, and `npm run risk:check` have passed.
-1. Local cutover verification has passed: SQLite backup, MySQL migration/import, admin reset, MySQL smoke, `risk:check`, `workers:check`, full regression tests, browser smoke, admin/user role separation, and 50-state detail/download HTTP checks.
+0. Before import or browser smoke, create a timestamped SQLite backup in `frontend/data/backups/` and keep `frontend/data/apsi.sqlite*` until MySQL browser smoke, `npm run db:mysql:smoke`, and `env -u RISK_CHECK_SEED_DATA npm run risk:check` have passed (the risk report headed `Risk checklist PASS`; an `INCOMPLETE` report exits 0 but is not a pass).
+1. Local cutover verification has passed: SQLite backup, MySQL migration/import, admin reset, MySQL smoke, `risk:check` (a report headed `Risk checklist PASS`), `workers:check`, full regression tests, browser smoke, admin/user role separation, and 50-state detail/download HTTP checks.
 2. Run Stripe sandbox verification in MySQL mode with real Stripe test credentials before production billing signoff.
 3. Execute `npm run workers:check` plus one-shot worker dry runs for crawler, notifications/dunning, and event outbox in staging/production-like environments.
 4. Execute `NODE_ENV=production npm run billing:production:check` in the production deployment environment before live webhook rotation or launch.
