@@ -21,6 +21,8 @@ Use this path for the first AWS release:
 | Billing | Stripe live mode + AWS-managed environment secrets | Webhook endpoint must be unique per environment. |
 | Backups | RDS automated backups plus manual pre-migration snapshots | Restore drill is required before launch signoff. |
 
+**Anything placed in front of the web app (CDN, WAF rule set, reverse proxy).** Since Next.js 16.3 the app validates React Server Component requests: the `RSC` header, every `Next-Router-*` header, `Next-Url` and the `_rsc` query parameter must reach the app unchanged. A layer that drops the router headers costs one extra 307 redirect per client navigation; one that strips or rewrites `_rsc` makes client navigations redirect repeatedly until the browser falls back to full page loads. A plain App Runner service or an ALB forwards request headers and query strings as they are; verify this again whenever a CDN, WAF or proxy is added in front of the web runtime.
+
 Official AWS references:
 
 - [AWS App Runner application development](https://docs.aws.amazon.com/apprunner/latest/dg/develop.html): App Runner supports managed runtimes, configurable port behavior, environment variables, Secrets Manager / SSM references, and instance roles.
