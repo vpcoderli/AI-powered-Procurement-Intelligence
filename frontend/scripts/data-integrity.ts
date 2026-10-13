@@ -97,7 +97,9 @@ export function formatDataIntegrityHelp() {
     "                                       counted out here and hidden by search) / a deadline the parser reads / a source URL",
     "  expiredOpen                          open bids whose deadline has passed",
     "  newestLastSeenAt, sourceHealth       newest last_seen_at; enabled sources, never succeeded, succeeded within 2 and 7 days, failing",
-    "Globally: malformedNyIds, the legacy ny_contract_reporter:% Company:% ids that the NY re-key left behind.",
+    "Globally: malformedNyIds, the number of legacy ny_contract_reporter:% Company:% ids that the NY re-key left behind (child rows or a",
+    "key clash). The ids themselves are listed under the count: the first 20 in the text report, all of them in the JSON as",
+    "report.malformedNyIdList.",
     "",
     "Target: DATABASE_URL / MYSQL_DATABASE_URL when it is a mysql:// URL, otherwise the SQLite file at DATABASE_PATH (default",
     "data/apsi.sqlite; a relative path is read from the frontend/ directory, whatever directory you run this from; the file must",
@@ -110,8 +112,11 @@ export function formatDataIntegrityHelp() {
     "transaction too, so the whole scan describes one moment even while a crawler writes. The scan reads every bid, a page at a time:",
     "run it against a replica, or off-hours, on a large database.",
     "",
-    "Exit codes: 0 done (the compare passed), 1 a regression was found (the report is on stdout) or the run failed (the message is",
-    "on stderr), 2 usage (a bad command line, a snapshot file that is missing or not a snapshot, or a SQLite database that is not there).",
+    "Exit codes: 0 done (the compare passed); 1 a regression was found (the report is on stdout) or the run failed (the message is on",
+    "stderr); 2 usage: a bad command line, a snapshot to compare with that is missing or not a snapshot, a --snapshot file that is there",
+    "already or whose directory is missing or not writable (all refused before the database is opened), or a SQLite database that is not",
+    "there or is a directory. A passing --compare whose --snapshot cannot be written afterwards has printed its comparison in full; its",
+    "exit code is 2 when the file appeared in the meantime, otherwise 1, and a compare that failed stays 1.",
   ].join("\n");
 }
 
@@ -226,6 +231,7 @@ export function formatIntegrityReport(report: IntegrityReport, target: string): 
   lines.push(
     "",
     `Legacy NY ids (ny_contract_reporter:% Company:%) still in the data: ${report.malformedNyIds}`,
+    ...idLines(report.malformedNyIdList, "  "),
     "",
     "open = lifecycle open; openVisible = open and shown by search (display_status not suppressed, publication gate passes, is_active = 1).",
     "Take a snapshot before a change: npm run data:integrity -- --snapshot <file>; after it: npm run data:integrity -- --compare <file>",

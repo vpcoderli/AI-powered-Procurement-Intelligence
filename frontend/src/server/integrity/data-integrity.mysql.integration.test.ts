@@ -97,6 +97,7 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data:integri
     expect(result.levels).toEqual(EXPECTED_LEVELS);
     expect(result.totals).toEqual(EXPECTED_TOTALS);
     expect(result.malformedNyIds).toBe(EXPECTED_MALFORMED_NY_IDS);
+    expect(result.malformedNyIdList).toEqual(["ny_contract_reporter:CR9 Company: Acme Inc"]);
   });
 
   it("counts exactly what the SQLite run counts on identical seed data", async () => {
@@ -107,6 +108,7 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data:integri
     for (const level of INTEGRITY_LEVELS) expect(viaMysql.levels[level], level).toEqual(viaSqlite.report.levels[level]);
     expect(viaMysql.totals).toEqual(viaSqlite.report.totals);
     expect(viaMysql.malformedNyIds).toBe(viaSqlite.report.malformedNyIds);
+    expect(viaMysql.malformedNyIdList).toEqual(viaSqlite.report.malformedNyIdList);
   });
 
   it("shows exactly the rows search shows: openVisible of each level equals queryBidsFromMysql", async () => {

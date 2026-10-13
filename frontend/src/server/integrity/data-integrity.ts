@@ -124,8 +124,13 @@ export interface IntegrityReport {
   levels: Record<IntegrityLevel, LevelReport>;
   /** The sum of the levels (the newest of their newest). */
   totals: LevelReport;
-  /** Legacy `ny_contract_reporter:% Company:%` ids the NY re-key skipped (child rows or a key clash). */
+  /** How many legacy `ny_contract_reporter:% Company:%` ids the NY re-key skipped (child rows or a key clash). */
   malformedNyIds: number;
+  /**
+   * Those ids themselves, in code-unit order whatever the database's collation. One per counted id, so its length is
+   * `malformedNyIds`. Every report this version builds has it; a snapshot written before it existed has the count alone.
+   */
+  malformedNyIdList?: string[];
 }
 
 export interface SnapshotRow {
@@ -436,7 +441,7 @@ interface LevelAccumulator {
 /** Folds evaluations and sources into the per-level report. */
 class ReportBuilder {
   private readonly levels = {} as Record<IntegrityLevel, LevelAccumulator>;
-  malformedNyIds = 0;
+  private readonly malformedNyIdList: string[] = [];
 
   constructor() {
     for (const level of INTEGRITY_LEVELS) this.levels[level] = { report: zeroLevelReport(), reasons: new Map() };
@@ -454,7 +459,7 @@ class ReportBuilder {
     if (evaluation.demoLike) report.demoLike += 1;
     if (evaluation.nonCanonicalId) report.nonCanonicalId += 1;
     if (evaluation.activeFlagMismatch) report.activeFlagMismatch += 1;
-    if (evaluation.malformedNyId) this.malformedNyIds += 1;
+    if (evaluation.malformedNyId) this.malformedNyIdList.push(evaluation.id);
     report.newestLastSeenAt = laterTimestamp(report.newestLastSeenAt, evaluation.lastSeenAt);
 
     if (!evaluation.open) return;
@@ -499,7 +504,8 @@ class ReportBuilder {
       totals.newestLastSeenAt = laterTimestamp(totals.newestLastSeenAt, report.newestLastSeenAt);
     }
     totals.hiddenReasons = sortedReasons(totalReasons);
-    return { generatedAt, dialect, levels, totals, malformedNyIds: this.malformedNyIds };
+    const malformedNyIdList = [...this.malformedNyIdList].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+    return { generatedAt, dialect, levels, totals, malformedNyIds: malformedNyIdList.length, malformedNyIdList };
   }
 }
 

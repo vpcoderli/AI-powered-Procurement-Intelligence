@@ -110,6 +110,7 @@ describe("data:integrity on SQLite", () => {
       expect(result.levels).toEqual(EXPECTED_LEVELS);
       expect(result.totals).toEqual(EXPECTED_TOTALS);
       expect(result.malformedNyIds).toBe(EXPECTED_MALFORMED_NY_IDS);
+      expect(result.malformedNyIdList).toEqual(["ny_contract_reporter:CR9 Company: Acme Inc"]);
       expect(result.dialect).toBe("sqlite");
       expect(result.generatedAt).toBe("2026-10-13T12:00:00.000Z");
     });
@@ -269,7 +270,12 @@ describe("data:integrity on SQLite", () => {
           "VALUES ('ny_contract_reporter:CR11', 'NY Contract Reporter', 'CR11', 'd11', 'T', 'D', 'Acme Inc', 'state', 'NY', 'https://example.test/y', 'a', 'a', 'a', 'a')",
       );
 
-      expect((await report()).malformedNyIds).toBe(EXPECTED_MALFORMED_NY_IDS + 1);
+      const result = await report();
+
+      expect(result.malformedNyIds).toBe(EXPECTED_MALFORMED_NY_IDS + 1);
+      // The ids behind the count, in code-unit order (not the database's collation), the clean CR11 not among them.
+      expect(result.malformedNyIdList).toEqual(["ny_contract_reporter:CR10 Company:Acme", "ny_contract_reporter:CR9 Company: Acme Inc"]);
+      expect(result.malformedNyIdList).toHaveLength(result.malformedNyIds);
     });
 
     it("counts a lower-case state code as a mismatch although the gate still shows the row", async () => {

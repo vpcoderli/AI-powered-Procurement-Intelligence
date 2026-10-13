@@ -80,6 +80,26 @@ describe("data-integrity arguments", () => {
     }
   });
 
+  it("states which exit code a snapshot that cannot be written ends with, before and after the compare", () => {
+    const help = formatDataIntegrityHelp().replace(/\s+/g, " ");
+
+    // Refused up front, before the database is opened: a directory that is missing or not writable, a file that is there.
+    expect(help).toContain("whose directory is missing or not writable");
+    expect(help).toContain("refused before the database is opened");
+    // After a compare that passed: the comparison has been printed, and the write is what fails the run.
+    expect(help).toContain("A passing --compare whose --snapshot cannot be written");
+    expect(help).toContain("is 2 when the file appeared in the meantime, otherwise 1");
+    expect(help).toContain("a compare that failed stays 1");
+  });
+
+  it("says that malformedNyIds is a count and where the ids behind it are", () => {
+    const help = formatDataIntegrityHelp().replace(/\s+/g, " ");
+
+    expect(help).toContain("malformedNyIds, the number of legacy ny_contract_reporter:% Company:% ids");
+    expect(help).toContain("malformedNyIdList");
+    expect(help).toContain("the first 20 in the text report");
+  });
+
   it("states the rule withIssuer applies, the publication gate's own", () => {
     const help = formatDataIntegrityHelp().replace(/\s+/g, " ");
 
@@ -181,6 +201,47 @@ describe("data-integrity", () => {
       const expected: IntegrityReport = await buildIntegrityReport({ database: testDb.db }, { now: INTEGRITY_NOW });
       expect(printed.report).toEqual(JSON.parse(JSON.stringify(expected)));
       expect(printed.report.levels.state).toEqual(JSON.parse(JSON.stringify(EXPECTED_LEVELS.state)));
+    });
+
+    it("lists the legacy NY ids under their count: the first 20 in the text, all of them in the JSON, the count keeping its name and type", async () => {
+      for (let index = 0; index < 24; index += 1) {
+        const id = `ny_contract_reporter:N${String(index).padStart(2, "0")} Company: Co`;
+        sqlite().prepare(
+          "INSERT INTO bids (id, source, source_bid_id, dedupe_key, title, description, issuer_name, issuer_type, state_code, source_url, first_seen_at, last_seen_at, created_at, updated_at) " +
+            "VALUES (?, 'NY Contract Reporter', ?, ?, 'T', 'D', 'Unknown state agency', 'state', 'NY', 'https://example.test/x', 'a', 'a', 'a', 'a')",
+        ).run(id, id.slice("ny_contract_reporter:".length), `dedupe:${id}`);
+      }
+
+      expect(await run([])).toBe(0);
+      const lines = out.join("\n").split("\n");
+      const heading = lines.findIndex((line) => line.startsWith("Legacy NY ids (ny_contract_reporter:% Company:%) still in the data: 25"));
+      expect(heading).toBeGreaterThan(-1);
+      const listed = lines.slice(heading + 1, heading + 21);
+      expect(listed.every((line) => line.startsWith("  ny_contract_reporter:"))).toBe(true);
+      expect(listed[0]).toBe("  ny_contract_reporter:CR9 Company: Acme Inc");
+      expect(lines[heading + 21]).toBe("  ... and 5 more (--json lists them all)");
+
+      out.length = 0;
+      expect(await run(["--json"])).toBe(0);
+      const { report } = JSON.parse(out[0]);
+      expect(report.malformedNyIds).toBe(25);
+      expect(report.malformedNyIdList).toHaveLength(25);
+      expect(report.malformedNyIdList[0]).toBe("ny_contract_reporter:CR9 Company: Acme Inc");
+      expect(new Set(report.malformedNyIdList).size).toBe(25);
+    });
+
+    it("lists them in a snapshot's report too, and a snapshot taken without the list still compares", async () => {
+      const snapshotFile = await takeSnapshot();
+      const snapshot = JSON.parse(readFileSync(snapshotFile, "utf8"));
+      expect(snapshot.report.malformedNyIds).toBe(1);
+      expect(snapshot.report.malformedNyIdList).toEqual(["ny_contract_reporter:CR9 Company: Acme Inc"]);
+
+      // A baseline written before the list existed has the count alone.
+      delete snapshot.report.malformedNyIdList;
+      const older = file("older.json");
+      writeFileSync(older, JSON.stringify(snapshot));
+
+      expect(await run(["--compare", older])).toBe(0);
     });
 
     it("exits 2 with a clear message, and creates nothing, when the database file is not there", async () => {
@@ -800,20 +861,26 @@ describe("data-integrity as a process of its own", () => {
     }
   }, 60_000);
 
-  it("looks for its default database in the frontend directory, never in the directory it was run from", async () => {
-    // A stray data/apsi.sqlite where a checkout's root (or any other directory) would have one.
+  it("reads the database DATABASE_PATH names, not a stray data/apsi.sqlite in the directory it was run from", async () => {
+    // A stray data/apsi.sqlite where a checkout's root (or any other directory) would have one. That the default, with no
+    // DATABASE_PATH, is frontend/data/apsi.sqlite and never the stray file is pinned in open-target.test.ts: a test that ran
+    // the script with no DATABASE_PATH would scan the checkout's own database in full.
     mkdirSync(path.join(workingDirectory, "data"));
     writeFileSync(path.join(workingDirectory, "data", "apsi.sqlite"), "");
+    const testDb = await createTestDatabase();
+    try {
+      const run = await runScriptIn(workingDirectory, ["--json"], { DATABASE_PATH: testDb.databasePath });
 
-    const run = await runScriptIn(workingDirectory, []);
-
-    // Whether frontend/data/apsi.sqlite exists here or not, the target is that file and not the stray one.
-    expect(run.stderr).toContain(path.join(frontendDir, "data", "apsi.sqlite"));
-    expect(run.stderr).not.toContain(workingDirectory);
-    expect(run.stdout).not.toContain(workingDirectory);
-    expect(readdirSync(path.join(workingDirectory, "data"))).toEqual(["apsi.sqlite"]);
-    expect(readFileSync(path.join(workingDirectory, "data", "apsi.sqlite"), "utf8")).toBe("");
-    expect(readdirSync(workingDirectory)).toEqual(["data"]);
+      expect(run.status, run.stderr).toBe(0);
+      expect(run.stderr).toContain(`Target: sqlite ${testDb.databasePath}`);
+      expect(run.stderr).not.toContain(workingDirectory);
+      expect(JSON.parse(run.stdout).target).toBe(`sqlite ${testDb.databasePath}`);
+      expect(readdirSync(path.join(workingDirectory, "data"))).toEqual(["apsi.sqlite"]);
+      expect(readFileSync(path.join(workingDirectory, "data", "apsi.sqlite"), "utf8")).toBe("");
+      expect(readdirSync(workingDirectory)).toEqual(["data"]);
+    } finally {
+      await testDb.cleanup();
+    }
   }, 60_000);
 
   it("reads a relative DATABASE_PATH from the frontend directory, whatever directory it is run from", async () => {
