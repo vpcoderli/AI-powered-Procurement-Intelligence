@@ -30,6 +30,8 @@ Match surrounding code: TypeScript uses two-space indentation, double quotes, se
 
 Use colocated `*.test.ts` files for Vitest and `test_*.py` for pytest. Prefer deterministic fixtures and mocked network calls. No numeric coverage threshold is configured. Cover changed behavior and relevant SQLite/MySQL paths. CI covers frontend, both Python suites, and database integration. Run `npm run test:crawler-integration` with the documented Python/MySQL environment.
 
+Every test report must explicitly assess state, city, and county data completeness and reliability; 县 and 郡 both map to `county` in this project and must not be counted as separate coverage. Follow [the jurisdiction data acceptance requirements](docs/qa/jurisdiction-data-acceptance.md). Record the target jurisdiction/source inventory, actual coverage, gaps, and evidence for each level. Do not infer complete data from passing code tests, mock fixtures, successful HTTP responses, or crawler exit codes. Missing, partial, stale, or unverified data blocks an overall data-quality pass. A focused test may report its own result, but unverified jurisdiction levels must remain explicitly unverified. Never fabricate records, silently narrow the inventory, or relabel an unknown result to make a gate pass.
+
 ## Crawler Integration
 
 Read [the crawler flow](docs/architecture/crawler-enrichment-flow.md) before crawler changes. Scrapling parses HTML fetched by the existing crawler. Verify normalization, enrichment, both importers, and displayed descriptions together; use field provenance to protect enriched content and archives during reimports.
