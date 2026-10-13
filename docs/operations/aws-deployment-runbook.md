@@ -96,7 +96,7 @@ Recommended evidence ledger:
 | RDS/MySQL migration | `03-mysql-migrate.log`, `04-mysql-smoke.log` | Data owner | Migration and smoke exit 0 against staging MySQL. | SQLite target, migration error, failed smoke domain. |
 | Workers check | `05-workers-check.log` | Operations owner | `workers:check` exits 0 in production-like worker env. | SQLite runtime or local notification provider in staging/production mode. |
 | Source health report-only | `06-source-health-report-only.log` | Source owner | Report is generated and access failures are classified. | Command crash, missing report, unclassified source failures. |
-| Demo/risk smoke | `07-demo-check.log`, `08-risk-check.log` | QA/release owner | Demo readiness exits 0. The risk gate exits 0 AND its report in `08-risk-check.log` is headed `Risk checklist PASS` (a report headed `Risk checklist INCOMPLETE` exits 0 too). | Missing demo data, unsafe attachment, risk/audit blocker, a risk report that is not headed `Risk checklist PASS`. |
+| Demo/risk smoke | `07-demo-check.log`, `08-risk-check.log` | QA/release owner | Demo readiness exits 0. The risk gate exits 0 (with `pipefail`, so the `tee` pipeline reports the command's own status, a failing `secrets:scan` or `npm audit` after the headline included) AND its report in `08-risk-check.log` is headed `Risk checklist PASS` (a report headed `Risk checklist INCOMPLETE` exits 0 too). | Missing demo data, unsafe attachment, risk/audit blocker, a risk gate whose own exit status is not 0, a risk report that is not headed `Risk checklist PASS`. |
 | Backup snapshot | `09-backup-snapshot.log`, `10-logical-dump.log` | Backup owner | Snapshot id and logical dump checksum recorded. | No snapshot id, dump failed, checksum missing. |
 | Restore rehearsal | `11-restore-rehearsal.log`, `12-restored-db-smoke.log` | Backup/data owner | Restored staging DB migrates/smokes cleanly. | Restore target unavailable or restored DB fails smoke. |
 | Rollback decision | `13-rollback-decision.txt` | Deploy owner | Proceed/rollback decision and owner recorded. | No named decision owner or no previous revision/restore target. |
@@ -192,13 +192,15 @@ Pass if the report is produced and every 403, CAPTCHA/login, timeout, 404/410, T
 ### 6. Demo And Risk Smoke
 
 ```bash
-npm run demo:check 2>&1 | tee "$EVIDENCE_DIR/07-demo-check.log"
-env -u RISK_CHECK_SEED_DATA npm run risk:check 2>&1 | tee "$EVIDENCE_DIR/08-risk-check.log"
-# A report headed INCOMPLETE exits 0 as well, so the exit status alone cannot tell it from a PASS: the headline does.
-grep -q '^Risk checklist PASS' "$EVIDENCE_DIR/08-risk-check.log"
+set -o pipefail   # a `| tee` pipeline then answers with the command's own status, not tee's (bash and zsh); it stays on for the rest of the session
+npm run demo:check 2>&1 | tee "$EVIDENCE_DIR/07-demo-check.log"; echo "demo:check exit=$?"
+env -u RISK_CHECK_SEED_DATA npm run risk:check 2>&1 | tee "$EVIDENCE_DIR/08-risk-check.log"; echo "risk:check exit=$?"
+# A report headed INCOMPLETE exits 0 as well, so the exit status alone cannot tell it from a PASS: the headline does. The headline
+# alone cannot see a later stage of the command (`secrets:scan`, `npm audit`) fail after it: the exit status does.
+grep -q '^Risk checklist PASS' "$EVIDENCE_DIR/08-risk-check.log"; echo "PASS headline exit=$?"
 ```
 
-Pass if both commands exit 0 and the `grep` exits 0, that is, the report in `08-risk-check.log` is headed `Risk checklist PASS`. A report headed `Risk checklist INCOMPLETE`, or with a `NOT RUN` line, set a check aside: it is not release evidence, whatever the exit status. What sets a check aside is `RISK_CHECK_SEED_DATA`, which CI sets on seed data; `env -u` makes sure it is not set for this run, and a process whose `NODE_ENV`, `APP_ENV`, `DEPLOY_ENV`, `VERCEL_ENV` or `RUNTIME_ENV` names production or staging ignores it as well. Do not run this with `NODE_ENV=production` instead of unsetting the variable: that also turns on the source-approval requirement of the checklist, which is the source owner's decision. Fail if demo data is incomplete, source placeholders appear, attachment checks fail, or risk/audit gates block the release.
+Pass if all three lines print `exit=0`: `demo:check`, `risk:check` (the whole command, so a failing `secrets:scan` or `npm audit` after the headline fails it) and the headline `grep`, that is, the report in `08-risk-check.log` is headed `Risk checklist PASS`. Without `pipefail` a `tee` pipeline answers with tee's own status, which is always 0, and would let such a failure through; that is the first line. A report headed `Risk checklist INCOMPLETE`, or with a `NOT RUN` line, set a check aside: it is not release evidence, whatever the exit status. What sets a check aside is `RISK_CHECK_SEED_DATA`, which CI sets on seed data; `env -u` makes sure it is not set for this run, and a process whose `NODE_ENV`, `APP_ENV`, `DEPLOY_ENV`, `VERCEL_ENV` or `RUNTIME_ENV` names production or staging ignores it as well. Do not run this with `NODE_ENV=production` instead of unsetting the variable: that also turns on the source-approval requirement of the checklist, which is the source owner's decision. Fail if demo data is incomplete, source placeholders appear, attachment checks fail, or risk/audit gates block the release.
 
 ### 7. Backup Snapshot
 
