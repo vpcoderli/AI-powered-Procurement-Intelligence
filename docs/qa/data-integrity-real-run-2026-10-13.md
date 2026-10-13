@@ -80,3 +80,18 @@
 - 指纹原始文件（含真实业务数据的每列原值）只保留在本会话 scratchpad `realrun/`，不进入仓库。
 - 备份文件及 sha256 见 §1；恢复方法见 [备份与恢复运行手册](../operations/backup-restore-runbook.md)。
 - 复跑顺序见 [数据完整性运行手册 §2.3](../operations/data-integrity.md)；本次执行即按该顺序进行。
+
+## 7. 复验：爬虫恢复后五轮抓取（2026-10-13 13:12Z）
+
+爬虫 worker 12:00Z 恢复后跑了 5 轮（12:01、12:19、12:36、12:53、13:11Z），共 110 个来源：50 个州级源各跑一遍，59 个地方源（预算 `bidnet=60`/小时，每轮约 12 个）；第 2–5 轮全部成功，第 1 轮 2 个失败（`sam_gov` 无 API Key；`ca_caleprocure` 门户 HTTP 500，后续重试仍失败）。随后重新运行 `data:integrity`，并与 11:56Z 的执行后快照比对：
+
+| 层级 | total | open = openVisible | withBody（open 内） | bodyMissing | identityMismatch / demoLike / openHidden / expiredOpen | newest last_seen_at |
+| --- | --- | --- | --- | --- | --- | --- |
+| state | 5,845 → 6,639 | 1,778 → 2,567 | 426 → 579 | 519 → 729 | 0 | 2026-10-13T13:11Z |
+| county | 555 → 623 | 319 → 392 | 0 | 0 | 0 | 2026-10-13T13:09Z |
+| city | 703 | 395 | 0 | 0 | 0 | 2026-10-03（尚未轮到） |
+| township | 71 | 40 | 0 | 0 | 0 | 2026-10-03（尚未轮到） |
+
+比对：`ok`，failures 0，warnings 0；新增 862 条（state 794、county 68），移除 0；改动 36 条：截止日更新 35、`closed→open` 11、`open→closed` 1（`bidnet_mi_oakland:0000438950`，完整列表扫描未再出现，`closed_reason = delisted`）、标题 5、机构 2；可见性回退 0。11 条重新打开的招标都是门户重新刊登并给出新截止日（10/13–11/16/2026），不是清扫错关。无 open 州级招标的州由 7 个降为 4 个：CA（门户 500）、CT、ME、RI。
+
+本节不改变 §4 矩阵的结论：上游完整性、正文与附件仍未验证；市、镇来源要等预算轮到后再复验。观察项：`wa_state_procurement:RFP` 这样的 id 说明 WA 适配器把 "RFP" 当成了公告编号，属既有适配器问题，待单独处理。
