@@ -42,6 +42,7 @@ function AcceptInviteForm() {
       });
       await refreshSession();
       setMessage(t("acceptInvite.accepted"));
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- full reload resets session state
       window.location.assign("/settings");
     } catch (err) {
       setError(
