@@ -196,7 +196,7 @@ npm run demo:check 2>&1 | tee "$EVIDENCE_DIR/07-demo-check.log"
 npm run risk:check 2>&1 | tee "$EVIDENCE_DIR/08-risk-check.log"
 ```
 
-Pass if both exit 0. Fail if demo data is incomplete, source placeholders appear, attachment checks fail, or risk/audit gates block the release.
+Pass if both exit 0 and the report in `08-risk-check.log` is headed `Risk checklist PASS`. A report headed `Risk checklist INCOMPLETE`, or with a `NOT RUN` line, set a check aside (`RISK_CHECK_SEED_DATA`, which CI sets on seed data and `NODE_ENV=production` ignores): it is not release evidence. Fail if demo data is incomplete, source placeholders appear, attachment checks fail, or risk/audit gates block the release.
 
 ### 7. Backup Snapshot
 

@@ -99,6 +99,8 @@ npm run risk:check
 
 This verifies that all 50 states have active non-empty state bid data, bid detail route IDs round-trip safely, state attachments use the internal download route instead of broken public URLs, ordinary/admin/paid feature entitlements remain separated, and production dependencies have no moderate-or-higher audit findings.
 
+On a seeded throwaway database (what CI runs it on: a state bid in five states, none in the other 45) the 50-state result cannot be judged, because whether every state has an active bid is a property of the business database. Set `RISK_CHECK_SEED_DATA=true` there and `state-coverage`, plus the missing-bid reason of `state-data-quality-gate`, are reported `NOT RUN` with their real counts (for example `not evaluated on seed data: 5/50 required states have at least one active bid`), never `PASS`. The report then opens with `Risk checklist INCOMPLETE ... (NOT RUN: ...)` instead of `PASS`, the command still exits 0 when nothing failed, and every other check still has to pass. `NODE_ENV=production` ignores the variable, so a release run always requires all 50 states; only a report headed `Risk checklist PASS` is release evidence.
+
 ## Artifact Vault
 
 Business-tier users can upload supplier-managed artifacts from an Intent detail page. Local development stores uploaded files under:
