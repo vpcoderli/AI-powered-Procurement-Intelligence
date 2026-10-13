@@ -1399,6 +1399,8 @@ export const en = {
     riskCheckCheckedAt: "Checked {time}",
     riskCheckOk: "Pass",
     riskCheckIssue: "Issue",
+    riskCheckNotRun: "Not run",
+    riskCheckIncomplete: "Not fully verified: {count} not run",
     riskCheckNoIssues: "No issues found.",
     riskCheckGlobalUrlTitle: "Global URL health",
     riskCheckGlobalUrlDescription: "Checks every active bid, including federal and MySQL runtime data, for placeholder source links or unsafe attachment URLs.",

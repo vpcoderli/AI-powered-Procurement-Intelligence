@@ -13,6 +13,9 @@ import {
   filterStateDataQualityActionsByRecommendedAction,
   filterStateDataQualityRows,
   riskCheckLabel,
+  riskCheckStatusLabel,
+  riskCheckStatusTone,
+  riskReportHeading,
   STATE_DATA_QUALITY_RISK_FILTERS,
   stateAttachmentRealRatio,
   stateDataQualityActionText,
@@ -479,5 +482,56 @@ describe("server-written text the section translates by its code", () => {
     expect(zhAdmin.riskCheckLabel_global_url_validity).toContain("启用招标");
     // The risk checklist is the 风险巡检 the page title names.
     expect(zhAdmin.stateQualityAction_risk_check_stale_or_missing).toContain(zhAdmin.riskCheck);
+  });
+});
+
+describe("a risk check that did not run", () => {
+  // The checklist can come back with a check set aside (50-state coverage on seed data). That is neither a pass nor a
+  // failure, so the console words it, and colours it, as a third thing.
+  it("is worded Not run, apart from Pass and Issue, in both languages", () => {
+    for (const dictionary of [enAdmin, zhAdmin]) {
+      const t = tIn(dictionary);
+
+      expect(riskCheckStatusLabel("pass", t)).toBe(dictionary.riskCheckOk);
+      expect(riskCheckStatusLabel("fail", t)).toBe(dictionary.riskCheckIssue);
+      expect(riskCheckStatusLabel("not_run", t)).toBe(dictionary.riskCheckNotRun);
+      expect(new Set([dictionary.riskCheckOk, dictionary.riskCheckIssue, dictionary.riskCheckNotRun]).size).toBe(3);
+    }
+    expect(enAdmin.riskCheckNotRun).toBe("Not run");
+  });
+
+  it("is coloured as neither a pass nor a failure", () => {
+    const tones = new Set([riskCheckStatusTone("pass"), riskCheckStatusTone("fail"), riskCheckStatusTone("not_run")]);
+
+    expect(tones.size).toBe(3);
+    expect(riskCheckStatusTone("not_run")).not.toMatch(/emerald|rose/);
+  });
+
+  it("makes the checklist's heading neither All checks passed nor Needs attention while a check did not run", () => {
+    const pass = { ok: true, status: "pass" } as const;
+    const fail = { ok: false, status: "fail" } as const;
+    const notRun = { ok: false, status: "not_run" } as const;
+
+    for (const dictionary of [enAdmin, zhAdmin]) {
+      const t = tIn(dictionary);
+
+      expect(riskReportHeading({ ok: true, checks: [pass] }, t)).toBe(dictionary.riskCheckPassed);
+      expect(riskReportHeading({ ok: false, checks: [pass, fail] }, t)).toBe(dictionary.riskCheckFailed);
+      // A failure outranks a check that did not run.
+      expect(riskReportHeading({ ok: false, checks: [notRun, fail] }, t)).toBe(dictionary.riskCheckFailed);
+      expect(riskReportHeading({ ok: false, checks: [pass, notRun] }, t)).toBe(dictionary.riskCheckIncomplete.replace("{count}", "1"));
+      expect(riskReportHeading({ ok: false, checks: [notRun, notRun, pass] }, t)).toBe(dictionary.riskCheckIncomplete.replace("{count}", "2"));
+      // Never a pass, even from a report that calls itself ok.
+      expect(riskReportHeading({ ok: true, checks: [pass, notRun] }, t)).toBe(dictionary.riskCheckIncomplete.replace("{count}", "1"));
+      // A report from before the status existed has only ok.
+      expect(riskReportHeading({ ok: true, checks: [{ ok: true }] }, t)).toBe(dictionary.riskCheckPassed);
+      expect(riskReportHeading({ ok: false, checks: [{ ok: false }] }, t)).toBe(dictionary.riskCheckFailed);
+    }
+  });
+
+  it("says the checklist is not fully verified in Chinese with the console's own word for it", () => {
+    expect(zhAdmin.riskCheckNotRun).toBe("未执行");
+    expect(zhAdmin.riskCheckIncomplete).toContain("未完全验证");
+    expect(zhAdmin.riskCheckIncomplete).toContain("{count}");
   });
 });

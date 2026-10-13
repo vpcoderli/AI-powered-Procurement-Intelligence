@@ -15,6 +15,7 @@ import {
 } from "@/lib/api/admin";
 import { bidDetailPath } from "@/lib/bid-routes";
 import { useLanguage } from "@/lib/i18n/LanguageContext";
+import { riskCheckStatus, riskChecklistOutcome, type RiskCheckStatus } from "@/lib/risk-check-status";
 import { formatDate } from "../admin-format";
 import { AdminNotice, AdminSectionStateCard } from "../AdminStateCards";
 import { useAdminResource } from "../use-admin-resource";
@@ -148,8 +149,45 @@ export function stateDataQualityRecommendedActionLabels(
   return labels;
 }
 
+/** A status badge's colours: green for a pass, red for a failure, amber for a check that did not run. */
+export function riskCheckStatusTone(status: RiskCheckStatus) {
+  if (status === "pass") return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  if (status === "not_run") return "border-amber-200 bg-amber-50 text-amber-700";
+  return "border-rose-200 bg-rose-50 text-rose-700";
+}
+
 function riskCheckTone(ok: boolean) {
-  return ok ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700";
+  return riskCheckStatusTone(ok ? "pass" : "fail");
+}
+
+/** The colour of a check's detail list: the details of a failure are problems, those of a check that did not run are notes. */
+function riskDetailsTone(status: RiskCheckStatus) {
+  return status === "not_run" ? "text-amber-700" : "text-rose-700";
+}
+
+/** A status badge's word: Pass, Issue, or Not run (a check that was set aside, which passed nothing and failed nothing). */
+export function riskCheckStatusLabel(status: RiskCheckStatus, t: Translate) {
+  if (status === "pass") return t("admin.riskCheckOk");
+  if (status === "not_run") return t("admin.riskCheckNotRun");
+  return t("admin.riskCheckIssue");
+}
+
+type ChecklistLike = { ok: boolean; checks: Array<{ ok: boolean; status?: string }> };
+
+/** A whole checklist as the status of one badge: none failed but some did not run reads Not run, never Pass. */
+function riskReportStatus(report: ChecklistLike): RiskCheckStatus {
+  const outcome = riskChecklistOutcome(report);
+  if (outcome === "pass") return "pass";
+  return outcome === "fail" ? "fail" : "not_run";
+}
+
+/** The checklist's heading: all checks passed, needs attention, or, with none failed but some not run, not fully verified. */
+export function riskReportHeading(report: ChecklistLike, t: Translate) {
+  const status = riskReportStatus(report);
+  if (status === "pass") return t("admin.riskCheckPassed");
+  if (status === "fail") return t("admin.riskCheckFailed");
+  const notRun = report.checks.filter((entry) => riskCheckStatus(entry) === "not_run").length;
+  return t("admin.riskCheckIncomplete").replace("{count}", String(notRun));
 }
 
 function riskReportFilename(report: AdminRiskChecklistResponse["report"]) {
@@ -436,17 +474,26 @@ function RiskCheck({
   const globalUrlCheck = report.checks.find((check) => check.id === "global-url-validity");
   const globalUrlSummary = (snapshotReport: AdminRiskChecklistResponse["report"]) =>
     snapshotReport.checks.find((check) => check.id === "global-url-validity")?.summary ?? "-";
+  const reportStatus = riskReportStatus(report);
+  // The coverage trend compares measured counts; a latest check that did not run has none, so it reads Not run.
+  const stateCoverageCheck = report.checks.find((check) => check.id === "state-coverage");
+  const stateCoverageTrendStatus: RiskCheckStatus =
+    stateCoverageCheck && riskCheckStatus(stateCoverageCheck) === "not_run"
+      ? "not_run"
+      : trend.stateCoverageDeclined
+        ? "fail"
+        : "pass";
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-col gap-3 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-2 font-semibold text-slate-950">
-          {report.ok ? <ShieldCheck size={18} /> : <AlertTriangle size={18} />}
+          {reportStatus === "pass" ? <ShieldCheck size={18} /> : <AlertTriangle size={18} />}
           {t("admin.riskCheck")}
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className={riskCheckTone(report.ok)}>
-            {report.ok ? t("admin.riskCheckPassed") : t("admin.riskCheckFailed")}
+          <Badge variant="outline" className={riskCheckStatusTone(reportStatus)}>
+            {riskReportHeading(report, t)}
           </Badge>
           <span className="text-xs font-medium text-slate-500">
             {t("admin.riskCheckCheckedAt").replace("{time}", formatDate(report.checkedAt))}
@@ -489,8 +536,8 @@ function RiskCheck({
             <div className="rounded-md border border-slate-200 bg-slate-50/70 p-2">
               <div className="text-xs font-semibold text-slate-700">{t("admin.riskTrendStateCoverageDeclined")}</div>
               <div className="mt-1 text-xs leading-5 text-slate-500">{trend.latestStateCoverageSummary ?? "-"}</div>
-              <Badge variant="outline" className={riskCheckTone(trend.stateCoverageDeclined !== true)}>
-                {trend.stateCoverageDeclined ? t("admin.riskCheckIssue") : t("admin.riskCheckOk")}
+              <Badge variant="outline" className={riskCheckStatusTone(stateCoverageTrendStatus)}>
+                {riskCheckStatusLabel(stateCoverageTrendStatus, t)}
               </Badge>
             </div>
             <div className="rounded-md border border-slate-200 bg-slate-50/70 p-2">
@@ -508,8 +555,8 @@ function RiskCheck({
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-semibold text-slate-950">{t("admin.riskCheckGlobalUrlTitle")}</span>
-                  <Badge variant="outline" className={riskCheckTone(globalUrlCheck.ok)}>
-                    {globalUrlCheck.ok ? t("admin.riskCheckOk") : t("admin.riskCheckIssue")}
+                  <Badge variant="outline" className={riskCheckStatusTone(riskCheckStatus(globalUrlCheck))}>
+                    {riskCheckStatusLabel(riskCheckStatus(globalUrlCheck), t)}
                   </Badge>
                 </div>
                 <div className="mt-1 text-xs leading-5 text-slate-600">
@@ -519,7 +566,7 @@ function RiskCheck({
               </div>
             </div>
             {globalUrlCheck.details && globalUrlCheck.details.length > 0 ? (
-              <ul className="mt-2 space-y-1 text-xs leading-5 text-rose-700">
+              <ul className={`mt-2 space-y-1 text-xs leading-5 ${riskDetailsTone(riskCheckStatus(globalUrlCheck))}`}>
                 {globalUrlCheck.details.slice(0, 5).map((detail) => (
                   <RiskDetailItem key={detail} detail={detail} />
                 ))}
@@ -534,28 +581,33 @@ function RiskCheck({
         )}
         {stateDataQuality && <StateDataQualityMatrix report={stateDataQuality} />}
         <div className="grid gap-3 lg:grid-cols-5">
-          {report.checks.map((check) => (
-            <div key={check.id} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="break-words text-sm font-semibold text-slate-950">{riskCheckLabel(check, t)}</div>
-                  <div className="mt-1 text-xs leading-5 text-slate-600">{check.summary}</div>
+          {report.checks.map((check) => {
+            const status = riskCheckStatus(check);
+
+            return (
+              <div key={check.id} className="rounded-lg border border-slate-200 bg-slate-50/60 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="break-words text-sm font-semibold text-slate-950">{riskCheckLabel(check, t)}</div>
+                    <div className="mt-1 text-xs leading-5 text-slate-600">{check.summary}</div>
+                  </div>
+                  <Badge variant="outline" className={riskCheckStatusTone(status)}>
+                    {riskCheckStatusLabel(status, t)}
+                  </Badge>
                 </div>
-                <Badge variant="outline" className={riskCheckTone(check.ok)}>
-                  {check.ok ? t("admin.riskCheckOk") : t("admin.riskCheckIssue")}
-                </Badge>
+                {check.details && check.details.length > 0 ? (
+                  <ul className={`mt-2 space-y-1 text-xs leading-5 ${riskDetailsTone(status)}`}>
+                    {check.details.slice(0, 3).map((detail) => (
+                      <RiskDetailItem key={detail} detail={detail} />
+                    ))}
+                  </ul>
+                ) : (
+                  // "No issues found" is a verdict; a check that did not run has none to give.
+                  status !== "not_run" && <div className="mt-2 text-xs leading-5 text-slate-500">{t("admin.riskCheckNoIssues")}</div>
+                )}
               </div>
-              {check.details && check.details.length > 0 ? (
-                <ul className="mt-2 space-y-1 text-xs leading-5 text-rose-700">
-                  {check.details.slice(0, 3).map((detail) => (
-                    <RiskDetailItem key={detail} detail={detail} />
-                  ))}
-                </ul>
-              ) : (
-                <div className="mt-2 text-xs leading-5 text-slate-500">{t("admin.riskCheckNoIssues")}</div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
         <div className="rounded-lg border border-slate-200 bg-white p-3">
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-950">
@@ -566,21 +618,25 @@ function RiskCheck({
             <div className="mt-2 text-xs leading-5 text-slate-500">{t("admin.riskCheckHistoryEmpty")}</div>
           ) : (
             <div className="mt-2 divide-y divide-slate-100">
-              {history.slice(0, 5).map((snapshot) => (
-                <div key={snapshot.id} className="grid gap-2 py-2 md:grid-cols-[auto_1fr] md:items-start">
-                  <Badge variant="outline" className={riskCheckTone(snapshot.ok)}>
-                    {snapshot.ok ? t("admin.riskCheckOk") : t("admin.riskCheckIssue")}
-                  </Badge>
-                  <div className="min-w-0">
-                    <div className="text-xs font-medium text-slate-600">
-                      {t("admin.riskCheckCheckedAt").replace("{time}", formatDate(snapshot.checkedAt))}
-                    </div>
-                    <div className="mt-1 break-words text-xs leading-5 text-slate-500">
-                      {globalUrlSummary(snapshot.report)}
+              {history.slice(0, 5).map((snapshot) => {
+                const snapshotStatus = riskReportStatus({ ok: snapshot.ok, checks: snapshot.report.checks });
+
+                return (
+                  <div key={snapshot.id} className="grid gap-2 py-2 md:grid-cols-[auto_1fr] md:items-start">
+                    <Badge variant="outline" className={riskCheckStatusTone(snapshotStatus)}>
+                      {riskCheckStatusLabel(snapshotStatus, t)}
+                    </Badge>
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium text-slate-600">
+                        {t("admin.riskCheckCheckedAt").replace("{time}", formatDate(snapshot.checkedAt))}
+                      </div>
+                      <div className="mt-1 break-words text-xs leading-5 text-slate-500">
+                        {globalUrlSummary(snapshot.report)}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
