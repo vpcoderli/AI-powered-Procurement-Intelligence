@@ -245,8 +245,10 @@ describe("Task 1 — deadline parser: every rule at both edges of expiry", () =>
     ["bare 12:00 is the whole day", "10/13/2026 12:00", eod(2026, 10, 13)],
     ["bare 12:00:00 is the whole day", "10/13/2026 12:00:00", eod(2026, 10, 13)],
     ["bare month-name 12:00 is the whole day", "Oct 13, 2026 12:00", eod(2026, 10, 13)],
-    ["bare ISO 12:00 is the whole day", "2026-10-13T12:00", eod(2026, 10, 13)],
-    ["bare ISO 12:00:00 is the whole day", "2026-10-13 12:00:00", eod(2026, 10, 13)],
+    // Digest C-2: the bare-12:00 whole-day rule covers the 12-hour US and month-name forms only; an ISO two-digit
+    // T12:00 is 24-hour noon, an offsetless UTC-10 wall clock.
+    ["ISO two-digit 12:00 is noon (C-2)", "2026-10-13T12:00", wall(2026, 10, 13, 12)],
+    ["ISO two-digit 12:00:00 is noon (C-2)", "2026-10-13 12:00:00", wall(2026, 10, 13, 12)],
     // 24:00 is D+1 00:00, the end of D.
     ["ISO 24:00", "2026-10-13T24:00", eod(2026, 10, 13)],
     ["ISO 24:00:00 with space", "2026-10-13 24:00:00", eod(2026, 10, 13)],
@@ -255,7 +257,9 @@ describe("Task 1 — deadline parser: every rule at both edges of expiry", () =>
     ["ISO Z exact", "2026-10-13T11:59:59Z", Date.UTC(2026, 9, 13, 11, 59, 59)],
     ["ISO Z exact, one second past", "2026-10-13T12:00:01Z", Date.UTC(2026, 9, 13, 12, 0, 1)],
     ["ISO negative offset exact", "2026-10-13T08:00:00-05:00", Date.UTC(2026, 9, 13, 13)],
-    ["ISO positive offset without colon exact", "2026-10-13T08:00:00+0200", Date.UTC(2026, 9, 13, 6)],
+    ["ISO positive offset without colon exact", "2026-10-13T08:30:00+0200", Date.UTC(2026, 9, 13, 6, 30)],
+    // 06:00Z is 00:00:00 at UTC-6, so the round-5 exact-instant rule makes it the whole day of 2026-10-13.
+    ["ISO positive offset without colon at a US local midnight is that whole day", "2026-10-13T08:00:00+0200", eod(2026, 10, 13)],
     ["ISO Z fraction honoured", "2026-10-13T11:59:59.500Z", Date.UTC(2026, 9, 13, 11, 59, 59, 500)],
     // Round-5 exact-instant rulings.
     ["ISO Z that is 00:00:00 at UTC-4 is that whole day", "2026-10-14T04:00:00Z", eod(2026, 10, 14)],
@@ -667,11 +671,10 @@ describe("Task 3 — data migrations on a legacy-shaped SQLite", () => {
       const payload = rawPayloadOf(row)!;
       expect(payload.data_quality, rekey.newId).toBeUndefined();
       expect(payload.contractor_company, rekey.newId).toBe(rekey.company);
-      // "stamps contractor_company / subcontracting": the key must be present on every re-keyed row. A row whose
-      // old title carried the marker sentence is a subcontracting card and must read true. Soft, so the remaining
-      // assertions of this test still report.
-      expect.soft(payload.subcontracting, `${rekey.newId} subcontracting stamped`).toBeTypeOf("boolean");
+      // Digest C-1: contractor_company is stamped on every re-keyed row; subcontracting: true only when the old
+      // title carried the marker sentence, and with no marker there is no subcontracting key (unknown, not false).
       if (rekey.markerInOldTitle) expect(payload.subcontracting, rekey.newId).toBe(true);
+      else expect(payload.subcontracting, `${rekey.newId}: no marker, so no subcontracting key (C-1)`).toBeUndefined();
       expect(payload).toMatchObject(rekey.rawKeep);
       expect(row.title).not.toContain(NY_MARKER);
     }
@@ -1060,6 +1063,8 @@ describe("Task 5 — data:integrity report, snapshot and compare (CLI)", () => {
       let client = fixture.open();
       client.prepare("DELETE FROM bids WHERE id = ?").run(fixture.seeded.removedId);
       client.prepare("UPDATE bids SET issuer_name = 'Unknown x' WHERE id = ?").run(fixture.seeded.regressionId);
+      // The retyped row is unregistered, so the retype moves a level's counts without raising any identityMismatch
+      // (which the plan makes a failure of its own, tested separately below).
       client.prepare("UPDATE bids SET issuer_type = 'county', jurisdiction_level = 'county' WHERE id = ?").run(fixture.seeded.retypedId);
       client.prepare("UPDATE bids SET description = 'A changed body outside the t columns' WHERE id = ?").run("sam_gov:F1");
       client.close();
@@ -1210,7 +1215,8 @@ describe("Task 6 — wiring", () => {
       const [header, ...rest] = chunk.split("\n");
       const name = /\bAS\s+(\S+)/i.exec(header)?.[1] ?? header.trim();
       const body = rest.join("\n");
-      const copiesTable = /^COPY\b[^\n]*crawler\/data(?:\/us_jurisdictions\.tsv|\/?)\s+[^\n]*\/crawler\/data\/?\s*$/m.test(body);
+      // The destination may be spelled as the directory or as the file itself; both place the table at /crawler/data/us_jurisdictions.tsv.
+      const copiesTable = /^COPY\b[^\n]*crawler\/data(?:\/us_jurisdictions\.tsv|\/?)\s+[^\n]*\/crawler\/data(?:\/|\/us_jurisdictions\.tsv)?\s*$/m.test(body);
       return { name, copiesTable };
     });
     const byName = new Map(stages.map((stage) => [stage.name, stage.copiesTable]));

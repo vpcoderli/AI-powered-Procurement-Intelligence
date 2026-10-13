@@ -621,7 +621,9 @@ export async function seedIntegrityScenario(run: SqlRunner, baseNowMs: number): 
     { level: "state", registered: true, id: "tx_esbd:3", issuerType: "state", stateCode: "TX", lifecycleStatus: "closed", description: BODY, deadlineDate: PAST },
     { level: "state", registered: true, id: `${NY_SOURCE}:2138289 Company: E.W. Howell Co., LLC.`, source: NY_SOURCE, sourceBidId: "2138289 Company: E.W. Howell Co., LLC.", issuerType: "state", stateCode: "NY", issuerName: "Unknown state agency", deadlineDate: FUTURE, deadlineParseable: true },
     { level: "state", registered: false, id: "orphan_source:9", issuerType: "state", stateCode: "TX", issuerName: "Orphan Agency", description: BODY, hasBody: true, deadlineDate: FUTURE, deadlineParseable: true },
-    { level: "state", registered: false, demo: true, id: "al_state_procurement_demo_readiness", source: "al_state_procurement", sourceBidId: "demo:al_state_procurement", issuerType: "state", stateCode: "AL", description: BODY, hasBody: true, deadlineDate: "2099-12-01", deadlineParseable: true },
+    // nonCanonicalId is not defined by the digest or the plan; the codebase's pre-existing definition (isCanonicalSourceBid in
+    // src/lib/source-identity.ts) is id === `<source id>:<source_bid_id>`, which a demo-readiness id (no colon, demo: source_bid_id) fails.
+    { level: "state", registered: false, demo: true, nonCanonical: true, id: "al_state_procurement_demo_readiness", source: "al_state_procurement", sourceBidId: "demo:al_state_procurement", issuerType: "state", stateCode: "AL", description: BODY, hasBody: true, deadlineDate: "2099-12-01", deadlineParseable: true },
     { level: "state", registered: true, id: "tx_esbd:7", issuerType: "state", stateCode: "TX", description: BODY, hasBody: true, deadlineDate: PAST, deadlineParseable: true, expired: true },
     { level: "state", registered: true, id: "tx_esbd:8", issuerType: "state", stateCode: "TX", lifecycleStatus: "awarded", awardedDate: "2026-09-01", description: BODY, deadlineDate: PAST },
     { level: "state", registered: true, id: "tx_esbd:9", issuerType: "state", stateCode: "TX", displayStatus: "suppressed", description: BODY, hasBody: true, deadlineDate: FUTURE, deadlineParseable: true },
@@ -685,7 +687,8 @@ export async function seedIntegrityScenario(run: SqlRunner, baseNowMs: number): 
     malformedNyIds: [`${NY_SOURCE}:2138289 Company: E.W. Howell Co., LLC.`],
     removedId: "tx_esbd:1",
     regressionId: "bidnet_co_aurora:1",
-    retypedId: "bidnet_mi_canton:1",
+    // Unregistered: retyping it moves per-level counts without creating an identity mismatch.
+    retypedId: "orphan_source:9",
     demoId: "al_state_procurement_demo_readiness",
     driftId: "bidnet_co_aurora:drift",
   };

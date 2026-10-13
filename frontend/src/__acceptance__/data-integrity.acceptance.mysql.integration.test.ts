@@ -285,9 +285,9 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data-integri
       const payload = rawPayloadOf(row)!;
       expect(payload.data_quality, rekey.newId).toBeUndefined();
       expect(payload.contractor_company, rekey.newId).toBe(rekey.company);
-      // Soft, so the row-level parity checks below still report when the stamp is missing.
-      expect.soft(payload.subcontracting, `${rekey.newId} subcontracting stamped`).toBeTypeOf("boolean");
+      // Digest C-1: subcontracting: true only when the old title carried the marker; no marker, no key.
       if (rekey.markerInOldTitle) expect(payload.subcontracting, rekey.newId).toBe(true);
+      else expect(payload.subcontracting, `${rekey.newId}: no marker, so no subcontracting key (C-1)`).toBeUndefined();
       expect(payload).toMatchObject(rekey.rawKeep);
       expect(row.title).not.toContain(NY_MARKER);
     }
@@ -431,8 +431,11 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data-integri
         }
         if (level !== "other") expect(findKey(mine, "openVisible"), `${level}.openVisible == search`).toBe(searchVisible[level]);
       }
-      expect(JSON.stringify(findKey(mysqlReport, "malformedNyIds") ?? null)).toContain("2138289");
-      expect(findKey(mysqlReport, "malformedNyIds")).toEqual(findKey(sqliteReport, "malformedNyIds"));
+      // The digest fixes the name, not the shape: a list naming the ids or a count are both accepted (as in the SQLite suite).
+      const malformed = findKey(mysqlReport, "malformedNyIds");
+      if (Array.isArray(malformed)) expect(malformed).toEqual(expect.arrayContaining(expected.malformedNyIds));
+      else expect(malformed, "malformedNyIds as a count").toBe(expected.malformedNyIds.length);
+      expect(malformed).toEqual(findKey(sqliteReport, "malformedNyIds"));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
