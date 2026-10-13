@@ -32,9 +32,9 @@ die()  { printf '\n\033[1;31m✗ %s\033[0m\n' "$1" >&2; exit 1; }
 # ---------------------------------------------------------------- 0. 前置检查
 step "0/5 环境前置检查"
 
-command -v node >/dev/null || die "未找到 node。Next 16.2.6 需要 Node 20+。"
+command -v node >/dev/null || die "未找到 node。Next 16.3.8 需要 Node 20+。"
 NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]')"
-[ "$NODE_MAJOR" -ge 20 ] || die "Node 版本为 $(node -v)，Next 16.2.6 需要 Node 20+（CI 与 Dockerfile 均为 Node 20）。"
+[ "$NODE_MAJOR" -ge 20 ] || die "Node 版本为 $(node -v)，Next 16.3.8 需要 Node 20+（CI 与 Dockerfile 均为 Node 20）。"
 ok "Node $(node -v)"
 
 [ -f "$ENV_FILE" ] || die "缺少 $ENV_FILE。MySQL 模式需要其中的 DATABASE_URL。"

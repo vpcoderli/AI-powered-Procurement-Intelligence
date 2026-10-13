@@ -189,8 +189,10 @@ After deploying with secrets wired in, confirm the app actually received them wi
 cd frontend
 NODE_ENV=production npm run ops:production:check
 NODE_ENV=production npm run workers:check
-npm run risk:check
+env -u RISK_CHECK_SEED_DATA npm run risk:check   # not under NODE_ENV=production: that also requires source approval. The report must be headed "Risk checklist PASS"
 ```
+
+`risk:check` passes only when it exits 0 **and** its report is headed `Risk checklist PASS` (the report comes first, before the secrets scan and the audit). A report headed `Risk checklist INCOMPLETE` also exits 0, but it means a check was set aside by `RISK_CHECK_SEED_DATA`, which CI sets on a seeded throwaway database; `env -u` makes sure it is not set for this run.
 
 `ops:production:check` and `workers:check` only print `configured`/boolean markers for secret-backed fields (see `frontend/src/server/operations/production-readiness.ts`); they never print the secret value itself, so their output is safe to paste into a deploy log or evidence file. `risk:check` (as of this change) also runs `secrets-scan` (`frontend/scripts/secrets-scan.ts`) against the repository to catch accidentally-committed secret-shaped strings — that check runs against the *source tree*, not runtime, and is a separate concern from confirming the deployed service resolved its secrets correctly.
 

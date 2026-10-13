@@ -1,4 +1,78 @@
 import type { AppDatabase } from "./client";
+import { noBidChildRowsSql } from "./bid-child-references";
+
+// NY Contract Reporter subcontracting cards were stored before the spider learned the "Company:" label: the company
+// text was glued onto the CR# value, so a row's id (and dedupe key) read `ny_contract_reporter:<CR#> Company: <company>`
+// and its source_bid_id `<CR#> Company: <company>`, the card had no Agency (the normalizer's "Unknown state agency"
+// placeholder), and the marker sentence trailed the title. The fixed spider stores `ny_contract_reporter:<CR#>`.
+// MySQL runs the same rules as MYSQL_NY_SUBCONTRACT_REKEY and MYSQL_NY_SUBCONTRACT_DUPLICATE_DELETE (mysql.ts).
+//
+// The statements match only that exact shape, and only a row nothing points at: SQLite enforces the foreign keys to
+// bids(id) (ON DELETE CASCADE, no ON UPDATE action), so touching a row that has children would cascade away user data
+// on a delete and abort the whole migration on a re-key. noBidChildRowsSql lists every table that points at a bid.
+const NY_COMPANY_MARKER = " Company: ";
+// The marker sentence, lower case with its leading space, compared with the lower-cased title.
+const NY_SUBCONTRACT_SUFFIX = " this is a subcontracting opportunity";
+const NY_CLEAN_CR = `substr(bids.source_bid_id, 1, instr(bids.source_bid_id, '${NY_COMPANY_MARKER}') - 1)`;
+const NY_CLEAN_ID = `'ny_contract_reporter:' || ${NY_CLEAN_CR}`;
+// The company: everything after the first marker, trimmed like the spider does.
+const NY_COMPANY = `trim(substr(bids.source_bid_id, instr(bids.source_bid_id, '${NY_COMPANY_MARKER}') + ${NY_COMPANY_MARKER.length}))`;
+// The title without a tail of ".", "!" and spaces (rtrim with a character set), so the marker sentence may be followed by
+// any mix of those and nothing else, like the spider's rule. The sentence ends in a letter, so only the tail goes.
+const NY_TITLE_STEM = "rtrim(bids.title, '.! ')";
+const NY_TITLE_HAS_MARKER = `lower(${NY_TITLE_STEM}) LIKE '%${NY_SUBCONTRACT_SUFFIX}'`;
+// The "_" in the id prefix is a LIKE wildcard, so it is escaped with "!". LIKE ignores ASCII case and instr does not,
+// which is why both are checked; the id must also be exactly the prefix plus source_bid_id.
+const NY_SUBCONTRACT_SHAPE = `bids.id LIKE 'ny!_contract!_reporter:%${NY_COMPANY_MARKER}%' ESCAPE '!'
+      AND instr(bids.source_bid_id, '${NY_COMPANY_MARKER}') > 1
+      AND bids.id = 'ny_contract_reporter:' || bids.source_bid_id`;
+const NY_CLEAN_TWIN = `(SELECT 1 FROM bids AS clean WHERE clean.id = ${NY_CLEAN_ID})`;
+
+// Re-keys a malformed row that has no clean twin and no children:
+// - id and dedupe_key become the clean id, source_bid_id the CR#;
+// - issuer_name becomes the company when it is blank or a placeholder ("Unknown...");
+// - a description or full description that is a copy of the OLD title is cleared (the spider copied the title into the
+//   description of a card without a Note:). Once the title is cleaned such a copy would no longer read as a title echo,
+//   would be shown as the body, and would be kept as "meaningful" by every later import;
+// - the title loses its trailing marker sentence (case-insensitively, then trimmed);
+// - when raw_payload is a JSON object, the stored data_quality verdict (computed while the placeholder issuer made the
+//   row core-invalid, and honoured by the publication gate) is removed so the row is judged by its fields again,
+//   contractor_company is set, and subcontracting is set to true if the old title carried the marker.
+// UPDATE OR IGNORE skips a row whose clean key another row already holds (the dedupe_key or (source, source_bid_id) unique
+// index, or a sibling malformed row of the same CR# that was re-keyed first) instead of failing the migration. A skipped
+// sibling then has a clean twin, so the delete below removes it; a row blocked by an unrelated row stays as it is.
+// Every SET expression reads the pre-update row, so source_bid_id may be reassigned in the same statement.
+const NY_SUBCONTRACT_REKEY_SQL = `
+  UPDATE OR IGNORE bids SET
+    id = ${NY_CLEAN_ID},
+    dedupe_key = ${NY_CLEAN_ID},
+    issuer_name = CASE WHEN bids.issuer_name IS NULL OR bids.issuer_name = '' OR bids.issuer_name LIKE 'Unknown%'
+      THEN ${NY_COMPANY} ELSE bids.issuer_name END,
+    description = CASE WHEN lower(trim(bids.description)) = lower(trim(bids.title)) THEN '' ELSE bids.description END,
+    full_description = CASE WHEN lower(trim(bids.full_description)) = lower(trim(bids.title)) THEN NULL ELSE bids.full_description END,
+    raw_payload = CASE WHEN json_valid(bids.raw_payload) THEN
+      CASE WHEN json_type(bids.raw_payload) = 'object' THEN
+        CASE WHEN ${NY_TITLE_HAS_MARKER}
+          THEN json_set(json_remove(bids.raw_payload, '$.data_quality'), '$.contractor_company', ${NY_COMPANY}, '$.subcontracting', json('true'))
+          ELSE json_set(json_remove(bids.raw_payload, '$.data_quality'), '$.contractor_company', ${NY_COMPANY}) END
+      ELSE bids.raw_payload END
+    ELSE bids.raw_payload END,
+    title = CASE WHEN ${NY_TITLE_HAS_MARKER}
+      THEN trim(substr(${NY_TITLE_STEM}, 1, length(${NY_TITLE_STEM}) - ${NY_SUBCONTRACT_SUFFIX.length}))
+      ELSE bids.title END,
+    source_bid_id = ${NY_CLEAN_CR}
+  WHERE ${NY_SUBCONTRACT_SHAPE}
+    AND NOT EXISTS ${NY_CLEAN_TWIN}
+    AND ${noBidChildRowsSql("bids.id")}
+`;
+
+// Deletes a malformed row that has no children and whose clean twin already exists; the twin is not touched.
+const NY_SUBCONTRACT_DUPLICATE_DELETE_SQL = `
+  DELETE FROM bids
+  WHERE ${NY_SUBCONTRACT_SHAPE}
+    AND EXISTS ${NY_CLEAN_TWIN}
+    AND ${noBidChildRowsSql("bids.id")}
+`;
 
 export function runMigrations(db: AppDatabase) {
   const sqlite = db.$client;
@@ -1139,6 +1213,10 @@ export function runMigrations(db: AppDatabase) {
   addBidColumn("lifecycle_status", "TEXT NOT NULL DEFAULT 'open'");
   addBidColumn("awarded_date", "TEXT");
   addBidColumn("solicitation_number", "TEXT");
+  // Both are part of the original CREATE TABLE, so only a hand-built legacy table lacks them; the FIPS-drift correction
+  // and the NY re-key at the end of this function read and rewrite them.
+  addBidColumn("raw_payload", "TEXT");
+  addBidColumn("full_description", "TEXT");
   // Rows written before lifecycle tracking: an inactive bid is not open. Idempotent, so it runs
   // on every migration (spec 2026-09-24 §5.1).
   sqlite.exec("UPDATE bids SET lifecycle_status = 'closed' WHERE is_active = 0 AND lifecycle_status = 'open'");
@@ -1317,10 +1395,13 @@ export function runMigrations(db: AppDatabase) {
   // Bids stored before the data-usability change carry issuer_type 'state' even when their
   // registered source is a county, city or township, so the publication gate hides them
   // (bid-usability.ts, registered-source-identity.ts). Give them their source's level. A row
-  // whose stored state code (exact, case-sensitive) or FIPS disagrees with its source's is left
+  // whose stored state code (exact, case-sensitive) disagrees with its source's is left
   // alone, because re-typing would make it core-valid and the importer's identity check would
-  // then quarantine every corrected re-crawl. Idempotent; runs on every migration after the
-  // data_sources columns above exist.
+  // then quarantine every corrected re-crawl. A row whose stored FIPS disagrees is skipped by
+  // this statement for the same reason (its FIPS guard stays), but it is not left behind: the
+  // statement after this one corrects exactly those rows, aligning their FIPS to the source's
+  // and keeping the old value in raw_payload.legacy_fips_code. Idempotent; runs on every
+  // migration after the data_sources columns above exist.
   // MySQL runs the same rule as MYSQL_LOCAL_ISSUER_TYPE_BACKFILL (mysql.ts).
   sqlite.exec(`
     UPDATE bids SET issuer_type = data_sources.jurisdiction_level
@@ -1333,4 +1414,35 @@ export function runMigrations(db: AppDatabase) {
       AND (bids.jurisdiction_level IS NULL OR bids.jurisdiction_level = '' OR bids.jurisdiction_level = data_sources.jurisdiction_level)
       AND (bids.fips_code IS NULL OR bids.fips_code = '' OR data_sources.fips_code IS NULL OR data_sources.fips_code = '' OR bids.fips_code = data_sources.fips_code)
   `);
+
+  // The rows the statement above skips on purpose: a legacy row of a registered local source whose
+  // stored FIPS disagrees with the source's (both non-empty) and which agrees on everything else
+  // (the exact complement of that statement's FIPS guard). It gets its source's level and FIPS, and
+  // the old FIPS is kept under raw_payload.legacy_fips_code when raw_payload is a JSON object (any
+  // other payload is left as it is). Every SET expression reads the pre-update row, so
+  // bids.fips_code inside json_set is still the old value. Once corrected, the row is no longer
+  // issuer_type 'state', so a second run changes nothing.
+  // MySQL runs the same rule as MYSQL_LEGACY_FIPS_DRIFT_STAMP and MYSQL_LEGACY_FIPS_DRIFT_RETYPE (mysql.ts).
+  sqlite.exec(`
+    UPDATE bids SET
+      issuer_type = data_sources.jurisdiction_level,
+      raw_payload = CASE WHEN json_valid(bids.raw_payload) AND json_type(bids.raw_payload) = 'object'
+        THEN json_set(bids.raw_payload, '$.legacy_fips_code', bids.fips_code) ELSE bids.raw_payload END,
+      fips_code = data_sources.fips_code
+    FROM data_sources
+    WHERE bids.issuer_type = 'state' AND instr(bids.id, ':') > 1
+      AND data_sources.id = substr(bids.id, 1, instr(bids.id, ':') - 1)
+      AND data_sources.jurisdiction_level IN ('county', 'city', 'township', 'special_district')
+      AND data_sources.state_code = bids.state_code
+      AND (bids.jurisdiction_level IS NULL OR bids.jurisdiction_level = '' OR bids.jurisdiction_level = data_sources.jurisdiction_level)
+      AND bids.fips_code IS NOT NULL AND bids.fips_code <> ''
+      AND data_sources.fips_code IS NOT NULL AND data_sources.fips_code <> ''
+      AND bids.fips_code <> data_sources.fips_code
+  `);
+
+  // NY Contract Reporter subcontracting rows: re-key first, then drop the duplicates the re-key leaves
+  // behind (see NY_SUBCONTRACT_REKEY_SQL above). Idempotent: a re-keyed row no longer has the legacy
+  // shape, and a protected row stays protected for as long as something points at it.
+  sqlite.exec(NY_SUBCONTRACT_REKEY_SQL);
+  sqlite.exec(NY_SUBCONTRACT_DUPLICATE_DELETE_SQL);
 }

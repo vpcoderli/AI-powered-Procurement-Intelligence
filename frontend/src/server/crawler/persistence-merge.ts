@@ -1,5 +1,5 @@
 import { getBidDescriptionIssue } from "@/lib/bid-description";
-import { mergeLifecycleFields } from "./lifecycle";
+import { closedPayload, resolveLifecycle, type LifecycleMergeOptions } from "./lifecycle";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -53,8 +53,12 @@ function detailProvenance(row: JsonRecord, persisted: boolean) {
   return fields;
 }
 
-/** Shared snake_case merge for SQLite and MySQL, performed inside the write transaction. */
-export function mergePersistedBid(incoming: JsonRecord, existing: JsonRecord = {}): JsonRecord {
+/**
+ * Shared snake_case merge for SQLite and MySQL, performed inside the write transaction.
+ * `options.now` is the ISO instant the run finished: an open bid whose deadline has passed by then is
+ * stored closed, and its raw payload says the deadline closed it.
+ */
+export function mergePersistedBid(incoming: JsonRecord, existing: JsonRecord = {}, options: LifecycleMergeOptions = {}): JsonRecord {
   const merged = { ...incoming };
   for (const field of ["source_bid_id", "dedupe_key", "jurisdiction_level", "fips_code"]) {
     if (!text(incoming[field]) && text(existing[field])) merged[field] = existing[field];
@@ -102,7 +106,15 @@ export function mergePersistedBid(incoming: JsonRecord, existing: JsonRecord = {
       },
     };
   }
-  Object.assign(merged, mergeLifecycleFields(incoming, existing));
+  const lifecycle = resolveLifecycle(incoming, existing, options);
+  Object.assign(merged, lifecycle.fields);
+  if (lifecycle.closedByDeadline !== null && options.now !== undefined) {
+    // The reason goes only on a payload that is a JSON object (or text that parses to one). Any other payload, or none,
+    // is stored exactly as the import would have stored it: the bid still closes, but a payload is never rewritten for it.
+    // The incoming payload replaces the stored one, so a bid that is open again carries no stale reason.
+    const closed = closedPayload(merged.raw_payload, "deadline_passed", options.now, { deadline: lifecycle.closedByDeadline });
+    if (closed) merged.raw_payload = closed;
+  }
   return merged;
 }
 

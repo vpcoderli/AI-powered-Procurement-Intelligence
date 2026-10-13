@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import mysql, { type Pool } from "mysql2/promise";
+import { noBidChildRowsSql } from "./bid-child-references";
 
 export interface MysqlMigrationResult {
   appliedStatements: number;
@@ -37,6 +38,23 @@ export function requireMysqlDatabaseUrl(env = process.env) {
 export function isMysqlDatabaseUrlConfigured(env = process.env) {
   const value = env.DATABASE_URL?.trim() || env.MYSQL_DATABASE_URL?.trim();
   return Boolean(value && (value.startsWith("mysql://") || value.startsWith("mysql2://")));
+}
+
+/**
+ * The URL with its password masked, for a log line or a "Target:" line. It lives here, with the pool code, and not with the
+ * smoke verifier (which re-exports it): a script that only needs to name its target must not load the server's whole module
+ * graph, `db/client` included, which opens `<cwd>/data/apsi.sqlite` when the process environment does not select MySQL.
+ */
+export function redactMysqlDatabaseUrl(databaseUrl: string) {
+  try {
+    const url = new URL(databaseUrl);
+    if (url.password) {
+      url.password = "***";
+    }
+    return url.toString();
+  } catch {
+    return databaseUrl.replace(/:\/\/([^:@/]+):([^@/]+)@/, "://$1:***@");
+  }
 }
 
 export interface MysqlPoolSizing {
@@ -515,11 +533,132 @@ export const MYSQL_LOCAL_ISSUER_TYPE_BACKFILL = "UPDATE bids JOIN data_sources O
   + " AND (bids.jurisdiction_level IS NULL OR bids.jurisdiction_level = '' OR bids.jurisdiction_level = data_sources.jurisdiction_level)"
   + " AND (bids.fips_code IS NULL OR bids.fips_code = '' OR data_sources.fips_code IS NULL OR data_sources.fips_code = '' OR bids.fips_code = data_sources.fips_code)";
 
+/**
+ * The rows MYSQL_LOCAL_ISSUER_TYPE_BACKFILL skips on purpose: legacy rows of a registered local source whose stored FIPS
+ * disagrees with the source's (both non-empty), and which agree with it on everything else. Re-typing such a row alone
+ * would make it core-valid while its FIPS still contradicts the source, and the importer's identity check would then
+ * quarantine every corrected re-crawl; so the pair of statements below re-types and aligns the FIPS together. This is
+ * the exact complement of the first backfill's FIPS guard, so each candidate row is handled by one of the two.
+ */
+export const MYSQL_LEGACY_FIPS_DRIFT_CONDITION = " WHERE bids.issuer_type = 'state' AND LOCATE(':', bids.id) > 1"
+  + " AND data_sources.jurisdiction_level IN ('county', 'city', 'township', 'special_district')"
+  + " AND data_sources.state_code COLLATE utf8mb4_bin = bids.state_code COLLATE utf8mb4_bin"
+  + " AND (bids.jurisdiction_level IS NULL OR bids.jurisdiction_level = '' OR bids.jurisdiction_level = data_sources.jurisdiction_level)"
+  + " AND bids.fips_code IS NOT NULL AND bids.fips_code <> ''"
+  + " AND data_sources.fips_code IS NOT NULL AND data_sources.fips_code <> ''"
+  + " AND bids.fips_code COLLATE utf8mb4_bin <> data_sources.fips_code COLLATE utf8mb4_bin";
+
+/**
+ * Whether raw_payload is a JSON object. A CASE, not `JSON_VALID(x) AND JSON_TYPE(x) = 'OBJECT'`: MySQL promises no order
+ * of evaluation for the operands of an AND, and JSON_TYPE raises an error on text that is not JSON, whereas a CASE
+ * reaches JSON_TYPE only after JSON_VALID has said yes.
+ */
+const MYSQL_PAYLOAD_IS_OBJECT = "CASE WHEN JSON_VALID(bids.raw_payload) THEN JSON_TYPE(bids.raw_payload) END = 'OBJECT'";
+
+/**
+ * Step one of the FIPS-drift correction: keep the stale FIPS under raw_payload.legacy_fips_code (only where raw_payload
+ * is a JSON object; any other payload is left as it is). It runs before the retype because a multi-table UPDATE gives
+ * no guarantee about the order of its assignments, so one statement could not both read and overwrite bids.fips_code.
+ * The key is top-level because JSON_SET does not create missing intermediate objects. Re-running it before the retype
+ * has happened writes the same value again.
+ */
+export const MYSQL_LEGACY_FIPS_DRIFT_STAMP = "UPDATE bids JOIN data_sources ON data_sources.id = SUBSTRING_INDEX(bids.id, ':', 1)"
+  + " SET bids.raw_payload = JSON_SET(bids.raw_payload, '$.legacy_fips_code', bids.fips_code)"
+  + MYSQL_LEGACY_FIPS_DRIFT_CONDITION + ` AND ${MYSQL_PAYLOAD_IS_OBJECT}`;
+
+/** Step two: the row takes its source's level and FIPS, which also takes it out of the condition above. */
+export const MYSQL_LEGACY_FIPS_DRIFT_RETYPE = "UPDATE bids JOIN data_sources ON data_sources.id = SUBSTRING_INDEX(bids.id, ':', 1)"
+  + " SET bids.issuer_type = data_sources.jurisdiction_level, bids.fips_code = data_sources.fips_code"
+  + MYSQL_LEGACY_FIPS_DRIFT_CONDITION;
+
+// NY Contract Reporter subcontracting cards were stored before the spider learned the "Company:" label: the company
+// text was glued onto the CR# value, so a row's id (and dedupe key) read `ny_contract_reporter:<CR#> Company: <company>`
+// and its source_bid_id `<CR#> Company: <company>`, the card had no Agency (the normalizer's "Unknown state agency"
+// placeholder), and the marker sentence trailed the title. The fixed spider stores `ny_contract_reporter:<CR#>`.
+// Mirrors NY_SUBCONTRACT_REKEY_SQL in migrate.ts.
+//
+// The statements match only that exact shape, and only a row nothing points at (MySQL has no foreign keys, so a re-key
+// or delete would otherwise orphan its children without a word).
+// - ny!_contract!_reporter: the "_" is a LIKE wildcard, so it is escaped with "!".
+// - LOCATE and the id comparison use utf8mb4_bin because the column collation ignores case while SUBSTRING_INDEX does not.
+// - MySQL refuses to select directly from the table being updated or deleted from, so the existing-row check goes
+//   through a derived table; it compares with the column's own collation, like the primary key does.
+const MYSQL_NY_CLEAN_ID = "CONCAT('ny_contract_reporter:', SUBSTRING_INDEX(bids.source_bid_id, ' Company: ', 1))";
+const MYSQL_NY_SUBCONTRACT_SHAPE = "bids.id LIKE 'ny!_contract!_reporter:% Company: %' ESCAPE '!'"
+  + " AND LOCATE(' Company: ', bids.source_bid_id COLLATE utf8mb4_bin) > 1"
+  + " AND bids.id COLLATE utf8mb4_bin = CONCAT('ny_contract_reporter:', bids.source_bid_id)";
+const MYSQL_NY_CLEAN_TWIN = `(SELECT 1 FROM (SELECT id FROM bids) AS existing WHERE existing.id = ${MYSQL_NY_CLEAN_ID})`;
+
+// The marker sentence, lower case with its leading space, compared with the lower-cased title.
+const NY_SUBCONTRACT_SUFFIX = " this is a subcontracting opportunity";
+const NY_COMPANY_MARKER_LENGTH = " Company: ".length;
+// The company: everything after the FIRST marker (SUBSTRING_INDEX(..., -1) would take what follows the LAST one, which
+// differs for a company name that itself contains the marker), trimmed like the spider does.
+const MYSQL_NY_COMPANY = `TRIM(SUBSTRING(bids.source_bid_id, LOCATE(' Company: ', bids.source_bid_id COLLATE utf8mb4_bin) + ${NY_COMPANY_MARKER_LENGTH}))`;
+// What follows the LAST marker sentence in the lower-cased title (the whole title when there is none).
+const MYSQL_NY_TITLE_TAIL = `SUBSTRING_INDEX(LOWER(bids.title), '${NY_SUBCONTRACT_SUFFIX}', -1)`;
+// The title ends with the marker sentence followed by nothing but ".", "!" and spaces. The tail is judged by its length,
+// not by comparing text: under the column collation ignorable characters compare equal to ''.
+const MYSQL_NY_TITLE_HAS_MARKER = `LOCATE('${NY_SUBCONTRACT_SUFFIX}', LOWER(bids.title) COLLATE utf8mb4_bin) > 0`
+  + ` AND CHAR_LENGTH(REPLACE(REPLACE(REPLACE(${MYSQL_NY_TITLE_TAIL}, '.', ''), '!', ''), ' ', '')) = 0`;
+// A body is a copy of the old title when the two match ignoring case and edge spaces (compared exactly, not with the
+// accent- and ignorable-insensitive column collation).
+const MYSQL_NY_OLD_TITLE_KEY = "LOWER(TRIM(bids.title)) COLLATE utf8mb4_bin";
+
+/**
+ * Re-keys a malformed row that has no clean twin and no children:
+ * - id and dedupe_key become the clean id, source_bid_id the CR#;
+ * - issuer_name becomes the company when it is blank or a placeholder ("Unknown...");
+ * - a description or full description that is a copy of the OLD title is cleared (the spider copied the title into the
+ *   description of a card without a Note:). Once the title is cleaned such a copy would no longer read as a title echo,
+ *   would be shown as the body, and would be kept as "meaningful" by every later import;
+ * - the title loses its trailing marker sentence (case-insensitively, then trimmed);
+ * - when raw_payload is a JSON object, the stored data_quality verdict (computed while the placeholder issuer made the
+ *   row core-invalid, and honoured by the publication gate) is removed so the row is judged by its fields again,
+ *   contractor_company is set, and subcontracting is set to true if the old title carried the marker.
+ *
+ * UPDATE IGNORE skips a row whose clean key another row already holds (the dedupe key or (source, source_bid_id) unique
+ * index, or a sibling malformed row of the same CR# that was re-keyed first) instead of failing the migration. A skipped
+ * sibling then has a clean twin, so the delete below removes it; a row blocked by an unrelated row stays as it is.
+ *
+ * Assignment order: MySQL documents that a single-table UPDATE evaluates its assignments left to right, each seeing the
+ * values assigned before it, and that is what a plain WHERE does on MySQL 8.4. A WHERE with subqueries, like this one
+ * (the twin check and the child checks), evaluated every assignment from the original row instead (observed on 8.4: a
+ * derived-table subquery and a correlated one each do it, and turning semijoin off does not undo it). The result is the
+ * same either way only because the assignments that read the old title or parse source_bid_id (the issuer, both bodies, the payload) come
+ * before the title, and source_bid_id, which every other assignment parses, is assigned last.
+ */
+export const MYSQL_NY_SUBCONTRACT_REKEY = "UPDATE IGNORE bids SET"
+  + ` bids.id = ${MYSQL_NY_CLEAN_ID},`
+  + ` bids.dedupe_key = ${MYSQL_NY_CLEAN_ID},`
+  + " bids.issuer_name = CASE WHEN bids.issuer_name IS NULL OR bids.issuer_name = '' OR bids.issuer_name LIKE 'Unknown%'"
+  + ` THEN ${MYSQL_NY_COMPANY} ELSE bids.issuer_name END,`
+  + ` bids.description = CASE WHEN LOWER(TRIM(bids.description)) COLLATE utf8mb4_bin = ${MYSQL_NY_OLD_TITLE_KEY} THEN '' ELSE bids.description END,`
+  + ` bids.full_description = CASE WHEN LOWER(TRIM(bids.full_description)) COLLATE utf8mb4_bin = ${MYSQL_NY_OLD_TITLE_KEY} THEN NULL ELSE bids.full_description END,`
+  + ` bids.raw_payload = CASE WHEN ${MYSQL_PAYLOAD_IS_OBJECT} THEN CASE WHEN ${MYSQL_NY_TITLE_HAS_MARKER}`
+  + ` THEN JSON_SET(JSON_REMOVE(bids.raw_payload, '$.data_quality'), '$.contractor_company', ${MYSQL_NY_COMPANY}, '$.subcontracting', CAST('true' AS JSON))`
+  + ` ELSE JSON_SET(JSON_REMOVE(bids.raw_payload, '$.data_quality'), '$.contractor_company', ${MYSQL_NY_COMPANY}) END`
+  + " ELSE bids.raw_payload END,"
+  + ` bids.title = CASE WHEN ${MYSQL_NY_TITLE_HAS_MARKER}`
+  + ` THEN TRIM(LEFT(bids.title, CHAR_LENGTH(bids.title) - ${NY_SUBCONTRACT_SUFFIX.length} - CHAR_LENGTH(${MYSQL_NY_TITLE_TAIL}))) ELSE bids.title END,`
+  + " bids.source_bid_id = SUBSTRING_INDEX(bids.source_bid_id, ' Company: ', 1)"
+  + ` WHERE ${MYSQL_NY_SUBCONTRACT_SHAPE} AND NOT EXISTS ${MYSQL_NY_CLEAN_TWIN} AND ${noBidChildRowsSql("bids.id")}`;
+
+/** Deletes a malformed row that has no children and whose clean twin already exists; the twin is not touched. */
+export const MYSQL_NY_SUBCONTRACT_DUPLICATE_DELETE = "DELETE FROM bids"
+  + ` WHERE ${MYSQL_NY_SUBCONTRACT_SHAPE} AND EXISTS ${MYSQL_NY_CLEAN_TWIN} AND ${noBidChildRowsSql("bids.id")}`;
+
 /** Idempotent data fixes that run after every column and index migration. */
 export function mysqlDataMigrationStatements(): string[] {
   return [
     "UPDATE bids SET lifecycle_status = 'closed' WHERE is_active = 0 AND lifecycle_status = 'open'",
     MYSQL_LOCAL_ISSUER_TYPE_BACKFILL,
+    // The stamp reads the stale FIPS the retype overwrites, so it goes first.
+    MYSQL_LEGACY_FIPS_DRIFT_STAMP,
+    MYSQL_LEGACY_FIPS_DRIFT_RETYPE,
+    // The delete handles the duplicates the re-key leaves behind, so it goes second.
+    MYSQL_NY_SUBCONTRACT_REKEY,
+    MYSQL_NY_SUBCONTRACT_DUPLICATE_DELETE,
   ];
 }
 

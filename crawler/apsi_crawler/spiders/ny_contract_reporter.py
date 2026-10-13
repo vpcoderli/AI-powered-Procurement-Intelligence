@@ -1,4 +1,5 @@
 import json
+import re
 from html.parser import HTMLParser
 
 import requests
@@ -19,6 +20,7 @@ _FIELD_LABELS = frozenset(
     (
         "Title:",
         "CR#:",
+        "Company:",
         "Agency:",
         "Division:",
         "Issue date:",
@@ -31,6 +33,22 @@ _FIELD_LABELS = frozenset(
     )
 )
 _IGNORED_CHUNKS = frozenset(("Log in or sign up to view this opportunity",))
+
+# A subcontracting card names the contractor ("Company:") instead of an agency, and carries an
+# unlabelled sentence between its title and its CR#. The sentence is a marker, not content: it
+# must never be appended to whichever field precedes it.
+_SUBCONTRACT_MARKERS = ("this is a subcontracting opportunity",)
+_SUBCONTRACTING_FLAG = "__subcontracting__"
+# Only "." / "!" / whitespace may follow the sentence, in any case; a longer sentence, other
+# punctuation or any other phrase is ordinary content. One tail serves both checks below.
+_MARKER_SENTENCE = "(?:" + "|".join(re.escape(marker) for marker in _SUBCONTRACT_MARKERS) + ")"
+_MARKER_TAIL = r"[.!\s]*$"
+# The marker as an element of its own, and glued onto the end of the title's own text node.
+_SUBCONTRACT_MARKER_CHUNK = re.compile("^" + _MARKER_SENTENCE + _MARKER_TAIL, re.IGNORECASE)
+_SUBCONTRACT_TITLE_SUFFIX = re.compile(r"\s+" + _MARKER_SENTENCE + _MARKER_TAIL, re.IGNORECASE)
+# The company folded into the CR# value ("2138289 Company: E.W. Howell Co., LLC."), possibly with
+# no company after the label at all.
+_CR_NUMBER_WITH_COMPANY = re.compile(r"^(\S+)\s+Company:\s*(.*)$")
 
 
 class NyContractReporterError(Exception):
@@ -81,6 +99,10 @@ class _NyAdsSearchParser(HTMLParser):
             self._current["chunks"].append(text)
 
 
+def _is_subcontract_marker(chunk):
+    return _SUBCONTRACT_MARKER_CHUNK.match(chunk) is not None
+
+
 def _fields_from_chunks(chunks):
     fields = {}
     label = None
@@ -93,6 +115,8 @@ def _fields_from_chunks(chunks):
             values = []
         elif chunk in _IGNORED_CHUNKS:
             continue
+        elif _is_subcontract_marker(chunk):
+            fields[_SUBCONTRACTING_FLAG] = True
         elif label is not None:
             values.append(chunk)
     if label is not None and values:
@@ -103,18 +127,41 @@ def _fields_from_chunks(chunks):
 def _record_from_item(item):
     fields = _fields_from_chunks(item["chunks"])
     ad_id = _normalize_space(item.get("ad_id")) or None
-    source_bid_id = fields.get("CR#:") or ad_id
+    cr_number = fields.get("CR#:")
+    company = fields.get("Company:")
+    title = fields.get("Title:")
+    subcontracting = bool(fields.get(_SUBCONTRACTING_FLAG))
+
+    # Only a "Company:" folded into the CR# text ("<CR#> Company: <name>") is peeled off, so the id
+    # stays clean; a CR# value with anything else folded in is left as it is. The peeled company
+    # only names the contractor when the page has no real Company: row, which otherwise wins.
+    if cr_number:
+        glued = _CR_NUMBER_WITH_COMPANY.match(cr_number)
+        if glued:
+            cr_number = glued.group(1)
+            if not company:
+                company = glued.group(2).strip() or None
+
+    if title:
+        bare_title = _SUBCONTRACT_TITLE_SUFFIX.sub("", title, count=1)
+        if bare_title != title:
+            title = bare_title.strip() or None
+            subcontracting = True
+
+    source_bid_id = cr_number or ad_id
     if not source_bid_id:
         raise NyContractReporterError("NY Contract Reporter record is missing source id")
 
     return {
         "source_bid_id": source_bid_id,
-        "title": fields.get("Title:"),
+        "title": title,
         "description": fields.get("Note:"),
         "original_category": fields.get("Category:"),
         "published_date": fields.get("Issue date:"),
         "deadline_date": fields.get("Due date:") or fields.get("Ad end date:"),
-        "issuer_name": fields.get("Agency:"),
+        "issuer_name": fields.get("Agency:") or company,
+        "contractor_company": company,
+        "subcontracting": subcontracting,
         "source_url": NY_CONTRACT_REPORTER_DETAIL_URL_TEMPLATE.format(
             ad_id=ad_id or source_bid_id
         ),

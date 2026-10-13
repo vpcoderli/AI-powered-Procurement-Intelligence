@@ -346,8 +346,10 @@ describe.runIf(process.env.RUN_CRAWLER_INTEGRATION === "1")("offline crawler / H
         baseUrl: "https://procurement.example.gov/bids", jurisdictionLevel: "city", jurisdictionName: "Quality city", fipsCode: "1714000",
         providerFamily: null, cadence: "daily", fetchConfig: {},
       }], "2026-10-01T00:00:00Z");
+      // The saved row's deadline (06/30/2026) is behind the 2026-09-29 and 2026-10-01 runs below, and an import closes a bid
+      // whose deadline has passed; this test is about quarantine and delisting, so the bid needs a deadline still ahead.
       const bid = { ...fixture.local.city.bids![0], source: "Quality city", id: `${sourceId}:1`, source_bid_id: "quality-1", dedupe_key: `${sourceId}:1`,
-        title: "Repair QA city bridges", jurisdiction_level: "city", fips_code: "1714000", description: "Repair bridges.", full_description: null,
+        deadline_date: "12/31/2099", title: "Repair QA city bridges", jurisdiction_level: "city", fips_code: "1714000", description: "Repair bridges.", full_description: null,
         attachments: [{ name: "Scope.pdf", url: "https://procurement.example.gov/scope.pdf", archive_status: "archived", storage_path: "/tmp/scope.pdf",
           byte_size: 42, checksum_sha256: "a".repeat(64), content_type: "application/pdf" }],
       };

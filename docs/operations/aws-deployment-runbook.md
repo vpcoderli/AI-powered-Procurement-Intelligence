@@ -21,6 +21,8 @@ Use this path for the first AWS release:
 | Billing | Stripe live mode + AWS-managed environment secrets | Webhook endpoint must be unique per environment. |
 | Backups | RDS automated backups plus manual pre-migration snapshots | Restore drill is required before launch signoff. |
 
+**Anything placed in front of the web app (CDN, WAF rule set, reverse proxy).** Since Next.js 16.3 the app validates React Server Component requests: the `RSC` header, every `Next-Router-*` header, `Next-Url` and the `_rsc` query parameter must reach the app unchanged. A layer that drops the router headers costs one extra 307 redirect per client navigation; one that strips or rewrites `_rsc` makes client navigations redirect repeatedly until the browser falls back to full page loads. A plain App Runner service or an ALB forwards request headers and query strings as they are; verify this again whenever a CDN, WAF or proxy is added in front of the web runtime.
+
 Official AWS references:
 
 - [AWS App Runner application development](https://docs.aws.amazon.com/apprunner/latest/dg/develop.html): App Runner supports managed runtimes, configurable port behavior, environment variables, Secrets Manager / SSM references, and instance roles.
@@ -73,6 +75,7 @@ Every staging dry-run must create an evidence folder before commands start. Keep
 export DRY_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-aws-staging"
 export EVIDENCE_ROOT="${EVIDENCE_ROOT:-../ops-evidence/aws-staging-dry-run}"
 export EVIDENCE_DIR="$EVIDENCE_ROOT/$DRY_RUN_ID"
+set -o pipefail   # every `| tee` step below then answers with the command's own status, not tee's (bash and zsh); run the whole protocol in this shell
 mkdir -p "$EVIDENCE_DIR"
 printf "dry_run_id=%s\nstarted_at=%s\nrelease_sha=%s\noperator=%s\n" \
   "$DRY_RUN_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(git rev-parse HEAD)" "${USER:-unknown}" \
@@ -81,7 +84,7 @@ printf "dry_run_id=%s\nstarted_at=%s\nrelease_sha=%s\noperator=%s\n" \
 
 Evidence rules:
 
-- Save every command output with `2>&1 | tee "$EVIDENCE_DIR/<step>.log"`.
+- Save every command output with `2>&1 | tee "$EVIDENCE_DIR/<step>.log"`, in the shell where the block above set `pipefail`. Without it a `| tee` pipeline answers with tee's own status, which is always 0, and a command that failed looks like one that passed; a new shell needs `set -o pipefail` again. `echo "<step> exit=$?"` right after the pipeline records the status for the dry-run notes, as section 6 does.
 - Each evidence file needs owner, UTC timestamp, command, exit status, and pass/fail decision in the dry-run notes.
 - Do not save raw secret values, `.env.local`, AWS keys, Stripe secrets, webhook payload signatures, OpenAI keys, RDS passwords, or notification tokens.
 - If a command must run with real provider secrets, capture only sanitized output and store it in the internal artifact store. Put the internal evidence URL in the readiness environment, not the secret itself.
@@ -96,7 +99,7 @@ Recommended evidence ledger:
 | RDS/MySQL migration | `03-mysql-migrate.log`, `04-mysql-smoke.log` | Data owner | Migration and smoke exit 0 against staging MySQL. | SQLite target, migration error, failed smoke domain. |
 | Workers check | `05-workers-check.log` | Operations owner | `workers:check` exits 0 in production-like worker env. | SQLite runtime or local notification provider in staging/production mode. |
 | Source health report-only | `06-source-health-report-only.log` | Source owner | Report is generated and access failures are classified. | Command crash, missing report, unclassified source failures. |
-| Demo/risk smoke | `07-demo-check.log`, `08-risk-check.log` | QA/release owner | Demo readiness and risk gate exit 0. | Missing demo data, unsafe attachment, risk/audit blocker. |
+| Demo/risk smoke | `07-demo-check.log`, `08-risk-check.log` | QA/release owner | Demo readiness exits 0. The risk gate exits 0 (with `pipefail`, so the `tee` pipeline reports the command's own status, a failing `secrets:scan` or `npm audit` after the headline included) AND its report in `08-risk-check.log` is headed `Risk checklist PASS` (a report headed `Risk checklist INCOMPLETE` exits 0 too). | Missing demo data, unsafe attachment, risk/audit blocker, a risk gate whose own exit status is not 0, a risk report that is not headed `Risk checklist PASS`. |
 | Backup snapshot | `09-backup-snapshot.log`, `10-logical-dump.log` | Backup owner | Snapshot id and logical dump checksum recorded. | No snapshot id, dump failed, checksum missing. |
 | Restore rehearsal | `11-restore-rehearsal.log`, `12-restored-db-smoke.log` | Backup/data owner | Restored staging DB migrates/smokes cleanly. | Restore target unavailable or restored DB fails smoke. |
 | Rollback decision | `13-rollback-decision.txt` | Deploy owner | Proceed/rollback decision and owner recorded. | No named decision owner or no previous revision/restore target. |
@@ -192,11 +195,15 @@ Pass if the report is produced and every 403, CAPTCHA/login, timeout, 404/410, T
 ### 6. Demo And Risk Smoke
 
 ```bash
-npm run demo:check 2>&1 | tee "$EVIDENCE_DIR/07-demo-check.log"
-npm run risk:check 2>&1 | tee "$EVIDENCE_DIR/08-risk-check.log"
+set -o pipefail   # already set by the protocol preamble; repeated so that this step also stands alone in a fresh shell
+npm run demo:check 2>&1 | tee "$EVIDENCE_DIR/07-demo-check.log"; echo "demo:check exit=$?"
+env -u RISK_CHECK_SEED_DATA npm run risk:check 2>&1 | tee "$EVIDENCE_DIR/08-risk-check.log"; echo "risk:check exit=$?"
+# A report headed INCOMPLETE exits 0 as well, so the exit status alone cannot tell it from a PASS: the headline does. The headline
+# alone cannot see a later stage of the command (`secrets:scan`, `npm audit`) fail after it: the exit status does.
+grep -q '^Risk checklist PASS' "$EVIDENCE_DIR/08-risk-check.log"; echo "PASS headline exit=$?"
 ```
 
-Pass if both exit 0. Fail if demo data is incomplete, source placeholders appear, attachment checks fail, or risk/audit gates block the release.
+Pass if all three lines print `exit=0`: `demo:check`, `risk:check` (the whole command, so a failing `secrets:scan` or `npm audit` after the headline fails it) and the headline `grep`, that is, the report in `08-risk-check.log` is headed `Risk checklist PASS`. Without `pipefail` a `tee` pipeline answers with tee's own status, which is always 0, and would let such a failure through; that is the first line (set once for the whole protocol in its preamble, and repeated here). A report headed `Risk checklist INCOMPLETE`, or with a `NOT RUN` line, set a check aside: it is not release evidence, whatever the exit status. What sets a check aside is `RISK_CHECK_SEED_DATA`, which CI sets on seed data; `env -u` makes sure it is not set for this run, and a process whose `NODE_ENV`, `APP_ENV`, `DEPLOY_ENV`, `VERCEL_ENV` or `RUNTIME_ENV` names production or staging ignores it as well. Do not run this with `NODE_ENV=production` instead of unsetting the variable: that also turns on the source-approval requirement of the checklist, which is the source owner's decision. Fail if demo data is incomplete, source placeholders appear, attachment checks fail, or risk/audit gates block the release.
 
 ### 7. Backup Snapshot
 
@@ -264,7 +271,7 @@ npm test
 npm run lint
 npm run build
 npm run db:migrate
-npm run risk:check
+env -u RISK_CHECK_SEED_DATA npm run risk:check   # the report must be headed "Risk checklist PASS"
 npm audit --omit=dev --audit-level=high
 git diff --check
 ```
@@ -310,7 +317,7 @@ The report covers six launch tracks:
 | AWS staging dry run | `AWS_STAGING_OWNER`, `AWS_STAGING_DRY_RUN_EVIDENCE_URL`, `AWS_STAGING_DEPLOYMENT_URL`, `AWS_STAGING_RELEASE_SHA` |
 | Live source health operations | `SOURCE_HEALTH_OWNER`, `SOURCE_HEALTH_OPS_EVIDENCE_URL` or `SOURCE_HEALTH_OPS_EVIDENCE_FILE`, plus `SOURCE_HEALTH_ACCESS_REVIEW_URL` or `SOURCE_HEALTH_ACCESS_REVIEW_FILE` |
 | Browser demo evidence | `DEMO_BROWSER_EVIDENCE_URL` or `DEMO_BROWSER_EVIDENCE_FILE` |
-| Risk gate | `RISK_CHECK_EVIDENCE_URL` or `RISK_CHECK_EVIDENCE_FILE` |
+| Risk gate | `RISK_CHECK_EVIDENCE_URL` or `RISK_CHECK_EVIDENCE_FILE`: a report headed `Risk checklist PASS`, not just a run that exited 0 |
 
 Do not put raw secret values into these evidence variables. Use internal evidence URLs, sanitized log paths, or artifact references. For source-health handoff, generate the local evidence bundle with `npm run source:health:evidence -- --format=json --output=../ops-evidence/source-health/source-health-evidence.json` after running `npm run source:health:ops`, then generate the access-review packet with `npm run source:health:access-review -- --format=json --output=../ops-evidence/source-health/source-health-access-review.json`. When `SOURCE_HEALTH_OPS_EVIDENCE_FILE` is set, `ops:launch-handoff` reads the JSON file and requires `ok=true`, full expected state coverage, a non-stale snapshot, zero critical unhealthy sources, and no missing owner/disposition/next-review blockers. Set `SOURCE_HEALTH_ACCESS_REVIEW_URL` or `SOURCE_HEALTH_ACCESS_REVIEW_FILE` as well; local access-review JSON is validated for review coverage, `reviewMode`, and `requiredEvidence`.
 The handoff report prints configured markers and blocker names only; it must not be used as a secret inventory.
@@ -590,11 +597,11 @@ Classify results:
 | `403`, login, CAPTCHA, bot-check | Access review required; do not bypass restrictions. |
 | Timeout / DNS / TLS / fetch failed | Network retry or AWS egress review. |
 
-Then run:
+Then run (the report must be headed `Risk checklist PASS`; an INCOMPLETE report exits 0 and does not count):
 
 ```bash
 cd frontend
-npm run risk:check
+env -u RISK_CHECK_SEED_DATA npm run risk:check
 ```
 
 ## Smoke Test After AWS Deploy
@@ -623,7 +630,7 @@ API/ops checks:
 cd frontend
 NODE_ENV=production npm run ops:production:check
 NODE_ENV=production npm run workers:check
-npm run risk:check
+env -u RISK_CHECK_SEED_DATA npm run risk:check   # not under NODE_ENV=production: that also requires source approval. The report must be headed "Risk checklist PASS"
 ```
 
 ## Backup And Restore
@@ -663,7 +670,7 @@ Restore drill:
 cd frontend
 npm run db:mysql:migrate
 npm run db:mysql:smoke
-npm run risk:check
+env -u RISK_CHECK_SEED_DATA npm run risk:check   # the report must be headed "Risk checklist PASS"
 ```
 
 4. Record drill result, owner, timestamp, restored endpoint, and evidence URL.
@@ -714,7 +721,7 @@ Use this table before switching real users to the AWS environment.
 | Billing | Stripe live endpoint configured and preflight passed. | Billing owner |
 | Workers | Worker preflight passed; schedules are documented. | Operations owner |
 | Source health | Live source health report reviewed. | Source owner |
-| Risk | `npm run risk:check` passed. | Release owner |
+| Risk | `env -u RISK_CHECK_SEED_DATA npm run risk:check` passed and its report is headed `Risk checklist PASS`. | Release owner |
 | Rollback | Previous revision and restore target are known. | Deploy owner |
 
 ## Open Production Gaps

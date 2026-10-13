@@ -5,6 +5,7 @@ import {
   createRiskChecklistReport,
   createRiskChecklistReportFromMysql,
   formatRiskChecklistReport,
+  riskChecklistCiAnnotation,
 } from "../src/server/risk/checklist";
 
 async function main() {
@@ -13,6 +14,9 @@ async function main() {
     ? await createRiskChecklistReportFromMysql(mysql)
     : await createRiskChecklistReport(db);
   console.log(formatRiskChecklistReport(report));
+  // An INCOMPLETE report exits 0, so on GitHub Actions it also says so in the check summary, beside the green step.
+  const annotation = riskChecklistCiAnnotation(report);
+  if (annotation) console.log(annotation);
   assertRiskChecklistReport(report);
 }
 

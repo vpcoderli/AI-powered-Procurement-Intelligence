@@ -77,7 +77,8 @@ function* bidIntake(payload: CrawlerJsonRunPayload, store: BidIntakeStore | Asyn
     const existingAttachments = (yield store.readAttachments(id)) as BidRow[];
     const incomingAttachments = Array.isArray(row.attachments) ? row.attachments as BidRow[] : [];
     const attachments = mergePersistedAttachments(existingAttachments, incomingAttachments, id);
-    const merged = stampPersistedBidQuality(row, { ...mergePersistedBid(row, prior ?? undefined), id, attachments },
+    const merged = stampPersistedBidQuality(row,
+      { ...mergePersistedBid(row, prior ?? undefined, { now: payload.finishedAt ?? payload.startedAt }), id, attachments },
       prior ?? undefined, gate.manifest.checkedAt);
     yield store.writeBid(merged);
     // Do not rewrite unobserved files; assess them in the effective snapshot above.

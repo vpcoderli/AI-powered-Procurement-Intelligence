@@ -35,6 +35,9 @@ COPY crawler/requirements-runtime.txt /tmp/crawler-requirements.txt
 RUN python3 -m venv /opt/crawler-venv \
     && /opt/crawler-venv/bin/python -m pip install --no-cache-dir -r /tmp/crawler-requirements.txt
 COPY --chown=nextjs:nodejs crawler/apsi_crawler /crawler/apsi_crawler
+# discover-sources reads the Census jurisdiction table from <crawler root>/data (apsi_crawler.jurisdictions
+# BUNDLED_TABLE_PATH). Without it the command dies with JurisdictionTableError in both images below.
+COPY --chown=nextjs:nodejs crawler/data/us_jurisdictions.tsv /crawler/data/us_jurisdictions.tsv
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 \
     CRAWLER_DIRECTORY=/crawler CRAWLER_PYTHON_BIN=/opt/crawler-venv/bin/python \
     PATH="/opt/crawler-venv/bin:${PATH}" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1

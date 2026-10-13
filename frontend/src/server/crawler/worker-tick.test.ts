@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import { bids, crawlerLocks, crawlerLogs, dataSources } from "@/server/db/schema";
 import type { SourcePrecheckResult } from "@/server/admin/source-precheck";
+import { sweepExpiredBids } from "@/server/bids/lifecycle-sweep";
 import type { RunCrawlerSourceOnceResult } from "./orchestrator";
 import { runCrawlTask } from "./state-runner";
 import { createCrawlerWorkerTick } from "./worker-tick";
@@ -50,6 +51,10 @@ describe("complete crawler worker tick", () => {
   function queueSource() { insertSource("queued", { cadence: "manual", precheckRequestedAt: new Date(NOW - 1000).toISOString() }); }
   function insertBacklog() {
     testDb.db.insert(bids).values({ id: "daily:old", source: "daily", sourceBidId: "old", dedupeKey: "daily:old", title: "Road repair", description: "Road repair", issuerName: "County", issuerType: "state", stateCode: "CA", sourceUrl: "https://public.example/bid/old", firstSeenAt: new Date(NOW).toISOString(), lastSeenAt: new Date(NOW).toISOString(), createdAt: new Date(NOW).toISOString(), updatedAt: new Date(NOW).toISOString() }).run();
+  }
+  function insertBid(id: string, deadlineDate: string | null) {
+    const at = new Date(NOW).toISOString();
+    testDb.db.insert(bids).values({ id: `daily:${id}`, source: "daily", sourceBidId: id, dedupeKey: `daily:${id}`, title: "Road repair", description: "Road repair", deadlineDate, issuerName: "County", issuerType: "state", stateCode: "CA", sourceUrl: `https://public.example/bid/${id}`, firstSeenAt: at, lastSeenAt: at, createdAt: at, updatedAt: at }).run();
   }
   function tick(adapters: TickAdapters, allowance = 3, options: Partial<TickOptions> = {}) {
     return createCrawlerWorkerTick({ database: testDb.db, owner: "test-worker", tickMs: 3600000, matcher: async () => matching, notifier: async () => notification, ...options }, { clock: () => time, sleep: async (ms) => { sleeps.push(ms); time += ms; }, platformBudgets: new Map([["bidnet", allowance]]), ...adapters });
@@ -228,5 +233,108 @@ describe("complete crawler worker tick", () => {
     time += 500;
     await run();
     expect(checked).toEqual(["queued", "queued"]);
+  });
+  describe("deadline sweep", () => {
+    it("closes bids past their deadline after the lists and the prechecks, and reports it", async () => {
+      insertSource("daily"); queueSource();
+      insertBid("late", "10/01/2026"); insertBid("ahead", "10/20/2026"); insertBid("undated", null);
+      const stages: string[] = [];
+      const result = await tick({
+        runCrawlerSourceOnce: async (_db, run) => { stages.push("list"); return success(run.source); },
+        runSourcePrecheck: async ({ sourceId }) => { stages.push("precheck"); return precheck(sourceId); },
+      }, 10)();
+
+      expect(result.lifecycleSweep).toEqual({ scanned: 3, closed: 1, unparseable: 0, closedByIssuerType: { state: 1 }, dryRun: false });
+      expect(result).not.toHaveProperty("lifecycleSweepError");
+      expect(testDb.db.select().from(bids).where(eq(bids.id, "daily:late")).get()).toMatchObject({ lifecycleStatus: "closed", isActive: 0, updatedAt: new Date(NOW).toISOString() });
+      expect(testDb.db.select().from(bids).where(eq(bids.id, "daily:ahead")).get()).toMatchObject({ lifecycleStatus: "open", isActive: 1 });
+      expect(testDb.db.select().from(bids).where(eq(bids.id, "daily:undated")).get()).toMatchObject({ lifecycleStatus: "open", isActive: 1 });
+      expect(stages).toEqual(["list", "precheck"]);
+    });
+
+    it("runs after the precheck stage and judges by the tick clock at that moment", async () => {
+      insertSource("daily"); queueSource();
+      const stages: string[] = [];
+      let swept: { target: unknown; now: number } | undefined;
+      const result = await tick({
+        runCrawlerSourceOnce: async (_db, run) => { stages.push("list"); return success(run.source); },
+        runSourcePrecheck: async ({ sourceId }) => { stages.push("precheck"); time += 2_000; return precheck(sourceId); },
+        sweepExpiredBids: async (target, options) => {
+          stages.push("sweep");
+          swept = { target, now: options.now.getTime() };
+          return { scanned: 0, closed: 0, unparseable: 0, closedByIssuerType: {}, dryRun: false };
+        },
+      }, 10)();
+
+      expect(stages).toEqual(["list", "precheck", "sweep"]);
+      expect(swept?.now).toBe(NOW + 2_000);
+      expect(swept?.target).toEqual({ database: testDb.db });
+      expect(result.lifecycleSweep).toEqual({ scanned: 0, closed: 0, unparseable: 0, closedByIssuerType: {}, dryRun: false });
+    });
+
+    it("sweeps the MySQL store when the worker has one", async () => {
+      const mysql = {
+        query: async () => [[], undefined] as [unknown[], unknown],
+        execute: async () => [{ affectedRows: 0 }, undefined] as [unknown, unknown],
+        getConnection: async (): Promise<never> => { throw new Error("nothing is closed here, so no transaction is opened"); },
+      };
+      let target: unknown;
+      await tick({ sweepExpiredBids: async (received) => { target = received; return { scanned: 0, closed: 0, unparseable: 0, closedByIssuerType: {}, dryRun: false }; } }, 10, { mysql })();
+
+      expect(target).toEqual({ mysql });
+    });
+
+    it("does not accept a MySQL store that cannot hold a transaction: that is a type error, not a failure on every tick", () => {
+      const narrow = { query: async () => [[], undefined] as [unknown[], unknown], execute: async () => [{ affectedRows: 0 }, undefined] as [unknown, unknown] };
+      // @ts-expect-error the sweep opens a transaction per page of closures, so the worker's mysql must have getConnection
+      createCrawlerWorkerTick({ database: testDb.db, mysql: narrow, owner: "test-worker", matcher: async () => matching, notifier: async () => notification });
+    });
+
+    it("turns a sweep failure into lifecycleSweepError without failing the tick or the other stages", async () => {
+      insertSource("daily"); queueSource();
+      const result = await tick({
+        runCrawlerSourceOnce: async (_db, run) => success(run.source),
+        runSourcePrecheck: async ({ sourceId }) => precheck(sourceId),
+        sweepExpiredBids: async () => { throw new Error("bids table is locked"); },
+      }, 10)();
+
+      expect(result.lifecycleSweepError).toBe("bids table is locked");
+      expect(result).not.toHaveProperty("lifecycleSweep");
+      expect(result.lists[0].status).toBe("success");
+      expect(result.prechecks?.processed).toHaveLength(1);
+      expect(result.precheckError).toBeNull();
+    });
+
+    it("reports a failure that is not an Error as text", async () => {
+      const result = await tick({ sweepExpiredBids: async () => { throw "connection refused"; } }, 10)();
+
+      expect(result.lifecycleSweepError).toBe("connection refused");
+    });
+
+    it("still sweeps when the precheck stage fails", async () => {
+      insertSource("daily"); queueSource(); insertBid("late", "10/01/2026");
+      const result = await tick({ runSourcePrecheck: async () => { throw new Error("precheck exploded"); } }, 10)();
+
+      expect(result.lifecycleSweep).toMatchObject({ closed: 1 });
+    });
+
+    it("does not start a sweep once shutdown has begun", async () => {
+      insertSource("daily"); insertBid("late", "10/01/2026");
+      let stopping = false;
+      const sweep = vi.fn(sweepExpiredBids);
+      const result = await tick({ runCrawlerSourceOnce: async (_db, run) => { stopping = true; return success(run.source); }, sweepExpiredBids: sweep }, 10, { isStopping: () => stopping })();
+
+      expect(sweep).not.toHaveBeenCalled();
+      expect(result).not.toHaveProperty("lifecycleSweep");
+      expect(testDb.db.select().from(bids).where(eq(bids.id, "daily:late")).get()).toMatchObject({ lifecycleStatus: "open" });
+    });
+
+    it("leaves an open bid with no deadline active", async () => {
+      insertSource("daily"); insertBacklog();
+      const result = await tick({ runCrawlerSourceOnce: async (_db, run) => success(run.source) }, 10)();
+
+      expect(result.lifecycleSweep).toMatchObject({ scanned: 1, closed: 0 });
+      expect(testDb.db.select().from(bids).get()?.isActive).toBe(1);
+    });
   });
 });

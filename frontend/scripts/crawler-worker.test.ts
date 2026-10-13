@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
   closeDatabase: vi.fn(),
@@ -19,6 +19,11 @@ vi.mock("../src/lib/observability/logger", () => ({ createLogger: () => ({ info:
 vi.mock("../src/lib/observability/sentry", () => ({ captureException: vi.fn() }));
 
 describe("crawler worker execution", () => {
+  beforeEach(() => {
+    // The worker starts itself when its module is imported, so each test needs a fresh import and fresh call records.
+    vi.resetModules();
+    vi.clearAllMocks();
+  });
   const originalArgs = process.argv;
   const originalExitCode = process.exitCode;
   const originalTermListeners = process.listeners("SIGTERM");
@@ -52,5 +57,44 @@ describe("crawler worker execution", () => {
     expect(state.info).toHaveBeenCalledWith("crawler_precheck_queue_completed", { prechecks });
     expect(state.closePool).toHaveBeenCalledOnce();
     expect(state.error).not.toHaveBeenCalled();
+  });
+  /** Runs one tick of the worker with the given result, then lets SIGTERM end its loop. */
+  async function runOneTick(result: Record<string, unknown>) {
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("APP_ENV", "");
+    vi.stubEnv("DEPLOY_ENV", "");
+    vi.stubEnv("VERCEL_ENV", "");
+    vi.stubEnv("RUNTIME_ENV", "");
+    process.argv = [process.argv[0], "crawler-worker.ts"];
+    state.tick.mockImplementation(async () => {
+      process.emit("SIGTERM");
+      return { lists: [], prechecks: null, backfill: [], precheckError: null, ...result };
+    });
+    state.createTick.mockReturnValue(state.tick);
+    await import("./crawler-worker");
+    await vi.waitFor(() => expect(state.closeDatabase).toHaveBeenCalledOnce(), { timeout: 500 });
+  }
+
+  it("logs a deadline sweep that closed bids", async () => {
+    const lifecycleSweep = { scanned: 40, closed: 3, unparseable: 1, closedByIssuerType: { state: 2, county: 1 }, dryRun: false };
+    await runOneTick({ lifecycleSweep });
+
+    expect(state.info).toHaveBeenCalledWith("crawler_lifecycle_sweep", { event: "crawler_lifecycle_sweep", ...lifecycleSweep });
+    expect(state.error).not.toHaveBeenCalled();
+  });
+
+  it("stays quiet about a deadline sweep that closed nothing", async () => {
+    await runOneTick({ lifecycleSweep: { scanned: 40, closed: 0, unparseable: 1, closedByIssuerType: {}, dryRun: false } });
+
+    expect(state.info.mock.calls.map(([message]) => message)).toEqual(["crawler_run_completed"]);
+    expect(state.error).not.toHaveBeenCalled();
+  });
+
+  it("logs a failed deadline sweep as an error and still ends the loop normally", async () => {
+    await runOneTick({ lifecycleSweepError: "bids table is locked" });
+
+    expect(state.error).toHaveBeenCalledWith("crawler_lifecycle_sweep", { event: "crawler_lifecycle_sweep", error: "bids table is locked" });
+    expect(state.info).toHaveBeenCalledWith("crawler_run_completed", { results: [] });
+    expect(state.closePool).toHaveBeenCalledOnce();
   });
 });

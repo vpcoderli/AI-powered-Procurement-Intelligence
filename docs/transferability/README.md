@@ -36,8 +36,10 @@ npm test
 npm run lint
 npm run build
 npm run db:migrate
-npm run risk:check
+RISK_CHECK_SEED_DATA=true npm run risk:check   # on the seeded local database: exits 0, report headed "Risk checklist INCOMPLETE"
 ```
+
+This is a local run on seed data (see the [Setup Guide](./setup-guide.md#local-verification)): the report is headed `Risk checklist INCOMPLETE`, with exactly `state-coverage` and `state-data-quality-gate` `NOT RUN` and every other line `PASS`, and the command exits 0. It is never release evidence. For a release candidate run `env -u RISK_CHECK_SEED_DATA npm run risk:check` on a database that holds the real data and require exit 0 **and** a report headed `Risk checklist PASS` (see the [Deployment Guide](./deployment-guide.md)).
 
 ## Production Boundary
 

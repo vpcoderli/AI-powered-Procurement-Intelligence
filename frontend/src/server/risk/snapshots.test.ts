@@ -7,15 +7,18 @@ function report(input: {
   globalOk: boolean;
   stateSummary: string;
   attachmentSummary: string;
+  /** The state coverage check was not evaluated (seed data): neither a pass nor a failure. */
+  stateNotRun?: boolean;
 }): RiskChecklistReport {
   return {
-    ok: input.globalOk,
+    ok: input.globalOk && !input.stateNotRun,
     checkedAt: input.checkedAt,
     checks: [
       {
         id: "state-coverage",
         label: "50 state data coverage",
-        ok: true,
+        ok: !input.stateNotRun,
+        ...(input.stateNotRun ? { status: "not_run" as const } : {}),
         summary: input.stateSummary,
       },
       {
@@ -70,5 +73,42 @@ describe("risk checklist snapshot trends", () => {
       latestStateCoverageSummary: "49/50 required states have at least one active bid",
       latestAttachmentSummary: "8 state attachments checked",
     });
+  });
+
+  // A check that was not evaluated has a count in its summary (the real one, 5 of 50) and no verdict. Read as the
+  // coverage of that run it would be a decline from 50, or a recovery to it, that nobody measured.
+  it("does not read the count of a state coverage check that did not run as a decline, or as the start of a recovery", () => {
+    const measured = (checkedAt: string) =>
+      report({
+        checkedAt,
+        globalOk: true,
+        stateSummary: "50/50 required states have at least one active bid",
+        attachmentSummary: "9 state attachments checked",
+      });
+    const notRun = (checkedAt: string) =>
+      report({
+        checkedAt,
+        globalOk: true,
+        stateNotRun: true,
+        stateSummary: "5/50 required states have at least one active bid (not evaluated on seed data)",
+        attachmentSummary: "9 state attachments checked",
+      });
+
+    const latestNotRun = summarizeRiskChecklistTrend([
+      snapshot("new", notRun("2026-06-01T02:00:00.000Z")),
+      snapshot("old", measured("2026-06-01T01:00:00.000Z")),
+    ]);
+    expect(latestNotRun.stateCoverageDeclined).toBeNull();
+    // What the latest run said stays on the card as it was written.
+    expect(latestNotRun.latestStateCoverageSummary).toBe("5/50 required states have at least one active bid (not evaluated on seed data)");
+
+    const oldestNotRun = summarizeRiskChecklistTrend([
+      snapshot("new", measured("2026-06-01T02:00:00.000Z")),
+      snapshot("old", notRun("2026-06-01T01:00:00.000Z")),
+    ]);
+    expect(oldestNotRun.stateCoverageDeclined).toBeNull();
+
+    // The other trends are read as they always were.
+    expect(latestNotRun).toMatchObject({ globalUrlAllPassing: true, attachmentDownloadCountChanged: false });
   });
 });

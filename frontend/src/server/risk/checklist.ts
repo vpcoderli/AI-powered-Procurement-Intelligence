@@ -1,3 +1,4 @@
+import { riskCheckStatus, riskChecklistOutcome, type RiskCheckStatus } from "@/lib/risk-check-status";
 import { STATE_CRAWLER_SOURCES } from "@/lib/state-crawler-sources";
 import { bidDetailPath, bidIdFromRouteParam } from "@/lib/bid-routes";
 import { getBidAttachmentDownload, getBidAttachmentDownloadFromMysql } from "@/server/bids/attachments";
@@ -6,11 +7,18 @@ import { getBidByIdFromMysqlRuntime, queryBidsFromDatabase, queryBidsFromMysql }
 import type { Bid } from "@/server/bids/domain";
 import type { AppDatabase } from "@/server/db/client";
 import { mysqlSelectMany } from "@/server/db/mysql-runtime";
-import { dataSources } from "@/server/db/schema";
+import { bids, dataSources } from "@/server/db/schema";
 import { featuresForUser, hasFeature } from "@/server/auth/entitlements";
 import { validateBidSourceUrl, validateStateAttachmentUrl } from "@/server/source-validity/url-validity";
-import { createStateDataQualityReport, stateDataQualityP0Details } from "@/server/source-validity/state-data-quality";
+import {
+  createStateDataQualityReport,
+  stateDataQualityP0Details,
+  type StateDataQualityReasonCode,
+  type StateDataQualityReport,
+} from "@/server/source-validity/state-data-quality";
 import type { Pool } from "mysql2/promise";
+
+export type { RiskCheckStatus };
 
 /**
  * The ids of the checks a risk checklist is made of, in report order (the MySQL report leaves out
@@ -37,12 +45,22 @@ export type RiskCheckId = (typeof RISK_CHECK_IDS)[number];
 export interface RiskChecklistCheck {
   id: string;
   label: string;
+  /**
+   * True only for a check that ran and passed. A check that did not run is not ok either, so a reader that ignores
+   * `status` never counts it as a pass.
+   */
   ok: boolean;
+  /** What became of the check: passed, failed or not run. Absent from a report stored before it existed; `riskCheckStatus` then reads `ok`. */
+  status?: RiskCheckStatus;
   summary: string;
   details?: string[];
 }
 
 export interface RiskChecklistReport {
+  /**
+   * True when every check ran and passed. A report with a check that did not run is not ok, and has not failed either:
+   * `riskChecklistOutcome` tells the two apart, and `assertRiskChecklistReport` throws only for a failure.
+   */
   ok: boolean;
   checkedAt: string;
   checks: RiskChecklistCheck[];
@@ -50,6 +68,17 @@ export interface RiskChecklistReport {
 
 export interface RiskChecklistOptions {
   requireSourceApproval?: boolean;
+  /**
+   * The database is seed (demo) data, so what it cannot speak about is not judged: whether a state it holds no bid row
+   * of any kind for has an active bid is a property of the business database, not of the code. For such a state the
+   * coverage check, and the missing-bid reason of the state data quality gate, are reported NOT RUN, with the count of
+   * each class, instead of failed. A state whose rows are there while none is an active state-level bid, and a database
+   * in which no required state has one, are data present and failing, so they fail. Nothing else is set aside: the other
+   * eight checks are about code, config or the rows that are present, so they run on the seeded rows and must pass.
+   * Defaults to RISK_CHECK_SEED_DATA=true. Never honoured in a deployed environment (NODE_ENV, APP_ENV, DEPLOY_ENV,
+   * VERCEL_ENV or RUNTIME_ENV naming production or staging).
+   */
+  seedData?: boolean;
 }
 
 type RiskDataSourceRow = typeof dataSources.$inferSelect;
@@ -59,6 +88,19 @@ function check(id: RiskCheckId, label: string, ok: boolean, summary: string, det
     id,
     label,
     ok,
+    status: ok ? "pass" : "fail",
+    summary,
+    ...(details.length > 0 ? { details } : {}),
+  };
+}
+
+/** A check that was not evaluated: neither a pass nor a failure, and `ok` is false so that no reader counts it as a pass. */
+function notRunCheck(id: RiskCheckId, label: string, summary: string, details: string[] = []): RiskChecklistCheck {
+  return {
+    id,
+    label,
+    ok: false,
+    status: "not_run",
     summary,
     ...(details.length > 0 ? { details } : {}),
   };
@@ -199,6 +241,168 @@ function accountFeatureMatrixCheck() {
   }
 
   return failures;
+}
+
+/** A state code as the registry spells it: trimmed, upper case. */
+function normalizeStateCode(value: unknown) {
+  return String(value ?? "").trim().toUpperCase();
+}
+
+/**
+ * What the app reads, besides NODE_ENV, to know it is a deployed environment, and what those variables say then: the way
+ * crawler/run-authorization.ts reads them. A staging or production process never runs the checklist on seed data.
+ */
+const DEPLOYMENT_ENVIRONMENT_KEYS = ["NODE_ENV", "APP_ENV", "DEPLOY_ENV", "VERCEL_ENV", "RUNTIME_ENV"] as const;
+const DEPLOYED_ENVIRONMENT_VALUES = new Set(["production", "prod", "staging"]);
+
+function isDeployedEnvironment() {
+  return DEPLOYMENT_ENVIRONMENT_KEYS.some((key) => DEPLOYED_ENVIRONMENT_VALUES.has(process.env[key]?.trim().toLowerCase() ?? ""));
+}
+
+/**
+ * Whether this run is on seed data, so that what seed data cannot speak about is set aside instead of judged. Like
+ * shouldRequireSourceApproval it takes an explicit option first and RISK_CHECK_SEED_DATA=true after it (the exact string),
+ * except that a deployed environment wins over both: when NODE_ENV, APP_ENV, DEPLOY_ENV, VERCEL_ENV or RUNTIME_ENV names
+ * production or staging, neither is read, so such a process can never skip the 50-state requirement. (A release is also
+ * protected by how it is run: the runbook's invocations unset the variable and require a report headed `Risk checklist
+ * PASS`, since an INCOMPLETE report exits 0.)
+ *
+ * What is set aside is a verdict about the coverage of the business database that seed data cannot give: `state-coverage`
+ * and the `missing_state_bid` reason of `state-data-quality-gate`, and only for a state with no bid row of any kind. A
+ * state whose rows are there while none is an active state-level bid, or a database in which no required state has one,
+ * is data present and failing, which seed data can show, so it fails. A verdict about code, config or the rows that are
+ * present can be satisfied by seed data, so it is still judged: state-content, bid-detail-routes, attachment-downloads,
+ * state-url-validity and global-url-validity (each scoped by the number of rows in its summary), account-tier-separation,
+ * source-ingestion-governance and source-validity-metadata. The table in checklist.test.ts decides every check by id,
+ * with the reason.
+ */
+function isSeedDataRun(options: RiskChecklistOptions) {
+  if (isDeployedEnvironment()) return false;
+  if (typeof options.seedData === "boolean") return options.seedData;
+  return process.env.RISK_CHECK_SEED_DATA === "true";
+}
+
+/** The first detail of a check set aside on seed data: why it was not run, and how to run it. */
+const SEED_DATA_NOT_RUN_REASON =
+  "run on seed data: which states have an active bid is a property of the business database, so it is not verified here; " +
+  "run the checklist against that database without RISK_CHECK_SEED_DATA to verify it";
+
+/** The first detail of a coverage check on seed data in which no required state has an active state-level bid. */
+const NO_ACTIVE_STATE_BID_DETAIL =
+  "no required state has an active state-level bid: an empty or mis-pointed database, a broken query, or bids that are no " +
+  "longer active. Seed data always holds state bids, so this is a failure, not something it leaves unknown";
+
+/** The state codes of every row of `bids`, whatever the row: active or not, state-level or local, visible or suppressed. */
+function stateCodesWithBidRows(db: AppDatabase): string[] {
+  return db
+    .select({ stateCode: bids.stateCode })
+    .from(bids)
+    .groupBy(bids.stateCode)
+    .all()
+    .map((row) => normalizeStateCode(row.stateCode));
+}
+
+async function stateCodesWithBidRowsFromMysql(mysql: Pool): Promise<string[]> {
+  const rows = await mysqlSelectMany<{ stateCode: string | null }>(mysql, "SELECT DISTINCT state_code AS stateCode FROM bids");
+  return rows.map((row) => normalizeStateCode(row.stateCode));
+}
+
+/**
+ * The 50-state coverage check. Without the seed-data opt-out, or with nothing missing, or with a registry that does not
+ * list 50 states (the code's problem, not the data's), it is what it always was. On seed data a required state with no
+ * active state-level bid is one of two things, told apart by the rows of the database (`statesWithBidRows`, every state
+ * with a bid row of any kind): no row at all, which seed data cannot speak about, so NOT RUN; or rows that are there with
+ * none an active state-level bid, which is data present and failing, so a failure. A database in which no required state
+ * has an active state-level bid fails too. The summary counts each class. The opt-out is read from `options` and the
+ * environment here, through the same guard as everywhere, so a caller cannot hand this a raw flag.
+ */
+export function stateCoverageCheck(input: {
+  requiredStates: string[];
+  availableStates: string[];
+  statesWithBidRows?: string[];
+  options?: RiskChecklistOptions;
+}): RiskChecklistCheck {
+  const { requiredStates, availableStates } = input;
+  const missingStates = requiredStates.filter((stateCode) => !availableStates.includes(stateCode));
+  const registryComplete = requiredStates.length === 50;
+  const summary = `${availableStates.length}/${requiredStates.length} required states have at least one active bid`;
+
+  if (!isSeedDataRun(input.options ?? {}) || !registryComplete || missingStates.length === 0) {
+    return check(
+      "state-coverage",
+      "50 state data coverage",
+      registryComplete && missingStates.length === 0,
+      summary,
+      missingStates.map((stateCode) => `missing state ${stateCode}`),
+    );
+  }
+
+  const withRows = new Set((input.statesWithBidRows ?? []).map(normalizeStateCode));
+  const failing = missingStates.filter((stateCode) => withRows.has(stateCode));
+  const unknown = missingStates.filter((stateCode) => !withRows.has(stateCode));
+  const noneActive = missingStates.length === requiredStates.length;
+  const counts =
+    `${requiredStates.length - missingStates.length}/${requiredStates.length} required states have at least one active bid; ` +
+    `with bid rows but no active state-level bid: ${failing.length}; with no bid rows at all: ${unknown.length}`;
+  const details = [
+    ...(noneActive ? [NO_ACTIVE_STATE_BID_DETAIL] : []),
+    ...failing.map((stateCode) => `missing state ${stateCode} (has bid rows, none an active state-level bid)`),
+    ...(unknown.length > 0 ? [SEED_DATA_NOT_RUN_REASON] : []),
+    ...unknown.map((stateCode) => `missing state ${stateCode} (no bid rows at all)`),
+  ];
+
+  if (noneActive || failing.length > 0) return check("state-coverage", "50 state data coverage", false, counts, details);
+  return notRunCheck("state-coverage", "50 state data coverage", `not evaluated on seed data: ${counts}`, details);
+}
+
+/**
+ * The state data quality P0 gate. On seed data the one P0 reason that is a coverage claim, a state with no active bid
+ * (`missing_state_bid`), is set aside only for a state with no bid row of any kind; for a state whose rows are there it
+ * still fails the gate, as does every other P0 reason. So the gate fails for any blocker seed data can show, is NOT RUN
+ * while a state with no rows at all is set aside, and passes only when nothing was.
+ */
+function stateDataQualityGateCheck(
+  report: StateDataQualityReport,
+  statesWithBidRows: string[],
+  options: RiskChecklistOptions,
+): RiskChecklistCheck {
+  const id = "state-data-quality-gate";
+  const label = "50-state data quality P0 gate";
+  const summary = `${report.rows.length} state quality rows checked for P0 blocker reason codes`;
+
+  if (!isSeedDataRun(options)) {
+    const failures = stateDataQualityP0Details(report);
+    return check(id, label, failures.length === 0, summary, failures);
+  }
+
+  const missingBid: StateDataQualityReasonCode = "missing_state_bid";
+  const withRows = new Set(statesWithBidRows.map(normalizeStateCode));
+  const lackingBid = report.rows.filter((row) => row.reasons.some((reason) => reason.code === missingBid));
+  const setAside = new Set(lackingBid.filter((row) => !withRows.has(normalizeStateCode(row.stateCode))));
+  const judged: StateDataQualityReport = {
+    ...report,
+    rows: report.rows.map((row) =>
+      setAside.has(row) ? { ...row, reasons: row.reasons.filter((reason) => reason.code !== missingBid) } : row,
+    ),
+  };
+  const failures = stateDataQualityP0Details(judged);
+  const breakdown =
+    lackingBid.length > 0
+      ? `, except ${missingBid}, which is not evaluated on seed data for the ${setAside.size}/${report.rows.length} states with no bid rows at all ` +
+        `and is judged for the ${lackingBid.length - setAside.size}/${report.rows.length} states with bid rows but no active state-level bid`
+      : "";
+
+  if (failures.length > 0) return check(id, label, false, `${summary}${breakdown}`, failures);
+  if (setAside.size === 0) return check(id, label, true, `${summary}${breakdown}`);
+  return notRunCheck(id, label, `${summary}${breakdown}`, [SEED_DATA_NOT_RUN_REASON]);
+}
+
+function reportOf(checks: RiskChecklistCheck[], now: Date): RiskChecklistReport {
+  return {
+    ok: checks.every((entry) => entry.ok),
+    checkedAt: now.toISOString(),
+    checks,
+  };
 }
 
 function shouldRequireSourceApproval(options: RiskChecklistOptions) {
@@ -419,13 +623,13 @@ export async function createRiskChecklistReport(
   const stateBids = stateResponse.bids;
   const requiredStates = requiredStateCodes();
   const availableStates = statesWithBids(stateBids);
-  const missingStates = requiredStates.filter((stateCode) => !availableStates.includes(stateCode));
   const emptyContentBids = stateBids.filter((bid) => !hasRequiredContent(bid)).map((bid) => bid.id);
   const routeFailures = routeRoundTripFailures(stateBids);
   const lookupFailures = await detailLookupFailures(db, stateBids);
   const safeAttachmentFailures = await attachmentFailures(db, stateBids);
   const stateDataQualityReport = await createStateDataQualityReport(db, now);
-  const stateDataQualityFailures = stateDataQualityP0Details(stateDataQualityReport);
+  // Only a run that sets states aside needs to know which states the database holds a row for.
+  const statesWithBidRows = isSeedDataRun(options) ? stateCodesWithBidRows(db) : [];
   const accountFeatureFailures = accountFeatureMatrixCheck();
   const requireSourceApproval = shouldRequireSourceApproval(options);
   const governanceFailures = sourceGovernanceFailures(db, { requireSourceApproval });
@@ -434,13 +638,7 @@ export async function createRiskChecklistReport(
   const globalUrlFailures = bidUrlValidityFailures(allBids);
 
   const checks = [
-    check(
-      "state-coverage",
-      "50 state data coverage",
-      requiredStates.length === 50 && missingStates.length === 0,
-      `${availableStates.length}/${requiredStates.length} required states have at least one active bid`,
-      missingStates.map((stateCode) => `missing state ${stateCode}`),
-    ),
+    stateCoverageCheck({ requiredStates, availableStates, statesWithBidRows, options }),
     check(
       "state-content",
       "State bid content is non-empty",
@@ -465,13 +663,7 @@ export async function createRiskChecklistReport(
       `${stateBids.reduce((total, bid) => total + bid.attachments.length, 0)} state attachments checked`,
       safeAttachmentFailures,
     ),
-    check(
-      "state-data-quality-gate",
-      "50-state data quality P0 gate",
-      stateDataQualityFailures.length === 0,
-      `${stateDataQualityReport.rows.length} state quality rows checked for P0 blocker reason codes`,
-      stateDataQualityFailures,
-    ),
+    stateDataQualityGateCheck(stateDataQualityReport, statesWithBidRows, options),
     check(
       "account-tier-separation",
       "Admin and paid feature separation",
@@ -511,11 +703,7 @@ export async function createRiskChecklistReport(
     ),
   ];
 
-  return {
-    ok: checks.every((entry) => entry.ok),
-    checkedAt: now.toISOString(),
-    checks,
-  };
+  return reportOf(checks, now);
 }
 
 export async function createRiskChecklistReportFromMysql(
@@ -529,7 +717,7 @@ export async function createRiskChecklistReportFromMysql(
   const stateBids = stateResponse.bids;
   const requiredStates = requiredStateCodes();
   const availableStates = statesWithBids(stateBids);
-  const missingStates = requiredStates.filter((stateCode) => !availableStates.includes(stateCode));
+  const statesWithBidRows = isSeedDataRun(options) ? await stateCodesWithBidRowsFromMysql(mysql) : [];
   const emptyContentBids = stateBids.filter((bid) => !hasRequiredContent(bid)).map((bid) => bid.id);
   const routeFailures = routeRoundTripFailures(stateBids);
   const lookupFailures = await detailLookupFailuresFromMysql(mysql, stateBids);
@@ -542,13 +730,7 @@ export async function createRiskChecklistReportFromMysql(
   const globalUrlFailures = bidUrlValidityFailures(allBids);
 
   const checks = [
-    check(
-      "state-coverage",
-      "50 state data coverage",
-      requiredStates.length === 50 && missingStates.length === 0,
-      `${availableStates.length}/${requiredStates.length} required states have at least one active bid`,
-      missingStates.map((stateCode) => `missing state ${stateCode}`),
-    ),
+    stateCoverageCheck({ requiredStates, availableStates, statesWithBidRows, options }),
     check(
       "state-content",
       "State bid content is non-empty",
@@ -612,18 +794,24 @@ export async function createRiskChecklistReportFromMysql(
     ),
   ];
 
-  return {
-    ok: checks.every((entry) => entry.ok),
-    checkedAt: now.toISOString(),
-    checks,
-  };
+  return reportOf(checks, now);
 }
 
+const STATUS_WORDS: Record<RiskCheckStatus, string> = { pass: "PASS", fail: "FAIL", not_run: "NOT RUN" };
+const OUTCOME_WORDS = { pass: "PASS", fail: "FAIL", incomplete: "INCOMPLETE" } as const;
+
+/**
+ * The report as text. A check that was not run reads NOT RUN on its line and is named on the headline, and a report
+ * with one is INCOMPLETE rather than PASS, so a reader of the log never takes an unverified result for a verified one.
+ */
 export function formatRiskChecklistReport(report: RiskChecklistReport) {
+  const notRun = report.checks.filter((entry) => riskCheckStatus(entry) === "not_run").map((entry) => entry.id);
   const lines = [
-    `Risk checklist ${report.ok ? "PASS" : "FAIL"} at ${report.checkedAt}`,
+    `Risk checklist ${OUTCOME_WORDS[riskChecklistOutcome(report)]} at ${report.checkedAt}${
+      notRun.length > 0 ? ` (NOT RUN: ${notRun.join(", ")})` : ""
+    }`,
     ...report.checks.flatMap((entry) => [
-      `${entry.ok ? "PASS" : "FAIL"} ${entry.id}: ${entry.summary}`,
+      `${STATUS_WORDS[riskCheckStatus(entry)]} ${entry.id}: ${entry.summary}`,
       ...(entry.details ?? []).map((detail) => `  - ${detail}`),
     ]),
   ];
@@ -631,8 +819,29 @@ export function formatRiskChecklistReport(report: RiskChecklistReport) {
   return lines.join("\n");
 }
 
+/** Throws for a report with a failed check. A check that was not run is not a failure: it is reported, not thrown. */
 export function assertRiskChecklistReport(report: RiskChecklistReport) {
-  if (!report.ok) {
+  if (riskChecklistOutcome(report) === "fail") {
     throw new Error(formatRiskChecklistReport(report));
   }
+}
+
+/** What a GitHub Actions workflow command cannot carry in its message: `%`, CR and LF. */
+function escapeWorkflowCommandData(value: string) {
+  return value.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+}
+
+/**
+ * The line that puts an INCOMPLETE report in the GitHub check summary: a workflow command, `::warning title=…::<NOT RUN
+ * ids>`, which the Actions runner turns into an annotation. A step that exits 0 shows nothing of a check that did not run,
+ * so on CI (`CI=true`, the exact value) an incomplete report says so beside the green step as well. Nothing for a report
+ * that passed, or one that failed (its step is red already).
+ */
+export function riskChecklistCiAnnotation(
+  report: RiskChecklistReport,
+  env: Record<string, string | undefined> = process.env,
+): string | null {
+  if (env.CI !== "true" || riskChecklistOutcome(report) !== "incomplete") return null;
+  const notRun = report.checks.filter((entry) => riskCheckStatus(entry) === "not_run").map((entry) => entry.id);
+  return `::warning title=Risk checklist INCOMPLETE::${escapeWorkflowCommandData(notRun.join(", "))}`;
 }

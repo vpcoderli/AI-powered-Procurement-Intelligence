@@ -6,7 +6,7 @@ import { en } from "@/lib/i18n/dictionaries/en";
 import { zh } from "@/lib/i18n/dictionaries/zh";
 import { LanguageProvider } from "@/lib/i18n/LanguageContext";
 import type { RiskChecklistCheck, RiskChecklistReport } from "@/server/risk/checklist";
-import type { RiskChecklistTrend } from "@/server/risk/snapshots";
+import type { RiskChecklistSnapshot, RiskChecklistTrend } from "@/server/risk/snapshots";
 import type { StateDataQualityReason } from "@/server/source-validity/state-data-quality";
 import type { AdminResourceStatus, useAdminResource } from "../use-admin-resource";
 import type { AdminRiskSectionData } from "./RiskCheckSection";
@@ -97,7 +97,12 @@ function stateReport(overrides: Partial<StateDataQualityReport> = {}): StateData
   };
 }
 
-function load(matrix: StateDataQualityReport | null, ok = true, checks: RiskChecklistCheck[] = []) {
+function load(
+  matrix: StateDataQualityReport | null,
+  ok = true,
+  checks: RiskChecklistCheck[] = [],
+  extra: { trend?: Partial<RiskChecklistTrend>; history?: RiskChecklistSnapshot[] } = {},
+) {
   const report: RiskChecklistReport = { ok, checkedAt: CHECKED_AT, checks };
   const trend: RiskChecklistTrend = {
     snapshotCount: 0,
@@ -107,11 +112,12 @@ function load(matrix: StateDataQualityReport | null, ok = true, checks: RiskChec
     latestGlobalUrlSummary: null,
     latestStateCoverageSummary: null,
     latestAttachmentSummary: null,
+    ...extra.trend,
   };
   const status: AdminResourceStatus = "ready";
   stubs.resource = {
     status,
-    data: { report, history: [], trend, stateDataQuality: matrix },
+    data: { report, history: extra.history ?? [], trend, stateDataQuality: matrix },
     error: null,
     reload: async () => undefined,
     setData: () => undefined,
@@ -421,5 +427,168 @@ describe("server-written check titles and action text in English", () => {
     ]) {
       expect(text, serverText).toContain(serverText);
     }
+  });
+});
+
+// The checklist can come back with a check that was set aside: 50-state coverage on seed data is NOT RUN. It is neither
+// a pass nor a failure, and the console must not show it as either.
+const NOT_RUN_COVERAGE: RiskChecklistCheck = {
+  id: "state-coverage",
+  label: SERVER_TEXT.coverageLabel,
+  ok: false,
+  status: "not_run",
+  summary: "not evaluated on seed data: 5/50 required states have at least one active bid",
+  details: ["run on seed data: which states have an active bid is a property of the business database", "missing state AK"],
+};
+
+const PASSING_CONTENT: RiskChecklistCheck = {
+  id: "state-content",
+  label: "State bid content is non-empty",
+  ok: true,
+  status: "pass",
+  summary: "5 state bids checked for title, issuer, URL, state, and description",
+};
+
+const FAILING_ATTACHMENTS: RiskChecklistCheck = {
+  id: "attachment-downloads",
+  label: "Attachments use safe non-404 download routes",
+  ok: false,
+  status: "fail",
+  summary: "6 state attachments checked",
+  details: ["bid_1: attachment SOW would return 404"],
+};
+
+/** The text nodes that follow the first node equal to `heading`. */
+const after = (text: string[], heading: string) => text.slice(text.indexOf(heading) + 1);
+
+function snapshotOf(id: string, ok: boolean, checks: RiskChecklistCheck[]): RiskChecklistSnapshot {
+  return { id, ok, checkedAt: CHECKED_AT, createdAt: CHECKED_AT, report: { ok, checkedAt: CHECKED_AT, checks } };
+}
+
+describe.each<Language>(["en", "zh"])("a risk check that did not run in %s", (language) => {
+  const t = admin(language);
+
+  it("headlines the checklist as not fully verified: neither all passed nor needs attention", () => {
+    load(null, false, [NOT_RUN_COVERAGE, PASSING_CONTENT]);
+    const text = textNodes(render(language));
+
+    expect(text).toContain(t.riskCheckIncomplete.replace("{count}", "1"));
+    expect(text).not.toContain(t.riskCheckPassed);
+    expect(text).not.toContain(t.riskCheckFailed);
+  });
+
+  it("still headlines a failure as a failure when another check did not run", () => {
+    load(null, false, [NOT_RUN_COVERAGE, FAILING_ATTACHMENTS]);
+    const text = textNodes(render(language));
+
+    expect(text).toContain(t.riskCheckFailed);
+    expect(text).not.toContain(t.riskCheckPassed);
+    expect(text.some((node) => node === t.riskCheckIncomplete.replace("{count}", "1"))).toBe(false);
+  });
+
+  it("badges the check Not run, with its summary as the server wrote it, and badges the others as they are", () => {
+    load(null, false, [NOT_RUN_COVERAGE, PASSING_CONTENT, FAILING_ATTACHMENTS]);
+    const text = textNodes(render(language));
+
+    // A check card reads: its title, its summary, its badge.
+    const card = (title: string) => text.slice(text.indexOf(title), text.indexOf(title) + 3);
+    expect(card(t.riskCheckLabel_state_coverage)).toEqual([
+      t.riskCheckLabel_state_coverage,
+      NOT_RUN_COVERAGE.summary,
+      t.riskCheckNotRun,
+    ]);
+    expect(card(t.riskCheckLabel_state_content)[2]).toBe(t.riskCheckOk);
+    expect(card(t.riskCheckLabel_attachment_downloads)[2]).toBe(t.riskCheckIssue);
+  });
+
+  it("does not paint what it did not run in the colour of a failure", () => {
+    load(null, false, [NOT_RUN_COVERAGE]);
+    const html = render(language);
+
+    const detailList = html.match(/<ul class="([^"]*)">(?:(?!<\/ul>)[\s\S])*missing state AK/);
+    expect(detailList?.[1]).toContain("text-amber-700");
+    expect(detailList?.[1]).not.toContain("text-rose-700");
+  });
+
+  it("reads the state coverage trend as Not run while the latest coverage check did not run", () => {
+    load(null, false, [NOT_RUN_COVERAGE], { trend: { stateCoverageDeclined: null, latestStateCoverageSummary: NOT_RUN_COVERAGE.summary } });
+    const text = textNodes(render(language));
+
+    expect(after(text, t.riskTrendStateCoverageDeclined).slice(0, 2)).toEqual([NOT_RUN_COVERAGE.summary, t.riskCheckNotRun]);
+  });
+
+  // The trend compares the first and the latest recorded coverage. When an older snapshot's coverage did not run (seed data), the
+  // server answers null, and the latest check can be a perfectly good pass: there is still nothing to call stable, so the card
+  // must not say Pass.
+  it("reads the state coverage trend as Not run, not Pass, when no comparison could be made because an older snapshot did not run it", () => {
+    load(
+      null,
+      true,
+      [{ ...NOT_RUN_COVERAGE, ok: true, status: "pass", summary: "50/50 required states have at least one active bid", details: undefined }],
+      { trend: { stateCoverageDeclined: null, latestStateCoverageSummary: "50/50 required states have at least one active bid" } },
+    );
+    const text = textNodes(render(language));
+
+    expect(after(text, t.riskTrendStateCoverageDeclined).slice(0, 2)).toEqual(["50/50 required states have at least one active bid", t.riskCheckNotRun]);
+  });
+
+  it("reads a trend the server did not answer at all as Not run too, an older server's", () => {
+    load(null, true, [{ ...NOT_RUN_COVERAGE, ok: true, status: "pass", summary: "50/50 required states have at least one active bid", details: undefined }], {
+      trend: { stateCoverageDeclined: undefined as never },
+    });
+
+    expect(after(textNodes(render(language)), t.riskTrendStateCoverageDeclined)[1]).toBe(t.riskCheckNotRun);
+  });
+
+  it("reads a coverage that declined as an Issue, and one that did not as Pass", () => {
+    load(null, false, [{ ...NOT_RUN_COVERAGE, ok: true, status: "pass", summary: "49/50 required states have at least one active bid", details: undefined }], {
+      trend: { stateCoverageDeclined: true },
+    });
+    expect(after(textNodes(render(language)), t.riskTrendStateCoverageDeclined)[1]).toBe(t.riskCheckIssue);
+
+    load(null, true, [{ ...NOT_RUN_COVERAGE, ok: true, status: "pass", summary: "50/50 required states have at least one active bid", details: undefined }], {
+      trend: { stateCoverageDeclined: false },
+    });
+    expect(after(textNodes(render(language)), t.riskTrendStateCoverageDeclined)[1]).toBe(t.riskCheckOk);
+  });
+
+  it("reads the state coverage trend as before once the check ran", () => {
+    load(null, true, [{ ...NOT_RUN_COVERAGE, ok: true, status: "pass", summary: "50/50 required states have at least one active bid", details: undefined }]);
+    const text = textNodes(render(language));
+
+    expect(after(text, t.riskTrendStateCoverageDeclined)[1]).toBe(t.riskCheckOk);
+  });
+
+  it("badges a recorded snapshot Not run when a check of its report did not run, Issue when one failed, Pass when none did", () => {
+    load(null, false, [NOT_RUN_COVERAGE], {
+      history: [
+        snapshotOf("incomplete", false, [NOT_RUN_COVERAGE, PASSING_CONTENT]),
+        snapshotOf("failed", false, [NOT_RUN_COVERAGE, FAILING_ATTACHMENTS]),
+        snapshotOf("passed", true, [PASSING_CONTENT]),
+      ],
+    });
+    const rows = after(textNodes(render(language)), t.riskCheckHistory);
+
+    // A snapshot row reads: its badge, when it was checked, the global URL summary.
+    expect([rows[0], rows[3], rows[6]]).toEqual([t.riskCheckNotRun, t.riskCheckIssue, t.riskCheckOk]);
+  });
+
+  it("leaves no dictionary key or placeholder on the page", () => {
+    load(null, false, [NOT_RUN_COVERAGE, PASSING_CONTENT], { history: [snapshotOf("incomplete", false, [NOT_RUN_COVERAGE])] });
+    const html = render(language);
+
+    expect(html).not.toMatch(/admin\.[a-zA-Z]/);
+    expect(html).not.toMatch(/\{[a-zA-Z]+\}/);
+  });
+});
+
+describe("a risk check that did not run in Chinese", () => {
+  it("prints none of the English words for it", () => {
+    load(null, false, [NOT_RUN_COVERAGE, PASSING_CONTENT]);
+    const text = textNodes(render("zh"));
+
+    expect(text).toContain(zhAdmin.riskCheckNotRun);
+    expect(text).not.toContain(enAdmin.riskCheckNotRun);
+    expect(text.some((node) => node.includes("Not fully verified"))).toBe(false);
   });
 });

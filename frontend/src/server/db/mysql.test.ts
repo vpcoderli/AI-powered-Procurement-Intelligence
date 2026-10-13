@@ -1,15 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { BID_CHILD_REFERENCES } from "./bid-child-references";
 import {
   closeResolvedMysqlPool,
   createMysqlPool,
   isMysqlDatabaseUrlConfigured,
+  MYSQL_LEGACY_FIPS_DRIFT_CONDITION,
+  MYSQL_LEGACY_FIPS_DRIFT_RETYPE,
+  MYSQL_LEGACY_FIPS_DRIFT_STAMP,
   MYSQL_LOCAL_ISSUER_TYPE_BACKFILL,
+  MYSQL_NY_SUBCONTRACT_DUPLICATE_DELETE,
+  MYSQL_NY_SUBCONTRACT_REKEY,
   mysqlColumnMigrationStatements,
   mysqlDataMigrationStatements,
   mysqlIndexColumnModification,
   mysqlIndexMigrationStatements,
   mysqlMigrationStatements,
   mysqlPoolSizing,
+  redactMysqlDatabaseUrl,
   requireMysqlDatabaseUrl,
   resetMysqlPoolForTests,
   resolveMysqlPool,
@@ -78,6 +85,29 @@ describe("mysql database foundation", () => {
     expect(bidsTable).toContain("quality_flags_json LONGTEXT NOT NULL DEFAULT ('[]')");
     expect(overridesTable).toContain("organization_id VARCHAR(191) NOT NULL");
     expect(overridesTable).toContain("feature_key VARCHAR(191) NOT NULL");
+  });
+});
+
+describe("redactMysqlDatabaseUrl", () => {
+  it("masks the password and keeps the rest of the URL", () => {
+    expect(redactMysqlDatabaseUrl("mysql://user:secret@localhost:3306/winbids")).toBe("mysql://user:***@localhost:3306/winbids");
+    expect(redactMysqlDatabaseUrl("mysql://root:s3cr3t@127.0.0.1:55381/apsi_db")).toBe("mysql://root:***@127.0.0.1:55381/apsi_db");
+  });
+
+  it("leaves a URL with no password as it is", () => {
+    expect(redactMysqlDatabaseUrl("mysql://localhost:3306/winbids")).toBe("mysql://localhost:3306/winbids");
+    expect(redactMysqlDatabaseUrl("mysql://user@localhost:3306/winbids")).toBe("mysql://user@localhost:3306/winbids");
+  });
+
+  it("masks the password of a URL that cannot be parsed, too", () => {
+    expect(redactMysqlDatabaseUrl("not a url://user:secret@host/db")).toBe("not a url://user:***@host/db");
+  });
+
+  it("does not load the app's database client: it lives with the pool code, so a script can print its target without opening a database", async () => {
+    const source = (await import("node:fs")).readFileSync(new URL("./mysql.ts", import.meta.url), "utf8");
+
+    expect(source).not.toMatch(/from ["']\.\/client["']/);
+    expect(source).not.toContain("mysql-smoke");
   });
 });
 
@@ -335,15 +365,122 @@ describe("mysql migrations cover the bid lifecycle columns (2026-09-24 phase 1)"
     expect(joined).toContain("data_sources ADD COLUMN consecutive_empty_runs INT NOT NULL DEFAULT 0");
   });
 
-  it("backfills closed lifecycle for inactive rows and local issuer types for legacy bids", () => {
+  it("runs the data fixes in a fixed order", () => {
+    // The FIPS-drift stamp must precede its retype (the stamp reads the stale FIPS the retype overwrites), and the NY
+    // duplicate delete must follow the re-key (the re-key is what gives a duplicate its clean twin).
     expect(mysqlDataMigrationStatements()).toEqual([
       "UPDATE bids SET lifecycle_status = 'closed' WHERE is_active = 0 AND lifecycle_status = 'open'",
       MYSQL_LOCAL_ISSUER_TYPE_BACKFILL,
+      MYSQL_LEGACY_FIPS_DRIFT_STAMP,
+      MYSQL_LEGACY_FIPS_DRIFT_RETYPE,
+      MYSQL_NY_SUBCONTRACT_REKEY,
+      MYSQL_NY_SUBCONTRACT_DUPLICATE_DELETE,
     ]);
+  });
+
+  it("backfills local issuer types for legacy bids", () => {
     expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("ON data_sources.id = SUBSTRING_INDEX(bids.id, ':', 1)");
     expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("IN ('county', 'city', 'township', 'special_district')");
     expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("bids.fips_code = data_sources.fips_code");
     expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain("data_sources.state_code COLLATE utf8mb4_bin = bids.state_code COLLATE utf8mb4_bin");
+  });
+
+  it("pins the legacy FIPS-drift statements", () => {
+    const join = "UPDATE bids JOIN data_sources ON data_sources.id = SUBSTRING_INDEX(bids.id, ':', 1)";
+    expect(MYSQL_LEGACY_FIPS_DRIFT_CONDITION).toBe(
+      " WHERE bids.issuer_type = 'state' AND LOCATE(':', bids.id) > 1"
+      + " AND data_sources.jurisdiction_level IN ('county', 'city', 'township', 'special_district')"
+      + " AND data_sources.state_code COLLATE utf8mb4_bin = bids.state_code COLLATE utf8mb4_bin"
+      + " AND (bids.jurisdiction_level IS NULL OR bids.jurisdiction_level = '' OR bids.jurisdiction_level = data_sources.jurisdiction_level)"
+      + " AND bids.fips_code IS NOT NULL AND bids.fips_code <> ''"
+      + " AND data_sources.fips_code IS NOT NULL AND data_sources.fips_code <> ''"
+      + " AND bids.fips_code COLLATE utf8mb4_bin <> data_sources.fips_code COLLATE utf8mb4_bin",
+    );
+    // Multi-table UPDATE assignment order is not guaranteed, so the stamp (which reads bids.fips_code) is its own statement.
+    expect(MYSQL_LEGACY_FIPS_DRIFT_STAMP).toBe(
+      `${join} SET bids.raw_payload = JSON_SET(bids.raw_payload, '$.legacy_fips_code', bids.fips_code)`
+      + `${MYSQL_LEGACY_FIPS_DRIFT_CONDITION} AND CASE WHEN JSON_VALID(bids.raw_payload) THEN JSON_TYPE(bids.raw_payload) END = 'OBJECT'`,
+    );
+    expect(MYSQL_LEGACY_FIPS_DRIFT_RETYPE).toBe(
+      `${join} SET bids.issuer_type = data_sources.jurisdiction_level, bids.fips_code = data_sources.fips_code${MYSQL_LEGACY_FIPS_DRIFT_CONDITION}`,
+    );
+  });
+
+  it("complements the first backfill's FIPS guard exactly, so every candidate row is handled by one of the two", () => {
+    expect(MYSQL_LOCAL_ISSUER_TYPE_BACKFILL).toContain(
+      "AND (bids.fips_code IS NULL OR bids.fips_code = '' OR data_sources.fips_code IS NULL OR data_sources.fips_code = '' OR bids.fips_code = data_sources.fips_code)",
+    );
+    expect(MYSQL_LEGACY_FIPS_DRIFT_CONDITION).toContain("AND bids.fips_code IS NOT NULL AND bids.fips_code <> ''");
+    expect(MYSQL_LEGACY_FIPS_DRIFT_CONDITION).toContain("AND data_sources.fips_code IS NOT NULL AND data_sources.fips_code <> ''");
+  });
+});
+
+describe("mysql NY subcontract re-key statements", () => {
+  it("re-keys with UPDATE IGNORE, so a key another row holds skips the row instead of failing the migration", () => {
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toMatch(/^UPDATE IGNORE bids SET bids\.id = /);
+    expect(MYSQL_NY_SUBCONTRACT_DUPLICATE_DELETE).toMatch(/^DELETE FROM bids WHERE /);
+  });
+
+  it("orders the assignments so the result does not depend on the order MySQL evaluates them in", () => {
+    // Left to right (a plain WHERE), each assignment sees the ones before it; with subqueries in the WHERE (this statement), each sees the original row.
+    // So no assignment may read a column that an earlier one rewrites: everything that parses source_bid_id or reads the old
+    // title comes before the title and source_bid_id assignments, and source_bid_id, which every other one parses, is last.
+    const assignments = MYSQL_NY_SUBCONTRACT_REKEY.slice(MYSQL_NY_SUBCONTRACT_REKEY.indexOf(" SET "), MYSQL_NY_SUBCONTRACT_REKEY.indexOf(" WHERE "));
+    const order = ["id", "dedupe_key", "issuer_name", "description", "full_description", "raw_payload", "title", "source_bid_id"];
+    const positions = order.map((column) => assignments.indexOf(` bids.${column} = `));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    expect(assignments.endsWith(", bids.source_bid_id = SUBSTRING_INDEX(bids.source_bid_id, ' Company: ', 1)")).toBe(true);
+    expect(assignments.indexOf("bids.source_bid_id = ")).toBe(assignments.lastIndexOf("bids.source_bid_id = "));
+    expect(assignments.indexOf("bids.title = ")).toBe(assignments.lastIndexOf("bids.title = "));
+  });
+
+  it("guards JSON functions with an order-proof CASE, never an AND that relies on short-circuiting", () => {
+    const guard = "CASE WHEN JSON_VALID(bids.raw_payload) THEN JSON_TYPE(bids.raw_payload) END = 'OBJECT'";
+    expect(MYSQL_LEGACY_FIPS_DRIFT_STAMP).toContain(guard);
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain(guard);
+    for (const statement of mysqlDataMigrationStatements()) {
+      expect(statement).not.toMatch(/JSON_VALID\([^)]*\)\s+AND\b/i);
+    }
+  });
+
+  it("reads the company after the first marker and trims it, like SQLite and the spider", () => {
+    const company = "TRIM(SUBSTRING(bids.source_bid_id, LOCATE(' Company: ', bids.source_bid_id COLLATE utf8mb4_bin) + 10))";
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain(`THEN ${company} ELSE bids.issuer_name END`);
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain(`'$.contractor_company', ${company}`);
+    // SUBSTRING_INDEX(..., -1) would take the text after the LAST marker.
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).not.toContain("SUBSTRING_INDEX(bids.source_bid_id, ' Company: ', -1)");
+  });
+
+  it("clears title-echo bodies with an exact comparison and refreshes the stored evidence of an object payload", () => {
+    const oldTitle = "LOWER(TRIM(bids.title)) COLLATE utf8mb4_bin";
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain(`bids.description = CASE WHEN LOWER(TRIM(bids.description)) COLLATE utf8mb4_bin = ${oldTitle} THEN '' ELSE bids.description END`);
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain(`bids.full_description = CASE WHEN LOWER(TRIM(bids.full_description)) COLLATE utf8mb4_bin = ${oldTitle} THEN NULL ELSE bids.full_description END`);
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain("JSON_REMOVE(bids.raw_payload, '$.data_quality')");
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain("'$.subcontracting', CAST('true' AS JSON)");
+  });
+
+  it("strips the marker only when nothing but '.', '!' and spaces follow it, comparing lengths rather than collated text", () => {
+    const tail = "SUBSTRING_INDEX(LOWER(bids.title), ' this is a subcontracting opportunity', -1)";
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain("LOCATE(' this is a subcontracting opportunity', LOWER(bids.title) COLLATE utf8mb4_bin) > 0");
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain(`CHAR_LENGTH(REPLACE(REPLACE(REPLACE(${tail}, '.', ''), '!', ''), ' ', '')) = 0`);
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain(`TRIM(LEFT(bids.title, CHAR_LENGTH(bids.title) - 37 - CHAR_LENGTH(${tail})))`);
+  });
+
+  it("matches only the exact legacy shape and only rows nothing points at", () => {
+    for (const statement of [MYSQL_NY_SUBCONTRACT_REKEY, MYSQL_NY_SUBCONTRACT_DUPLICATE_DELETE]) {
+      expect(statement).toContain("WHERE bids.id LIKE 'ny!_contract!_reporter:% Company: %' ESCAPE '!'");
+      expect(statement).toContain("LOCATE(' Company: ', bids.source_bid_id COLLATE utf8mb4_bin) > 1");
+      expect(statement).toContain("bids.id COLLATE utf8mb4_bin = CONCAT('ny_contract_reporter:', bids.source_bid_id)");
+      // MySQL refuses to select directly from the table it updates or deletes from; a derived table is the sanctioned way.
+      expect(statement).toContain("(SELECT id FROM bids) AS existing WHERE existing.id = CONCAT('ny_contract_reporter:', SUBSTRING_INDEX(bids.source_bid_id, ' Company: ', 1))");
+      // No foreign keys protect child rows in MySQL, so the statement itself must check every one.
+      for (const { table, column } of BID_CHILD_REFERENCES) {
+        expect(statement).toContain(`NOT EXISTS (SELECT 1 FROM ${table} WHERE ${table}.${column} = bids.id)`);
+      }
+    }
+    expect(MYSQL_NY_SUBCONTRACT_REKEY).toContain("AND NOT EXISTS (SELECT 1 FROM (SELECT id FROM bids) AS existing");
+    expect(MYSQL_NY_SUBCONTRACT_DUPLICATE_DELETE).toContain("AND EXISTS (SELECT 1 FROM (SELECT id FROM bids) AS existing");
   });
 });
 

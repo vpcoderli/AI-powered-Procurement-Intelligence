@@ -1,7 +1,12 @@
 """Offline cross-language fixture: saved BidNet list -> real reader + real Scrapling sidecar -> CLI JSON.
 
 Run 1 serves Denver's saved open list; run 2 serves the same page with one row removed. Only
-the portal transport is replaced; no public portal is contacted.
+the portal transport and the clock are replaced; no public portal is contacted.
+
+The clock stands at the day the page was saved. The importers close a bid once its deadline has
+passed, and the saved rows' deadlines (25 September to 13 October 2026) fall behind the real clock
+as time goes on, so a replay stamped with it would close them on import and leave the delisting
+nothing to close in the second run.
 """
 
 import contextlib
@@ -23,6 +28,9 @@ from apsi_crawler.html.public_page import FetchedPage  # noqa: E402
 from server import create_server  # noqa: E402
 
 REMOVED = "0000436007"
+# The day the saved page was captured, and half an hour later for the second run.
+FIRST_RUN_AT = "2026-09-24T18:00:00+00:00"
+SECOND_RUN_AT = "2026-09-24T18:30:00+00:00"
 
 
 def main():
@@ -47,18 +55,19 @@ def main():
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            def run(html):
+            def run(html, at):
                 output = io.StringIO()
                 with patch("apsi_crawler.spiders.co_bidnet.fetch_page", side_effect=lambda url, **kwargs: FetchedPage(html, url, False)), \
                      patch("apsi_crawler.spiders.co_bidnet.time.sleep", lambda seconds: None), \
+                     patch("apsi_crawler.cli.now_iso", return_value=at), \
                      patch.dict("os.environ", {"SCRAPLING_EXTRACTOR_URL": f"http://127.0.0.1:{server.server_address[1]}"}), \
                      contextlib.redirect_stdout(output):
                     status = cli.fetch_task(dict(task))
                 assert status == 0, output.getvalue()
                 return json.loads(output.getvalue())
 
-            first = run(page)
-            second = run(without_row)
+            first = run(page, FIRST_RUN_AT)
+            second = run(without_row, SECOND_RUN_AT)
         finally:
             server.shutdown()
     print(json.dumps({"first": first, "second": second, "removedId": f"bidnet_co_denver:{REMOVED}"}))

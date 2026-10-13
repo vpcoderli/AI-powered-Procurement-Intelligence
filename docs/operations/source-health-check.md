@@ -200,7 +200,7 @@ Never store real portal credentials in CLI arguments, package scripts, source re
 
 Before a production or demo release:
 
-1. `npm run risk:check` is still the deterministic release gate and must pass without external network assumptions.
+1. `npm run risk:check` is still the deterministic release gate and must pass without external network assumptions. "Pass" means a report headed `Risk checklist PASS`, not just exit status 0: a report headed `Risk checklist INCOMPLETE` (a check set aside by `RISK_CHECK_SEED_DATA`, which CI sets on seed data) exits 0 too. Run it as `env -u RISK_CHECK_SEED_DATA npm run risk:check`.
 2. `npm run source:health:ops` has been run from the production-like operator network, or the release notes explicitly state why live probes were deferred.
 3. No confirmed `update_registry_url` or `add_base_url` critical finding is open for a launch-critical source.
 4. Repeated `forbidden`, `timeout`, `bot_check`, or `login_required` warnings have an owner, disposition, and next review date.
@@ -236,7 +236,7 @@ Local MVP 50-state validity check on 2026-06-24:
 - Launch handoff result: `SOURCE_HEALTH_OWNER=source-ops@winbids.local SOURCE_HEALTH_OPS_EVIDENCE_FILE=../ops-evidence/source-health/source-health-evidence.json SOURCE_HEALTH_ACCESS_REVIEW_FILE=../ops-evidence/source-health/source-health-access-review.json npm run ops:launch-handoff -- --allow-blocked --format=json --output=../ops-evidence/source-health/launch-handoff-source-health.json` returned Live Source Health Operations `status=ready`.
 - Fixed during this pass: MS no longer returns HTTP 404 after updating `ms_state_procurement` from the stale DFA page to `https://www.ms.gov/dfa/contract_bid_search/Bid?autoloadGrid=true`; the follow-up single-source probe returned PASS. `source-health-check --persist` is now MySQL-runtime aware, and Admin Data Sources classification filters read the latest MySQL snapshot.
 - Operational risk states: AL, AK, AZ, AR, CA, CO, GA, ID, IL, IA, LA, MD, MA, MN, MO, NC, ND, NE, NJ, NM, NY, OH, OR, RI, SC, TN, TX, VA, and VT.
-- Release interpretation: local MVP publication uses deterministic `risk:check` as the release gate. Live source health is an operations risk report because public procurement portals can block local probes, require browser/vendor context, return bot-check/login pages, or fail due to network/TLS/temporary service behavior.
+- Release interpretation: local MVP publication uses deterministic `risk:check` as the release gate, and a passing gate is a report headed `Risk checklist PASS`, not only exit status 0. Live source health is an operations risk report because public procurement portals can block local probes, require browser/vendor context, return bot-check/login pages, or fail due to network/TLS/temporary service behavior.
 
 Previous local body-inspection report-only run on 2026-06-13:
 
@@ -274,4 +274,4 @@ Previous local report-only run on 2026-06-02:
 2. For repeated 404s, update registry URLs immediately and add a note to implementation status.
 3. For repeated 403/timeouts, decide whether to keep source as beta/fallback, switch to an approved aggregator fallback, or mark as blocked/manual review.
 4. Do not store or expose raw external attachment URLs directly to users; use local attachment download APIs or explicit unavailable states.
-5. Keep `npm run risk:check` green before treating source data as usable in product flows.
+5. Keep `npm run risk:check` green before treating source data as usable in product flows: green is a report headed `Risk checklist PASS`, not only exit status 0 (an INCOMPLETE report exits 0).

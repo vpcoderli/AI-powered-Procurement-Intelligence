@@ -14,8 +14,10 @@ npm test
 npm run lint
 npm run build
 npm run db:migrate
-npm run risk:check
+env -u RISK_CHECK_SEED_DATA npm run risk:check   # the report must be headed "Risk checklist PASS"
 ```
+
+The risk check passes only when it exits 0 **and** its report is headed `Risk checklist PASS`. A report headed `Risk checklist INCOMPLETE` also exits 0, but it means a check was set aside (`RISK_CHECK_SEED_DATA`, which CI sets on a seeded throwaway database): it is not a pass, and `env -u` makes sure the variable is not set for this run. Do not run it with `NODE_ENV=production` instead: that also turns on the source-approval requirement of the checklist, which is the source owner's decision. This is a release candidate check, so run it on a database that holds the data the candidate will serve: on a database that holds only the seed (`npm run db:seed`, demo bids in five states) 50-state coverage cannot pass, and a run there is the developer's seeded check of the [Setup Guide](./setup-guide.md#local-verification), never release evidence.
 
 For a production-like handoff environment, also run:
 

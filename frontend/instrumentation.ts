@@ -7,14 +7,12 @@
  * depends on, and `frontend/src/lib/observability/sentry.ts` for the guarded
  * init/no-op wrapper.
  *
- * This project pins Next.js 16.x (pre-release/canary). The `instrumentation.ts`
- * `register()` convention and the `onRequestError` hook used below have been stable
- * since Next.js 13.4 and 15 respectively; `node_modules/next/dist/docs/` was not
- * present/readable in the sandbox this file was authored in, so this was NOT verified
- * against this exact 16.2.6 canary's docs. Human follow-up: confirm against
- * `node_modules/next/dist/docs/` (per CLAUDE.md guidance) or the deployed Next.js
- * version's release notes before relying on this in production, and re-check if a
- * future canary bump changes the signature.
+ * This project pins Next.js 16.3.8. The `instrumentation.ts` `register()` convention
+ * and the `onRequestError` hook used below have been stable since Next.js 13.4 and 15
+ * respectively. They were checked against the bundled docs of the pinned version
+ * (`node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/instrumentation.md`),
+ * where `error` is typed `unknown` as it is here. Re-check them when the pin moves
+ * (per CLAUDE.md guidance).
  */
 
 export async function register() {

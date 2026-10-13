@@ -945,6 +945,7 @@ export default function SettingsPage() {
       await deleteAccount();
       setAccountActionMessage(t("settings.accountDeleted"));
       await refreshSession();
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- full reload resets session state
       window.location.assign("/login");
     } catch (error) {
       setAccountActionError(ownerTransferErrorMessage(error));

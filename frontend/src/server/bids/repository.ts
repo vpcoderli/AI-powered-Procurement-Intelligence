@@ -34,7 +34,7 @@ function parseStringArrayJson(value: string | null) {
   }
 }
 
-function sourceIdentityFromRow(row: {
+export function sourceIdentityFromRow(row: {
   rawPayload: string | null; sourceBidId?: string | null; dedupeKey?: string | null;
   jurisdictionLevel?: string | null; fipsCode?: string | null;
 }) {
@@ -50,17 +50,30 @@ function sourceIdentityFromRow(row: {
   };
 }
 
-function isPublishableRow(row: {
+/** The stored columns the publication gate reads. */
+export interface PublishableRowInput {
   id: string; source: string; title: string; issuerName: string; issuerType: string; stateCode: string; sourceUrl: string;
   rawPayload: string | null; qualityFlagsJson: string | null;
-}, matchesSource: ReturnType<typeof createRegisteredSourceIdentityGuard>) {
-  const identity = { ...row, ...sourceIdentityFromRow(row) };
-  if (!matchesSource(identity)) return false;
-  return getBidUsability({
-    ...identity,
+  sourceBidId?: string | null; dedupeKey?: string | null; jurisdictionLevel?: string | null; fipsCode?: string | null;
+}
+
+/**
+ * What the gate judges a stored row by, in one place so that whoever asks why a row is hidden (data:integrity) reads
+ * exactly the inputs `isPublishableRow` does.
+ */
+export function publicationInputsOf(row: PublishableRowInput) {
+  return {
+    identity: { ...row, ...sourceIdentityFromRow(row) },
     qualityFlags: parseStringArrayJson(row.qualityFlagsJson),
     dataQuality: bidDataQualityFromRawPayload(row.rawPayload),
-  }).discovery;
+  };
+}
+
+/** The search path's publication gate (`listBids`, `getBidById`): the registered-source identity guard, then core validity. */
+export function isPublishableRow(row: PublishableRowInput, matchesSource: ReturnType<typeof createRegisteredSourceIdentityGuard>) {
+  const { identity, qualityFlags, dataQuality } = publicationInputsOf(row);
+  if (!matchesSource(identity)) return false;
+  return getBidUsability({ ...identity, qualityFlags, dataQuality }).discovery;
 }
 
 function registeredSourceGuard(db: AppDatabase) {

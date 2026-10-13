@@ -1,19 +1,24 @@
 import { emitWorkerFailureAlert } from "@/lib/resilience/failure-alerts";
+import { sweepExpiredBids as defaultSweepExpiredBids, type LifecycleSweepResult, type MysqlSweepStore } from "@/server/bids/lifecycle-sweep";
 import { runConfiguredCrawlerSourcesOnce, type RunConfiguredCrawlerSourcesOnceOptions } from "./configured-runner";
 import type { RunCrawlerSourceOnceResult } from "./orchestrator";
 import { DEFAULT_TICK_MS, PlatformPauseRegistry, PlatformTickBudget, platformBudgetsFromEnv } from "./platform-budget";
 import { PlatformDeferralTracker } from "./platform-deferral";
 import { PrecheckRetryRegistry, runQueuedPrechecksOnce, type RunQueuedPrechecksOnceOptions, type RunQueuedPrechecksOnceResult } from "./precheck-queue-runner";
 
-type WorkerTickOptions = Pick<RunConfiguredCrawlerSourcesOnceOptions,
+type WorkerTickOptions = Omit<Pick<RunConfiguredCrawlerSourcesOnceOptions,
   "database" | "mysql" | "owner" | "stateRunnerOptions" | "matcher" | "notifier" | "tickMs" | "isStopping"
->;
+>, "mysql"> & {
+  /** A MySQL pool: besides what the lists and prechecks use, the deadline sweep holds its transactions on connections from it. */
+  mysql?: NonNullable<RunConfiguredCrawlerSourcesOnceOptions["mysql"]> & MysqlSweepStore;
+};
 
 /** Work and clock adapters at the tick seam; production uses the existing runner implementations. */
 type WorkerTickAdapters = Pick<RunConfiguredCrawlerSourcesOnceOptions, "runCrawlerSourceOnce" | "platformBudgets"> &
   Pick<RunQueuedPrechecksOnceOptions, "runSourcePrecheck"> & {
     clock?: () => number;
     sleep?: (ms: number) => Promise<void>;
+    sweepExpiredBids?: typeof defaultSweepExpiredBids;
   };
 
 export interface CrawlerWorkerTickResult {
@@ -22,6 +27,10 @@ export interface CrawlerWorkerTickResult {
   backfill: RunCrawlerSourceOnceResult[];
   /** Queue failures remain isolated from completed ingestion and the next worker tick. */
   precheckError: unknown | null;
+  /** Bids the deadline sweep examined and closed this tick; absent when it did not run or failed. */
+  lifecycleSweep?: LifecycleSweepResult;
+  /** Why the deadline sweep failed. Like a precheck failure, it never fails the tick or its other stages. */
+  lifecycleSweepError?: string;
 }
 
 function positiveIntegerEnv(name: string, fallback: number): number {
@@ -34,8 +43,8 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * One worker's complete tick. The returned function owns list → precheck → optional historical
- * ordering, one budget and contact timeline per tick, and pauses/retry state for its lifetime.
+ * One worker's complete tick. The returned function owns list → precheck → deadline sweep → optional
+ * historical ordering, one budget and contact timeline per tick, and pauses/retry state for its lifetime.
  * Each crawl attempt still runs through the existing source lease, fencing, and public-page guards.
  */
 export function createCrawlerWorkerTick(options: WorkerTickOptions, adapters: WorkerTickAdapters = {}) {
@@ -43,6 +52,7 @@ export function createCrawlerWorkerTick(options: WorkerTickOptions, adapters: Wo
   const precheckRetries = new PrecheckRetryRegistry();
   const clock = adapters.clock ?? Date.now;
   const wait = adapters.sleep ?? sleep;
+  const sweepExpiredBids = adapters.sweepExpiredBids ?? defaultSweepExpiredBids;
 
   return async (): Promise<CrawlerWorkerTickResult> => {
     const budget = new PlatformTickBudget(adapters.platformBudgets ?? platformBudgetsFromEnv(), options.tickMs ?? DEFAULT_TICK_MS);
@@ -108,6 +118,16 @@ export function createCrawlerWorkerTick(options: WorkerTickOptions, adapters: Wo
         precheckError = error;
       }
     }
+    // An import closes a bid whose deadline has passed, but only while its portal still lists it: close the stored ones here.
+    let lifecycleSweep: LifecycleSweepResult | undefined;
+    let lifecycleSweepError: string | undefined;
+    if (!options.isStopping?.()) {
+      try {
+        lifecycleSweep = await sweepExpiredBids(options.mysql ? { mysql: options.mysql } : { database: options.database }, { now: new Date(clock()) });
+      } catch (error) {
+        lifecycleSweepError = error instanceof Error ? error.message : String(error);
+      }
+    }
     const backfill = process.env.CRAWLER_DETAIL_BACKFILL_ENABLED === "true" && !options.isStopping?.()
       ? await runConfiguredCrawlerSourcesOnce({
         ...shared,
@@ -118,6 +138,10 @@ export function createCrawlerWorkerTick(options: WorkerTickOptions, adapters: Wo
       })
       : [];
     reportFailures(backfill);
-    return { lists, prechecks, backfill, precheckError };
+    return {
+      lists, prechecks, backfill, precheckError,
+      ...(lifecycleSweep ? { lifecycleSweep } : {}),
+      ...(lifecycleSweepError !== undefined ? { lifecycleSweepError } : {}),
+    };
   };
 }

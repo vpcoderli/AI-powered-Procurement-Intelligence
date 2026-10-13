@@ -29,6 +29,15 @@ vi.mock("./repository", () => ({
   saveSavedBidId: vi.fn(),
 }));
 
+// The saved-bid scope is the user's workspace, which `savedBidScope` reads through the process-wide `db`. In a fresh
+// checkout that is an empty, unmigrated file with no `users` table, so these tests would only pass where a developer
+// happens to have a migrated database. They are about the saved ids handed to the repository, not about workspaces
+// (account/workspace.test.ts covers those), so an anonymous user's scope is the user alone.
+vi.mock("@/server/account/workspace", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/server/account/workspace")>()),
+  listWorkspaceMemberUserIds: vi.fn((_database: unknown, userId: string) => [userId]),
+}));
+
 const repositoryListBids = vi.mocked(listBids);
 const repositoryListBidsFromMysql = vi.mocked(listBidsFromMysql);
 const repositoryGetBidById = vi.mocked(getBidByIdFromRepository);

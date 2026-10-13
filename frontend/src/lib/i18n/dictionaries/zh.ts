@@ -1401,6 +1401,8 @@ export const zh: Dictionary = {
     riskCheckCheckedAt: "检查时间 {time}",
     riskCheckOk: "通过",
     riskCheckIssue: "异常",
+    riskCheckNotRun: "未执行",
+    riskCheckIncomplete: "未完全验证：{count} 项未执行",
     riskCheckNoIssues: "暂无问题。",
     riskCheckGlobalUrlTitle: "全局 URL 健康",
     riskCheckGlobalUrlDescription: "检查所有启用招标，包括 federal 和 MySQL runtime 数据，是否存在占位来源链接或不安全附件 URL。",
