@@ -24,9 +24,9 @@ const nextConfig: NextConfig = {
   experimental: {
     // Stop-gap. Since Next 16.3 `next build` type-checks with the project-local `tsc` CLI over the
     // whole tsconfig project, test files included; 16.2 used the TypeScript API and dropped the
-    // diagnostics of *.test.* files. 78 test files still carry type errors (276 errors), so the CLI
-    // checker fails every build ("Failed to type check"). Keep the 16.2 checker until those files
-    // are type-clean (a separate task), then delete this option.
+    // diagnostics of *.test.* files. The pre-existing type errors in test files make the CLI
+    // checker fail every build ("Failed to type check"). Keep the 16.2 checker until those errors
+    // are fixed (a separate task), then delete this option.
     useTypeScriptCli: false,
   },
 };
