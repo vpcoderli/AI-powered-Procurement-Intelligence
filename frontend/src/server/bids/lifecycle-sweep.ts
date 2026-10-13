@@ -46,7 +46,12 @@ export interface MysqlSweepStore {
   getConnection: () => Promise<MysqlSweepConnection>;
 }
 
-export type LifecycleSweepTarget = { database: AppDatabase } | { mysql: MysqlSweepStore };
+/**
+ * Where the sweep runs. A SQLite target is anything that carries the better-sqlite3 connection as `$client`: the app's
+ * Drizzle database, or `{ $client }` from a script that opened the file itself. The sweep runs raw SQL on that connection
+ * and nothing else, so a script need not load the app's db/client (which opens <cwd>/data/apsi.sqlite when imported).
+ */
+export type LifecycleSweepTarget = { database: Pick<AppDatabase, "$client"> } | { mysql: MysqlSweepStore };
 
 interface OpenBid {
   id: string;
@@ -86,7 +91,7 @@ function closureOf(bid: LockedBid, nowMs: number, nowIso: string): { rawPayload:
   return { rawPayload: closedRawPayload(bid.raw_payload, "deadline_passed", nowIso, { deadline: String(bid.deadline_date).trim() }) };
 }
 
-function sqliteSweepStore(database: AppDatabase): SweepStore {
+function sqliteSweepStore(database: Pick<AppDatabase, "$client">): SweepStore {
   const client = database.$client;
   return {
     async readPage(afterId, limit) {
