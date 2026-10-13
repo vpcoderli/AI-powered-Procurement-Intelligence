@@ -47,7 +47,7 @@ APSi GovBid 是一个致力于帮助供应商（特别是中小企业）高效�
 
 本项目前端和本地后端采用现代 Web 技术栈构建：
 
-- **框架**: [Next.js 16](https://nextjs.org/) (App Router, 固定版本 16.2.6) + React 19
+- **框架**: [Next.js 16](https://nextjs.org/) (App Router, 固定版本 16.3.8) + React 19
 - **样式**: Tailwind CSS v4 + 极简主义设计规范
 - **组件库**: [shadcn/ui](https://ui.shadcn.com/) (基于 Radix UI)
 - **图标**: Lucide React
