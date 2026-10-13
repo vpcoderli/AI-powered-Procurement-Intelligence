@@ -50,17 +50,21 @@ export function formatDataIntegrityHelp() {
     "  tsx scripts/data-integrity.ts --compare <file> --allow-removed <regex> [--allow-removed <regex> ...]",
     "",
     "Before and after every migration, deploy or data fix: take a snapshot, make the change, compare. The compare exits 1 on",
-    "any unexplained removal, visibility regression or rise in identity mismatches, so it is the proof that state, county",
-    "and city data were neither lost, hidden nor mis-typed.",
+    "any unexplained removal, visibility regression, bid closed for its deadline too early or rise in identity mismatches, so it",
+    "is the proof that state, county and city data were neither lost, hidden nor mis-typed.",
     "",
     "Options:",
     "  --json                   Print machine-readable output; stdout is the JSON document only: { target, mode, report } for a report,",
     "                           { ..., snapshot: { file, bids, bytes } } when a snapshot was written, { target, mode: \"compare\", comparison,",
-    "                           report, snapshot? } for a compare.",
+    "                           report, snapshot?, snapshotError? } for a compare (snapshot when the baseline written beside it was written,",
+    "                           snapshotError, the reason, when it could not be). The comparison lists every id of every group; the text",
+    "                           output prints the first 20 of a list.",
     "  --snapshot <file>        Write a snapshot: the report plus, for every bid, a sha256 of all its columns, its level, whether",
     "                           search shows it, whether it is open, and the columns that explain a change (issuer_type,",
     "                           jurisdiction_level, fips_code, lifecycle_status, is_active, display_status, issuer_name, title,",
-    "                           deadline_date, source_bid_id). One line of JSON, a few hundred bytes per bid.",
+    "                           deadline_date, source_bid_id), and two more sha256: u, of every other column except raw_payload,",
+    "                           updated_at and last_seen_at, and p, of raw_payload without its lifecycle key. One line of JSON, a few",
+    "                           hundred bytes per bid.",
     "                           The script will not overwrite a file that is there: use a new name, or remove the old one yourself.",
     "  --compare <file>         Compare the data now with a snapshot. May be combined with --snapshot, which then writes the",
     "                           state just read as the next baseline.",
@@ -72,13 +76,19 @@ export function formatDataIntegrityHelp() {
     "The compare FAILS (exit 1) when",
     "  - a bid was removed and no --allow-removed pattern matches its id;",
     "  - a bid that was open and shown by search is still open and is no longer shown (a visibility regression);",
+    "  - a bid that was open is now closed with closed_reason deadline_passed, although its deadline had not passed when the data was read",
+    "    (early_close; a deadline that cannot be read has not passed either);",
     "  - the identityMismatch of a level went up.",
     "It warns, and still exits 0, when a bid went from open to closed without a closed_reason of deadline_passed or delisted",
-    "(an award is a reason of its own), when the dialect changed, or when a schema change limits what can be compared. It also",
-    "reports the bids added and the removed ones that --allow-removed explained (both by level, the first 20 ids of each, all of them",
-    "in the JSON), the bids changed grouped by what changed (e.g. issuer_type state→city: 11), the bids whose only change is outside",
-    "the tracked columns, and every metric that moved. The comparison is always printed, even when the baseline written beside it",
-    "(--compare with --snapshot) cannot be: that is then reported on stderr, and the exit code stays 1 if the compare failed.",
+    "(an award is a reason of its own), when the dialect changed, when a schema change limits what can be compared, or when the",
+    "snapshot was written before the u and p hashes existed (untracked_hashes_missing: a change outside the tracked columns on a bid",
+    "that also changed a tracked column cannot then be seen). It also reports the bids added and the removed ones that --allow-removed",
+    "explained (both by level, the first 20 ids of each, all of them in the JSON), the bids changed grouped by what changed (e.g.",
+    "issuer_type state→city: 11, with every id of the group in the JSON), the bids whose only change is outside the tracked columns,",
+    "the bids that changed outside the tracked columns (u or p changed) whether or not they also changed a tracked one, and every",
+    "metric that moved. That last list is reported, not failed: read it, and check that it is the bids you meant to change.",
+    "The comparison is always printed, even when the baseline written beside it (--compare with --snapshot) cannot be: that is then",
+    "reported on stderr, and the exit code stays 1 if the compare failed.",
     "",
     "Levels: a bid's issuer_type when that is state, county, city, township, special_district or federal, otherwise other.",
     "Metrics, per level:",
@@ -292,10 +302,12 @@ export function formatIntegrityComparison(comparison: IntegrityComparison, targe
 
   const removed = comparison.removed;
   const outside = comparison.changed.onlyOutsideTracked;
+  const outsideAny = comparison.changedOutsideTracked;
   lines.push(
     "",
     `Bids: added ${comparison.added.count}, removed ${removed.count}${removed.allowed.length > 0 ? ` (${removed.allowed.length} allowed)` : ""}, ` +
-      `changed ${comparison.changed.count}, changed only outside the tracked columns ${outside.count ?? "unknown"}`,
+      `changed ${comparison.changed.count}, changed only outside the tracked columns ${outside.count ?? "unknown"}, ` +
+      `changed outside the tracked columns ${outsideAny.count ?? "unknown"}`,
   );
   // The removed bids no pattern allowed are under Failures. The ones a pattern allowed are listed here, as the others are, so
   // that a pattern that is too broad can be seen.
@@ -310,6 +322,16 @@ export function formatIntegrityComparison(comparison: IntegrityComparison, targe
     }
   }
   if (outside.count !== null && outside.count > 0) lines.push("", `Changed only outside the tracked columns: ${outside.count}`, ...idLines(outside.ids, "    "));
+  if (outsideAny.count !== null && outsideAny.count > 0) {
+    // Each id with what changed on it: u (the columns outside the tracked ones) and/or p (the payload without its lifecycle key).
+    const shown = Object.fromEntries(INTEGRITY_LEVELS.map((level) => [level, outsideAny.changesByLevel[level].map((change) => `${change.id}  ${change.changed.join(" ")}`)]));
+    lines.push(
+      "",
+      `Changed outside the tracked columns (${outsideAny.count}), whether or not a tracked column changed too; reported, not failed (u: the other columns except raw_payload, ` +
+        "updated_at and last_seen_at; p: raw_payload without its lifecycle key):",
+      ...idsByLevelLines(shown, "  "),
+    );
+  }
 
   if (comparison.metricDeltas.length > 0) {
     const rows = comparison.metricDeltas.map((delta) => [delta.level, delta.metric, String(delta.before), String(delta.after), `${delta.delta > 0 ? "+" : ""}${delta.delta}`]);

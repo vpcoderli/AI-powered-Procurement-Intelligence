@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { bidDeadlineExpiresAtMs } from "@/lib/bid-deadline";
+import { sweepExpiredBids } from "@/server/bids/lifecycle-sweep";
 import { queryBidsFromDatabase } from "@/server/bids/service";
+import { runMigrations } from "@/server/db/migrate";
 import { createTestDatabase, type TestDatabase } from "@/server/db/test-utils";
 import type { DemoPurgeMysql } from "./demo-purge";
 import {
@@ -10,9 +13,12 @@ import {
   buildIntegritySnapshot,
   canonicalRowJson,
   hashBidRow,
+  hashPayload,
+  hashUntrackedColumns,
   levelOfIssuerType,
   parseIntegritySnapshot,
   serializeIntegritySnapshot,
+  untrackedHashColumns,
 } from "./data-integrity";
 import { compareWithSnapshot } from "./data-integrity-compare";
 import {
@@ -79,6 +85,75 @@ describe("row hashing", () => {
     expect(hashBidRow({ ...row })).toBe(hashBidRow(row));
     expect(hashBidRow({ ...row, description: "D2" })).not.toBe(hashBidRow(row));
     expect(hashBidRow({ ...row, description: "D2" }, ["id", "title"])).toBe(hashBidRow(row, ["id", "title"]));
+  });
+});
+
+describe("the hashes of the untracked columns (u) and of the payload (p)", () => {
+  it("u covers every column but the tracked ones, the payload and the two clocks", () => {
+    const columns = ["id", "title", "description", "full_description", "issuer_type", "raw_payload", "updated_at", "last_seen_at", "source_url", "__integrity_shown", "deadline_date"];
+
+    expect(untrackedHashColumns(columns)).toEqual(["id", "description", "full_description", "source_url"]);
+    const row = { id: "x", title: "T", description: "D", full_description: null, issuer_type: "state", raw_payload: "{}", updated_at: "a", last_seen_at: "b", source_url: "u", deadline_date: "d" };
+    expect(hashUntrackedColumns(row)).toMatch(/^[0-9a-f]{64}$/);
+    for (const change of [{ title: "T2" }, { issuer_type: "city" }, { raw_payload: "{\"a\":1}" }, { updated_at: "z" }, { last_seen_at: "z" }, { deadline_date: "z" }]) {
+      expect(hashUntrackedColumns({ ...row, ...change }), JSON.stringify(change)).toBe(hashUntrackedColumns(row));
+    }
+    for (const change of [{ description: "D2" }, { full_description: "" }, { source_url: "u2" }, { id: "y" }]) {
+      expect(hashUntrackedColumns({ ...row, ...change }), JSON.stringify(change)).not.toBe(hashUntrackedColumns(row));
+    }
+  });
+
+  it("u over the columns of an older schema leaves a newer column out", () => {
+    const row = { id: "x", description: "D", note: "new" };
+
+    expect(hashUntrackedColumns(row, ["id", "description"])).toBe(hashUntrackedColumns({ id: "x", description: "D" }));
+    expect(hashUntrackedColumns(row)).not.toBe(hashUntrackedColumns(row, ["id", "description"]));
+  });
+
+  it("p is the same for the same payload however it is written, and ignores the lifecycle key at the top level only", () => {
+    const plain = hashPayload('{"a":1,"b":[1,2],"c":{"d":null}}');
+
+    expect(plain).toMatch(/^[0-9a-f]{64}$/);
+    expect(hashPayload('{ "c": { "d": null }, "b": [1, 2],\n "a": 1 }')).toBe(plain);
+    expect(hashPayload('{"a":1,"b":[1,2],"c":{"d":null},"lifecycle":{"closed_reason":"deadline_passed","closed_observed_at":"2026-10-13T00:00:00.000Z"}}')).toBe(plain);
+    expect(hashPayload('{"lifecycle":"anything","a":1,"b":[1,2],"c":{"d":null}}')).toBe(plain);
+    // Nested under another key it is data like any other.
+    expect(hashPayload('{"a":{"lifecycle":1}}')).not.toBe(hashPayload('{"a":{}}'));
+    // An object that held only a lifecycle key is the empty object.
+    expect(hashPayload('{"lifecycle":{"closed_reason":"delisted"}}')).toBe(hashPayload("{}"));
+  });
+
+  it("p follows every other key, every value and the order of an array", () => {
+    const plain = hashPayload('{"a":1,"b":[1,2]}');
+
+    for (const changed of ['{"a":2,"b":[1,2]}', '{"a":1,"b":[2,1]}', '{"a":1,"b":[1,2],"legacy_fips_code":"0803455"}', '{"a":"1","b":[1,2]}', '{"a":1}', '{"a":1,"b":[1,2,3]}']) {
+      expect(hashPayload(changed), changed).not.toBe(plain);
+    }
+  });
+
+  it("p hashes a payload that is not a JSON object as it is: NULL, plain text, an array, a bare value", () => {
+    const texts = ["", "plain text", "[1,2]", "[2,1]", '"x"', "123", "null", "{not json"];
+    const hashes = new Set([hashPayload(null), hashPayload(undefined), ...texts.map((text) => hashPayload(text))]);
+
+    // NULL and undefined agree; every text differs from every other, and from NULL (the text "null" is not the value NULL).
+    expect(hashes.size).toBe(texts.length + 1);
+    expect(hashPayload(null)).toBe(hashPayload(undefined));
+    expect(hashPayload("plain text")).toBe(hashPayload("plain text"));
+    // The lifecycle key is only ever taken out of an object.
+    expect(hashPayload('[{"lifecycle":1}]')).not.toBe(hashPayload("[{}]"));
+  });
+
+  it("p does not throw on a payload nested too deeply to write out, and still tells it from another", () => {
+    const deep = (leaf: string) => `{"a":${"[".repeat(60_000)}${leaf}${"]".repeat(60_000)}}`;
+
+    expect(() => hashPayload(deep("1"))).not.toThrow();
+    expect(hashPayload(deep("1"))).toBe(hashPayload(deep("1")));
+    expect(hashPayload(deep("1"))).not.toBe(hashPayload(deep("2")));
+  });
+
+  it("p treats a key called __proto__ as the ordinary key it is", () => {
+    expect(hashPayload('{"__proto__":{"a":1}}')).not.toBe(hashPayload("{}"));
+    expect(hashPayload('{"__proto__":{"a":1}}')).not.toBe(hashPayload('{"__proto__":{"a":2}}'));
   });
 });
 
@@ -391,6 +466,63 @@ describe("data:integrity on SQLite", () => {
       }
     });
 
+    it("gives every row the hash of its untracked columns (u) and of its payload (p), and they are what hashUntrackedColumns and hashPayload say", async () => {
+      const result = await snapshot();
+      const stored = sqlite().prepare("SELECT * FROM bids WHERE id = 'bidnet_co_boulder:114'").get() as Record<string, unknown>;
+
+      for (const [id, row] of Object.entries(result.rows)) {
+        expect(row.u, `${id}.u`).toMatch(/^[0-9a-f]{64}$/);
+        expect(row.p, `${id}.p`).toMatch(/^[0-9a-f]{64}$/);
+      }
+      expect(result.rows["bidnet_co_boulder:114"].u).toBe(hashUntrackedColumns(stored));
+      expect(result.rows["bidnet_co_boulder:114"].p).toBe(hashPayload(stored.raw_payload));
+      // A closed row's payload carries a lifecycle key, which p leaves out: it is the hash of the rest.
+      expect(result.rows["bidnet_co_boulder:114"].p).toBe(hashPayload('{"detail_access":{"platform":"bidnet","restricted":["description"]}}'));
+    });
+
+    it("moves u with a column outside the tracked ones, and leaves it alone for a tracked column, the payload and the two clocks", async () => {
+      const before = (await snapshot()).rows["ca_caleprocure:RFQ-1"];
+
+      for (const statement of [
+        "UPDATE bids SET title = 'Another title' WHERE id = 'ca_caleprocure:RFQ-1'",
+        "UPDATE bids SET deadline_date = '2027-01-01' WHERE id = 'ca_caleprocure:RFQ-1'",
+        "UPDATE bids SET raw_payload = '{\"a\":1}' WHERE id = 'ca_caleprocure:RFQ-1'",
+        "UPDATE bids SET updated_at = '2026-10-14T00:00:00.000Z', last_seen_at = '2026-10-14T00:00:00.000Z' WHERE id = 'ca_caleprocure:RFQ-1'",
+      ]) {
+        run(statement);
+        expect((await snapshot()).rows["ca_caleprocure:RFQ-1"].u, statement).toBe(before.u);
+      }
+      for (const statement of [
+        "UPDATE bids SET description = 'Another body.' WHERE id = 'ca_caleprocure:RFQ-1'",
+        "UPDATE bids SET source_url = 'https://example.test/else' WHERE id = 'ca_caleprocure:RFQ-1'",
+        "UPDATE bids SET contact_name = 'Someone' WHERE id = 'ca_caleprocure:RFQ-1'",
+      ]) {
+        const unchanged = (await snapshot()).rows["ca_caleprocure:RFQ-1"].u;
+        run(statement);
+        expect((await snapshot()).rows["ca_caleprocure:RFQ-1"].u, statement).not.toBe(unchanged);
+      }
+    });
+
+    it("moves p with the payload, and not with the lifecycle key a sweep or an import records", async () => {
+      const before = (await snapshot()).rows["tx_esbd:101"];
+
+      run("UPDATE bids SET raw_payload = ? WHERE id = 'tx_esbd:101'", JSON.stringify({ lifecycle: { closed_reason: "delisted", closed_observed_at: "2026-10-13T11:00:00.000Z" } }));
+      expect((await snapshot()).rows["tx_esbd:101"].p, "another reason").toBe(before.p);
+      run("UPDATE bids SET raw_payload = ? WHERE id = 'tx_esbd:101'", JSON.stringify({ lifecycle: { closed_reason: "deadline_passed" }, legacy_fips_code: "0803455" }));
+      expect((await snapshot()).rows["tx_esbd:101"].p, "a key beside it").not.toBe(before.p);
+    });
+
+    it("refuses a snapshot whose u or p is not a text, and still reads one that has neither", async () => {
+      const valid = JSON.parse(serializeIntegritySnapshot(await snapshot()));
+      const withRow = (change: object) => JSON.stringify({ ...valid, rows: { ...valid.rows, "ca_caleprocure:RFQ-1": { ...valid.rows["ca_caleprocure:RFQ-1"], ...change } } });
+
+      expect(() => parseIntegritySnapshot(withRow({ u: 1 }))).toThrow(IntegritySnapshotError);
+      expect(() => parseIntegritySnapshot(withRow({ p: null }))).toThrow(IntegritySnapshotError);
+      const old = parseIntegritySnapshot(withRow({ u: undefined, p: undefined }));
+      expect(old.rows["ca_caleprocure:RFQ-1"]).not.toHaveProperty("u");
+      expect(old.rows["ca_caleprocure:RFQ-1"]).not.toHaveProperty("p");
+    });
+
     it("lists the columns it hashed, the scan's own columns excluded", async () => {
       const { columns } = await snapshot();
 
@@ -569,7 +701,7 @@ describe("data:integrity on SQLite", () => {
       expect(comparison.visibility.regressions).toEqual(["ca_caleprocure:RFQ-1"]);
       expect(comparison.failures.map((failure) => failure.code)).toEqual(["visibility_regression"]);
       expect(comparison.changed.groups).toEqual([
-        { label: "issuer_name changed", column: "issuer_name", count: 1, sampleIds: ["ca_caleprocure:RFQ-1"] },
+        { label: "issuer_name changed", column: "issuer_name", count: 1, sampleIds: ["ca_caleprocure:RFQ-1"], ids: ["ca_caleprocure:RFQ-1"] },
       ]);
       expect(comparison.metricDeltas).toEqual(expect.arrayContaining([
         { level: "state", metric: "openVisible", before: 5, after: 4, delta: -1 },
@@ -586,9 +718,9 @@ describe("data:integrity on SQLite", () => {
       expect(comparison.ok).toBe(true);
       expect(comparison.changed.count).toBe(1);
       expect(comparison.changed.groups).toEqual(expect.arrayContaining([
-        { label: "issuer_type state→city", column: "issuer_type", from: "state", to: "city", count: 1, sampleIds: ["bidnet_co_aurora:202"] },
-        { label: "jurisdiction_level NULL→city", column: "jurisdiction_level", from: "NULL", to: "city", count: 1, sampleIds: ["bidnet_co_aurora:202"] },
-        { label: "fips_code changed", column: "fips_code", count: 1, sampleIds: ["bidnet_co_aurora:202"] },
+        { label: "issuer_type state→city", column: "issuer_type", from: "state", to: "city", count: 1, sampleIds: ["bidnet_co_aurora:202"], ids: ["bidnet_co_aurora:202"] },
+        { label: "jurisdiction_level NULL→city", column: "jurisdiction_level", from: "NULL", to: "city", count: 1, sampleIds: ["bidnet_co_aurora:202"], ids: ["bidnet_co_aurora:202"] },
+        { label: "fips_code changed", column: "fips_code", count: 1, sampleIds: ["bidnet_co_aurora:202"], ids: ["bidnet_co_aurora:202"] },
       ]));
       expect(comparison.metricDeltas).toEqual(expect.arrayContaining([
         { level: "state", metric: "identityMismatch", before: 1, after: 0, delta: -1 },
@@ -649,6 +781,210 @@ describe("data:integrity on SQLite", () => {
       expect(comparison.ok).toBe(true);
       expect(comparison.changed.count).toBe(0);
       expect(comparison.changed.onlyOutsideTracked).toEqual({ count: 1, ids: ["ca_caleprocure:RFQ-1"] });
+    });
+
+    describe("changes outside the tracked columns", () => {
+      const outside = (comparison: Awaited<ReturnType<typeof compare>>) => comparison.changedOutsideTracked;
+      /** A closed legacy row of the Aurora source: typed state, carrying the old FIPS, with a payload that is a JSON object. */
+      const insertAuroraDrift = (id: string, payload: string | null = '{"agency":"City of Aurora"}') => run(
+        "INSERT INTO bids (id, source, source_bid_id, dedupe_key, title, description, issuer_name, issuer_type, state_code, source_url, deadline_date, " +
+          "lifecycle_status, is_active, fips_code, raw_payload, first_seen_at, last_seen_at, created_at, updated_at) " +
+          "VALUES (?, 'City of Aurora, CO (BidNet)', ?, ?, 'Old Aurora bid', 'Body of an old Aurora bid.', 'City of Aurora', 'state', 'CO', ?, '2025-01-01', " +
+          "'closed', 0, '0803455', ?, 'a', '2026-01-01T00:00:00.000Z', 'a', '2026-01-01T00:00:00.000Z')",
+        id, id.slice(id.indexOf(":") + 1), `dedupe:${id}`, `https://example.test/${id}`, payload,
+      );
+
+      /** The seed's two bids that are past their deadline hold no payload; every real row holds a JSON object, which is what a sweep writes its reason into. */
+      const giveObjectPayloads = () => {
+        for (const id of ["ca_caleprocure:RFQ-2", "bidnet_co_aurora:203"]) run("UPDATE bids SET raw_payload = ? WHERE id = ?", JSON.stringify({ agency: id }), id);
+      };
+
+      it("names a description wiped on a row the sweep closes in the same pass, and names nothing for the sweep's own closes", async () => {
+        giveObjectPayloads();
+        const before = await snapshot();
+        // Two open bids are past their deadline: ca_caleprocure:RFQ-2 and bidnet_co_aurora:203.
+        const swept = await sweepExpiredBids(target(), { now: INTEGRITY_NOW });
+        run("UPDATE bids SET description = '' WHERE id = 'ca_caleprocure:RFQ-2'");
+
+        const comparison = await compare(before);
+
+        expect(swept.closed).toBe(2);
+        expect(comparison.changed.groups.find((group) => group.label === "lifecycle_status open→closed")?.ids).toEqual(["bidnet_co_aurora:203", "ca_caleprocure:RFQ-2"]);
+        expect(outside(comparison).count).toBe(1);
+        expect(outside(comparison).ids).toEqual(["ca_caleprocure:RFQ-2"]);
+        expect(outside(comparison).changesByLevel.state).toEqual([{ id: "ca_caleprocure:RFQ-2", changed: ["u"] }]);
+        expect(outside(comparison).changesByLevel.city).toEqual([]);
+        // It is reported, not judged.
+        expect(comparison.ok).toBe(true);
+        expect(comparison.failures).toEqual([]);
+        expect(comparison.warnings).toEqual([]);
+      });
+
+      it("names nothing for a pure sweep close: the lifecycle columns, the payload's lifecycle key and updated_at are all it touches", async () => {
+        // A payload with content of its own, so that the sweep rewrites it: a closed_reason beside the keys it already had.
+        giveObjectPayloads();
+        run("UPDATE bids SET raw_payload = ? WHERE id = 'ca_caleprocure:RFQ-2'", JSON.stringify({ agency: "California", attachments: [{ name: "a.pdf" }] }));
+        const before = await snapshot();
+        await sweepExpiredBids(target(), { now: INTEGRITY_NOW });
+
+        const comparison = await compare(before);
+
+        expect(comparison.changed.count).toBe(2);
+        expect(comparison.changed.onlyOutsideTracked.count).toBe(0);
+        expect(outside(comparison)).toMatchObject({ count: 0, ids: [] });
+        expect(JSON.parse((sqlite().prepare("SELECT raw_payload FROM bids WHERE id = 'ca_caleprocure:RFQ-2'").get() as { raw_payload: string }).raw_payload).lifecycle.closed_reason).toBe("deadline_passed");
+        expect(comparison.ok).toBe(true);
+      });
+
+      it("names a payload key the sweep did not write, on a row it closes", async () => {
+        run("UPDATE bids SET raw_payload = ? WHERE id = 'ca_caleprocure:RFQ-2'", JSON.stringify({ agency: "California", note: "kept" }));
+        const before = await snapshot();
+        await sweepExpiredBids(target(), { now: INTEGRITY_NOW });
+        run("UPDATE bids SET raw_payload = json_remove(raw_payload, '$.note') WHERE id = 'ca_caleprocure:RFQ-2'");
+
+        const comparison = await compare(before);
+
+        expect(outside(comparison).changesByLevel.state).toEqual([{ id: "ca_caleprocure:RFQ-2", changed: ["p"] }]);
+      });
+
+      it("names exactly the Aurora rows when the migrations run, each with p: the legacy FIPS is added to the payload", async () => {
+        const aurora = ["bidnet_co_aurora:old-1", "bidnet_co_aurora:old-2", "bidnet_co_aurora:old-3"];
+        for (const id of aurora) insertAuroraDrift(id);
+        // Not a JSON object: the migration retypes it and leaves the payload alone, so p stays.
+        insertAuroraDrift("bidnet_co_aurora:old-text", "plain text payload");
+        const before = await snapshot();
+
+        runMigrations(testDb.db);
+        const comparison = await compare(before);
+
+        // Everything else the migrations do to the seed is a tracked change (the retype of bidnet_co_aurora:202, the close of a
+        // row that was open and not active) or a re-key (a new id): none of it reaches u or p.
+        expect(outside(comparison).ids).toEqual(aurora);
+        expect(outside(comparison).changesByLevel.city).toEqual(aurora.map((id) => ({ id, changed: ["p"] })));
+        expect(outside(comparison).byLevel).toMatchObject({ city: 3, state: 0 });
+        const stored = sqlite().prepare("SELECT issuer_type, fips_code, raw_payload FROM bids WHERE id = 'bidnet_co_aurora:old-1'").get() as { issuer_type: string; fips_code: string; raw_payload: string };
+        expect(stored.issuer_type).toBe("city");
+        expect(stored.fips_code).toBe("0804000");
+        expect(JSON.parse(stored.raw_payload).legacy_fips_code).toBe("0803455");
+        const groups = Object.fromEntries(comparison.changed.groups.map((group) => [group.label, group.ids]));
+        expect(groups["issuer_type state→city"]).toEqual(expect.arrayContaining(aurora));
+        expect(groups["fips_code changed"]).toEqual(expect.arrayContaining([...aurora, "bidnet_co_aurora:old-text"]));
+        expect(comparison.removed.unexpected).toEqual(["ny_contract_reporter:CR9 Company: Acme Inc"]);
+        expect(comparison.added.ids).toEqual(["ny_contract_reporter:CR9"]);
+      });
+
+      it("does not name a payload that was rewritten with the same content, however it was formatted", async () => {
+        const before = await snapshot();
+        run("UPDATE bids SET raw_payload = ? WHERE id = 'bidnet_co_boulder:112'", JSON.stringify(JSON.parse((sqlite().prepare("SELECT raw_payload FROM bids WHERE id = 'bidnet_co_boulder:112'").get() as { raw_payload: string }).raw_payload), null, 4));
+        const reformatted = (sqlite().prepare("SELECT raw_payload FROM bids WHERE id = 'bidnet_co_boulder:112'").get() as { raw_payload: string }).raw_payload;
+
+        const comparison = await compare(before);
+
+        expect(reformatted).toContain("\n");
+        // The full hash sees the new text; u and p do not.
+        expect(comparison.changed.onlyOutsideTracked.ids).toEqual(["bidnet_co_boulder:112"]);
+        expect(outside(comparison)).toMatchObject({ count: 0, ids: [] });
+      });
+
+      it("names a change in a column nobody tracks on a row that changed a tracked one, which the full hash alone leaves unsaid", async () => {
+        const before = await snapshot();
+        run("UPDATE bids SET issuer_name = 'Unknown x', source_url = 'https://example.test/moved' WHERE id = 'ca_caleprocure:RFQ-1'");
+
+        const comparison = await compare(before);
+
+        expect(comparison.changed.onlyOutsideTracked.ids).toEqual([]);
+        expect(outside(comparison).changesByLevel.state).toEqual([{ id: "ca_caleprocure:RFQ-1", changed: ["u"] }]);
+        expect(comparison.visibility.regressions).toEqual(["ca_caleprocure:RFQ-1"]);
+      });
+
+      it("compares under the old rule, and warns, against a snapshot written before u and p existed", async () => {
+        const written = JSON.parse(serializeIntegritySnapshot(await snapshot()));
+        for (const row of Object.values(written.rows as Record<string, { u?: string; p?: string }>)) {
+          delete row.u;
+          delete row.p;
+        }
+        const old = parseIntegritySnapshot(JSON.stringify(written));
+        run("UPDATE bids SET description = '', title = 'Retitled' WHERE id = 'ca_caleprocure:RFQ-1'");
+        run("UPDATE bids SET description = 'Only the body changed.' WHERE id = 'ca_caleprocure:RFQ-2'");
+
+        const comparison = await compare(old);
+
+        expect(outside(comparison)).toMatchObject({ count: null, ids: [] });
+        const warning = comparison.warnings.find((candidate) => candidate.code === "untracked_hashes_missing");
+        expect(warning?.message).toContain("cannot be seen");
+        // The old rule still sees the row whose only change is outside the tracked columns, and the tracked change of the other.
+        expect(comparison.changed.onlyOutsideTracked.ids).toEqual(["ca_caleprocure:RFQ-2"]);
+        expect(comparison.changed.groups.map((group) => group.label)).toEqual(["title changed"]);
+        expect(comparison.ok).toBe(true);
+      });
+
+      it("keeps naming a changed untracked column when a column was added since the snapshot, and does not name the new column's content", async () => {
+        const before = await snapshot();
+        sqlite().exec("ALTER TABLE bids ADD COLUMN integrity_note TEXT");
+        run("UPDATE bids SET integrity_note = 'new data' WHERE id = 'ca_caleprocure:RFQ-1'");
+        run("UPDATE bids SET description = '', is_active = 0, lifecycle_status = 'closed' WHERE id = 'ca_caleprocure:RFQ-2'");
+
+        const comparison = await compare(before);
+
+        expect(comparison.columns).toEqual({ added: ["integrity_note"], removed: [] });
+        expect(outside(comparison).ids).toEqual(["ca_caleprocure:RFQ-2"]);
+        expect(outside(comparison).changesByLevel.state).toEqual([{ id: "ca_caleprocure:RFQ-2", changed: ["u"] }]);
+      });
+
+      it("cannot judge it when a column was dropped, and says so", async () => {
+        const before = await snapshot();
+        sqlite().exec("ALTER TABLE bids DROP COLUMN awarded_date");
+        run("UPDATE bids SET description = '' WHERE id = 'ca_caleprocure:RFQ-1'");
+
+        const comparison = await compare(before);
+
+        expect(outside(comparison).count).toBeNull();
+        expect(comparison.warnings.map((warning) => warning.code)).toContain("hashes_not_comparable");
+      });
+    });
+
+    describe("a bid closed for its deadline too early", () => {
+      const closeForDeadline = (id: string) => run(
+        "UPDATE bids SET lifecycle_status = 'closed', is_active = 0, raw_payload = ? WHERE id = ?",
+        JSON.stringify({ lifecycle: { closed_reason: "deadline_passed", closed_observed_at: "2026-10-13T11:00:00.000Z" } }), id,
+      );
+
+      it("fails when the deadline had not passed when the data was read, naming the bid", async () => {
+        const before = await snapshot();
+        // ca_caleprocure:RFQ-1 is due on 2026-12-01.
+        closeForDeadline("ca_caleprocure:RFQ-1");
+
+        const comparison = await compare(before);
+
+        expect(comparison.ok).toBe(false);
+        expect(comparison.failures).toEqual([
+          expect.objectContaining({ code: "early_close", ids: ["ca_caleprocure:RFQ-1"], idsByLevel: expect.objectContaining({ state: ["ca_caleprocure:RFQ-1"] }) }),
+        ]);
+      });
+
+      it("passes when the deadline had passed, as it has for everything the sweep closes", async () => {
+        const before = await snapshot();
+        closeForDeadline("ca_caleprocure:RFQ-2");
+        await sweepExpiredBids(target(), { now: INTEGRITY_NOW });
+
+        const comparison = await compare(before);
+
+        expect(comparison.changed.count).toBe(2);
+        expect(comparison.failures).toEqual([]);
+        expect(comparison.ok).toBe(true);
+      });
+
+      it("judges the deadline at the time of the compare: the same close is early the moment before the deadline expires and not at it", async () => {
+        const before = await snapshot();
+        closeForDeadline("bidnet_co_boulder:111");
+        // The row's deadline is "11/30/2026 5:00 PM", which the rule reads on one UTC-10 clock: 03:00 UTC on 12/01.
+        const expiresAt = bidDeadlineExpiresAtMs("11/30/2026 5:00 PM");
+        expect(expiresAt).toBe(Date.parse("2026-12-01T03:00:00.000Z"));
+        const at = (ms: number) => compareWithSnapshot(target(), before, { now: new Date(ms), allowRemoved: [] }).then((result) => result.comparison);
+
+        expect((await at(expiresAt! - 1)).failures.map((failure) => failure.code)).toEqual(["early_close"]);
+        expect((await at(expiresAt!)).failures).toEqual([]);
+      });
     });
 
     it("lists the rows that were added, by level", async () => {

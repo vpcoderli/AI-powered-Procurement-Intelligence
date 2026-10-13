@@ -23,6 +23,18 @@
  * the handle; MySQL: `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ` and then `START TRANSACTION WITH CONSISTENT SNAPSHOT,
  * READ ONLY` on one pooled connection: the snapshot only holds under REPEATABLE READ), so the pages of a scan, the source
  * list, the column list and the report all describe one moment even while a crawler writes. Nothing here writes.
+ *
+ * WHAT A SNAPSHOT ROW HOLDS. Besides the level and the flags, three hashes of the row, all of them canonical (the keys sorted,
+ * NULL kept apart from an empty string, a number from its text):
+ *   h  every column of the row;
+ *   u  every column except the tracked ones (they are kept by value), `raw_payload` and the two clocks every write moves
+ *      (`updated_at`, `last_seen_at`);
+ *   p  `raw_payload` without its top-level `lifecycle` key, parsed and re-written canonically (the raw text when it is not a
+ *      JSON object), so that neither the way a database formats JSON nor the reason a sweep or an import records for closing
+ *      a bid changes it.
+ * `h` alone cannot say that a column OUTSIDE the tracked ones changed on a row that ALSO changed a tracked one (a sweep that
+ * closes a bid and wipes its description in the same pass); `u` and `p` can, and they stay quiet for what a sweep or an import
+ * does to a bid it closes (compare: data-integrity-compare.ts). A snapshot written before they existed has neither.
  */
 import { createHash } from "node:crypto";
 import { detailAccessFromRawPayload } from "@/lib/bid-access";
@@ -143,12 +155,26 @@ export interface SnapshotRow {
   t: Record<TrackedColumn, TrackedValue>;
   /** `raw_payload.lifecycle.closed_reason`, kept for a row that is not open. */
   c?: string;
+  /**
+   * sha256 of every column other than the tracked ones, `raw_payload`, `updated_at` and `last_seen_at`, hashed like `h`.
+   * Absent from a snapshot written before it existed.
+   */
+  u?: string;
+  /**
+   * sha256 of `raw_payload` without its top-level `lifecycle` key, as canonical JSON; of the raw text when it is not a JSON
+   * object. Absent from a snapshot written before it existed.
+   */
+  p?: string;
 }
 
-/** Hashes of an earlier snapshot's columns, computed now: how a compare tells an edited row from a new column. */
+/**
+ * Hashes of an earlier snapshot's columns, computed now: how a compare tells an edited row from a new column. `byId` is `h`
+ * over those columns, `untrackedById` is `u` over them.
+ */
 export interface ComparableHashes {
   columns: readonly string[];
   byId: ReadonlyMap<string, string>;
+  untrackedById: ReadonlyMap<string, string>;
 }
 
 export interface IntegritySnapshot {
@@ -216,6 +242,56 @@ export function canonicalRowJson(row: Record<string, unknown>, columns?: readonl
 
 export function hashBidRow(row: Record<string, unknown>, columns?: readonly string[]): string {
   return createHash("sha256").update(canonicalRowJson(row, columns)).digest("hex");
+}
+
+const TRACKED_COLUMN_SET: ReadonlySet<string> = new Set(TRACKED_COLUMNS);
+/** What `u` leaves out besides the tracked columns: the payload (`p` judges it) and the two clocks every write moves. */
+const UNTRACKED_HASH_EXCLUDED: ReadonlySet<string> = new Set(["raw_payload", "updated_at", "last_seen_at"]);
+
+/** The columns of `columns` that `u` covers: not the scan's own, not a tracked one, not the payload or a clock. */
+export function untrackedHashColumns(columns: readonly string[]): string[] {
+  return columns.filter((column) => !column.startsWith(SCAN_COLUMN_PREFIX) && !TRACKED_COLUMN_SET.has(column) && !UNTRACKED_HASH_EXCLUDED.has(column));
+}
+
+/** `u` of a row: `hashBidRow` over its untracked columns. `columns` narrows the row to the columns of an older snapshot. */
+export function hashUntrackedColumns(row: Record<string, unknown>, columns?: readonly string[]): string {
+  return hashBidRow(row, untrackedHashColumns(columns ?? Object.keys(row)));
+}
+
+/** A parsed JSON value as one text: object keys in code-unit order at every depth, arrays in order. `skipKey` is left out of the top-level object. */
+function canonicalJson(value: unknown, skipKey?: string): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+  const object = value as Record<string, unknown>;
+  const keys = Object.keys(object).filter((key) => key !== skipKey).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(",")}}`;
+}
+
+/** The text `p` hashes. */
+function canonicalPayload(rawPayload: unknown): string {
+  if (typeof rawPayload !== "string") return canonicalValue(rawPayload);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawPayload);
+  } catch {
+    return JSON.stringify(rawPayload);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return JSON.stringify(rawPayload);
+  try {
+    return canonicalJson(parsed, "lifecycle");
+  } catch {
+    // Nested too deeply to write out: the raw text still tells an edited payload from one that was not.
+    return JSON.stringify(rawPayload);
+  }
+}
+
+/**
+ * `p` of a row: the sha256 of its payload with the top-level `lifecycle` key removed, as canonical JSON, so that the reason a
+ * sweep or an import records for closing a bid, and the way a database formats the JSON it stores, do not change it. A payload
+ * that is not a JSON object (NULL, plain text, an array) is hashed as it is.
+ */
+export function hashPayload(rawPayload: unknown): string {
+  return createHash("sha256").update(canonicalPayload(rawPayload)).digest("hex");
 }
 
 /* -------------------------------------------------------------------------------------------------------------- */
@@ -621,7 +697,12 @@ async function scan(target: IntegrityTarget, options: ScanOptions): Promise<Scan
 
     const bidColumns = (await reader.bidColumns()).sort();
     const rows = dictionary<SnapshotRow>();
-    const comparableById = options.hashColumns ? new Map<string, string>() : null;
+    // With the columns unchanged the row's own hashes are the comparable ones; there is nothing more to keep.
+    const wanted = options.hashColumns ? [...options.hashColumns].sort() : null;
+    const sameColumns = wanted !== null && bidColumns.length === wanted.length && bidColumns.every((column, index) => column === wanted[index]);
+    const comparable = options.rows && wanted && !sameColumns
+      ? { columns: wanted, byId: new Map<string, string>(), untrackedById: new Map<string, string>() }
+      : null;
     let afterId: string | null = null;
     for (;;) {
       const page = await reader.bidPage(afterId, PAGE_SIZE);
@@ -629,26 +710,26 @@ async function scan(target: IntegrityTarget, options: ScanOptions): Promise<Scan
         const evaluation = evaluateBid(row, context);
         builder.addBid(evaluation);
         if (options.rows) {
-          const hash = hashBidRow(row);
           rows[evaluation.id] = {
-            h: hash, level: evaluation.level, visible: evaluation.visible, open: evaluation.open, t: trackedValuesOf(row),
+            h: hashBidRow(row), level: evaluation.level, visible: evaluation.visible, open: evaluation.open, t: trackedValuesOf(row),
             ...(evaluation.closedReason ? { c: evaluation.closedReason } : {}),
+            u: hashUntrackedColumns(row), p: hashPayload(row.raw_payload),
           };
-          if (comparableById && options.hashColumns) comparableById.set(evaluation.id, hashBidRow(row, options.hashColumns));
+          if (comparable) {
+            comparable.byId.set(evaluation.id, hashBidRow(row, comparable.columns));
+            comparable.untrackedById.set(evaluation.id, hashUntrackedColumns(row, comparable.columns));
+          }
         }
       }
       if (page.length < PAGE_SIZE) break;
       afterId = String(page[page.length - 1].id);
     }
 
-    const wanted = options.hashColumns ? [...options.hashColumns].sort() : null;
-    const sameColumns = wanted !== null && bidColumns.length === wanted.length && bidColumns.every((column, index) => column === wanted[index]);
     return {
       report: builder.build(options.now.toISOString(), dialectOf(target)),
       columns: bidColumns,
       rows,
-      // With the columns unchanged the full hash is the comparable one; nothing more to keep.
-      comparable: comparableById && wanted && !sameColumns ? { columns: wanted, byId: comparableById } : null,
+      comparable,
     };
   });
 }
@@ -696,7 +777,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
 function validSnapshotRow(value: unknown): value is SnapshotRow {
   return isRecord(value) && typeof value.h === "string" && (INTEGRITY_LEVELS as readonly unknown[]).includes(value.level)
     && typeof value.visible === "boolean" && typeof value.open === "boolean" && isRecord(value.t)
-    && (value.c === undefined || typeof value.c === "string");
+    && (value.c === undefined || typeof value.c === "string")
+    && (value.u === undefined || typeof value.u === "string") && (value.p === undefined || typeof value.p === "string");
 }
 
 /** Reads a snapshot file. Throws IntegritySnapshotError for anything that is not a version 1 snapshot. */

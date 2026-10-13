@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createPool, type Pool } from "mysql2/promise";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { sweepExpiredBids } from "@/server/bids/lifecycle-sweep";
 import { queryBidsFromMysql } from "@/server/bids/service";
 import { createMysqlPool, runMysqlMigrations } from "@/server/db/mysql";
 import { createTestDatabase } from "@/server/db/test-utils";
@@ -9,6 +10,8 @@ import {
   INTEGRITY_LEVELS,
   buildIntegrityReport,
   buildIntegritySnapshot,
+  parseIntegritySnapshot,
+  serializeIntegritySnapshot,
   type IntegrityReport,
   type IntegritySnapshot,
 } from "./data-integrity";
@@ -134,6 +137,46 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data:integri
     expect(Object.keys(viaMysql.rows).sort()).toEqual([...SEEDED_BID_IDS].sort());
     for (const id of SEEDED_BID_IDS) {
       expect(viaMysql.rows[id], id).toEqual(viaSqlite.snapshot.rows[id]);
+    }
+  });
+
+  it("gives rows with every kind of payload the same u and p as SQLite does", async () => {
+    // Objects (nested, with accents, CJK and an astral character), NULL, plain text, an array, and a payload that already has a lifecycle key.
+    const payloads: Array<[string, string | null]> = [
+      ["ca_caleprocure:p-object", JSON.stringify({ agency: "Café – 北京", list: [3, 1, 2], nested: { z: 1, a: { y: [true, null, 1.5] } }, emoji: "𠜎" })],
+      ["ca_caleprocure:p-lifecycle", JSON.stringify({ agency: "x", lifecycle: { closed_reason: "delisted", closed_observed_at: "2026-10-02T00:00:00.000Z" } })],
+      ["ca_caleprocure:p-spaced", '{ "b" : 1,\n  "a" : [ 1 , 2 ] }'],
+      ["ca_caleprocure:p-null", null],
+      ["ca_caleprocure:p-text", "plain text, not JSON"],
+      ["ca_caleprocure:p-array", "[1,2,3]"],
+      ["ca_caleprocure:p-empty", ""],
+    ];
+    const testDb = await createTestDatabase();
+    try {
+      for (const statement of buildIntegritySeed()) {
+        const { sql, params } = insertSql(statement);
+        testDb.db.$client.prepare(sql).run(...params);
+      }
+      for (const [id, payload] of payloads) {
+        const { sql, params } = insertSql(plainStateBid(id, { raw_payload: payload }));
+        testDb.db.$client.prepare(sql).run(...params);
+        await mysql.query(sql, params);
+      }
+
+      const viaSqlite = await buildIntegritySnapshot({ database: testDb.db }, { now: INTEGRITY_NOW });
+      const viaMysql = await snapshot();
+
+      for (const [id] of payloads) {
+        expect(viaMysql.rows[id].u, `${id}.u`).toMatch(/^[0-9a-f]{64}$/);
+        expect(viaMysql.rows[id].p, `${id}.p`).toMatch(/^[0-9a-f]{64}$/);
+        expect(viaMysql.rows[id], id).toEqual(viaSqlite.rows[id]);
+      }
+      // The lifecycle key is not part of p, and the way the text is spaced is not either.
+      expect(viaMysql.rows["ca_caleprocure:p-spaced"].p).toBe(
+        (await buildIntegritySnapshot({ database: testDb.db }, { now: INTEGRITY_NOW })).rows["ca_caleprocure:p-spaced"].p,
+      );
+    } finally {
+      await testDb.cleanup();
     }
   });
 
@@ -343,6 +386,162 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data:integri
       } finally {
         await mysql.query("ALTER TABLE bids DROP COLUMN integrity_note");
       }
+    });
+  });
+
+  describe("changes outside the tracked columns (u and p)", () => {
+    const compare = async (before: IntegritySnapshot, allowRemoved: RegExp[] = []) =>
+      (await compareWithSnapshot(target(), before, { now: INTEGRITY_NOW, allowRemoved })).comparison;
+    /** The seed's two bids past their deadline hold no payload; a real row holds a JSON object, which a sweep writes its reason into. */
+    const giveObjectPayloads = async (payloads: Record<string, object> = {}) => {
+      for (const id of ["ca_caleprocure:RFQ-2", "bidnet_co_aurora:203"]) {
+        await mysql.query("UPDATE bids SET raw_payload = ? WHERE id = ?", [JSON.stringify(payloads[id] ?? { agency: id }), id]);
+      }
+    };
+    const sweep = () => sweepExpiredBids({ mysql }, { now: INTEGRITY_NOW });
+    const insertAuroraDrift = (id: string, payload: string | null = '{"agency":"City of Aurora"}') => mysql.query(
+      "INSERT INTO bids (id, source, source_bid_id, dedupe_key, title, description, issuer_name, issuer_type, state_code, source_url, deadline_date, " +
+        "lifecycle_status, is_active, fips_code, raw_payload, first_seen_at, last_seen_at, created_at, updated_at) " +
+        "VALUES (?, 'City of Aurora, CO (BidNet)', ?, ?, 'Old Aurora bid', 'Body of an old Aurora bid.', 'City of Aurora', 'state', 'CO', ?, '2025-01-01', " +
+        "'closed', 0, '0803455', ?, 'a', '2026-01-01T00:00:00.000Z', 'a', '2026-01-01T00:00:00.000Z')",
+      [id, id.slice(id.indexOf(":") + 1), `dedupe:${id}`, `https://example.test/${id}`, payload],
+    );
+
+    it("names a description wiped on a row the sweep closes in the same pass, and names nothing for the sweep's own closes", async () => {
+      await giveObjectPayloads();
+      const before = await snapshot();
+      const swept = await sweep();
+      await mysql.query("UPDATE bids SET description = '' WHERE id = 'ca_caleprocure:RFQ-2'");
+
+      const comparison = await compare(before);
+
+      expect(swept.closed).toBe(2);
+      expect(comparison.changed.groups.find((group) => group.label === "lifecycle_status open→closed")?.ids).toEqual(["bidnet_co_aurora:203", "ca_caleprocure:RFQ-2"]);
+      expect(comparison.changedOutsideTracked.ids).toEqual(["ca_caleprocure:RFQ-2"]);
+      expect(comparison.changedOutsideTracked.changesByLevel.state).toEqual([{ id: "ca_caleprocure:RFQ-2", changed: ["u"] }]);
+      expect(comparison.changedOutsideTracked.changesByLevel.city).toEqual([]);
+      expect(comparison.ok).toBe(true);
+      expect(comparison.failures).toEqual([]);
+      expect(comparison.warnings).toEqual([]);
+    });
+
+    it("names nothing for a pure sweep close", async () => {
+      await giveObjectPayloads({ "ca_caleprocure:RFQ-2": { agency: "California", attachments: [{ name: "a.pdf" }] } });
+      const before = await snapshot();
+      await sweep();
+
+      const comparison = await compare(before);
+
+      expect(comparison.changed.count).toBe(2);
+      expect(comparison.changedOutsideTracked).toMatchObject({ count: 0, ids: [] });
+      expect(comparison.ok).toBe(true);
+    });
+
+    it("names exactly the Aurora rows when the MySQL migrations run, each with p: the legacy FIPS is added to the payload", async () => {
+      const aurora = ["bidnet_co_aurora:old-1", "bidnet_co_aurora:old-2", "bidnet_co_aurora:old-3"];
+      for (const id of aurora) await insertAuroraDrift(id);
+      await insertAuroraDrift("bidnet_co_aurora:old-text", "plain text payload");
+      const before = await snapshot();
+
+      await runMysqlMigrations(mysql);
+      const comparison = await compare(before);
+
+      // MySQL re-writes the JSON text its own way (JSON_SET), which p does not see; the added key it does.
+      expect(comparison.changedOutsideTracked.ids).toEqual(aurora);
+      expect(comparison.changedOutsideTracked.changesByLevel.city).toEqual(aurora.map((id) => ({ id, changed: ["p"] })));
+      expect(comparison.changedOutsideTracked.byLevel).toMatchObject({ city: 3, state: 0 });
+      const [rows] = await mysql.query("SELECT issuer_type, fips_code, raw_payload FROM bids WHERE id = 'bidnet_co_aurora:old-1'");
+      const stored = (rows as Array<{ issuer_type: string; fips_code: string; raw_payload: string }>)[0];
+      expect(stored.issuer_type).toBe("city");
+      expect(stored.fips_code).toBe("0804000");
+      expect(JSON.parse(stored.raw_payload).legacy_fips_code).toBe("0803455");
+      const groups = Object.fromEntries(comparison.changed.groups.map((group) => [group.label, group.ids]));
+      expect(groups["issuer_type state→city"]).toEqual(expect.arrayContaining(aurora));
+      expect(comparison.removed.unexpected).toEqual(["ny_contract_reporter:CR9 Company: Acme Inc"]);
+      expect(comparison.added.ids).toEqual(["ny_contract_reporter:CR9"]);
+    });
+
+    it("does not name a payload MySQL re-wrote with the same content: its text changes, u and p do not", async () => {
+      const before = await snapshot();
+      const [was] = await mysql.query("SELECT raw_payload FROM bids WHERE id = 'bidnet_co_boulder:112'");
+      await mysql.query("UPDATE bids SET raw_payload = JSON_REMOVE(JSON_SET(raw_payload, '$.zz', 1), '$.zz') WHERE id = 'bidnet_co_boulder:112'");
+      const [now] = await mysql.query("SELECT raw_payload FROM bids WHERE id = 'bidnet_co_boulder:112'");
+
+      const comparison = await compare(before);
+
+      const textBefore = (was as Array<{ raw_payload: string }>)[0].raw_payload;
+      const textNow = (now as Array<{ raw_payload: string }>)[0].raw_payload;
+      expect(textNow).not.toBe(textBefore);
+      expect(JSON.parse(textNow)).toEqual(JSON.parse(textBefore));
+      expect(comparison.changed.onlyOutsideTracked.ids).toEqual(["bidnet_co_boulder:112"]);
+      expect(comparison.changedOutsideTracked).toMatchObject({ count: 0, ids: [] });
+    });
+
+    it("compares under the old rule, and warns, against a snapshot written before u and p existed", async () => {
+      const written = JSON.parse(serializeIntegritySnapshot(await snapshot()));
+      for (const row of Object.values(written.rows as Record<string, { u?: string; p?: string }>)) {
+        delete row.u;
+        delete row.p;
+      }
+      const old = parseIntegritySnapshot(JSON.stringify(written));
+      await mysql.query("UPDATE bids SET description = '', title = 'Retitled' WHERE id = 'ca_caleprocure:RFQ-1'");
+      await mysql.query("UPDATE bids SET description = 'Only the body changed.' WHERE id = 'ca_caleprocure:RFQ-2'");
+
+      const comparison = await compare(old);
+
+      expect(comparison.changedOutsideTracked).toMatchObject({ count: null, ids: [] });
+      expect(comparison.warnings.find((warning) => warning.code === "untracked_hashes_missing")?.message).toContain("cannot be seen");
+      expect(comparison.changed.onlyOutsideTracked.ids).toEqual(["ca_caleprocure:RFQ-2"]);
+      expect(comparison.ok).toBe(true);
+    });
+
+    it("keeps naming a changed untracked column when a column was added since the snapshot", async () => {
+      const before = await snapshot();
+      await mysql.query("ALTER TABLE bids ADD COLUMN integrity_note TEXT");
+      try {
+        await mysql.query("UPDATE bids SET integrity_note = 'new data' WHERE id = 'ca_caleprocure:RFQ-1'");
+        await mysql.query("UPDATE bids SET description = '' WHERE id = 'ca_caleprocure:RFQ-2'");
+
+        const comparison = await compare(before);
+
+        expect(comparison.columns).toEqual({ added: ["integrity_note"], removed: [] });
+        expect(comparison.changedOutsideTracked.ids).toEqual(["ca_caleprocure:RFQ-2"]);
+        expect(comparison.changedOutsideTracked.changesByLevel.state).toEqual([{ id: "ca_caleprocure:RFQ-2", changed: ["u"] }]);
+      } finally {
+        await mysql.query("ALTER TABLE bids DROP COLUMN integrity_note");
+      }
+    });
+  });
+
+  describe("a bid closed for its deadline too early", () => {
+    const closeForDeadline = (id: string) => mysql.query(
+      "UPDATE bids SET lifecycle_status = 'closed', is_active = 0, raw_payload = ? WHERE id = ?",
+      [JSON.stringify({ lifecycle: { closed_reason: "deadline_passed", closed_observed_at: "2026-10-13T11:00:00.000Z" } }), id],
+    );
+
+    it("fails when the deadline had not passed when the data was read, and passes for a bid whose deadline had", async () => {
+      const before = await snapshot();
+      // ca_caleprocure:RFQ-1 is due on 2026-12-01, ca_caleprocure:RFQ-2 was due on 2026-09-01.
+      await closeForDeadline("ca_caleprocure:RFQ-1");
+      await closeForDeadline("ca_caleprocure:RFQ-2");
+
+      const comparison = (await compareWithSnapshot(target(), before, { now: INTEGRITY_NOW, allowRemoved: [] })).comparison;
+
+      expect(comparison.ok).toBe(false);
+      expect(comparison.failures).toEqual([
+        expect.objectContaining({ code: "early_close", ids: ["ca_caleprocure:RFQ-1"], idsByLevel: expect.objectContaining({ state: ["ca_caleprocure:RFQ-1"] }) }),
+      ]);
+    });
+
+    it("passes for everything the sweep closes", async () => {
+      await mysql.query("UPDATE bids SET raw_payload = ? WHERE id = 'ca_caleprocure:RFQ-2'", [JSON.stringify({ agency: "x" })]);
+      const before = await snapshot();
+      await sweepExpiredBids({ mysql }, { now: INTEGRITY_NOW });
+
+      const comparison = (await compareWithSnapshot(target(), before, { now: INTEGRITY_NOW, allowRemoved: [] })).comparison;
+
+      expect(comparison.failures).toEqual([]);
+      expect(comparison.ok).toBe(true);
     });
   });
 

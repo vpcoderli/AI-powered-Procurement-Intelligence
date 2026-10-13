@@ -24,10 +24,23 @@ function tracked(overrides: Partial<SnapshotRow["t"]> = {}): SnapshotRow["t"] {
   };
 }
 
-function row(overrides: { h?: string; level?: IntegrityLevel; visible?: boolean; open?: boolean; c?: string; t?: Partial<SnapshotRow["t"]> } = {}): SnapshotRow {
+/**
+ * A snapshot row as this version writes it: with the hashes of the untracked columns (`u`) and of the payload (`p`). A
+ * test that wants an older row passes `u: undefined, p: undefined`.
+ */
+function row(
+  overrides: { h?: string; level?: IntegrityLevel; visible?: boolean; open?: boolean; c?: string; u?: string; p?: string; t?: Partial<SnapshotRow["t"]> } = {},
+): SnapshotRow {
   const { t, c, ...rest } = overrides;
-  return { h: "hash-0", level: "state", visible: true, open: true, ...rest, t: tracked(t), ...(c ? { c } : {}) };
+  const made: SnapshotRow = { h: "hash-0", level: "state", visible: true, open: true, u: "untracked-0", p: "payload-0", ...rest, t: tracked(t), ...(c ? { c } : {}) };
+  // `u: undefined` must not leave a key behind: an older snapshot has no such property at all.
+  if (made.u === undefined) delete made.u;
+  if (made.p === undefined) delete made.p;
+  return made;
 }
+
+/** The deadline of a bid that is long past at the default `takenAt`, 2026-10-13. */
+const PAST = "2026-09-01";
 
 function reportWith(overrides: Partial<Record<IntegrityLevel, Partial<LevelReport>>> = {}, dialect: "sqlite" | "mysql" = "sqlite"): IntegrityReport {
   const levels = Object.fromEntries(INTEGRITY_LEVELS.map((level) => [level, { ...structuredClone(EXPECTED_LEVELS[level]), ...overrides[level] }])) as Record<IntegrityLevel, LevelReport>;
@@ -134,9 +147,9 @@ describe("compareIntegritySnapshots: visibility regressions", () => {
 
   it("does not fail on a row that closed (that is a lifecycle change), nor on one that was hidden before", () => {
     const comparison = compareIntegritySnapshots(
-      snapshotOf({ closes: row(), hiddenBefore: row({ visible: false }), closedBefore: row({ open: false, visible: true }) }),
+      snapshotOf({ closes: row({ t: { deadline_date: PAST } }), hiddenBefore: row({ visible: false }), closedBefore: row({ open: false, visible: true }) }),
       snapshotOf({
-        closes: row({ open: false, visible: false, c: "deadline_passed", t: { lifecycle_status: "closed", is_active: 0 } }),
+        closes: row({ open: false, visible: false, c: "deadline_passed", t: { lifecycle_status: "closed", is_active: 0, deadline_date: PAST } }),
         hiddenBefore: row({ visible: false }),
         closedBefore: row({ open: false, visible: false }),
       }),
@@ -202,11 +215,11 @@ describe("compareIntegritySnapshots: identity mismatches", () => {
 
 describe("compareIntegritySnapshots: warnings", () => {
   const closing = (c?: string, lifecycle = "closed") =>
-    row({ open: false, visible: false, ...(c ? { c } : {}), t: { lifecycle_status: lifecycle, is_active: 0 } });
+    row({ open: false, visible: false, ...(c ? { c } : {}), t: { lifecycle_status: lifecycle, is_active: 0, deadline_date: PAST } });
 
   it("warns on a row that went from open to closed with no recorded reason, or one that is neither deadline_passed nor delisted", () => {
     const comparison = compareIntegritySnapshots(
-      snapshotOf({ none: row(), other: row(), expired: row(), delisted: row() }),
+      snapshotOf({ none: row({ t: { deadline_date: PAST } }), other: row({ t: { deadline_date: PAST } }), expired: row({ t: { deadline_date: PAST } }), delisted: row({ t: { deadline_date: PAST } }) }),
       snapshotOf({ none: closing(), other: closing("something_else"), expired: closing("deadline_passed"), delisted: closing("delisted") }),
     );
 
@@ -216,7 +229,7 @@ describe("compareIntegritySnapshots: warnings", () => {
 
   it("does not warn about an award, a row that stayed open, or one that was already closed", () => {
     const comparison = compareIntegritySnapshots(
-      snapshotOf({ awarded: row(), open: row(), already: row({ open: false, visible: false, t: { lifecycle_status: "closed", is_active: 0 } }) }),
+      snapshotOf({ awarded: row({ t: { deadline_date: PAST } }), open: row(), already: row({ open: false, visible: false, t: { lifecycle_status: "closed", is_active: 0, deadline_date: PAST } }) }),
       snapshotOf({ awarded: closing(undefined, "awarded"), open: row(), already: closing() }),
     );
 
@@ -252,6 +265,8 @@ describe("compareIntegritySnapshots: changed rows", () => {
       {
         label: "issuer_type state→city", column: "issuer_type", from: "state", to: "city", count: 11,
         sampleIds: ["bidnet:00", "bidnet:01", "bidnet:02", "bidnet:03", "bidnet:04", "bidnet:05", "bidnet:06", "bidnet:07", "bidnet:08", "bidnet:09"],
+        // The group has 11 rows; the examples stop at ten, the ids do not.
+        ids: ["bidnet:00", "bidnet:01", "bidnet:02", "bidnet:03", "bidnet:04", "bidnet:05", "bidnet:06", "bidnet:07", "bidnet:08", "bidnet:09", "bidnet:10"],
       },
     ]);
     expect(comparison.changed.onlyOutsideTracked.count).toBe(0);
@@ -262,8 +277,8 @@ describe("compareIntegritySnapshots: changed rows", () => {
     const after: Record<string, SnapshotRow> = {};
     for (let n = 0; n < 340; n += 1) {
       const id = `ca:${n}`;
-      before[id] = row({ h: "old" });
-      after[id] = row({ h: "new", open: false, visible: false, c: "deadline_passed", t: { lifecycle_status: "closed", is_active: 0 } });
+      before[id] = row({ h: "old", t: { deadline_date: PAST } });
+      after[id] = row({ h: "new", open: false, visible: false, c: "deadline_passed", t: { lifecycle_status: "closed", is_active: 0, deadline_date: PAST } });
     }
 
     const comparison = compareIntegritySnapshots(snapshotOf(before), snapshotOf(after));
@@ -346,7 +361,7 @@ describe("compareIntegritySnapshots: hashes across a schema change", () => {
       snapshotOf({ a: row({ h: "old-a" }), b: row({ h: "old-b" }) }),
       snapshotOf({ a: row({ h: "full-a" }), b: row({ h: "full-b" }) }, {
         columns: [...COLUMNS, "note"],
-        comparable: { columns: COLUMNS, byId: new Map([["a", "old-a"], ["b", "changed-b"]]) },
+        comparable: { columns: COLUMNS, byId: new Map([["a", "old-a"], ["b", "changed-b"]]), untrackedById: new Map([["a", "untracked-0"], ["b", "untracked-0"]]) },
       }),
     );
 
@@ -482,5 +497,331 @@ describe("compareIntegritySnapshots: ids by level", () => {
     expect(comparison.removed.allowed).toEqual(["ca:北京", "ca:é"].sort());
     expect(comparison.removed.unexpected).toEqual(["ca:Ünï–1", "ca:Zürich", "ca:e"].sort());
     expect(comparison.removed.idsByLevel.state).toEqual([...ids].sort());
+  });
+});
+
+
+describe("compareIntegritySnapshots: every change group carries all of its ids", () => {
+  it("keeps the first few as examples and every id in `ids`, in order", () => {
+    const before: Record<string, SnapshotRow> = {};
+    const after: Record<string, SnapshotRow> = {};
+    for (let n = 0; n < 45; n += 1) {
+      const id = `ca:${String(n).padStart(2, "0")}`;
+      before[id] = row({ h: "old" });
+      after[id] = row({ h: "new", level: "city", t: { issuer_type: "city" } });
+    }
+
+    const comparison = compareIntegritySnapshots(snapshotOf(before), snapshotOf(after));
+
+    const [group] = comparison.changed.groups;
+    expect(group.label).toBe("issuer_type state→city");
+    expect(group.count).toBe(45);
+    expect(group.sampleIds).toHaveLength(10);
+    expect(group.ids).toHaveLength(45);
+    expect(group.ids).toEqual(Object.keys(before).sort());
+    expect(group.sampleIds).toEqual(group.ids.slice(0, 10));
+  });
+
+  it("gives each group its own ids, a row that belongs to two groups appearing in both", () => {
+    const comparison = compareIntegritySnapshots(
+      snapshotOf({ a: row({ h: "1" }), b: row({ h: "2" }), c: row({ h: "3" }) }),
+      snapshotOf({
+        a: row({ h: "4", t: { title: "New A", issuer_name: "Other A" } }),
+        b: row({ h: "5", t: { title: "New B" } }),
+        c: row({ h: "6", t: { issuer_name: "Other C" } }),
+      }),
+    );
+
+    const byLabel = Object.fromEntries(comparison.changed.groups.map((group) => [group.label, group.ids]));
+    expect(byLabel).toEqual({ "title changed": ["a", "b"], "issuer_name changed": ["a", "c"] });
+  });
+});
+
+describe("compareIntegritySnapshots: changes outside the tracked columns", () => {
+  const byLevel = (listed: Partial<Record<IntegrityLevel, Array<{ id: string; changed: Array<"u" | "p"> }>>>) =>
+    Object.fromEntries(INTEGRITY_LEVELS.map((level) => [level, listed[level] ?? []]));
+  const closing = (overrides: Parameters<typeof row>[0] = {}) =>
+    row({ open: false, visible: false, c: "deadline_passed", ...overrides, t: { lifecycle_status: "closed", is_active: 0, deadline_date: PAST, ...overrides.t } });
+
+  it("names a row whose untracked columns changed although a tracked column changed as well", () => {
+    // What a sweep that also wipes a description looks like: the lifecycle columns move, and so does something else.
+    const comparison = compareIntegritySnapshots(
+      snapshotOf({ "ca:wiped": row({ t: { deadline_date: PAST } }) }),
+      snapshotOf({ "ca:wiped": closing({ h: "full-hash-1", u: "untracked-1" }) }),
+    );
+
+    expect(comparison.changed.count).toBe(1);
+    expect(comparison.changedOutsideTracked.count).toBe(1);
+    expect(comparison.changedOutsideTracked.ids).toEqual(["ca:wiped"]);
+    expect(comparison.changedOutsideTracked.changesByLevel).toEqual(byLevel({ state: [{ id: "ca:wiped", changed: ["u"] }] }));
+    expect(comparison.changedOutsideTracked.byLevel).toMatchObject({ state: 1, city: 0 });
+  });
+
+  it("names a row whose payload changed beyond its lifecycle key, with `p`", () => {
+    const comparison = compareIntegritySnapshots(
+      snapshotOf({ "ca:1": row() }),
+      snapshotOf({ "ca:1": row({ h: "full-hash-1", p: "payload-1", t: { title: "New title" } }) }),
+    );
+
+    expect(comparison.changedOutsideTracked.changesByLevel.state).toEqual([{ id: "ca:1", changed: ["p"] }]);
+  });
+
+  it("says both when both changed, `u` before `p`", () => {
+    const comparison = compareIntegritySnapshots(
+      snapshotOf({ "ca:1": row() }),
+      snapshotOf({ "ca:1": row({ u: "untracked-1", p: "payload-1" }) }),
+    );
+
+    expect(comparison.changedOutsideTracked.changesByLevel.state).toEqual([{ id: "ca:1", changed: ["u", "p"] }]);
+  });
+
+  it("names a row that changed nothing but outside the tracked columns, too", () => {
+    const comparison = compareIntegritySnapshots(
+      snapshotOf({ "ca:1": row() }),
+      snapshotOf({ "ca:1": row({ h: "full-hash-1", u: "untracked-1" }) }),
+    );
+
+    expect(comparison.changed.count).toBe(0);
+    expect(comparison.changed.onlyOutsideTracked).toEqual({ count: 1, ids: ["ca:1"] });
+    expect(comparison.changedOutsideTracked.ids).toEqual(["ca:1"]);
+  });
+
+  it("does not name a row that moved only its clocks and its lifecycle (a plain sweep close)", () => {
+    // `h` moves with updated_at and the lifecycle key, but `u` and `p` leave those out.
+    const comparison = compareIntegritySnapshots(
+      snapshotOf({ "ca:1": row({ t: { deadline_date: PAST } }), "ca:2": row() }),
+      snapshotOf({ "ca:1": closing({ h: "full-hash-1" }), "ca:2": row({ h: "full-hash-2" }) }),
+    );
+
+    expect(comparison.changed.count).toBe(1);
+    expect(comparison.changedOutsideTracked.count).toBe(0);
+    expect(comparison.changedOutsideTracked.ids).toEqual([]);
+    expect(comparison.changedOutsideTracked.changesByLevel).toEqual(byLevel({}));
+    expect(comparison.changed.onlyOutsideTracked).toEqual({ count: 1, ids: ["ca:2"] });
+  });
+
+  it("groups the rows by the level they have now, every level present, and lists every one of them", () => {
+    const before: Record<string, SnapshotRow> = {};
+    const after: Record<string, SnapshotRow> = {};
+    for (let n = 0; n < 30; n += 1) {
+      const id = `bidnet_co_aurora:${String(n).padStart(2, "0")}`;
+      before[id] = row({ t: { fips_code: "0803455" } });
+      // The retype moves the row from state to city, and the payload gains a key.
+      after[id] = row({ level: "city", h: "full-hash-1", p: "payload-1", t: { issuer_type: "city", fips_code: "0804000" } });
+    }
+    before["ca:untouched"] = row();
+    after["ca:untouched"] = row();
+
+    const { changedOutsideTracked } = compareIntegritySnapshots(snapshotOf(before), snapshotOf(after));
+
+    expect(changedOutsideTracked.count).toBe(30);
+    expect(changedOutsideTracked.byLevel).toMatchObject({ city: 30, state: 0 });
+    expect(Object.keys(changedOutsideTracked.changesByLevel)).toEqual([...INTEGRITY_LEVELS]);
+    expect(changedOutsideTracked.changesByLevel.state).toEqual([]);
+    expect(changedOutsideTracked.changesByLevel.city).toHaveLength(30);
+    expect(changedOutsideTracked.changesByLevel.city.every((change) => change.changed.join() === "p")).toBe(true);
+    expect(changedOutsideTracked.ids).toEqual(Object.keys(before).filter((id) => id.startsWith("bidnet_")).sort());
+  });
+
+  it("only reports: it does not fail the compare, and adds no warning", () => {
+    const comparison = compareIntegritySnapshots(
+      snapshotOf({ "ca:1": row() }),
+      snapshotOf({ "ca:1": row({ u: "untracked-1", p: "payload-1" }) }),
+    );
+
+    expect(comparison.changedOutsideTracked.count).toBe(1);
+    expect(comparison.ok).toBe(true);
+    expect(comparison.failures).toEqual([]);
+    expect(comparison.warnings).toEqual([]);
+  });
+
+  it("does not look at rows that are only on one side", () => {
+    const comparison = compareIntegritySnapshots(
+      snapshotOf({ gone: row(), kept: row() }),
+      snapshotOf({ kept: row(), fresh: row({ u: "untracked-9" }) }),
+      { allowRemoved: [/./] },
+    );
+
+    expect(comparison.changedOutsideTracked.count).toBe(0);
+  });
+
+  describe("against a snapshot that has no such hashes (one written before they existed)", () => {
+    const old = (overrides: Parameters<typeof row>[0] = {}) => row({ u: undefined, p: undefined, ...overrides });
+
+    it("compares under today's rule and warns, explicitly, that a change outside the tracked columns on a touched row cannot be seen", () => {
+      const comparison = compareIntegritySnapshots(
+        snapshotOf({ touched: old(), untouched: old() }),
+        snapshotOf({ touched: row({ h: "full-hash-1", u: "untracked-1", t: { title: "New" } }), untouched: row({ h: "full-hash-2" }) }),
+      );
+
+      expect(comparison.changedOutsideTracked).toMatchObject({ count: null, ids: [] });
+      expect(comparison.changedOutsideTracked.changesByLevel).toEqual(byLevel({}));
+      // Today's rule: the full hash on a row with no tracked change.
+      expect(comparison.changed.onlyOutsideTracked).toEqual({ count: 1, ids: ["untouched"] });
+      expect(comparison.changed.count).toBe(1);
+      const warning = comparison.warnings.find((candidate) => candidate.code === "untracked_hashes_missing");
+      expect(warning).toBeDefined();
+      expect(warning!.message).toContain("cannot be seen");
+      expect(warning!.message).toContain("also changed a tracked column");
+      expect(comparison.ok).toBe(true);
+    });
+
+    it("warns when only some rows lack the hashes, and when it is the later snapshot that lacks them", () => {
+      const partial = compareIntegritySnapshots(snapshotOf({ a: old(), b: row() }), snapshotOf({ a: row(), b: row() }));
+      const later = compareIntegritySnapshots(snapshotOf({ a: row() }), snapshotOf({ a: old() }));
+
+      expect(partial.warnings.map((warning) => warning.code)).toEqual(["untracked_hashes_missing"]);
+      expect(later.warnings.map((warning) => warning.code)).toEqual(["untracked_hashes_missing"]);
+      expect(later.warnings[0].message).toContain("later snapshot");
+      expect(partial.warnings[0].message).toContain("earlier snapshot");
+    });
+
+    it("does not warn about an empty snapshot, which has no rows to be blind on", () => {
+      const comparison = compareIntegritySnapshots(snapshotOf({}), snapshotOf({ a: row() }));
+
+      expect(comparison.warnings).toEqual([]);
+      expect(comparison.changedOutsideTracked.count).toBe(0);
+    });
+  });
+
+  describe("across a schema change", () => {
+    const wider = { columns: [...COLUMNS, "note"] };
+
+    it("compares the untracked columns the earlier snapshot had when columns were added, and ignores the new ones", () => {
+      const comparison = compareIntegritySnapshots(
+        snapshotOf({ a: row(), b: row(), c: row() }),
+        snapshotOf({ a: row({ h: "f-a", u: "untracked-with-note-a" }), b: row({ h: "f-b", u: "untracked-with-note-b" }), c: row({ h: "f-c", u: "untracked-with-note-c" }) }, {
+          ...wider,
+          comparable: {
+            columns: COLUMNS,
+            byId: new Map([["a", "hash-0"], ["b", "hash-0"], ["c", "hash-0"]]),
+            // Over the old columns only: a is as it was (only `note` is new), b really changed, c's payload changed.
+            untrackedById: new Map([["a", "untracked-0"], ["b", "untracked-changed"], ["c", "untracked-0"]]),
+          },
+        }),
+      );
+
+      expect(comparison.hashesComparable).toBe(true);
+      expect(comparison.changedOutsideTracked.ids).toEqual(["b"]);
+      expect(comparison.changedOutsideTracked.changesByLevel.state).toEqual([{ id: "b", changed: ["u"] }]);
+    });
+
+    it("cannot judge the group when columns were added and the later snapshot did not hash the old ones", () => {
+      const comparison = compareIntegritySnapshots(snapshotOf({ a: row() }), snapshotOf({ a: row({ u: "untracked-1" }) }, wider));
+
+      expect(comparison.changedOutsideTracked.count).toBeNull();
+      expect(comparison.warnings.map((warning) => warning.code)).toContain("hashes_not_comparable");
+    });
+
+    it("cannot judge the group when a column is gone", () => {
+      const comparison = compareIntegritySnapshots(
+        snapshotOf({ a: row() }),
+        snapshotOf({ a: row({ u: "untracked-1" }) }, { columns: COLUMNS.filter((column) => column !== "description") }),
+      );
+
+      expect(comparison.changedOutsideTracked.count).toBeNull();
+      expect(comparison.warnings.map((warning) => warning.code)).toContain("hashes_not_comparable");
+    });
+  });
+});
+
+describe("compareIntegritySnapshots: a close for the deadline that came early", () => {
+  const TAKEN_AT = "2026-10-13T12:00:00.000Z";
+  const closing = (deadline: string | null, overrides: Parameters<typeof row>[0] = {}) =>
+    row({ open: false, visible: false, c: "deadline_passed", ...overrides, t: { lifecycle_status: "closed", is_active: 0, deadline_date: deadline, ...overrides.t } });
+  const compareClose = (deadline: string | null, after: Parameters<typeof snapshotOf>[1] = {}) =>
+    compareIntegritySnapshots(
+      snapshotOf({ "ca:1": row({ t: { deadline_date: deadline } }) }),
+      snapshotOf({ "ca:1": closing(deadline) }, { takenAt: TAKEN_AT, ...after }),
+    );
+
+  it("fails when the bid was closed for its deadline but the deadline had not passed when the data was read", () => {
+    const comparison = compareClose("2026-12-01");
+
+    expect(comparison.ok).toBe(false);
+    expect(comparison.failures).toEqual([
+      expect.objectContaining({ code: "early_close", ids: ["ca:1"], idsByLevel: expect.objectContaining({ state: ["ca:1"] }) }),
+    ]);
+    expect(comparison.failures[0].message).toContain("deadline_passed");
+    expect(comparison.failures[0].message).toContain(TAKEN_AT);
+  });
+
+  it("passes when the deadline had passed when the data was read", () => {
+    const comparison = compareClose(PAST);
+
+    expect(comparison.ok).toBe(true);
+    expect(comparison.failures).toEqual([]);
+  });
+
+  it("judges the deadline at the later snapshot's time, to the hour: a date-only deadline runs to the end of its day in the latest zone", () => {
+    // 2026-10-13 expires at 2026-10-14 10:00 UTC (the end of the day in UTC-10).
+    expect(compareClose("2026-10-13", { takenAt: "2026-10-14T09:59:59.999Z" }).failures.map((failure) => failure.code)).toEqual(["early_close"]);
+    expect(compareClose("2026-10-13", { takenAt: "2026-10-14T10:00:00.000Z" }).failures).toEqual([]);
+  });
+
+  it("fails when the deadline cannot be read, because a deadline that cannot be read never closes a bid", () => {
+    for (const deadline of ["Not Available", "", null, "0001-01-01"]) {
+      const comparison = compareClose(deadline);
+      expect(comparison.failures.map((failure) => failure.code), String(deadline)).toEqual(["early_close"]);
+    }
+  });
+
+  it("lists every early close by the level the bid has now, and leaves the others out", () => {
+    const comparison = compareIntegritySnapshots(
+      snapshotOf({
+        "ca:late": row({ t: { deadline_date: "2026-12-01" } }),
+        "ca:fine": row({ t: { deadline_date: PAST } }),
+        "co:late": row({ level: "county", t: { issuer_type: "county", deadline_date: "2026-11-01" } }),
+      }),
+      snapshotOf({
+        "ca:late": closing("2026-12-01"),
+        "ca:fine": closing(PAST),
+        "co:late": closing("2026-11-01", { level: "county", t: { issuer_type: "county" } }),
+      }, { takenAt: TAKEN_AT }),
+    );
+
+    const failure = comparison.failures.find((candidate) => candidate.code === "early_close");
+    expect(failure?.ids).toEqual(["ca:late", "co:late"]);
+    expect(failure?.idsByLevel).toMatchObject({ state: ["ca:late"], county: ["co:late"], city: [] });
+  });
+
+  it("does not look at a close for another reason, an award, a bid that was already closed, or one that stayed open", () => {
+    const future = "2026-12-01";
+    const closed = (overrides: Parameters<typeof row>[0] = {}) => row({ open: false, visible: false, ...overrides, t: { lifecycle_status: "closed", is_active: 0, deadline_date: future, ...overrides.t } });
+    const comparison = compareIntegritySnapshots(
+      snapshotOf({
+        delisted: row({ t: { deadline_date: future } }),
+        unexplained: row({ t: { deadline_date: future } }),
+        awarded: row({ t: { deadline_date: future } }),
+        already: closed({ c: "deadline_passed" }),
+        stillOpen: row({ t: { deadline_date: future } }),
+      }),
+      snapshotOf({
+        delisted: closed({ c: "delisted" }),
+        unexplained: closed(),
+        awarded: closed({ c: "deadline_passed", t: { lifecycle_status: "awarded" } }),
+        already: closed({ c: "deadline_passed" }),
+        stillOpen: row({ t: { deadline_date: future } }),
+      }, { takenAt: TAKEN_AT }),
+    );
+
+    expect(comparison.failures).toEqual([]);
+    expect(comparison.ok).toBe(true);
+  });
+
+  it("warns, instead of staying silent, when the later snapshot's time cannot be read and so the check cannot run", () => {
+    const comparison = compareClose("2026-12-01", { takenAt: "not a time" });
+
+    expect(comparison.failures).toEqual([]);
+    expect(comparison.warnings).toEqual([expect.objectContaining({ code: "early_close_not_checked", ids: ["ca:1"] })]);
+  });
+
+  it("is a failure of its own: the other failures are reported beside it", () => {
+    const comparison = compareIntegritySnapshots(
+      snapshotOf({ "ca:early": row({ t: { deadline_date: "2026-12-01" } }), "ca:gone": row() }),
+      snapshotOf({ "ca:early": closing("2026-12-01") }, { takenAt: TAKEN_AT }),
+    );
+
+    expect(comparison.failures.map((failure) => failure.code)).toEqual(["removed_unexplained", "early_close"]);
   });
 });

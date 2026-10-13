@@ -100,6 +100,26 @@ describe("data-integrity arguments", () => {
     expect(help).toContain("the first 20 in the text report");
   });
 
+  it("shows the JSON shape of a compare with the snapshot that was written, or the reason it was not", () => {
+    const help = formatDataIntegrityHelp().replace(/\s+/g, " ");
+
+    expect(help).toContain("snapshot?, snapshotError?");
+    expect(help).toContain("snapshotError");
+  });
+
+  it("states the new failure, the group of changes outside the tracked columns, and what an older snapshot costs", () => {
+    const help = formatDataIntegrityHelp().replace(/\s+/g, " ");
+
+    expect(help).toContain("early_close");
+    expect(help).toContain("closed_reason deadline_passed");
+    expect(help).toContain("changed outside the tracked columns");
+    expect(help).toContain("whether or not they also changed a tracked one");
+    expect(help).toContain("reported, not failed");
+    expect(help).toContain("raw_payload without its lifecycle key");
+    expect(help).toContain("untracked_hashes_missing");
+    expect(help).toContain("every id of every group");
+  });
+
   it("states the rule withIssuer applies, the publication gate's own", () => {
     const help = formatDataIntegrityHelp().replace(/\s+/g, " ");
 
@@ -505,6 +525,158 @@ describe("data-integrity", () => {
       expect(await run(["--compare", snapshotFile, "--snapshot", snapshotFile])).toBe(2);
 
       expect(readFileSync(snapshotFile, "utf8")).toBe(before);
+    });
+
+    describe("changes outside the tracked columns", () => {
+      /** The seed's two bids past their deadline hold no payload; a real row holds a JSON object, which a sweep writes its reason into. */
+      const closeExpired = (descriptionWiped: boolean) => {
+        const now = "2026-10-13T12:00:00.000Z";
+        for (const id of ["ca_caleprocure:RFQ-2", "bidnet_co_aurora:203"]) {
+          sqlite().prepare(
+            "UPDATE bids SET lifecycle_status = 'closed', is_active = 0, updated_at = ?, raw_payload = ? WHERE id = ?",
+          ).run(now, JSON.stringify({ agency: id, lifecycle: { closed_reason: "deadline_passed", closed_observed_at: now, deadline: "2020-01-01" } }), id);
+        }
+        if (descriptionWiped) sqlite().prepare("UPDATE bids SET description = '' WHERE id = 'ca_caleprocure:RFQ-2'").run();
+      };
+      const giveObjectPayloads = () => {
+        for (const id of ["ca_caleprocure:RFQ-2", "bidnet_co_aurora:203"]) sqlite().prepare("UPDATE bids SET raw_payload = ? WHERE id = ?").run(JSON.stringify({ agency: id }), id);
+      };
+
+      it("lists a description wiped on a row that was closed in the same pass, without failing, and not the closes themselves", async () => {
+        giveObjectPayloads();
+        const snapshotFile = await takeSnapshot();
+        closeExpired(true);
+
+        expect(await run(["--compare", snapshotFile])).toBe(0);
+
+        const text = out.join("\n");
+        expect(text).toContain("Data integrity compare: OK");
+        expect(text).toContain("changed outside the tracked columns 1");
+        expect(text).toMatch(/Changed outside the tracked columns \(1\)[^\n]*\n {2}state \(1\)\n {4}ca_caleprocure:RFQ-2 {2}u\n/);
+        expect(text).not.toMatch(/ {4}bidnet_co_aurora:203/);
+        out.length = 0;
+
+        expect(await run(["--compare", snapshotFile, "--json"])).toBe(0);
+        const { changedOutsideTracked } = JSON.parse(out[0]).comparison;
+        expect(changedOutsideTracked.count).toBe(1);
+        expect(changedOutsideTracked.ids).toEqual(["ca_caleprocure:RFQ-2"]);
+        expect(changedOutsideTracked.changesByLevel.state).toEqual([{ id: "ca_caleprocure:RFQ-2", changed: ["u"] }]);
+        expect(Object.keys(changedOutsideTracked.changesByLevel)).toEqual(["state", "county", "city", "township", "special_district", "federal", "other"]);
+      });
+
+      it("prints nothing for it when the closes are all there is", async () => {
+        giveObjectPayloads();
+        const snapshotFile = await takeSnapshot();
+        closeExpired(false);
+
+        expect(await run(["--compare", snapshotFile])).toBe(0);
+
+        const text = out.join("\n");
+        expect(text).toContain("changed 2, changed only outside the tracked columns 0, changed outside the tracked columns 0");
+        expect(text).not.toContain("Changed outside the tracked columns (");
+      });
+
+      it("lists the first 20 ids and counts the rest, and the JSON has every one, each with what changed", async () => {
+        for (let n = 0; n < 30; n += 1) {
+          const { sql, params } = insertSql(plainStateBid(`ca_caleprocure:bulk-${String(n).padStart(2, "0")}`));
+          sqlite().prepare(sql).run(...params);
+        }
+        const snapshotFile = await takeSnapshot();
+        sqlite().prepare("UPDATE bids SET source_url = 'https://example.test/moved', raw_payload = '{\"moved\":true}' WHERE id LIKE 'ca_caleprocure:bulk-%'").run();
+
+        expect(await run(["--compare", snapshotFile])).toBe(0);
+
+        const text = out.join("\n");
+        expect(text).toContain("changed outside the tracked columns 30");
+        expect(text).toMatch(/Changed outside the tracked columns \(30\)/);
+        const listed = text.split("\n").filter((line) => /^ {4}ca_caleprocure:bulk-\d\d {2}u p$/.test(line));
+        expect(listed).toHaveLength(20);
+        expect(listed[0]).toBe("    ca_caleprocure:bulk-00  u p");
+        expect(listed[19]).toBe("    ca_caleprocure:bulk-19  u p");
+        expect(text).toContain("... and 10 more (--json lists them all)");
+        out.length = 0;
+
+        expect(await run(["--compare", snapshotFile, "--json"])).toBe(0);
+        const { changedOutsideTracked } = JSON.parse(out[0]).comparison;
+        expect(changedOutsideTracked.changesByLevel.state).toHaveLength(30);
+        expect(changedOutsideTracked.changesByLevel.state[29]).toEqual({ id: "ca_caleprocure:bulk-29", changed: ["u", "p"] });
+      });
+
+      it("says why it cannot list anything against a snapshot written before the hashes existed, and still exits 0", async () => {
+        const snapshotFile = await takeSnapshot();
+        const snapshot = JSON.parse(readFileSync(snapshotFile, "utf8"));
+        for (const row of Object.values(snapshot.rows as Record<string, { u?: string; p?: string }>)) {
+          delete row.u;
+          delete row.p;
+        }
+        const older = file("older.json");
+        writeFileSync(older, JSON.stringify(snapshot));
+        sqlite().prepare("UPDATE bids SET description = '', title = 'Retitled' WHERE id = 'ca_caleprocure:RFQ-1'").run();
+
+        expect(await run(["--compare", older])).toBe(0);
+
+        const text = out.join("\n");
+        expect(text).toContain("Data integrity compare: OK (with warnings)");
+        expect(text).toContain("untracked_hashes_missing");
+        expect(text).toContain("cannot be seen");
+        expect(text).toContain("changed outside the tracked columns unknown");
+        expect(text).not.toContain("Changed outside the tracked columns (");
+      });
+    });
+
+    describe("a close for the deadline that came early", () => {
+      const closeEarly = () => sqlite().prepare("UPDATE bids SET lifecycle_status = 'closed', is_active = 0, raw_payload = ? WHERE id = 'ca_caleprocure:RFQ-1'")
+        .run(JSON.stringify({ lifecycle: { closed_reason: "deadline_passed", closed_observed_at: "2026-10-13T11:00:00.000Z" } }));
+
+      it("exits 1 and names the bid, because its deadline (2026-12-01) had not passed when the data was read", async () => {
+        const snapshotFile = await takeSnapshot();
+        closeEarly();
+
+        expect(await run(["--compare", snapshotFile])).toBe(1);
+
+        const text = out.join("\n");
+        expect(text).toContain("Data integrity compare: REGRESSION");
+        expect(text).toMatch(/Failures \(exit 1\):\n {2}- early_close: 1 bid\(s\) were closed with closed_reason deadline_passed[^\n]*\n {6}state \(1\)\n {8}ca_caleprocure:RFQ-1\n/);
+        out.length = 0;
+
+        expect(await run(["--compare", snapshotFile, "--json"])).toBe(1);
+        const { comparison } = JSON.parse(out[0]);
+        expect(comparison.ok).toBe(false);
+        expect(comparison.failures.map((failure: { code: string }) => failure.code)).toEqual(["early_close"]);
+        expect(comparison.failures[0].ids).toEqual(["ca_caleprocure:RFQ-1"]);
+      });
+
+      it("exits 0 for a close whose deadline had passed (2026-09-01)", async () => {
+        const snapshotFile = await takeSnapshot();
+        sqlite().prepare("UPDATE bids SET lifecycle_status = 'closed', is_active = 0, raw_payload = ? WHERE id = 'ca_caleprocure:RFQ-2'")
+          .run(JSON.stringify({ lifecycle: { closed_reason: "deadline_passed", closed_observed_at: "2026-10-13T11:00:00.000Z" } }));
+
+        expect(await run(["--compare", snapshotFile])).toBe(0);
+      });
+    });
+
+    describe("every change group carries all of its ids in the JSON", () => {
+      it("keeps the text to a few examples and puts every id in `ids`", async () => {
+        for (let n = 0; n < 30; n += 1) {
+          const { sql, params } = insertSql(plainStateBid(`ca_caleprocure:bulk-${String(n).padStart(2, "0")}`));
+          sqlite().prepare(sql).run(...params);
+        }
+        const snapshotFile = await takeSnapshot();
+        sqlite().prepare("UPDATE bids SET issuer_name = 'Renamed Agency' WHERE id LIKE 'ca_caleprocure:bulk-%'").run();
+
+        expect(await run(["--compare", snapshotFile])).toBe(0);
+        const text = out.join("\n");
+        expect(text).toContain("issuer_name changed: 30  (e.g. ca_caleprocure:bulk-00, ca_caleprocure:bulk-01, ca_caleprocure:bulk-02)");
+        expect(text).not.toContain("ca_caleprocure:bulk-29");
+        out.length = 0;
+
+        expect(await run(["--compare", snapshotFile, "--json"])).toBe(0);
+        const group = JSON.parse(out[0]).comparison.changed.groups.find((candidate: { label: string }) => candidate.label === "issuer_name changed");
+        expect(group.count).toBe(30);
+        expect(group.sampleIds).toHaveLength(10);
+        expect(group.ids).toHaveLength(30);
+        expect(group.ids[29]).toBe("ca_caleprocure:bulk-29");
+      });
     });
 
     describe("when the next baseline is written in the same run", () => {
