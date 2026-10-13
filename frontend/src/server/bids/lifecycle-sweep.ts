@@ -149,7 +149,7 @@ function pageSize(batchSize: number | undefined): number {
 
 /**
  * Closes every open bid whose deadline has passed at `options.now`. The import closes a bid at the moment it
- * sees one past its deadline (`mergeLifecycleFields`), but a bid its portal stops listing, or whose source is
+ * sees one past its deadline (`resolveLifecycle`, called by `mergePersistedBid`), but a bid its portal stops listing, or whose source is
  * not crawled for weeks, would stay open until then; this is the same rule applied to what is already stored.
  *
  * Open bids are read a page at a time in id order, without their payloads. A page's expired bids are then
