@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTestDatabase } from "@/server/db/test-utils";
 
@@ -19,26 +20,51 @@ const frontendDir = fileURLToPath(new URL("..", import.meta.url));
 const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 const ANNOTATION = "::warning title=Risk checklist INCOMPLETE::state-coverage, state-data-quality-gate";
 
+/** The directories the script runs in, each with the process-wide database it will open: `<directory>/data/apsi.sqlite`. */
 let workingDirectory: string;
+let allInactiveDirectory: string;
+let emptyDirectory: string;
+
+/** A directory that holds a copy of a migrated database, seeded or not, after `change` has had its way with the copy. */
+async function directoryWithDatabase(options: { seed: boolean }, change?: (database: Database.Database) => void) {
+  const directory = mkdtempSync(path.join(tmpdir(), "apsi-risk-check-"));
+  mkdirSync(path.join(directory, "data"));
+  const source = await createTestDatabase({ seed: options.seed });
+  const target = path.join(directory, "data", "apsi.sqlite");
+  try {
+    // Checkpointing the write-ahead log into the file first means the copy holds everything.
+    source.db.$client.pragma("wal_checkpoint(TRUNCATE)");
+    copyFileSync(source.databasePath, target);
+  } finally {
+    await source.cleanup();
+  }
+  if (change) {
+    const copy = new Database(target);
+    try {
+      change(copy);
+    } finally {
+      copy.close();
+    }
+  }
+  return directory;
+}
 
 beforeAll(async () => {
-  workingDirectory = mkdtempSync(path.join(tmpdir(), "apsi-risk-check-"));
-  mkdirSync(path.join(workingDirectory, "data"));
-  const seeded = await createTestDatabase({ seed: true });
-  try {
-    // Closing the last connection checkpoints the write-ahead log into the file, so the copy holds everything.
-    seeded.db.$client.pragma("wal_checkpoint(TRUNCATE)");
-    copyFileSync(seeded.databasePath, path.join(workingDirectory, "data", "apsi.sqlite"));
-  } finally {
-    await seeded.cleanup();
-  }
+  workingDirectory = await directoryWithDatabase({ seed: true });
+  // The reviewer's scenario: the seed's bids are all there, and none is active any more.
+  allInactiveDirectory = await directoryWithDatabase({ seed: true }, (copy) => copy.exec("UPDATE bids SET is_active = 0"));
+  // A database that was migrated and never seeded, which is what a mis-pointed run opens.
+  emptyDirectory = await directoryWithDatabase({ seed: false });
 }, 60_000);
 
 afterAll(() => {
-  rmSync(workingDirectory, { recursive: true, force: true });
+  for (const directory of [workingDirectory, allInactiveDirectory, emptyDirectory]) rmSync(directory, { recursive: true, force: true });
 });
 
-function runRiskCheck(env: Record<string, string | undefined>): Promise<{ status: number | null; stdout: string; stderr: string }> {
+function runRiskCheck(
+  env: Record<string, string | undefined>,
+  cwd: string = workingDirectory,
+): Promise<{ status: number | null; stdout: string; stderr: string }> {
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
     DATABASE_URL: "",
@@ -51,7 +77,7 @@ function runRiskCheck(env: Record<string, string | undefined>): Promise<{ status
 
   return new Promise((resolve) => {
     const child = spawn(process.execPath, ["--import", tsxLoader, path.join(frontendDir, "scripts", "risk-check.ts")], {
-      cwd: workingDirectory,
+      cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: childEnv,
     });
@@ -106,4 +132,28 @@ describe("scripts/risk-check.ts on seed data", () => {
       expect(run.stdout + run.stderr).not.toContain("::warning");
     }
   }, 120_000);
+
+  // The opt-out sets aside what seed data cannot speak about, and nothing else: the seed always holds state bids, so a database
+  // without an active one is a failure, even though the opt-out is on and CI is set.
+  it("exits 1 when the seed's bids are all inactive, which is data present and failing, and prints no annotation", async () => {
+    const run = await runRiskCheck({ NODE_ENV: "test", CI: "true", RISK_CHECK_SEED_DATA: "true" }, allInactiveDirectory);
+
+    expect(run.status).toBe(1);
+    expect(run.stdout).toContain("Risk checklist FAIL");
+    expect(run.stdout).toContain(
+      "FAIL state-coverage: 0/50 required states have at least one active bid; with bid rows but no active state-level bid: 5; with no bid rows at all: 45",
+    );
+    expect(run.stdout).not.toContain("Risk checklist INCOMPLETE");
+    expect(run.stdout + run.stderr).not.toContain("::warning");
+  }, 60_000);
+
+  it("exits 1 on a database with no bids at all, which is not an unknown either", async () => {
+    const run = await runRiskCheck({ NODE_ENV: "test", CI: "true", RISK_CHECK_SEED_DATA: "true" }, emptyDirectory);
+
+    expect(run.status).toBe(1);
+    expect(run.stdout).toContain("Risk checklist FAIL");
+    expect(run.stdout).toContain("FAIL state-coverage: 0/50 required states have at least one active bid");
+    expect(run.stdout).toContain("no required state has an active state-level bid");
+    expect(run.stdout + run.stderr).not.toContain("::warning");
+  }, 60_000);
 });
