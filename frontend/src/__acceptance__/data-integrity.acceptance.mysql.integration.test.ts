@@ -186,6 +186,30 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data-integri
     }
   });
 
+  /**
+   * No credential may leak into a script's output. When the URL carries a password it must never appear (CI's MySQL
+   * service has an empty root password, and every string contains "", so that check only runs when there is one);
+   * in every case any mysql:// URL printed must carry no secret: a credential part, if present, is the "***" mask.
+   */
+  function expectNoCredentialLeak(output: string) {
+    if (password) expect(output, "the password never appears").not.toContain(password);
+    for (const match of output.matchAll(/mysql:\/\/([^\s@/]*)@/g)) {
+      const credentials = match[1];
+      const colon = credentials.indexOf(":");
+      if (colon >= 0) expect(credentials.slice(colon + 1), `credential printed in ${match[0]}`).toBe("***");
+    }
+  }
+
+  /** The target line names the server (host) and the database, with the password masked when there is one. */
+  function expectTargetLine(line: string) {
+    const url = new URL(databaseUrl);
+    expect(line).toMatch(/mysql/i);
+    expect(line).toContain(url.hostname);
+    expect(line).toContain(databaseName);
+    if (password) expect(line).toContain(":***@");
+    expectNoCredentialLeak(line);
+  }
+
   beforeEach(async () => {
     await resetMysql();
     sqlite = await createTestDatabase({ seed: false });
@@ -247,7 +271,7 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data-integri
     const document = parseJson(result.stdout) as Row;
     expect(document.dryRun).toBe(true);
     expect(document.closed).toBe(expected.closes.length);
-    expect(result.stdout + result.stderr).not.toContain(password);
+    expectNoCredentialLeak(result.stdout + result.stderr);
     expect(await mysqlCount("SELECT count(*) AS n FROM bids WHERE lifecycle_status = 'closed'")).toBe(4);
   }, 180_000);
 
@@ -380,8 +404,8 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data-integri
     await seedDemoPurgeScenario(mysqlRun);
     const result = runScript(SCRIPTS.purge, ["--json"], { DATABASE_URL: databaseUrl });
     expect(result.code, result.stderr).toBe(0);
-    expect(result.stderr.trim().split("\n")[0]).toMatch(/mysql/i);
-    expect(result.stderr + result.stdout).not.toContain(password);
+    expectTargetLine(result.stderr.trim().split("\n")[0]);
+    expectNoCredentialLeak(result.stderr + result.stdout);
     expect(parseJson(result.stdout)).toBeDefined();
     expect(await mysqlCount("SELECT count(*) AS n FROM bids")).toBe(13);
   }, 180_000);
@@ -412,7 +436,8 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data-integri
 
       const mysqlRun1 = runScript(SCRIPTS.integrity, ["--json"], { DATABASE_URL: databaseUrl });
       expect(mysqlRun1.code, mysqlRun1.stderr).toBe(0);
-      expect(mysqlRun1.stderr + mysqlRun1.stdout).not.toContain(password);
+      expectTargetLine(mysqlRun1.stderr.trim().split("\n")[0]);
+      expectNoCredentialLeak(mysqlRun1.stderr + mysqlRun1.stdout);
       const mysqlReport = parseJson(mysqlRun1.stdout);
       expect(mysqlReport, "stdout must be exactly one JSON document").toBeDefined();
 
