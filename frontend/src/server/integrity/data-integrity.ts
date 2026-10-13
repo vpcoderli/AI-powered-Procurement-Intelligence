@@ -20,8 +20,9 @@
  * hide shows up in `hiddenReasons` as `registered_source_mismatch`.
  *
  * ONE CONSISTENT READ. Both dialects read inside a single read-only transaction (SQLite: a deferred transaction on
- * the handle; MySQL: `START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY` on one pooled connection), so the pages
- * of a scan, the source list and the report all describe one moment even while a crawler writes. Nothing here writes.
+ * the handle; MySQL: `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ` and then `START TRANSACTION WITH CONSISTENT SNAPSHOT,
+ * READ ONLY` on one pooled connection: the snapshot only holds under REPEATABLE READ), so the pages of a scan, the source
+ * list, the column list and the report all describe one moment even while a crawler writes. Nothing here writes.
  */
 import { createHash } from "node:crypto";
 import { detailAccessFromRawPayload } from "@/lib/bid-access";
@@ -101,7 +102,10 @@ export interface LevelReport {
   detailLockedAtSource: number;
   /** Open rows with no body that the portal does not lock: genuinely missing. */
   bodyMissing: number;
-  /** Open rows whose issuer is neither blank nor a placeholder ("Unknown ..."), as the gate judges it. */
+  /**
+   * Open rows whose issuer is neither blank nor a placeholder, by the publication gate's own rule (`invalid_issuer`: the
+   * trimmed name is empty or matches `/^Unknown(?:\s|$)/i`), so that a bid counted out here is also one search hides.
+   */
   withIssuer: number;
   deadlineParseable: number;
   withSourceUrl: number;
@@ -512,12 +516,16 @@ function levelOfSource(source: SourceRow): IntegrityLevel {
 
 interface IntegrityReader {
   dataSources(): Promise<SourceRow[]>;
+  /** The columns of `bids`, from the schema (not from a row, so an empty table has them too). */
+  bidColumns(): Promise<string[]>;
   /** The next page of bids after `afterId` (the first page when null), in id order, whole rows plus the scan's own column. */
   bidPage(afterId: string | null, limit: number): Promise<BidRow[]>;
 }
 
 const SOURCES_SQL =
   "SELECT id, label, issuer_type, jurisdiction_level, state_code, fips_code, is_enabled, last_success_at, consecutive_failures FROM data_sources";
+const SQLITE_COLUMNS_SQL = "PRAGMA table_info(bids)";
+const MYSQL_COLUMNS_SQL = "SELECT column_name AS name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'bids'";
 // The expression of the repository's WHERE clause, evaluated by the database it runs on.
 const BIDS_SQL = `SELECT *, (display_status <> 'suppressed') AS ${SHOWN_COLUMN} FROM bids`;
 const FIRST_PAGE_SQL = `${BIDS_SQL} ORDER BY id LIMIT ?`;
@@ -526,6 +534,7 @@ const NEXT_PAGE_SQL = `${BIDS_SQL} WHERE id > ? ORDER BY id LIMIT ?`;
 async function withSqliteReader<T>(sqlite: DemoPurgeSqlite["$client"], run: (reader: IntegrityReader) => Promise<T>): Promise<T> {
   const reader: IntegrityReader = {
     dataSources: async () => sqlite.prepare(SOURCES_SQL).all() as SourceRow[],
+    bidColumns: async () => (sqlite.prepare(SQLITE_COLUMNS_SQL).all() as Array<{ name: string }>).map((column) => column.name),
     bidPage: async (afterId, limit) =>
       (afterId === null ? sqlite.prepare(FIRST_PAGE_SQL).all(limit) : sqlite.prepare(NEXT_PAGE_SQL).all(afterId, limit)) as BidRow[],
   };
@@ -546,10 +555,15 @@ async function withSqliteReader<T>(sqlite: DemoPurgeSqlite["$client"], run: (rea
 async function withMysqlReader<T>(pool: DemoPurgeMysql, run: (reader: IntegrityReader) => Promise<T>): Promise<T> {
   const connection = await pool.getConnection();
   try {
+    // WITH CONSISTENT SNAPSHOT only holds under REPEATABLE READ (under READ COMMITTED every statement reads the newest
+    // committed data), and a connection's own level is whatever the server or the URL gave it. SET TRANSACTION, without
+    // SESSION, covers the next transaction only, so the pooled connection is handed back as it was.
+    await connection.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
     // READ ONLY makes the server itself refuse a write on this connection; CONSISTENT SNAPSHOT pins every page to one moment.
     await connection.query("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY");
     const result = await run({
       dataSources: () => mysqlSelectMany<SourceRow>(connection, SOURCES_SQL),
+      bidColumns: async () => (await mysqlSelectMany<{ name: string }>(connection, MYSQL_COLUMNS_SQL)).map((column) => column.name),
       bidPage: (afterId, limit) =>
         mysqlSelectMany<BidRow>(connection, afterId === null ? FIRST_PAGE_SQL : NEXT_PAGE_SQL, afterId === null ? [limit] : [afterId, limit]),
     });
@@ -591,10 +605,6 @@ interface ScanResult {
   comparable: ComparableHashes | null;
 }
 
-function bidColumnsOf(row: BidRow): string[] {
-  return Object.keys(row).filter((column) => !column.startsWith(SCAN_COLUMN_PREFIX)).sort();
-}
-
 async function scan(target: IntegrityTarget, options: ScanOptions): Promise<ScanResult> {
   const nowMs = options.now.getTime();
   return withReader(target, async (reader) => {
@@ -603,14 +613,13 @@ async function scan(target: IntegrityTarget, options: ScanOptions): Promise<Scan
     const builder = new ReportBuilder();
     for (const source of sources) builder.addSource(source, nowMs);
 
-    let columns: string[] | null = null;
+    const bidColumns = (await reader.bidColumns()).sort();
     const rows = dictionary<SnapshotRow>();
     const comparableById = options.hashColumns ? new Map<string, string>() : null;
     let afterId: string | null = null;
     for (;;) {
       const page = await reader.bidPage(afterId, PAGE_SIZE);
       for (const row of page) {
-        columns ??= bidColumnsOf(row);
         const evaluation = evaluateBid(row, context);
         builder.addBid(evaluation);
         if (options.rows) {
@@ -626,7 +635,6 @@ async function scan(target: IntegrityTarget, options: ScanOptions): Promise<Scan
       afterId = String(page[page.length - 1].id);
     }
 
-    const bidColumns = columns ?? [];
     const wanted = options.hashColumns ? [...options.hashColumns].sort() : null;
     const sameColumns = wanted !== null && bidColumns.length === wanted.length && bidColumns.every((column, index) => column === wanted[index]);
     return {

@@ -269,6 +269,33 @@ function bidStatement(bid: BidSeed): SeedStatement {
   };
 }
 
+/**
+ * A valid, visible, open state bid with the id it is given (`ca_caleprocure:<anything>`), for the tests that need many
+ * rows or rows with particular ids (paging, non-ASCII ids). Its source_bid_id is the part of the id after the first colon.
+ */
+export function plainStateBid(id: string, overrides: Record<string, SeedValue> = {}): SeedStatement {
+  return {
+    table: "bids",
+    values: {
+      id, source: CA, source_bid_id: id.slice(id.indexOf(":") + 1), dedupe_key: `dedupe:${id}`, title: `Plain bid ${id}`,
+      description: "Plain body text for a bid used by a paging or encoding check.", issuer_name: "California Department of Plain Bids",
+      issuer_type: "state", state_code: "CA", source_url: `https://example.test/plain/${encodeURIComponent(id)}`,
+      deadline_date: "2026-12-01", is_active: 1, lifecycle_status: "open", display_status: "published",
+      first_seen_at: SEED_AT, last_seen_at: "2026-10-01T00:00:00.000Z", created_at: SEED_AT, updated_at: SEED_AT,
+      ...overrides,
+    },
+  };
+}
+
+/**
+ * Ids that are not plain ASCII: an accent, an en dash, a CJK name, an umlaut. A unique number ends each, so that no two
+ * of them are equal under an accent- and case-insensitive collation (`cafe-1` and `café-1` would be one key on MySQL).
+ */
+export function nonAsciiBidIds(count: number): string[] {
+  const names = ["cafe", "café–A", "北京–B", "Zürich–C"];
+  return Array.from({ length: count }, (_, n) => `ca_caleprocure:${names[n % names.length]}-${n}`);
+}
+
 /** The whole seed, sources first. */
 export function buildIntegritySeed(): SeedStatement[] {
   return [...SOURCES.map(sourceStatement), ...BIDS.map(bidStatement)];

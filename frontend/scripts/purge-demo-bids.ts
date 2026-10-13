@@ -1,14 +1,13 @@
-import { existsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import Database from "better-sqlite3";
+import { purgeDemoBids, type DemoPurgeResult } from "../src/server/integrity/demo-purge";
 import {
-  closeResolvedMysqlPool,
-  isMysqlDatabaseUrlConfigured,
-  requireMysqlDatabaseUrl,
-  resolveMysqlPool,
-} from "../src/server/db/mysql";
-import { purgeDemoBids, type DemoPurgeResult, type DemoPurgeTarget } from "../src/server/integrity/demo-purge";
+  IntegrityUsageError,
+  openResolvedTarget,
+  resolveIntegrityTarget,
+  type OpenedIntegrityTarget,
+} from "../src/server/integrity/open-target";
 
 export interface PurgeDemoBidsCliOptions {
   apply: boolean;
@@ -18,7 +17,7 @@ export interface PurgeDemoBidsCliOptions {
 }
 
 /** A bad command line, or a target that cannot be used (no such SQLite file): reported, then exit code 2. */
-export class PurgeDemoBidsUsageError extends Error {}
+export class PurgeDemoBidsUsageError extends IntegrityUsageError {}
 
 export interface PurgeDemoBidsIo {
   stdout: (text: string) => void;
@@ -59,8 +58,9 @@ export function formatPurgeDemoBidsHelp() {
     "columns (artifact vault, response-package exports, archived attachments) are not removed.",
     "",
     "Target: DATABASE_URL / MYSQL_DATABASE_URL when it is a mysql:// URL, otherwise the SQLite file at DATABASE_PATH",
-    "(default data/apsi.sqlite, which must exist: nothing is created). The process environment is used as it is;",
-    ".env.local is not read. The target is printed to stderr as soon as it is opened.",
+    "(default data/apsi.sqlite; a relative path is read from the frontend/ directory, whatever directory you run this from; the file",
+    "must exist: nothing is created). The process environment is used as it is; .env.local is not read. The target is printed to",
+    "stderr as soon as it is opened.",
     "",
     "A maintenance window is required on MySQL: stop the web app AND every worker first. MySQL has no foreign keys, so the",
     "web app can insert a child row for a demo bid (a save, an intent, a workspace edit) while the purge runs, and that row",
@@ -183,59 +183,6 @@ export function formatPurgeDemoBidsReport(result: DemoPurgeResult, target: strin
   return lines.join("\n");
 }
 
-type ResolvedTarget = { kind: "mysql"; databaseUrl: string } | { kind: "sqlite"; databasePath: string };
-
-/** Which database the environment points at, without touching it. */
-function resolveTarget(env: NodeJS.ProcessEnv): ResolvedTarget {
-  if (isMysqlDatabaseUrlConfigured(env)) return { kind: "mysql", databaseUrl: requireMysqlDatabaseUrl(env) };
-  return { kind: "sqlite", databasePath: path.resolve(process.cwd(), env.DATABASE_PATH?.trim() || path.join("data", "apsi.sqlite")) };
-}
-
-interface OpenedTarget {
-  target: DemoPurgeTarget;
-  description: string;
-  close: () => Promise<void>;
-}
-
-async function openTarget(resolved: ResolvedTarget): Promise<OpenedTarget> {
-  if (resolved.kind === "mysql") {
-    // mysql-smoke.ts pulls in most of the server; only the MySQL runtime needs its URL redaction.
-    const { redactMysqlDatabaseUrl } = await import("../src/server/db/mysql-smoke");
-    return {
-      target: { mysql: resolveMysqlPool(resolved.databaseUrl) },
-      description: `mysql ${redactMysqlDatabaseUrl(resolved.databaseUrl)}`,
-      // An open mysql2 pool keeps the process alive, so it is released on every path (see src/server/db/mysql.ts).
-      close: () => closeResolvedMysqlPool(),
-    };
-  }
-
-  // Opening a SQLite path creates an empty database at a mistyped one, and so does importing the app's db/client (its
-  // `db` is created at import time, in <cwd>/data). This script does neither: it checks that the file is there, then
-  // opens it with fileMustExist, and the purge reads and writes through that connection alone.
-  if (!existsSync(resolved.databasePath)) {
-    throw new PurgeDemoBidsUsageError(
-      `SQLite database not found: ${resolved.databasePath}. Nothing was created. ` +
-        "Set DATABASE_PATH to the database file (the default is data/apsi.sqlite in the directory you run this from).",
-    );
-  }
-  const sqlite = new Database(resolved.databasePath, { fileMustExist: true });
-  try {
-    // The settings the app gives its own connections (db/client.ts), except journal_mode: the purge does not change it.
-    sqlite.pragma("busy_timeout = 5000");
-    sqlite.pragma("foreign_keys = ON");
-  } catch (error) {
-    sqlite.close();
-    throw error;
-  }
-  return {
-    target: { database: { $client: sqlite } },
-    description: `sqlite ${resolved.databasePath}`,
-    close: async () => {
-      sqlite.close();
-    },
-  };
-}
-
 /**
  * The whole command, returning its exit code (0 done, 1 error, 2 usage) instead of exiting, so it can be run
  * and tested in-process. On the MySQL runtime it ENDS the process-wide shared pool when it is done, on every path.
@@ -257,7 +204,7 @@ export async function runPurgeDemoBids(
     return 0;
   }
 
-  const resolved = resolveTarget(env);
+  const resolved = resolveIntegrityTarget(env);
   if (options.apply) {
     const problem = backupFileProblem(options.backupFile, resolved.kind === "sqlite" ? resolved.databasePath : null);
     if (problem) {
@@ -266,9 +213,10 @@ export async function runPurgeDemoBids(
     }
   }
 
-  let opened: OpenedTarget | undefined;
+  let opened: OpenedIntegrityTarget | undefined;
   try {
-    opened = await openTarget(resolved);
+    // The purge writes, so its SQLite handle is a writable one.
+    opened = await openResolvedTarget(resolved, { readonly: false });
     // Before anything is planned or written: a run that fails or rolls back still says which database it hit. It goes
     // to stderr, so that --json leaves stdout as one JSON document.
     io.stderr(`Target: ${opened.description}`);
@@ -282,7 +230,7 @@ export async function runPurgeDemoBids(
     return 0;
   } catch (error) {
     io.stderr(error instanceof Error ? error.message : String(error));
-    return error instanceof PurgeDemoBidsUsageError ? 2 : 1;
+    return error instanceof IntegrityUsageError ? 2 : 1;
   } finally {
     await opened?.close();
   }

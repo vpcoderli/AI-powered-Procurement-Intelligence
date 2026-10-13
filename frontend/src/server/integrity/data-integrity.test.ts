@@ -23,6 +23,8 @@ import {
   SEEDED_BID_IDS,
   buildIntegritySeed,
   insertSql,
+  nonAsciiBidIds,
+  plainStateBid,
 } from "./data-integrity.fixtures";
 
 const REAL_ISSUER_TYPES = ["state", "county", "city", "township", "special_district", "federal"] as const;
@@ -391,6 +393,17 @@ describe("data:integrity on SQLite", () => {
       expect(columns.some((column) => column.startsWith("__integrity"))).toBe(false);
     });
 
+    it("takes the column list from the schema: an empty bids table has the same columns as a full one", async () => {
+      const full = await snapshot();
+      sqlite().exec("DELETE FROM bids");
+
+      const empty = await snapshot();
+
+      expect(Object.keys(empty.rows)).toEqual([]);
+      expect(empty.columns).toEqual(full.columns);
+      expect(empty.columns).toEqual((sqlite().prepare("PRAGMA table_info(bids)").all() as Array<{ name: string }>).map((column) => column.name).sort());
+    });
+
     it("records why a closed row was closed, and only then", async () => {
       const { rows } = await snapshot();
 
@@ -456,6 +469,30 @@ describe("data:integrity on SQLite", () => {
       expect(() => parseIntegritySnapshot(JSON.stringify({ ...valid, report: null }))).toThrow(IntegritySnapshotError);
       expect(() => parseIntegritySnapshot(JSON.stringify({ ...valid, columns: "id" }))).toThrow(IntegritySnapshotError);
       expect(() => parseIntegritySnapshot(JSON.stringify({ ...valid, rows: { x: { h: 1 } } }))).toThrow(IntegritySnapshotError);
+    });
+
+    it("keeps ids with accents, dashes, CJK and astral characters whole through the report, the file and the compare", async () => {
+      const ids = [...nonAsciiBidIds(8), "ca_caleprocure:𠜎-9", "ca_caleprocure:Ünïcödé – 10"];
+      for (const id of ids) {
+        const { sql, params } = insertSql(plainStateBid(id));
+        run(sql, ...params);
+      }
+
+      const before = await snapshot();
+      const viaFile = parseIntegritySnapshot(serializeIntegritySnapshot(before));
+
+      expect(Object.keys(viaFile.rows).sort()).toEqual([...SEEDED_BID_IDS, ...ids].sort());
+      for (const id of ids) expect(viaFile.rows[id], id).toEqual(before.rows[id]);
+      expect(before.report.levels.state.total).toBe(EXPECTED_LEVELS.state.total + ids.length);
+      expect(before.report.levels.state.openVisible).toBe(EXPECTED_LEVELS.state.openVisible + ids.length);
+
+      run("DELETE FROM bids WHERE id IN (?, ?)", ids[1], ids[8]);
+      const removed = (await compareWithSnapshot(target(), viaFile, { now: INTEGRITY_NOW, allowRemoved: [/café–A/] })).comparison;
+
+      expect(removed.removed.ids).toEqual([ids[1], ids[8]].sort());
+      expect(removed.removed.allowed).toEqual([ids[1]]);
+      expect(removed.removed.unexpected).toEqual([ids[8]]);
+      expect(removed.ok).toBe(false);
     });
 
     it("treats an id like a prototype property as an ordinary id", async () => {
@@ -622,6 +659,29 @@ describe("data:integrity on SQLite", () => {
       expect(comparison.added.byLevel.state).toBe(1);
     });
 
+    it("does not read an empty table as every column added or removed", async () => {
+      const full = await snapshot();
+      sqlite().exec("DELETE FROM bids");
+      const empty = await snapshot();
+      // The data is empty now: the full snapshot is the earlier one.
+      const toEmpty = await compare(full);
+      for (const statement of buildIntegritySeed().filter((candidate) => candidate.table === "bids")) {
+        const { sql, params } = insertSql(statement);
+        run(sql, ...params);
+      }
+      // The data is full again: the empty snapshot is the earlier one.
+      const fromEmpty = await compare(empty);
+
+      for (const comparison of [fromEmpty, toEmpty]) {
+        expect(comparison.columns).toEqual({ added: [], removed: [] });
+        expect(comparison.hashesComparable).toBe(true);
+        expect(comparison.warnings.map((warning) => warning.code)).not.toContain("columns_added");
+        expect(comparison.warnings.map((warning) => warning.code)).not.toContain("columns_removed");
+      }
+      expect(fromEmpty.added.count).toBe(SEEDED_BID_IDS.length);
+      expect(toEmpty.removed.count).toBe(SEEDED_BID_IDS.length);
+    });
+
     it("keeps comparing row by row when a column was added since the snapshot, and ignores the new column", async () => {
       const before = await snapshot();
       sqlite().exec("ALTER TABLE bids ADD COLUMN integrity_note TEXT");
@@ -702,13 +762,17 @@ describe("data:integrity through the MySQL loader (stand-in pool)", () => {
   function standIn(): DemoPurgeMysql {
     let selects = 0;
     const run = async (sql: string, values: unknown[] = []) => {
-      if (/^START TRANSACTION/i.test(sql)) {
+      if (/^(START|SET) TRANSACTION/i.test(sql)) {
         events.push(sql);
         return [[]];
       }
       events.push(sql.replace(/\s+/g, " ").trim());
       selects += 1;
       if (failOnSelect !== null && selects === failOnSelect) throw new Error("connection lost");
+      // MySQL's schema view, answered from SQLite's.
+      if (/information_schema\.columns/i.test(sql)) {
+        return [(testDb.db.$client.prepare("PRAGMA table_info(bids)").all() as Array<{ name: string }>).map((column) => ({ name: column.name }))];
+      }
       return [testDb.db.$client.prepare(sql).all(...values)];
     };
     const connection = {
@@ -762,14 +826,26 @@ describe("data:integrity through the MySQL loader (stand-in pool)", () => {
   it("reads inside one read-only consistent-snapshot transaction on a single connection, and only reads", async () => {
     await buildIntegritySnapshot({ mysql: standIn() }, { now: INTEGRITY_NOW });
 
-    expect(events[0]).toBe("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY");
+    // WITH CONSISTENT SNAPSHOT holds only under REPEATABLE READ, whatever the server or the connection defaults to.
+    expect(events[0]).toBe("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+    expect(events[1]).toBe("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY");
     expect(events.slice(-2)).toEqual(["COMMIT", "RELEASE"]);
-    const statements = events.slice(1, -2);
-    expect(statements.length).toBeGreaterThanOrEqual(2);
+    const statements = events.slice(2, -2);
+    expect(statements.length).toBeGreaterThanOrEqual(3);
     for (const statement of statements) expect(statement, statement).toMatch(/^SELECT /);
     for (const statement of statements) expect(statement, statement).not.toMatch(/\b(INSERT|UPDATE|DELETE|REPLACE|ALTER|DROP|CREATE|TRUNCATE)\b/i);
     expect(poolQueries).toBe(0);
     expect(events.filter((event) => event === "RELEASE")).toHaveLength(1);
+  });
+
+  it("reads the column list from the schema and not from the rows", async () => {
+    testDb.db.$client.exec("DELETE FROM bids");
+
+    const viaMysql = await buildIntegritySnapshot({ mysql: standIn() }, { now: INTEGRITY_NOW });
+
+    expect(Object.keys(viaMysql.rows)).toEqual([]);
+    expect(viaMysql.columns).toEqual((testDb.db.$client.prepare("PRAGMA table_info(bids)").all() as Array<{ name: string }>).map((column) => column.name).sort());
+    expect(events.some((event) => /FROM information_schema\.columns WHERE table_schema = DATABASE\(\) AND table_name = 'bids'/.test(event))).toBe(true);
   });
 
   it("pages through the bids by id instead of reading them at once", async () => {
@@ -790,7 +866,8 @@ describe("data:integrity through the MySQL loader (stand-in pool)", () => {
   });
 
   it("rolls back and releases the connection when a read fails, and reports the failure", async () => {
-    failOnSelect = 2;
+    // The sources and the columns are read first; the first page of bids is the third read.
+    failOnSelect = 3;
 
     await expect(buildIntegrityReport({ mysql: standIn() }, { now: INTEGRITY_NOW })).rejects.toThrow("connection lost");
 

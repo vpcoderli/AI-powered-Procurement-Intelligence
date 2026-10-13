@@ -52,6 +52,7 @@ describe("purge-demo-bids arguments", () => {
       "notification_outbox.matched_bid_ids", "search_alert_digest_runs.matched_bid_ids_json", "event_log.target_id",
       "ai_call_logs.metadata_json", "crawler_logs.metadata", "storage_path", "npm run demo:prepare",
       "npm run db:seed", "npm run db:mysql:import-sqlite", "winbids", "knowledge_items are kept",
+      "a relative path is read from the frontend/ directory",
     ]) {
       expect(help, text).toContain(text);
     }
@@ -349,6 +350,13 @@ describe("purge-demo-bids", () => {
     expect(readdirSync(elsewhere)).toEqual([]);
   });
 
+  it("exits 2 when DATABASE_PATH is a directory, and writes nothing", async () => {
+    expect(await runPurgeDemoBids([], testEnv(directory), io())).toBe(2);
+
+    expect(err.join("\n")).toContain(`DATABASE_PATH is a directory, not a SQLite file: ${directory}`);
+    expect(out).toEqual([]);
+  });
+
   it("exits 1 and changes nothing when the integrity check refuses the purge", async () => {
     const sqlite = testDb.db.$client;
     sqlite.exec("CREATE TABLE unlisted_child (id TEXT PRIMARY KEY, bid_id TEXT REFERENCES bids(id) DEFERRABLE INITIALLY DEFERRED)");
@@ -369,6 +377,14 @@ describe("purge-demo-bids", () => {
 
 const frontendDir = fileURLToPath(new URL("..", import.meta.url));
 const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
+
+/** A directory below `root` that is deeper than the frontend directory is. */
+function deepWorkingDirectory(root: string): string {
+  const depth = frontendDir.split(path.sep).filter(Boolean).length + 2;
+  const deep = path.join(root, ...Array.from({ length: depth }, () => "d"));
+  mkdirSync(deep, { recursive: true });
+  return deep;
+}
 
 /**
  * What a process printed, one string per stream. The two pipes are read independently, so no order between them is
@@ -424,14 +440,50 @@ describe("purge-demo-bids as a process of its own", () => {
   });
 
   it("exits 2 and leaves a directory without a database exactly as it was", async () => {
-    const run = await runScriptIn(workingDirectory, []);
+    // Named explicitly: with no DATABASE_PATH the target is frontend/data/apsi.sqlite, which a developer's checkout may have.
+    const elsewhere = mkdtempSync(path.join(tmpdir(), "apsi-purge-missing-"));
+    const missing = path.join(elsewhere, "nope.sqlite");
+    try {
+      const run = await runScriptIn(workingDirectory, [], { DATABASE_PATH: missing });
 
-    // Importing the app's db/client would have created data/apsi.sqlite here by now.
-    expect(readdirSync(workingDirectory)).toEqual([]);
-    expect(run.status).toBe(2);
-    expect(run.stderr).toContain("SQLite database not found");
-    expect(run.stderr).not.toContain("no such table");
-    expect(run.stdout).toBe("");
+      // Importing the app's db/client would have created data/apsi.sqlite here by now.
+      expect(readdirSync(workingDirectory)).toEqual([]);
+      expect(readdirSync(elsewhere)).toEqual([]);
+      expect(run.status).toBe(2);
+      expect(run.stderr).toContain(`SQLite database not found: ${missing}`);
+      expect(run.stderr).not.toContain("no such table");
+      expect(run.stdout).toBe("");
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  }, 40_000);
+
+  it("reads a relative DATABASE_PATH from the frontend directory, not from the directory it was run in", async () => {
+    const testDb = await createTestDatabase();
+    try {
+      for (const row of buildDemoPurgeSeed()) {
+        const { sql, params } = insertStatement(row);
+        testDb.db.$client.prepare(sql).run(...params);
+      }
+      const relative = path.relative(frontendDir, testDb.databasePath);
+      // Run from a directory deeper than the frontend directory: the ".." segments of the relative path then cannot climb
+      // out of it onto the right file by luck (they stop at the root), as they could from a shallow one.
+      const deep = deepWorkingDirectory(workingDirectory);
+      expect(path.resolve(deep, relative)).not.toBe(testDb.databasePath);
+      // A decoy where the working directory's own data/apsi.sqlite would be, to be left alone.
+      mkdirSync(path.join(deep, "data"));
+      writeFileSync(path.join(deep, "data", "apsi.sqlite"), "");
+
+      const run = await runScriptIn(deep, ["--json"], { DATABASE_PATH: relative });
+
+      expect(run.status).toBe(0);
+      expect(JSON.parse(run.stdout).target).toBe(`sqlite ${testDb.databasePath}`);
+      expect(run.stderr).toContain(`Target: sqlite ${testDb.databasePath}`);
+      expect(readdirSync(path.join(deep, "data"))).toEqual(["apsi.sqlite"]);
+      expect(readFileSync(path.join(deep, "data", "apsi.sqlite"), "utf8")).toBe("");
+    } finally {
+      await testDb.cleanup();
+    }
   }, 40_000);
 
   it("leaves the working directory alone even when the database it was given exists", async () => {

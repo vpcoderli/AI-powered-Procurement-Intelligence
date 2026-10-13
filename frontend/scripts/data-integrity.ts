@@ -1,13 +1,6 @@
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import Database from "better-sqlite3";
-import {
-  closeResolvedMysqlPool,
-  isMysqlDatabaseUrlConfigured,
-  requireMysqlDatabaseUrl,
-  resolveMysqlPool,
-} from "../src/server/db/mysql";
 import {
   INTEGRITY_LEVELS,
   IntegritySnapshotError,
@@ -18,10 +11,16 @@ import {
   serializeIntegritySnapshot,
   type IntegrityReport,
   type IntegritySnapshot,
-  type IntegrityTarget,
   type LevelReport,
 } from "../src/server/integrity/data-integrity";
 import { compareWithSnapshot, type ComparisonFinding, type IntegrityComparison } from "../src/server/integrity/data-integrity-compare";
+import {
+  IntegrityUsageError,
+  openResolvedTarget,
+  resolveIntegrityTarget,
+  type OpenedIntegrityTarget,
+  type ResolvedTarget,
+} from "../src/server/integrity/open-target";
 
 export interface DataIntegrityCliOptions {
   json: boolean;
@@ -32,7 +31,7 @@ export interface DataIntegrityCliOptions {
 }
 
 /** A bad command line, or a target or file that cannot be used: reported, then exit code 2. */
-export class DataIntegrityUsageError extends Error {}
+export class DataIntegrityUsageError extends IntegrityUsageError {}
 
 export interface DataIntegrityIo {
   stdout: (text: string) => void;
@@ -76,8 +75,10 @@ export function formatDataIntegrityHelp() {
     "  - the identityMismatch of a level went up.",
     "It warns, and still exits 0, when a bid went from open to closed without a closed_reason of deadline_passed or delisted",
     "(an award is a reason of its own), when the dialect changed, or when a schema change limits what can be compared. It also",
-    "reports the bids added, the bids changed grouped by what changed (e.g. issuer_type state→city: 11), the bids whose only",
-    "change is outside the tracked columns, and every metric that moved.",
+    "reports the bids added and the removed ones that --allow-removed explained (both by level, the first 20 ids of each, all of them",
+    "in the JSON), the bids changed grouped by what changed (e.g. issuer_type state→city: 11), the bids whose only change is outside",
+    "the tracked columns, and every metric that moved. The comparison is always printed, even when the baseline written beside it",
+    "(--compare with --snapshot) cannot be: that is then reported on stderr, and the exit code stays 1 if the compare failed.",
     "",
     "Levels: a bid's issuer_type when that is state, county, city, township, special_district or federal, otherwise other.",
     "Metrics, per level:",
@@ -91,15 +92,17 @@ export function formatDataIntegrityHelp() {
     "  activeFlagMismatch                   is_active disagrees with lifecycle_status = open",
     "  withBody, detailLockedAtSource,      among open bids: a body worth showing / the portal locks the description to its members",
     "  bodyMissing                          (raw_payload.detail_access) / no body and not locked: genuinely missing",
-    "  withIssuer, deadlineParseable,       among open bids: a real issuer name / a deadline the parser reads / a source URL",
-    "  withSourceUrl",
+    "  withIssuer, deadlineParseable,       among open bids: a real issuer name (not blank, and not \"Unknown\" alone or followed by a",
+    "  withSourceUrl                        space: the publication gate's rule, /^Unknown(?:\\s|$)/i, so a bid with a placeholder issuer is",
+    "                                       counted out here and hidden by search) / a deadline the parser reads / a source URL",
     "  expiredOpen                          open bids whose deadline has passed",
     "  newestLastSeenAt, sourceHealth       newest last_seen_at; enabled sources, never succeeded, succeeded within 2 and 7 days, failing",
     "Globally: malformedNyIds, the legacy ny_contract_reporter:% Company:% ids that the NY re-key left behind.",
     "",
     "Target: DATABASE_URL / MYSQL_DATABASE_URL when it is a mysql:// URL, otherwise the SQLite file at DATABASE_PATH (default",
-    "data/apsi.sqlite, which must exist: nothing is created). The process environment is used as it is; .env.local is not read.",
-    "The target is printed to stderr as soon as it is opened.",
+    "data/apsi.sqlite; a relative path is read from the frontend/ directory, whatever directory you run this from; the file must",
+    "exist: nothing is created). The process environment is used as it is; .env.local is not read. The target is printed to stderr",
+    "as soon as it is opened.",
     "",
     "This command never writes to the database. SQLite is opened read-only (which can leave an empty -wal and a -shm file beside",
     "a WAL-mode database; the database file itself is not touched). On MySQL every read runs in one",
@@ -238,13 +241,34 @@ function idLines(ids: readonly string[] | undefined, indent: string): string[] {
   return ids.length > LISTED_IDS ? [...shown, `${indent}... and ${ids.length - LISTED_IDS} more (--json lists them all)`] : shown;
 }
 
-function findingLines(findings: readonly ComparisonFinding[]): string[] {
-  return findings.flatMap((finding) => [`  - ${finding.code}: ${finding.message}`, ...idLines(finding.ids, "      ")]);
+/**
+ * The ids of a list, level by level in report order: `state (2)` and then its ids. At most LISTED_IDS ids are written in all
+ * (a level's heading always shows how many it has); the rest are counted.
+ */
+function idsByLevelLines(byLevel: Readonly<Record<string, readonly string[]>>, indent: string): string[] {
+  const lines: string[] = [];
+  let total = 0;
+  let listed = 0;
+  for (const level of INTEGRITY_LEVELS) total += byLevel[level]?.length ?? 0;
+  for (const level of INTEGRITY_LEVELS) {
+    const ids = byLevel[level] ?? [];
+    if (ids.length === 0) continue;
+    lines.push(`${indent}${level} (${ids.length})`);
+    for (const id of ids) {
+      if (listed >= LISTED_IDS) break;
+      lines.push(`${indent}  ${id}`);
+      listed += 1;
+    }
+  }
+  if (total > listed) lines.push(`${indent}... and ${total - listed} more (--json lists them all)`);
+  return lines;
 }
 
-function nonZeroByLevel(byLevel: Record<string, number>): string {
-  const parts = INTEGRITY_LEVELS.filter((level) => byLevel[level] > 0).map((level) => `${level} ${byLevel[level]}`);
-  return parts.join(", ");
+function findingLines(findings: readonly ComparisonFinding[]): string[] {
+  return findings.flatMap((finding) => [
+    `  - ${finding.code}: ${finding.message}`,
+    ...(finding.idsByLevel ? idsByLevelLines(finding.idsByLevel, "      ") : idLines(finding.ids, "      ")),
+  ]);
 }
 
 export function formatIntegrityComparison(comparison: IntegrityComparison, target: string): string {
@@ -267,10 +291,11 @@ export function formatIntegrityComparison(comparison: IntegrityComparison, targe
     `Bids: added ${comparison.added.count}, removed ${removed.count}${removed.allowed.length > 0 ? ` (${removed.allowed.length} allowed)` : ""}, ` +
       `changed ${comparison.changed.count}, changed only outside the tracked columns ${outside.count ?? "unknown"}`,
   );
-  if (comparison.added.count > 0) lines.push(`  added by level: ${nonZeroByLevel(comparison.added.byLevel)}`, ...idLines(comparison.added.ids, "    "));
-  if (removed.count > 0) {
-    lines.push(`  removed by level: ${nonZeroByLevel(removed.byLevel)}`);
-    if (removed.allowed.length > 0) lines.push(`  allowed by --allow-removed: ${removed.allowed.length}`);
+  // The removed bids no pattern allowed are under Failures. The ones a pattern allowed are listed here, as the others are, so
+  // that a pattern that is too broad can be seen.
+  if (comparison.added.count > 0) lines.push("", `Added bids (${comparison.added.count}):`, ...idsByLevelLines(comparison.added.idsByLevel, "  "));
+  if (removed.allowed.length > 0) {
+    lines.push("", `Removed bids allowed by --allow-removed (${removed.allowed.length}):`, ...idsByLevelLines(removed.allowedByLevel, "  "));
   }
   if (comparison.changed.groups.length > 0) {
     lines.push("", "Changed bids, by what changed:");
@@ -292,63 +317,8 @@ export function formatIntegrityComparison(comparison: IntegrityComparison, targe
 }
 
 /* -------------------------------------------------------------------------------------------------------------- */
-/* Target and files                                                                                               */
+/* Files                                                                                                          */
 /* -------------------------------------------------------------------------------------------------------------- */
-
-export type ResolvedTarget = { kind: "mysql"; databaseUrl: string } | { kind: "sqlite"; databasePath: string };
-
-/** Which database the environment points at, without touching it. */
-export function resolveTarget(env: NodeJS.ProcessEnv): ResolvedTarget {
-  if (isMysqlDatabaseUrlConfigured(env)) return { kind: "mysql", databaseUrl: requireMysqlDatabaseUrl(env) };
-  return { kind: "sqlite", databasePath: path.resolve(process.cwd(), env.DATABASE_PATH?.trim() || path.join("data", "apsi.sqlite")) };
-}
-
-export interface OpenedTarget {
-  target: IntegrityTarget;
-  description: string;
-  close: () => Promise<void>;
-}
-
-export async function openTarget(resolved: ResolvedTarget): Promise<OpenedTarget> {
-  if (resolved.kind === "mysql") {
-    // mysql-smoke.ts pulls in most of the server; only the MySQL runtime needs its URL redaction.
-    const { redactMysqlDatabaseUrl } = await import("../src/server/db/mysql-smoke");
-    return {
-      target: { mysql: resolveMysqlPool(resolved.databaseUrl) },
-      description: `mysql ${redactMysqlDatabaseUrl(resolved.databaseUrl)}`,
-      // An open mysql2 pool keeps the process alive, so it is released on every path (see src/server/db/mysql.ts).
-      close: () => closeResolvedMysqlPool(),
-    };
-  }
-
-  // Opening a SQLite path creates an empty database at a mistyped one, and so does importing the app's db/client (its
-  // `db` is created at import time, in <cwd>/data). This script does neither: it checks that the file is there, then
-  // opens it read-only (and so it can neither write nor create), and the integrity tools read through that connection alone.
-  if (!existsSync(resolved.databasePath)) {
-    throw new DataIntegrityUsageError(
-      `SQLite database not found: ${resolved.databasePath}. Nothing was created. ` +
-        "Set DATABASE_PATH to the database file (the default is data/apsi.sqlite in the directory you run this from).",
-    );
-  }
-  if (statSync(resolved.databasePath).isDirectory()) {
-    throw new DataIntegrityUsageError(`DATABASE_PATH is a directory, not a SQLite file: ${resolved.databasePath}.`);
-  }
-  const sqlite = new Database(resolved.databasePath, { readonly: true, fileMustExist: true });
-  try {
-    // The wait the app gives its own connections. foreign_keys is not set: it only matters to writes.
-    sqlite.pragma("busy_timeout = 5000");
-  } catch (error) {
-    sqlite.close();
-    throw error;
-  }
-  return {
-    target: { database: { $client: sqlite } },
-    description: `sqlite ${resolved.databasePath}`,
-    close: async () => {
-      sqlite.close();
-    },
-  };
-}
 
 function readBaseline(file: string): IntegritySnapshot {
   let text: string;
@@ -391,6 +361,11 @@ function snapshotFileProblem(file: string): string | null {
   }
   const directory = path.dirname(resolved);
   if (!existsSync(directory) || !statSync(directory).isDirectory()) return `The directory for --snapshot does not exist: ${directory}.`;
+  try {
+    accessSync(directory, constants.W_OK);
+  } catch {
+    return `The directory for --snapshot is not writable: ${directory}.`;
+  }
   return null;
 }
 
@@ -415,6 +390,25 @@ function writeSnapshot(file: string, snapshot: IntegritySnapshot): WrittenSnapsh
 
 function snapshotLine(written: WrittenSnapshot): string {
   return `Snapshot written: ${written.file} (${written.bids} bids, ${(written.bytes / 1024).toFixed(0)} KB)`;
+}
+
+type SnapshotAttempt = { written: WrittenSnapshot } | { error: unknown };
+
+/** A write that reports its failure instead of throwing, for a run that has a comparison in hand that must not be lost. */
+function tryWriteSnapshot(file: string, snapshot: IntegritySnapshot): SnapshotAttempt {
+  try {
+    return { written: writeSnapshot(file, snapshot) };
+  } catch (error) {
+    return { error };
+  }
+}
+
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+/** The JSON fields that say what became of the file: where it went, or why it did not. */
+function snapshotFields(attempt: SnapshotAttempt | null): { snapshot?: WrittenSnapshot; snapshotError?: string } {
+  if (attempt === null) return {};
+  return "written" in attempt ? { snapshot: attempt.written } : { snapshotError: messageOf(attempt.error) };
 }
 
 /**
@@ -452,10 +446,11 @@ export async function runDataIntegrity(
     return 2;
   }
 
-  const resolved = resolveTarget(env);
-  let opened: OpenedTarget | undefined;
+  const resolved = resolveIntegrityTarget(env);
+  let opened: OpenedIntegrityTarget | undefined;
   try {
-    opened = await openTarget(resolved);
+    // A report only reads: the SQLite connection itself refuses a write.
+    opened = await openResolvedTarget(resolved, { readonly: true });
     // Before anything is read: a run that fails still says which database it hit. It goes to stderr, so that --json
     // leaves stdout as one JSON document.
     io.stderr(`Target: ${opened.description}`);
@@ -464,13 +459,25 @@ export async function runDataIntegrity(
 
     if (baseline) {
       const { comparison, after } = await compareWithSnapshot(opened.target, baseline, { now, allowRemoved });
-      const written = options.snapshot !== null ? writeSnapshot(options.snapshot, after) : null;
-      io.stdout(
-        options.json
-          ? JSON.stringify({ target: opened.description, mode: "compare", comparison, report: after.report, ...(written ? { snapshot: written } : {}) }, null, 2)
-          : [formatIntegrityComparison(comparison, opened.description), ...(written ? ["", snapshotLine(written)] : [])].join("\n"),
-      );
-      return comparison.ok ? 0 : 1;
+      let attempt: SnapshotAttempt | null = null;
+      if (options.json) {
+        // One JSON document, so what became of the baseline is part of it; a failed write never costs the comparison.
+        attempt = options.snapshot !== null ? tryWriteSnapshot(options.snapshot, after) : null;
+        io.stdout(JSON.stringify({ target: opened.description, mode: "compare", comparison, report: after.report, ...snapshotFields(attempt) }, null, 2));
+      } else {
+        // The comparison first: whatever becomes of the file after it, it has been seen.
+        io.stdout(formatIntegrityComparison(comparison, opened.description));
+        attempt = options.snapshot !== null ? tryWriteSnapshot(options.snapshot, after) : null;
+        if (attempt && "written" in attempt) io.stdout(snapshotLine(attempt.written));
+      }
+      const compared = comparison.ok ? 0 : 1;
+      if (attempt && "error" in attempt) {
+        io.stderr(`Snapshot not written: ${messageOf(attempt.error)}`);
+        // A comparison that failed stays exit 1. A passing one is failed by the write: 2 when the file is the problem (it is
+        // there), 1 for anything else.
+        return compared !== 0 ? compared : attempt.error instanceof IntegrityUsageError ? 2 : 1;
+      }
+      return compared;
     }
 
     if (options.snapshot !== null) {
@@ -493,7 +500,7 @@ export async function runDataIntegrity(
     return 0;
   } catch (error) {
     io.stderr(failureMessage(error, resolved));
-    return error instanceof DataIntegrityUsageError ? 2 : 1;
+    return error instanceof IntegrityUsageError ? 2 : 1;
   } finally {
     await opened?.close();
   }

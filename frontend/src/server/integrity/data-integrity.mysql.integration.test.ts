@@ -21,6 +21,8 @@ import {
   SEEDED_BID_IDS,
   buildIntegritySeed,
   insertSql,
+  nonAsciiBidIds,
+  plainStateBid,
 } from "./data-integrity.fixtures";
 
 const REAL_ISSUER_TYPES = ["state", "county", "city", "township", "special_district", "federal"] as const;
@@ -148,6 +150,137 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data:integri
     expect(result.report.levels.state.openVisible).toBe(EXPECTED_LEVELS.state.openVisible + 620);
   });
 
+  /** The pool, with every statement it is asked to run (and the values it is given) written down. */
+  function recording(pool: Pool) {
+    const statements: Array<{ sql: string; values: unknown[] | undefined }> = [];
+    let poolQueries = 0;
+    const wrapped = {
+      query: (...args: Parameters<Pool["query"]>) => { poolQueries += 1; return pool.query(...args); },
+      getConnection: async () => {
+        const connection = await pool.getConnection();
+        return new Proxy(connection, {
+          get(inner, property) {
+            if (property === "query") {
+              return (sql: string, values?: unknown[]) => { statements.push({ sql: sql.replace(/\s+/g, " ").trim(), values }); return inner.query(sql, values); };
+            }
+            const value = Reflect.get(inner, property);
+            return typeof value === "function" ? value.bind(inner) : value;
+          },
+        });
+      },
+    };
+    return { pool: wrapped as unknown as DemoPurgeMysql, statements, poolQueries: () => poolQueries };
+  }
+
+  const nonAscii = /[^\u0000-\u007f]/;
+
+  describe("ids that are not ASCII (the collation sorts é with e, and keys are not case-sensitive)", () => {
+    it("pages through ids with accents, dashes and CJK, a page boundary on one of them, without losing or repeating a bid", async () => {
+      // 620 ids, three of every four non-ASCII, interleaved with ASCII ones as the collation orders them.
+      const ids = nonAsciiBidIds(620);
+      for (const id of ids) {
+        const { sql, params } = insertSql(plainStateBid(id));
+        await mysql.query(sql, params);
+      }
+      const spy = recording(mysql);
+
+      const result = await buildIntegritySnapshot({ mysql: spy.pool }, { now: INTEGRITY_NOW });
+
+      // The pages after the first start where the page before ended: at least one of those ids is not ASCII, so the keyset
+      // comparison `id > ?` really ran on one.
+      const boundaries = spy.statements.filter((statement) => statement.sql.includes("WHERE id > ?")).map((statement) => String(statement.values?.[0]));
+      expect(boundaries.length).toBeGreaterThanOrEqual(2);
+      expect(boundaries.some((boundary) => nonAscii.test(boundary))).toBe(true);
+      expect(Object.keys(result.rows)).toHaveLength(SEEDED_BID_IDS.length + 620);
+      expect(Object.keys(result.rows).sort()).toEqual([...SEEDED_BID_IDS, ...ids].sort());
+      expect(result.report.levels.state.total).toBe(EXPECTED_LEVELS.state.total + 620);
+      expect(result.report.levels.state.openVisible).toBe(EXPECTED_LEVELS.state.openVisible + 620);
+    }, 60_000);
+
+    it("pages through ids that are all non-ASCII, so that every boundary is one", async () => {
+      const ids = nonAsciiBidIds(620).filter((id) => nonAscii.test(id));
+      expect(ids.length).toBeGreaterThan(400);
+      for (const id of ids) {
+        const { sql, params } = insertSql(plainStateBid(id));
+        await mysql.query(sql, params);
+      }
+      // Only the non-ASCII ids are left, so that every page boundary falls on one.
+      await mysql.query(`DELETE FROM bids WHERE id IN (${SEEDED_BID_IDS.map(() => "?").join(", ")})`, [...SEEDED_BID_IDS]);
+      const spy = recording(mysql);
+
+      const result = await buildIntegritySnapshot({ mysql: spy.pool }, { now: INTEGRITY_NOW });
+
+      const boundaries = spy.statements.filter((statement) => statement.sql.includes("WHERE id > ?")).map((statement) => String(statement.values?.[0]));
+      expect(boundaries.length).toBeGreaterThanOrEqual(1);
+      for (const boundary of boundaries) expect(boundary, boundary).toMatch(nonAscii);
+      expect(Object.keys(result.rows).sort()).toEqual([...ids].sort());
+    }, 60_000);
+
+    it("finds exactly the non-ASCII bid that was removed, and lets a pattern with a non-ASCII character explain it", async () => {
+      const ids = nonAsciiBidIds(12);
+      for (const id of ids) {
+        const { sql, params } = insertSql(plainStateBid(id));
+        await mysql.query(sql, params);
+      }
+      const before = await snapshot();
+      await mysql.query("DELETE FROM bids WHERE id IN (?, ?)", [ids[1], ids[2]]);
+
+      const comparison = (await compareWithSnapshot(target(), before, { now: INTEGRITY_NOW, allowRemoved: [/café–A/] })).comparison;
+
+      expect(comparison.removed.ids).toEqual([ids[1], ids[2]].sort());
+      expect(comparison.removed.allowed).toEqual([ids[1]]);
+      expect(comparison.removed.unexpected).toEqual([ids[2]]);
+      expect(comparison.removed.unexpectedByLevel.state).toEqual([ids[2]]);
+      expect(comparison.ok).toBe(false);
+    });
+
+    it("takes the same snapshot as SQLite for the same non-ASCII ids, hashes included", async () => {
+      const ids = nonAsciiBidIds(8);
+      const testDb = await createTestDatabase();
+      try {
+        for (const statement of buildIntegritySeed()) {
+          const { sql, params } = insertSql(statement);
+          testDb.db.$client.prepare(sql).run(...params);
+        }
+        for (const id of ids) {
+          const { sql, params } = insertSql(plainStateBid(id));
+          testDb.db.$client.prepare(sql).run(...params);
+          await mysql.query(sql, params);
+        }
+
+        const viaSqlite = await buildIntegritySnapshot({ database: testDb.db }, { now: INTEGRITY_NOW });
+        const viaMysql = await snapshot();
+
+        for (const id of ids) expect(viaMysql.rows[id], id).toEqual(viaSqlite.rows[id]);
+      } finally {
+        await testDb.cleanup();
+      }
+    });
+  });
+
+  describe("the column list", () => {
+    it("comes from the schema: an empty bids table has the columns a full one has, and is not read as every column added or removed", async () => {
+      const full = await snapshot();
+      await mysql.query("DELETE FROM bids");
+      const empty = await snapshot();
+      const toEmpty = await compareWithSnapshot(target(), full, { now: INTEGRITY_NOW, allowRemoved: [] });
+      for (const statement of buildIntegritySeed().filter((candidate) => candidate.table === "bids")) {
+        const { sql, params } = insertSql(statement);
+        await mysql.query(sql, params);
+      }
+      const fromEmpty = await compareWithSnapshot(target(), empty, { now: INTEGRITY_NOW, allowRemoved: [] });
+
+      expect(Object.keys(empty.rows)).toEqual([]);
+      expect(empty.columns).toEqual(full.columns);
+      expect(empty.columns.length).toBeGreaterThan(30);
+      for (const { comparison } of [toEmpty, fromEmpty]) {
+        expect(comparison.columns).toEqual({ added: [], removed: [] });
+        expect(comparison.hashesComparable).toBe(true);
+        expect(comparison.warnings.map((warning) => warning.code)).toEqual([]);
+      }
+    });
+  });
+
   describe("the compare", () => {
     const compare = async (before: IntegritySnapshot, allowRemoved: RegExp[] = []) =>
       (await compareWithSnapshot(target(), before, { now: INTEGRITY_NOW, allowRemoved })).comparison;
@@ -212,36 +345,16 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data:integri
   });
 
   describe("it only reads, and reads one moment", () => {
-    /** The pool, with every statement it is asked to run written down. */
-    function recording(pool: Pool) {
-      const statements: string[] = [];
-      let poolQueries = 0;
-      const wrapped = {
-        query: (...args: Parameters<Pool["query"]>) => { poolQueries += 1; return pool.query(...args); },
-        getConnection: async () => {
-          const connection = await pool.getConnection();
-          return new Proxy(connection, {
-            get(inner, property) {
-              if (property === "query") {
-                return (sql: string, values?: unknown[]) => { statements.push(sql.replace(/\s+/g, " ").trim()); return inner.query(sql, values); };
-              }
-              const value = Reflect.get(inner, property);
-              return typeof value === "function" ? value.bind(inner) : value;
-            },
-          });
-        },
-      };
-      return { pool: wrapped as unknown as DemoPurgeMysql, statements, poolQueries: () => poolQueries };
-    }
-
-    it("sends only reads, inside one read-only consistent-snapshot transaction, and never uses the pool itself", async () => {
+    it("sends only reads, inside one REPEATABLE READ read-only consistent-snapshot transaction, and never uses the pool itself", async () => {
       const spy = recording(mysql);
 
       await buildIntegritySnapshot({ mysql: spy.pool }, { now: INTEGRITY_NOW });
 
-      expect(spy.statements[0]).toBe("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY");
-      for (const statement of spy.statements.slice(1)) expect(statement, statement).toMatch(/^SELECT /);
-      expect(spy.statements.length).toBeGreaterThanOrEqual(3);
+      const sent = spy.statements.map((statement) => statement.sql);
+      expect(sent[0]).toBe("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      expect(sent[1]).toBe("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY");
+      for (const statement of sent.slice(2)) expect(statement, statement).toMatch(/^SELECT /);
+      expect(sent.length).toBeGreaterThanOrEqual(5);
       expect(spy.poolQueries()).toBe(0);
     });
 
@@ -259,12 +372,14 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data:integri
       expect((rows as Array<{ n: number }>)[0].n).toBe(SEEDED_BID_IDS.length);
     });
 
-    it("describes one moment even while another connection deletes and inserts between its pages", async () => {
-      const insert =
-        "INSERT INTO bids (id, source, source_bid_id, dedupe_key, title, description, issuer_name, issuer_type, state_code, source_url, deadline_date, first_seen_at, last_seen_at, created_at, updated_at) " +
-        "VALUES (?, 'California Cal eProcure', ?, ?, ?, 'Bulk body text for a consistency check.', 'California Department of Bulk', 'state', 'CA', ?, '2026-12-01', 'a', '2026-10-01T00:00:00.000Z', 'a', 'a')";
+    const insertBulk =
+      "INSERT INTO bids (id, source, source_bid_id, dedupe_key, title, description, issuer_name, issuer_type, state_code, source_url, deadline_date, first_seen_at, last_seen_at, created_at, updated_at) " +
+      "VALUES (?, 'California Cal eProcure', ?, ?, ?, 'Bulk body text for a consistency check.', 'California Department of Bulk', 'state', 'CA', ?, '2026-12-01', 'a', '2026-10-01T00:00:00.000Z', 'a', 'a')";
+
+    /** 600 bulk bids, then a scan during which another session deletes 111 of them and adds one right after the first page. */
+    async function scanWhileAnotherSessionWrites() {
       for (let n = 0; n < 600; n += 1) {
-        await mysql.query(insert, [`ca_caleprocure:bulk-${n}`, `bulk-${n}`, `dedupe:bulk-${n}`, `Bulk bid ${n}`, `https://example.test/bulk/${n}`]);
+        await mysql.query(insertBulk, [`ca_caleprocure:bulk-${n}`, `bulk-${n}`, `dedupe:bulk-${n}`, `Bulk bid ${n}`, `https://example.test/bulk/${n}`]);
       }
       let pages = 0;
       const interleaving = {
@@ -278,10 +393,10 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data:integri
                   const result = await inner.query(sql, values);
                   if (/FROM bids/.test(sql)) {
                     pages += 1;
-                    // After the first page, from another session: remove 100 bids the scan has not reached, and add one.
+                    // After the first page, from another session: remove 111 bids the scan has not reached, and add one.
                     if (pages === 1) {
                       await writer.query("DELETE FROM bids WHERE id LIKE 'ca_caleprocure:bulk-5%'");
-                      await writer.query(insert, ["ca_caleprocure:zzz-late", "zzz-late", "dedupe:zzz-late", "Late bid", "https://example.test/late"]);
+                      await writer.query(insertBulk, ["ca_caleprocure:zzz-late", "zzz-late", "dedupe:zzz-late", "Late bid", "https://example.test/late"]);
                     }
                   }
                   return result;
@@ -295,7 +410,10 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data:integri
       } as unknown as DemoPurgeMysql;
 
       const result = await buildIntegritySnapshot({ mysql: interleaving }, { now: INTEGRITY_NOW });
+      return { result, pages };
+    }
 
+    async function expectTheMomentTheScanBegan({ result, pages }: Awaited<ReturnType<typeof scanWhileAnotherSessionWrites>>) {
       expect(pages).toBeGreaterThan(1);
       // What the scan saw is the data as it was when it began: the 600 bulk bids, none deleted, the late one absent.
       expect(Object.keys(result.rows)).toHaveLength(SEEDED_BID_IDS.length + 600);
@@ -305,6 +423,28 @@ describe.runIf(Boolean(process.env.CRAWLER_INTEGRATION_MYSQL_URL))("data:integri
       const after = await snapshot();
       expect(Object.keys(after.rows)).toContain("ca_caleprocure:zzz-late");
       expect(Object.keys(after.rows)).toHaveLength(SEEDED_BID_IDS.length + 600 - 111 + 1);
+    }
+
+    it("describes one moment even while another connection deletes and inserts between its pages", async () => {
+      await expectTheMomentTheScanBegan(await scanWhileAnotherSessionWrites());
+    }, 60_000);
+
+    it("describes one moment when the connection's own isolation level is READ COMMITTED, because the scan asks for REPEATABLE READ itself", async () => {
+      // The pool has one connection, so this is the session every scan runs on. WITH CONSISTENT SNAPSHOT alone is not enough
+      // here: under READ COMMITTED every statement would read the newest committed data.
+      await mysql.query("SET SESSION transaction_isolation = 'READ-COMMITTED'");
+      try {
+        const [rows] = await mysql.query("SELECT @@transaction_isolation AS level");
+        expect((rows as Array<{ level: string }>)[0].level).toBe("READ-COMMITTED");
+
+        await expectTheMomentTheScanBegan(await scanWhileAnotherSessionWrites());
+
+        // ...and the scan leaves the session as it found it: SET TRANSACTION covers its own transaction only.
+        const [after] = await mysql.query("SELECT @@transaction_isolation AS level");
+        expect((after as Array<{ level: string }>)[0].level).toBe("READ-COMMITTED");
+      } finally {
+        await mysql.query("SET SESSION transaction_isolation = 'REPEATABLE-READ'");
+      }
     }, 60_000);
 
     it("leaves every row as it was", async () => {

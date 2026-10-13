@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { redactMysqlDatabaseUrl as redactMysqlDatabaseUrlFromPoolCode } from "./mysql";
 import {
   buildMysqlSmokeBid,
   redactMysqlDatabaseUrl,
@@ -58,6 +59,10 @@ describe("mysql smoke verifier helpers", () => {
       "mysql://user:***@localhost:3306/winbids",
     );
     expect(redactMysqlDatabaseUrl("mysql://localhost:3306/winbids")).toBe("mysql://localhost:3306/winbids");
+  });
+
+  it("keeps exporting the redaction from here, now that it lives with the pool code", () => {
+    expect(redactMysqlDatabaseUrl).toBe(redactMysqlDatabaseUrlFromPoolCode);
   });
 
   it("builds a smoke bid with long content for LONGTEXT validation", () => {

@@ -424,3 +424,63 @@ describe("compareIntegritySnapshots: metric deltas", () => {
     expect(comparison.metricDeltas).toEqual([{ level: "total", metric: "malformedNyIds", before: 1, after: 0, delta: -1 }]);
   });
 });
+
+describe("compareIntegritySnapshots: ids by level", () => {
+  /** Every level, in report order, empty unless listed. */
+  const byLevel = (listed: Partial<Record<IntegrityLevel, string[]>>): Record<IntegrityLevel, string[]> =>
+    Object.fromEntries(INTEGRITY_LEVELS.map((level) => [level, listed[level] ?? []])) as Record<IntegrityLevel, string[]>;
+  const county = (overrides: Parameters<typeof row>[0] = {}) => row({ level: "county", ...overrides, t: { issuer_type: "county", ...overrides.t } });
+  const city = (overrides: Parameters<typeof row>[0] = {}) => row({ level: "city", ...overrides, t: { issuer_type: "city", ...overrides.t } });
+
+  it("groups every removed id by the level it had, and the allowed and the unexpected ones apart, so a pattern that is too broad shows", () => {
+    const before = snapshotOf({ "ca:2": row(), "ca:1": row(), "co:1": county(), "ci:2": city(), "ci:1": city() });
+    const after = snapshotOf({ "ca:2": row() });
+
+    const { removed } = compareIntegritySnapshots(before, after, { allowRemoved: [/^co:/, /^ci:/] });
+
+    expect(removed.idsByLevel).toEqual(byLevel({ state: ["ca:1"], county: ["co:1"], city: ["ci:1", "ci:2"] }));
+    expect(removed.allowedByLevel).toEqual(byLevel({ county: ["co:1"], city: ["ci:1", "ci:2"] }));
+    expect(removed.unexpectedByLevel).toEqual(byLevel({ state: ["ca:1"] }));
+    expect(Object.keys(removed.idsByLevel)).toEqual([...INTEGRITY_LEVELS]);
+    expect(removed.byLevel).toMatchObject({ state: 1, county: 1, city: 2 });
+    // The flat lists are still there, in order.
+    expect(removed.ids).toEqual(["ca:1", "ci:1", "ci:2", "co:1"]);
+    expect(removed.allowed).toEqual(["ci:1", "ci:2", "co:1"]);
+    expect(removed.unexpected).toEqual(["ca:1"]);
+  });
+
+  it("groups the added ids by the level they have now", () => {
+    const comparison = compareIntegritySnapshots(
+      snapshotOf({ "ca:1": row() }),
+      snapshotOf({ "ca:1": row(), "ca:2": row(), "co:1": county(), "ci:1": city() }),
+    );
+
+    expect(comparison.added.idsByLevel).toEqual(byLevel({ state: ["ca:2"], county: ["co:1"], city: ["ci:1"] }));
+    expect(comparison.added.ids).toEqual(["ci:1", "co:1", "ca:2"].sort());
+  });
+
+  it("groups the ids of a failure or a warning by level, too", () => {
+    const closing = (level: "state" | "county") => (level === "state" ? row : county)({ open: false, visible: false, t: { lifecycle_status: "closed", is_active: 0 } });
+    const comparison = compareIntegritySnapshots(
+      snapshotOf({ "ca:gone": row(), "co:hidden": county(), "ca:hidden": row(), "ca:closed": row(), "co:closed": county() }),
+      snapshotOf({ "co:hidden": county({ visible: false }), "ca:hidden": row({ visible: false }), "ca:closed": closing("state"), "co:closed": closing("county") }),
+    );
+
+    const finding = (code: string) => [...comparison.failures, ...comparison.warnings].find((candidate) => candidate.code === code);
+    expect(finding("removed_unexplained")?.idsByLevel).toEqual(byLevel({ state: ["ca:gone"] }));
+    expect(finding("visibility_regression")?.idsByLevel).toEqual(byLevel({ state: ["ca:hidden"], county: ["co:hidden"] }));
+    expect(finding("closed_without_reason")?.idsByLevel).toEqual(byLevel({ state: ["ca:closed"], county: ["co:closed"] }));
+  });
+
+  it("keeps ids with accents, dashes and CJK whole, and orders them by code unit", () => {
+    const ids = ["ca:é", "ca:e", "ca:Ünï–1", "ca:北京", "ca:Zürich"];
+    const before = snapshotOf(Object.fromEntries(ids.map((id) => [id, row()])));
+
+    const comparison = compareIntegritySnapshots(before, snapshotOf({}), { allowRemoved: [/北京/, /é$/] });
+
+    expect(comparison.removed.ids).toEqual([...ids].sort());
+    expect(comparison.removed.allowed).toEqual(["ca:北京", "ca:é"].sort());
+    expect(comparison.removed.unexpected).toEqual(["ca:Ünï–1", "ca:Zürich", "ca:e"].sort());
+    expect(comparison.removed.idsByLevel.state).toEqual([...ids].sort());
+  });
+});

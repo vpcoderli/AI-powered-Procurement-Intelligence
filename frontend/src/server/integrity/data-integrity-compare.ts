@@ -63,6 +63,8 @@ export interface ComparisonFinding {
   message: string;
   level?: IntegrityLevel;
   ids?: string[];
+  /** The same ids grouped by level (every level, in report order, an empty list when it has none). */
+  idsByLevel?: Record<IntegrityLevel, string[]>;
 }
 
 export interface SnapshotMeta {
@@ -77,8 +79,22 @@ export interface IntegrityComparison {
   /** False when a column was dropped (or the later snapshot did not hash the old columns): `h` is then not judged. */
   hashesComparable: boolean;
   columns: { added: string[]; removed: string[] };
-  added: { count: number; byLevel: Record<IntegrityLevel, number>; ids: string[] };
-  removed: { count: number; byLevel: Record<IntegrityLevel, number>; ids: string[]; allowed: string[]; unexpected: string[] };
+  /** `idsByLevel`: the ids by the level they have now. */
+  added: { count: number; byLevel: Record<IntegrityLevel, number>; ids: string[]; idsByLevel: Record<IntegrityLevel, string[]> };
+  /**
+   * `allowed` are the removed ids an `--allow-removed` pattern matched, `unexpected` the rest. Each list comes flat and grouped
+   * by the level the bid had, so that a pattern that is too broad shows in what it allowed.
+   */
+  removed: {
+    count: number;
+    byLevel: Record<IntegrityLevel, number>;
+    ids: string[];
+    idsByLevel: Record<IntegrityLevel, string[]>;
+    allowed: string[];
+    allowedByLevel: Record<IntegrityLevel, string[]>;
+    unexpected: string[];
+    unexpectedByLevel: Record<IntegrityLevel, string[]>;
+  };
   changed: {
     /** Bids with a change in a tracked column. */
     count: number;
@@ -98,6 +114,13 @@ const byCodeUnit = (left: string, right: string) => (left < right ? -1 : left > 
 
 function zeroByLevel(): Record<IntegrityLevel, number> {
   return Object.fromEntries(INTEGRITY_LEVELS.map((level) => [level, 0])) as Record<IntegrityLevel, number>;
+}
+
+/** The ids of a sorted list grouped by level, every level present, each group keeping the list's order. */
+function groupByLevel(ids: readonly string[], levelOf: (id: string) => IntegrityLevel): Record<IntegrityLevel, string[]> {
+  const groups = Object.fromEntries(INTEGRITY_LEVELS.map((level) => [level, [] as string[]])) as Record<IntegrityLevel, string[]>;
+  for (const id of ids) groups[levelOf(id)].push(id);
+  return groups;
 }
 
 function showValue(value: TrackedValue): string {
@@ -211,6 +234,8 @@ export function compareIntegritySnapshots(
 
   const unexpected = removed.filter((id) => !isAllowed(id));
   const allowed = removed.filter((id) => isAllowed(id));
+  const levelBefore = (id: string) => before.rows[id].level;
+  const levelAfter = (id: string) => after.rows[id].level;
 
   const failures: ComparisonFinding[] = [];
   if (unexpected.length > 0) {
@@ -218,6 +243,7 @@ export function compareIntegritySnapshots(
       code: "removed_unexplained",
       message: `${unexpected.length} bid(s) were removed and no --allow-removed pattern covers them`,
       ids: unexpected,
+      idsByLevel: groupByLevel(unexpected, levelBefore),
     });
   }
   if (regressions.length > 0) {
@@ -225,6 +251,7 @@ export function compareIntegritySnapshots(
       code: "visibility_regression",
       message: `${regressions.length} bid(s) that were open and shown by search are still open and are no longer shown`,
       ids: regressions,
+      idsByLevel: groupByLevel(regressions, levelAfter),
     });
   }
   for (const level of INTEGRITY_LEVELS) {
@@ -262,6 +289,7 @@ export function compareIntegritySnapshots(
       code: "closed_without_reason",
       message: `${closedWithoutReason.length} bid(s) went from open to closed with no closed_reason of deadline_passed or delisted on record`,
       ids: closedWithoutReason,
+      idsByLevel: groupByLevel(closedWithoutReason, levelAfter),
     });
   }
 
@@ -270,8 +298,17 @@ export function compareIntegritySnapshots(
     after: { takenAt: after.takenAt, dialect: after.dialect, bids: Object.keys(after.rows).length },
     hashesComparable: hashOf !== null,
     columns: { added: addedColumns, removed: removedColumns },
-    added: { count: added.length, byLevel: addedByLevel, ids: added },
-    removed: { count: removed.length, byLevel: removedByLevel, ids: removed, allowed, unexpected },
+    added: { count: added.length, byLevel: addedByLevel, ids: added, idsByLevel: groupByLevel(added, levelAfter) },
+    removed: {
+      count: removed.length,
+      byLevel: removedByLevel,
+      ids: removed,
+      idsByLevel: groupByLevel(removed, levelBefore),
+      allowed,
+      allowedByLevel: groupByLevel(allowed, levelBefore),
+      unexpected,
+      unexpectedByLevel: groupByLevel(unexpected, levelBefore),
+    },
     changed: {
       count: changed,
       groups: [...groups.values()].sort((left, right) => right.count - left.count || byCodeUnit(left.label, right.label)),

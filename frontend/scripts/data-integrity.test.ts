@@ -4,19 +4,31 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDatabase, type TestDatabase } from "../src/server/db/test-utils";
 import { buildIntegrityReport, parseIntegritySnapshot, type IntegrityReport } from "../src/server/integrity/data-integrity";
-import { EXPECTED_LEVELS, INTEGRITY_NOW, buildIntegritySeed, insertSql } from "../src/server/integrity/data-integrity.fixtures";
+import {
+  EXPECTED_LEVELS,
+  INTEGRITY_NOW,
+  buildIntegritySeed,
+  insertSql,
+  nonAsciiBidIds,
+  plainStateBid,
+} from "../src/server/integrity/data-integrity.fixtures";
+import { openResolvedTarget } from "../src/server/integrity/open-target";
 import {
   DataIntegrityUsageError,
   formatDataIntegrityHelp,
   formatIntegrityReport,
-  openTarget,
   parseDataIntegrityArgs,
-  resolveTarget,
   runDataIntegrity,
 } from "./data-integrity";
+
+// The real opener, watched: how the script opens the database (read-only) is part of its promise.
+vi.mock("../src/server/integrity/open-target", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/server/integrity/open-target")>();
+  return { ...actual, openResolvedTarget: vi.fn(actual.openResolvedTarget) };
+});
 
 describe("data-integrity arguments", () => {
   it("is a plain report by default", () => {
@@ -61,19 +73,19 @@ describe("data-integrity arguments", () => {
       "never writes to the database", "removed", "visibility regression", "identityMismatch", "warns",
       "DATABASE_PATH", "data/apsi.sqlite", "READ ONLY", "will not overwrite", "demoLike", "detailLockedAtSource",
       "malformedNyIds", "openVisible", "unanchored",
+      // A relative DATABASE_PATH is read from frontend/, not from where the command was typed.
+      "a relative path is read from the frontend/ directory",
     ]) {
       expect(help, text).toContain(text);
     }
   });
-});
 
-describe("data-integrity target", () => {
-  it("is MySQL when a mysql:// URL is set, otherwise the SQLite file DATABASE_PATH names (default data/apsi.sqlite)", () => {
-    const env = (values: Record<string, string>): NodeJS.ProcessEnv => ({ NODE_ENV: "test", ...values });
-    expect(resolveTarget(env({ DATABASE_URL: "mysql://u:p@h:3306/d" }))).toEqual({ kind: "mysql", databaseUrl: "mysql://u:p@h:3306/d" });
-    expect(resolveTarget(env({ MYSQL_DATABASE_URL: "mysql2://u:p@h/d" }))).toEqual({ kind: "mysql", databaseUrl: "mysql://u:p@h/d" });
-    expect(resolveTarget(env({ DATABASE_PATH: "elsewhere/x.sqlite" }))).toEqual({ kind: "sqlite", databasePath: path.resolve(process.cwd(), "elsewhere/x.sqlite") });
-    expect(resolveTarget(env({ DATABASE_PATH: " " }))).toEqual({ kind: "sqlite", databasePath: path.resolve(process.cwd(), "data", "apsi.sqlite") });
+  it("states the rule withIssuer applies, the publication gate's own", () => {
+    const help = formatDataIntegrityHelp().replace(/\s+/g, " ");
+
+    expect(help).toContain("withIssuer");
+    expect(help).toContain("/^Unknown(?:\\s|$)/i");
+    expect(help).toContain("the publication gate's rule");
   });
 });
 
@@ -184,6 +196,7 @@ describe("data-integrity", () => {
         expect(line).toContain(`SQLite database not found: ${missing}`);
         expect(line).toContain("DATABASE_PATH");
         expect(line).toContain("Nothing was created");
+        expect(line).toContain("frontend/ directory");
       }
       expect(out).toEqual([]);
       expect(readdirSync(elsewhere)).toEqual([]);
@@ -228,13 +241,16 @@ describe("data-integrity", () => {
       expect(out).toEqual([]);
     });
 
-    it("opens the SQLite file read-only", async () => {
-      const opened = await openTarget({ kind: "sqlite", databasePath: testDb.databasePath });
-      try {
-        expect("database" in opened.target && opened.target.database.$client.readonly).toBe(true);
-        expect(() => ("database" in opened.target ? opened.target.database.$client.exec("DELETE FROM bids") : undefined)).toThrow(/readonly/i);
-      } finally {
-        await opened.close();
+    it("opens the SQLite file read-only, through the opener the purge uses", async () => {
+      vi.mocked(openResolvedTarget).mockClear();
+
+      expect(await run([])).toBe(0);
+      expect(await run(["--snapshot", file("before.json")])).toBe(0);
+      expect(await run(["--compare", file("before.json")])).toBe(0);
+
+      expect(openResolvedTarget).toHaveBeenCalledTimes(3);
+      for (const call of vi.mocked(openResolvedTarget).mock.calls) {
+        expect(call).toEqual([{ kind: "sqlite", databasePath: testDb.databasePath }, { readonly: true }]);
       }
       expect(sqlite().prepare("SELECT COUNT(*) AS n FROM bids").get()).toEqual({ n: 23 });
     });
@@ -430,6 +446,226 @@ describe("data-integrity", () => {
       expect(readFileSync(snapshotFile, "utf8")).toBe(before);
     });
 
+    describe("when the next baseline is written in the same run", () => {
+      const deleteOne = () => sqlite().prepare("DELETE FROM bids WHERE id = 'ca_caleprocure:RFQ-2'").run();
+      const retype = () => sqlite().prepare("UPDATE bids SET issuer_type = 'city', jurisdiction_level = 'city', fips_code = '0804000' WHERE id = 'bidnet_co_aurora:202'").run();
+      /** A clock that does something between the pre-check of --snapshot and the write of it. */
+      const clockThat = (action: () => void) => ({ now: () => { action(); return INTEGRITY_NOW; } });
+
+      it("prints the comparison before it writes the baseline", async () => {
+        const snapshotFile = await takeSnapshot();
+        retype();
+        const target = file("after.json");
+        const existedAtPrint: boolean[] = [];
+        const watching = { stdout: (text: string) => { out.push(text); existedAtPrint.push(existsSync(target)); }, stderr: (text: string) => err.push(text) };
+
+        expect(await runDataIntegrity(["--compare", snapshotFile, "--snapshot", target], env(), watching, clock)).toBe(0);
+
+        expect(out).toHaveLength(2);
+        expect(out[0]).toContain("Data integrity compare: OK");
+        expect(out[1]).toContain(`Snapshot written: ${target}`);
+        expect(existedAtPrint).toEqual([false, true]);
+      });
+
+      it("keeps the comparison, and exit 1, when the baseline cannot be written because the file appeared meanwhile", async () => {
+        const snapshotFile = await takeSnapshot();
+        deleteOne();
+        const target = file("after.json");
+
+        expect(await runDataIntegrity(["--compare", snapshotFile, "--snapshot", target], env(), io(), clockThat(() => writeFileSync(target, "written meanwhile")))).toBe(1);
+
+        expect(out.join("\n")).toContain("Data integrity compare: REGRESSION");
+        expect(out.join("\n")).toContain("ca_caleprocure:RFQ-2");
+        expect(err.join("\n")).toContain("Snapshot not written");
+        expect(err.join("\n")).toContain("will not overwrite");
+        expect(readFileSync(target, "utf8")).toBe("written meanwhile");
+      });
+
+      it("reports a passing comparison, and fails the run (a usage error) when the baseline cannot be written", async () => {
+        const snapshotFile = await takeSnapshot();
+        retype();
+        const target = file("after.json");
+
+        expect(await runDataIntegrity(["--compare", snapshotFile, "--snapshot", target], env(), io(), clockThat(() => writeFileSync(target, "written meanwhile")))).toBe(2);
+
+        expect(out.join("\n")).toContain("Data integrity compare: OK");
+        expect(err.join("\n")).toContain("Snapshot not written");
+        expect(readFileSync(target, "utf8")).toBe("written meanwhile");
+      });
+
+      // A root process ignores directory permissions, so there is nothing to refuse.
+      it.skipIf(process.getuid?.() === 0)("keeps the comparison, and exit 1, when the directory turns read-only before the write", async () => {
+        const snapshotFile = await takeSnapshot();
+        deleteOne();
+        const frozen = path.join(directory, "frozen");
+        mkdirSync(frozen);
+        const target = path.join(frozen, "after.json");
+        let code: number;
+        try {
+          code = await runDataIntegrity(["--compare", snapshotFile, "--snapshot", target], env(), io(), clockThat(() => chmodSync(frozen, 0o555)));
+        } finally {
+          chmodSync(frozen, 0o755);
+        }
+
+        expect(code).toBe(1);
+        expect(out.join("\n")).toContain("Data integrity compare: REGRESSION");
+        expect(err.join("\n")).toMatch(/Snapshot not written: .*EACCES/);
+        expect(existsSync(target)).toBe(false);
+      });
+
+      it.skipIf(process.getuid?.() === 0)("fails a passing comparison with exit 1 (not a usage error) when the directory turns read-only before the write", async () => {
+        const snapshotFile = await takeSnapshot();
+        retype();
+        const frozen = path.join(directory, "frozen");
+        mkdirSync(frozen);
+        let code: number;
+        try {
+          code = await runDataIntegrity(["--compare", snapshotFile, "--snapshot", path.join(frozen, "after.json")], env(), io(), clockThat(() => chmodSync(frozen, 0o555)));
+        } finally {
+          chmodSync(frozen, 0o755);
+        }
+
+        expect(code).toBe(1);
+        expect(out.join("\n")).toContain("Data integrity compare: OK");
+        expect(err.join("\n")).toMatch(/Snapshot not written: .*EACCES/);
+      });
+
+      it("puts the failure to write in the JSON document, which stays a single document with the comparison in it", async () => {
+        const snapshotFile = await takeSnapshot();
+        deleteOne();
+        const target = file("after.json");
+
+        expect(await runDataIntegrity(["--compare", snapshotFile, "--snapshot", target, "--json"], env(), io(), clockThat(() => writeFileSync(target, "written meanwhile")))).toBe(1);
+
+        expect(out).toHaveLength(1);
+        const printed = JSON.parse(out[0]);
+        expect(printed.comparison.ok).toBe(false);
+        expect(printed.comparison.removed.unexpected).toEqual(["ca_caleprocure:RFQ-2"]);
+        expect(printed.snapshotError).toContain("will not overwrite");
+        expect(printed).not.toHaveProperty("snapshot");
+        expect(err.join("\n")).toContain("Snapshot not written");
+      });
+
+      // A root process ignores directory permissions, so there is nothing to refuse.
+      it.skipIf(process.getuid?.() === 0)("refuses a --snapshot into a directory it cannot write to before it reads anything", async () => {
+        const frozen = path.join(directory, "frozen");
+        mkdirSync(frozen);
+        chmodSync(frozen, 0o555);
+        try {
+          expect(await run(["--snapshot", path.join(frozen, "before.json")])).toBe(2);
+        } finally {
+          chmodSync(frozen, 0o755);
+        }
+
+        expect(err.join("\n")).toContain("is not writable");
+        expect(err.join("\n")).not.toContain("Target:");
+        expect(out).toEqual([]);
+      });
+    });
+
+    describe("what was removed and what was added, by level", () => {
+      it("lists the ids an --allow-removed pattern allowed, as it lists the ones it did not, grouped by level", async () => {
+        const snapshotFile = await takeSnapshot();
+        for (const id of ["ca_caleprocure:RFQ-2", "bidnet_co_boulder:111", "bidnet_co_aurora:201"]) sqlite().prepare("DELETE FROM bids WHERE id = ?").run(id);
+
+        expect(await run(["--compare", snapshotFile, "--allow-removed", "^bidnet_"])).toBe(1);
+
+        const text = out.join("\n");
+        expect(text).toMatch(/Failures \(exit 1\):\n {2}- removed_unexplained: 1 bid\(s\) were removed[^\n]*\n {6}state \(1\)\n {8}ca_caleprocure:RFQ-2\n/);
+        expect(text).toMatch(/Removed bids allowed by --allow-removed \(2\):\n {2}county \(1\)\n {4}bidnet_co_boulder:111\n {2}city \(1\)\n {4}bidnet_co_aurora:201\n/);
+        expect(text).toContain("Bids: added 0, removed 3 (2 allowed)");
+      });
+
+      it("shows the same grouping in the JSON, for the allowed, the unexpected and all of them", async () => {
+        const snapshotFile = await takeSnapshot();
+        for (const id of ["ca_caleprocure:RFQ-2", "bidnet_co_boulder:111", "bidnet_co_aurora:201"]) sqlite().prepare("DELETE FROM bids WHERE id = ?").run(id);
+
+        expect(await run(["--compare", snapshotFile, "--allow-removed", "^bidnet_", "--json"])).toBe(1);
+
+        const { removed } = JSON.parse(out[0]).comparison;
+        expect(removed.idsByLevel).toMatchObject({
+          state: ["ca_caleprocure:RFQ-2"], county: ["bidnet_co_boulder:111"], city: ["bidnet_co_aurora:201"], township: [], special_district: [], federal: [], other: [],
+        });
+        expect(removed.allowedByLevel).toMatchObject({ state: [], county: ["bidnet_co_boulder:111"], city: ["bidnet_co_aurora:201"] });
+        expect(removed.unexpectedByLevel).toMatchObject({ state: ["ca_caleprocure:RFQ-2"], county: [], city: [] });
+        expect(Object.keys(removed.idsByLevel)).toEqual(["state", "county", "city", "township", "special_district", "federal", "other"]);
+      });
+
+      it("lists the first 20 allowed ids and counts the rest, so a pattern that allows everything is seen, not hidden", async () => {
+        for (let n = 0; n < 30; n += 1) {
+          const { sql, params } = insertSql(plainStateBid(`ca_caleprocure:bulk-${String(n).padStart(2, "0")}`));
+          sqlite().prepare(sql).run(...params);
+        }
+        const snapshotFile = await takeSnapshot();
+        sqlite().prepare("DELETE FROM bids WHERE id LIKE 'ca_caleprocure:bulk-%'").run();
+
+        expect(await run(["--compare", snapshotFile, "--allow-removed", "^ca_caleprocure:bulk-"])).toBe(0);
+
+        const text = out.join("\n");
+        expect(text).toContain("Removed bids allowed by --allow-removed (30):");
+        expect(text).toContain("state (30)");
+        const listed = text.split("\n").filter((line) => /^ {4}ca_caleprocure:bulk-\d\d$/.test(line));
+        expect(listed).toHaveLength(20);
+        expect(listed[0]).toBe("    ca_caleprocure:bulk-00");
+        expect(listed[19]).toBe("    ca_caleprocure:bulk-19");
+        expect(text).toContain("... and 10 more (--json lists them all)");
+        out.length = 0;
+
+        expect(await run(["--compare", snapshotFile, "--allow-removed", "^ca_caleprocure:bulk-", "--json"])).toBe(0);
+        expect(JSON.parse(out[0]).comparison.removed.allowedByLevel.state).toHaveLength(30);
+      });
+
+      it("lists the bids added since, grouped by level", async () => {
+        const snapshotFile = await takeSnapshot();
+        for (const statement of [
+          plainStateBid("ca_caleprocure:added-1"),
+          plainStateBid("bidnet_co_boulder:900", {
+            source: "Boulder County, CO (BidNet)", issuer_type: "county", jurisdiction_level: "county", state_code: "CO", fips_code: "08013",
+            issuer_name: "Boulder County",
+          }),
+        ]) {
+          const { sql, params } = insertSql(statement);
+          sqlite().prepare(sql).run(...params);
+        }
+
+        expect(await run(["--compare", snapshotFile])).toBe(0);
+
+        const text = out.join("\n");
+        expect(text).toMatch(/Added bids \(2\):\n {2}state \(1\)\n {4}ca_caleprocure:added-1\n {2}county \(1\)\n {4}bidnet_co_boulder:900\n/);
+        out.length = 0;
+
+        expect(await run(["--compare", snapshotFile, "--json"])).toBe(0);
+        expect(JSON.parse(out[0]).comparison.added.idsByLevel).toMatchObject({ state: ["ca_caleprocure:added-1"], county: ["bidnet_co_boulder:900"], city: [] });
+      });
+    });
+
+    describe("ids that are not ASCII", () => {
+      it("keeps accents, dashes and CJK whole in the snapshot file, the printed comparison and the JSON", async () => {
+        const ids = nonAsciiBidIds(6);
+        for (const id of ids) {
+          const { sql, params } = insertSql(plainStateBid(id));
+          sqlite().prepare(sql).run(...params);
+        }
+        const snapshotFile = await takeSnapshot();
+        expect(readFileSync(snapshotFile, "utf8")).toContain(JSON.stringify(ids[1]).slice(1, -1));
+        expect(Object.keys(parseIntegritySnapshot(readFileSync(snapshotFile, "utf8")).rows)).toEqual(expect.arrayContaining(ids));
+        sqlite().prepare("DELETE FROM bids WHERE id IN (?, ?, ?)").run(ids[1], ids[2], ids[3]);
+
+        expect(await run(["--compare", snapshotFile, "--allow-removed", "café–A"])).toBe(1);
+
+        const text = out.join("\n");
+        expect(text).toContain(ids[2]);
+        expect(text).toContain(ids[3]);
+        expect(text).toMatch(new RegExp(`Removed bids allowed by --allow-removed \\(1\\):\\n {2}state \\(1\\)\\n {4}${ids[1]}\\n`));
+        out.length = 0;
+
+        expect(await run(["--compare", snapshotFile, "--allow-removed", "café–A", "--json"])).toBe(1);
+        const { removed } = JSON.parse(out[0]).comparison;
+        expect(removed.allowed).toEqual([ids[1]]);
+        expect(removed.unexpected).toEqual([ids[2], ids[3]].sort());
+      });
+    });
+
     it("exits 2 when the snapshot file is missing, empty, not JSON, or not a snapshot, without opening the database", async () => {
       writeFileSync(file("empty.json"), "");
       writeFileSync(file("other.json"), JSON.stringify({ hello: "world" }));
@@ -486,6 +722,14 @@ describe("formatIntegrityReport", () => {
 const frontendDir = fileURLToPath(new URL("..", import.meta.url));
 const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 
+/** A directory below `root` that is deeper than the frontend directory is. */
+function deepWorkingDirectory(root: string): string {
+  const depth = frontendDir.split(path.sep).filter(Boolean).length + 2;
+  const deep = path.join(root, ...Array.from({ length: depth }, () => "d"));
+  mkdirSync(deep, { recursive: true });
+  return deep;
+}
+
 /**
  * What a process printed, one string per stream. The two pipes are read independently, so no order between them is
  * defined: a test must never look at them as one text.
@@ -538,15 +782,95 @@ describe("data-integrity as a process of its own", () => {
   });
 
   it("exits 2 and leaves a directory without a database exactly as it was", async () => {
+    // Named explicitly: with no DATABASE_PATH the target is frontend/data/apsi.sqlite, which a developer's checkout may have.
+    const elsewhere = mkdtempSync(path.join(tmpdir(), "apsi-data-integrity-missing-"));
+    const missing = path.join(elsewhere, "nope.sqlite");
+    try {
+      const run = await runScriptIn(workingDirectory, [], { DATABASE_PATH: missing });
+
+      // Importing the app's db/client would have created data/apsi.sqlite here by now.
+      expect(readdirSync(workingDirectory)).toEqual([]);
+      expect(readdirSync(elsewhere)).toEqual([]);
+      expect(run.status).toBe(2);
+      expect(run.stderr).toContain(`SQLite database not found: ${missing}`);
+      expect(run.stderr).not.toContain("no such table");
+      expect(run.stdout).toBe("");
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("looks for its default database in the frontend directory, never in the directory it was run from", async () => {
+    // A stray data/apsi.sqlite where a checkout's root (or any other directory) would have one.
+    mkdirSync(path.join(workingDirectory, "data"));
+    writeFileSync(path.join(workingDirectory, "data", "apsi.sqlite"), "");
+
     const run = await runScriptIn(workingDirectory, []);
 
-    // Importing the app's db/client would have created data/apsi.sqlite here by now.
-    expect(readdirSync(workingDirectory)).toEqual([]);
-    expect(run.status).toBe(2);
-    expect(run.stderr).toContain("SQLite database not found");
-    expect(run.stderr).not.toContain("no such table");
-    expect(run.stdout).toBe("");
+    // Whether frontend/data/apsi.sqlite exists here or not, the target is that file and not the stray one.
+    expect(run.stderr).toContain(path.join(frontendDir, "data", "apsi.sqlite"));
+    expect(run.stderr).not.toContain(workingDirectory);
+    expect(run.stdout).not.toContain(workingDirectory);
+    expect(readdirSync(path.join(workingDirectory, "data"))).toEqual(["apsi.sqlite"]);
+    expect(readFileSync(path.join(workingDirectory, "data", "apsi.sqlite"), "utf8")).toBe("");
+    expect(readdirSync(workingDirectory)).toEqual(["data"]);
   }, 60_000);
+
+  it("reads a relative DATABASE_PATH from the frontend directory, whatever directory it is run from", async () => {
+    const testDb = await createTestDatabase();
+    try {
+      for (const statement of buildIntegritySeed()) {
+        const { sql, params } = insertSql(statement);
+        testDb.db.$client.prepare(sql).run(...params);
+      }
+      const relative = path.relative(frontendDir, testDb.databasePath);
+      expect(path.isAbsolute(relative)).toBe(false);
+      // Run from a directory deeper than the frontend directory: the ".." segments of the relative path then cannot climb
+      // out of it onto the right file by luck (they stop at the root), as they could from a shallow one.
+      const deep = deepWorkingDirectory(workingDirectory);
+      expect(path.resolve(deep, relative)).not.toBe(testDb.databasePath);
+
+      const run = await runScriptIn(deep, ["--json"], { DATABASE_PATH: relative });
+
+      expect(run.status).toBe(0);
+      expect(JSON.parse(run.stdout).target).toBe(`sqlite ${testDb.databasePath}`);
+      expect(JSON.parse(run.stdout).report.totals.total).toBe(23);
+      expect(readdirSync(workingDirectory)).toEqual(["d"]);
+    } finally {
+      await testDb.cleanup();
+    }
+  }, 60_000);
+
+  it("prints ids with accents, dashes and CJK as UTF-8, in the text, the JSON and the snapshot file", async () => {
+    const testDb = await createTestDatabase();
+    try {
+      for (const statement of buildIntegritySeed()) {
+        const { sql, params } = insertSql(statement);
+        testDb.db.$client.prepare(sql).run(...params);
+      }
+      const ids = nonAsciiBidIds(4);
+      for (const id of ids) {
+        const { sql, params } = insertSql(plainStateBid(id));
+        testDb.db.$client.prepare(sql).run(...params);
+      }
+      const snapshotFile = path.join(workingDirectory, "accents.json");
+      const withDatabase = { DATABASE_PATH: testDb.databasePath };
+      expect((await runScriptIn(workingDirectory, ["--snapshot", snapshotFile], withDatabase)).status).toBe(0);
+      expect(readFileSync(snapshotFile, "utf8")).toContain(ids[1]);
+      testDb.db.$client.prepare("DELETE FROM bids WHERE id IN (?, ?)").run(ids[1], ids[2]);
+
+      const text = await runScriptIn(workingDirectory, ["--compare", snapshotFile], withDatabase);
+      const json = await runScriptIn(workingDirectory, ["--compare", snapshotFile, "--json"], withDatabase);
+
+      expect(text.status).toBe(1);
+      expect(text.stdout).toContain(ids[1]);
+      expect(text.stdout).toContain(ids[2]);
+      expect(json.status).toBe(1);
+      expect(JSON.parse(json.stdout).comparison.removed.ids).toEqual([ids[1], ids[2]].sort());
+    } finally {
+      await testDb.cleanup();
+    }
+  }, 120_000);
 
   it("reports, snapshots and compares a database it was given, and leaves the working directory alone", async () => {
     const testDb = await createTestDatabase();
