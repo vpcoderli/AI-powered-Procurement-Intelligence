@@ -94,19 +94,33 @@ P0-5 终审列出的剩余误杀在 `classifier-followup` 分支（基于 `fix/d
 | 改动前后无法证明没丢、没藏、没串类型 | **`npm run data:integrity`**：按 state / county / city / township / special_district / federal / other 分层的报告，加逐行快照与比对（未解释的删除、可见性回归、`identityMismatch` 上升都退出码 1）。它不写库 | SQLite 单测、CLI 单测；MySQL 集成测试要求两种数据库对同一份夹具给出同样的报告 |
 | 容器镜像缺 Census 地域表：`discover-sources` 在 worker 和 runner 镜像里报 `JurisdictionTableError`（[全量测试](skill-assisted-full-test-2026-10-12.md) ISSUE-001） | `frontend/Dockerfile` 的 `crawler-runtime` 阶段把 `crawler/data/us_jurisdictions.tsv` 复制到 `/crawler/data/`，两个镜像都继承；CI 的 `crawler-runtime` 任务在 worker 镜像里加了 `--network none` 的离线探针 | `frontend/dockerfile.test.ts` 钉住这一行；真实构建见下 |
 
-另外，`test:crawler-integration` 现在列出仓库里全部 11 个 `*.integration.test.ts`（此前漏了 5 个，其中 4 个是本次新增的），`frontend/package-scripts.test.ts` 在有新的集成测试没被列入时失败；`bid-references-agree.test.ts` 要求迁移用的 `BID_CHILD_REFERENCES` 与演示清理的关系表对 `bids` 的引用是同一组列。
+另外，`test:crawler-integration` 现在列出仓库里全部 `*.integration.test.ts`（Tasks 1–6 合并时是 11 个，此前漏了 5 个，其中 4 个是本次新增的；并入独立验收套件后是 12 个），`frontend/package-scripts.test.ts` 在有新的集成测试没被列入时失败；`bid-references-agree.test.ts` 要求迁移用的 `BID_CHILD_REFERENCES` 与演示清理的关系表对 `bids` 的引用是同一组列。
 
 ### 验证
 
+每个数字都标了它跑在哪个提交上；没有标的格子表示那一轮没有跑。
+
+| 检查 | 9675c8d（Tasks 1–6 合并后） | c178806（再加独立验收套件） | 本轮修复（c178806 之上，提交前的工作树） |
+| --- | --- | --- | --- |
+| 爬虫 pytest | 1,361 通过 | 1,368 通过 | 1,368 通过 |
+| 前端全量 Vitest | 415 个文件 / 4,451 项 | 416 个文件 / 4,584 项 | 416 个文件通过、11 个按环境条件跳过；4,603 项通过、81 项跳过（含 `src/__acceptance__`） |
+| `npm run test:crawler-integration`，指向一次性 MySQL 8.4.9 容器（随机密码，跑完即停），含 Python 爬虫 → HTTP extractor → 两个导入器的跨语言链路 | 11 个文件 / 114 项通过 | 12 个文件 / 120 项通过 | 12 个文件 / 120 项通过 |
+| 独立验收套件（黑盒，只按计划写成） | 尚未并入 | 146/146 通过 | 146/146 通过：`src/__acceptance__` 2 个文件 139 项（SQLite 与 MySQL 各一个文件），加 Python 的 7 项 |
+| ESLint | — | — | 通过 |
+| `tsc --noEmit` | — | — | 仍报既有的类型诊断（276 条）；出错的文件集合与基线（78 个文件）完全相同，没有新增 |
+
+本轮修复（评审意见 I-1 与次要项）之后，把手册里的流程在一次性 SQLite 库和 MySQL 8.4.9 库上重新走了一遍。数据是夹具数据加上遗留行：1 条旧 FIPS 的 Aurora、23 条旧 id 的 NY、54 条演示/种子招标（48 条 demo-readiness、6 条 mock）。结果：
+
+- 清扫在还没迁移的库上只关闭了 2 条过期招标，23 条遗留 NY id、旧 FIPS 的 Aurora 行和 `is_active = 0` 的 open 行原样不动（它不迁移）；`--dry-run` 前后 SQLite 主文件的 SHA-256 相同、`-wal` 大小不变；
+- 在 MySQL 上打开服务器的 general log，`--dry-run` 期间服务器收到的只有一条 `SELECT id, deadline_date, issuer_type FROM bids …`（外加驱动握手时的 `select @@version_comment`），没有 `START TRANSACTION`，没有 `UPDATE`；真跑时才出现 `START TRANSACTION`、`SELECT … FOR UPDATE SKIP LOCKED`、两条 `UPDATE`、`COMMIT`；
+- 空文件、不存在的文件、没迁移的 MySQL 库，清扫都退出码 2，库不变，什么也没建；
+- 迁移、清理（SQLite 用 `db:backup` 的备份，MySQL 用容器里 `mysqldump` 的备份）之后，带三条 `--allow-removed` 的比对退出码 0：删除 77 条、全部被放行（23 条 NY + 54 条演示），新增 23 条（重键后的 NY id），没有未解释的删除；文本输出每份 id 列表只列 20 个，`--json` 里 `comparison.removed.allowed` 是全部 77 个。两种数据库的结论一致。
+
 | 检查 | 结果 |
 | --- | --- |
-| 前端全量 Vitest | 414 个文件通过，10 个按环境条件跳过；4,408 项通过，69 项跳过 |
-| `npm run test:crawler-integration` | 11 个文件、108 项通过，指向一次性 MySQL 8.4.9 容器（随机密码，跑完即停），含 Python 爬虫 → HTTP extractor → 两个导入器的跨语言链路 |
-| 爬虫 pytest | 1,361 通过 |
-| ESLint | 通过 |
-| `tsc --noEmit` | 仍退出 2：既有测试文件的类型诊断。出错的文件集合与基线（78 个文件）完全相同，没有新增 |
-| 手册流程演练 | 在一次性 SQLite 库和 MySQL 8.4.9 库上，用夹具数据加 2 条遗留行（1 条旧 FIPS 的 Aurora、1 条旧 id 的 NY），按手册走完 备份 → 快照 → 迁移 → 预演与清理 → 清扫 → 比对：迁移重键 NY 行、校正 Aurora 行，清理 2 条演示招标（1 条 demo-readiness、1 条 mock），清扫关闭过期招标。不加 `--allow-removed` 比对退出码 1 并列出被删的 id，放行后退出码 0。两种数据库结论一致 |
-| 镜像 | 在仓库根目录构建 `--target worker`，`docker run --rm --network none` 运行 CI 的探针：`load_jurisdictions()` 载入成功，`match_jurisdiction("city", "CA", "City of Los Angeles")` 返回 `{'status': 'exact', 'geoid': '0644000', 'name': 'Los Angeles city'}`；镜像里的表与仓库文件的 SHA-256 相同。ISSUE-001 的原命令（`discover-sources`，关闭网络）在修复前的镜像里报 `JurisdictionTableError`，在新镜像里越过了读表一步（因没有网络而以 `fetch_failed` 停止）。验证后镜像已删除；runner 镜像没有单独构建，它与 worker 共用同一个阶段 |
+| 镜像 | 在 Dockerfile 修复提交（aa30802）的内容上，于仓库根目录构建 `--target worker`，`docker run --rm --network none` 运行 CI 的探针：`load_jurisdictions()` 载入成功，`match_jurisdiction("city", "CA", "City of Los Angeles")` 返回 `{'status': 'exact', 'geoid': '0644000', 'name': 'Los Angeles city'}`；镜像里的表与仓库文件的 SHA-256 相同。ISSUE-001 的原命令（`discover-sources`，关闭网络）在修复前的镜像里报 `JurisdictionTableError`，在新镜像里越过了读表一步（因没有网络而以 `fetch_failed` 停止）。验证后镜像已删除；runner 镜像没有单独构建，它与 worker 共用同一个阶段；此后 Dockerfile 没有再改动 |
+| `winbids` 备份上的数据演练（备份 → 快照 → `db:mysql:migrate` → 清理 → 清扫 → 比对） | **未验证**：属于独立测试阶段，尚未执行 |
+| 业务库上执行迁移、清理、清扫 | **未验证**：尚未执行 |
 
 ### 州、市、县／郡数据完整性
 

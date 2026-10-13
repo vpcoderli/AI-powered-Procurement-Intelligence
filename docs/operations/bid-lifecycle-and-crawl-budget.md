@@ -136,7 +136,7 @@ SELECT COUNT(*) FROM bids WHERE (lifecycle_status = 'open') <> (is_active = 1);
 **让招标多开一会儿的读法**
 
 - 美国数字（`10/13/2026 2:00`）和月份英文（`Oct 13, 2026 at 2:00`）两种写法里，**没有 AM/PM 的 1–11 点**可能是被丢掉了 AM/PM 的 12 小时制，按 PM 读法再多留 12 小时；
-- **整天**的写法算到所写那天的结束：精确的午夜（`12:00 AM`、`0:00`、`00:00`、`T00:00:00`）；`24:00`；这两种美国写法里没有 AM/PM、秒为 0 的整点 `12:00`（可能是 12:00 AM）；带 `Z` 或偏移的 ISO `T23:59:59`。对带 `Z` 或偏移的 ISO 时刻，"所写那天"是文本里写的日期，不是换算成 UTC 之后的日期。`12:30` 这样的 12 点带分钟，按字面读（当 AM 读会早 12 小时，字面就是最晚的）；
+- **整天**的写法算到所写那天的结束：精确的午夜（`12:00 AM`、`0:00`、`00:00`、`T00:00:00`）；`24:00`；这两种美国写法里没有 AM/PM、秒为 0 的整点 `12:00`（可能是 12:00 AM）；带 `Z` 或偏移的 ISO `T23:59:59`。对带 `Z` 或偏移的 ISO 时刻，"所写那天"是文本里写的日期，不是把时刻换算到 UTC 或 UTC−10 之后的日期。`12:30` 这样的 12 点带分钟，按字面读（当 AM 读会早 12 小时，字面就是最晚的）；
 - **精确时刻可能是被转成了时刻的美国日期**：epoch、`/Date()/`、带 `Z` 或偏移的 ISO 时刻，只要在某个美国偏移（UTC−4 到 UTC−10；`/Date()/` 还包括它自己写的那个偏移）下的当地时间恰好是 00:00:00 或 23:59:59，就当作那个当地日期，算到该日的结束；多个都满足时取最晚的；
 - ISO 的一位数小时（`2026-10-13 2:00`）可能是手写格式，按 PM 读法再多留 12 小时。ISO 是 24 小时制，`2026-10-13T12:00:00` 就是中午，上面"没有 AM/PM 的 12:00"只适用于两种美国写法；
 - ISO 的秒以下小数保留（向上取整到毫秒），不会在所写时刻之前关；`at`、`@` 作时间分隔（`7/7/2026 at 1:30PM`、`Aug 21, 2026 @ 02:00 PM`）都接受。
@@ -157,7 +157,7 @@ SELECT COUNT(*) FROM bids WHERE (lifecycle_status = 'open') <> (is_active = 1);
 | `10/13/2026 24:00` | 2026-10-14 10:00 | 24:00 是当天的结束 |
 | `2026-10-13T12:00:00` | 2026-10-13 22:00 | ISO 24 小时制：UTC−10 的中午 |
 | `2026-10-13 2:00` | 2026-10-14 00:00 | ISO 一位数小时：按 PM 读法 |
-| `2026-10-13T00:00:00Z` | 2026-10-14 10:00 | 带 `Z` 的午夜：所写日期 10/13 整天有效，而不是 UTC 的 10/12 |
+| `2026-10-13T00:00:00Z` | 2026-10-14 10:00 | 带 `Z` 的午夜：所写日期 10/13 整天有效（它换算到 UTC−10 是 10/12，不按那一天算） |
 | `2026-10-13T23:59:59Z` | 2026-10-14 10:00 | 带 `Z` 的 23:59:59：到所写日期结束 |
 | `2026-10-13T05:00:00Z` | 2026-10-14 10:00 | 在 UTC−5 是 00:00:00，像是被转成时刻的 10/13 |
 | `2026-10-13T08:00:00-05:00` | 2026-10-13 13:00 | 精确时刻 |
@@ -166,8 +166,8 @@ SELECT COUNT(*) FROM bids WHERE (lifecycle_status = 'open') <> (is_active = 1);
 
 ### 8.2 在哪里执行
 
-1. **导入时。** 两个 JSON 导入器共用的 `bid-intake.ts` 在合并每条招标时传入 `now`——这次运行的 `finishedAt`（没有则 `startedAt`）。`mergeLifecycleFields` 在状态为 open、且截止日（传入的 `deadline_date`，没有就用库里的）按规则已到期时，把招标存成 `closed`、`is_active = 0`，并在 `raw_payload.lifecycle` 里记 `deadline_passed`（8.3）。`awarded` 的招标不会被降级为 `closed`。反过来，这次导入说它是 open、截止日又在将来，就把此前关闭的招标重新打开；新 payload 整体替换旧 payload，所以重新打开的招标不会带着过期的 `closed_reason`。读不懂的截止日不会关招标。
-2. **清扫。** 导入只管门户这次还列出来的招标；门户已经不再列出、或者所在的源很久没被抓的 open 招标会一直开着。`sweepExpiredBids`（`frontend/src/server/bids/lifecycle-sweep.ts`）对库里已有的 open 招标应用同一条规则。`crawler-worker` 每个 tick 在列表和预检队列之后跑一次（`worker-tick.ts`），间隔是 `CRAWLER_WORKER_INTERVAL_MS`（默认 15 分钟），worker 正在停止时跳过；一次性命令是 `npm run bids:lifecycle:sweep [--dry-run] [--json]`。日志、预演和排查见[数据完整性运维](./data-integrity.md)第 5 节。
+1. **导入时。** 两个 JSON 导入器共用的 `bid-intake.ts` 把这次运行的 `finishedAt`（没有则 `startedAt`）作为 `now` 交给 `mergePersistedBid`，后者调用 `resolveLifecycle`（`mergeLifecycleFields` 是同一个决定，只是不带 payload）。传入的状态是 open、且截止日（传入的 `deadline_date`，没有就用库里的）按规则已到期时，招标被存成 `closed`、`is_active = 0`，并在 `raw_payload.lifecycle` 里记 `deadline_passed`（8.3）。`awarded` 的招标不会被降级为 `closed`。反过来，这次导入说它是 open、截止日又在将来，就把此前关闭的招标重新打开；新 payload 整体替换旧 payload，所以重新打开的招标不会带着过期的 `closed_reason`。读不懂的截止日不会关招标。
+2. **清扫。** 导入只管门户这次还列出来的招标；门户已经不再列出、或者所在的源很久没被抓的 open 招标会一直开着。`sweepExpiredBids`（`frontend/src/server/bids/lifecycle-sweep.ts`）对库里已有的 open 招标应用同一条规则。`crawler-worker` 每个 tick 在列表和预检队列之后跑一次（`worker-tick.ts`），间隔是 `CRAWLER_WORKER_INTERVAL_MS`（默认 15 分钟），worker 正在停止时跳过；一次性命令是 `npm run bids:lifecycle:sweep [--dry-run] [--json]`：目标库的选法与 `data:integrity`、`bids:purge-demo` 相同，从不迁移，`--dry-run` 在两种数据库上都不写。日志、预演和排查见[数据完整性运维](./data-integrity.md)第 2、5 节。
 
    清扫按 `id` 顺序每页 500 条读 open 招标（不读 payload）；页内到期的招标在写锁下重读并再判断一次——刚被导入刷新的招标不会按过期的截止日关闭——然后一页一个事务地关闭：`lifecycle_status = 'closed'`、`is_active = 0`、`updated_at`，并记原因。SQLite 用 `BEGIN IMMEDIATE`；MySQL 用 `FOR UPDATE SKIP LOCKED`，**要求 MySQL ≥ 8.0.1**：导入正持有的招标这一轮跳过，留给下一轮，不会阻塞导入，也不会与它死锁。只处理 open 的招标，所以重复跑是安全的。
 
@@ -180,4 +180,4 @@ SELECT COUNT(*) FROM bids WHERE (lifecycle_status = 'open') <> (is_active = 1);
 | `delisted` | 两个导入器的 `delistMissingOpenBids`（第 1 节） | 一次完整的开放列表运行没再返回这条 open 招标 | `closed_observed_at` 是该次运行的结束时间。payload 不是 JSON 对象时，会被改写成只含 `lifecycle` 的新对象 |
 | `deadline_passed` | 导入（`mergePersistedBid`）和清扫 | open 招标的截止日按 8.1 的规则到期 | `closed_observed_at` 是导入的 `now` 或清扫的时刻；`deadline` 是当时的截止日文本。**只在 `raw_payload` 是 JSON 对象时记录**：不是（NULL、纯文本）的，招标照样关闭，payload 原样不动，没有原因 |
 
-没有 reason 的关闭：在 closed / awarded 列表上看到的招标、早期迁移关闭的行（`is_active = 0` 的 open 招标），以及上面那种 payload 不是 JSON 对象的清扫关闭。`awarded` 是状态，不是原因。`data:integrity --compare` 把"从 open 变成 closed，却没有这两个 reason"（中标除外）报成 `closed_without_reason` 警告。
+没有 reason 的关闭：在 closed / awarded 列表上看到的招标、早期迁移关闭的行（`is_active = 0` 的 open 招标），以及上面那种 payload 不是 JSON 对象的关闭（导入和清扫都一样：`persistence-merge.ts` 只在 payload 是 JSON 对象时才改写它）。`awarded` 是状态，不是原因。`data:integrity --compare` 把"从 open 变成 closed，却没有这两个 reason"（中标除外）报成 `closed_without_reason` 警告。

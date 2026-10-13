@@ -24,9 +24,9 @@
 
 | 命令 | 做什么 | 写库 | 退出码 |
 | --- | --- | --- | --- |
-| `npm run data:integrity` | 打印分层报告；`--snapshot <文件>` 拍快照；`--compare <文件>` 与快照比对 | 不写 | `0` 完成（比对通过）；`1` 发现回归，或运行失败；`2` 用法错误（参数不对、快照文件不存在或不是快照、`--snapshot` 要写的文件已存在、SQLite 文件不存在） |
-| `npm run bids:lifecycle:sweep` | 一次截止日清扫：关闭截止日已过的 open 招标；`--dry-run`、`--json` | 写（`--dry-run` 不写） | `0` 跑完；`1` 失败（含拼错的参数） |
-| `npm run bids:purge-demo` | 删除演示/种子招标和它们的全部依赖行；默认只预演 | 只有 `--apply` 才写 | `0` 完成；`1` 出错（整个事务已回滚）；`2` 用法错误（备份文件缺失、为空、不是文件、就是数据库本身，或 SQLite 文件不存在） |
+| `npm run data:integrity` | 打印分层报告；`--snapshot <文件>` 拍快照；`--compare <文件>` 与快照比对 | 不写 | `0` 完成（比对通过）；`1` 发现回归，或运行失败；`2` 用法错误：参数不对（包括不带 `--compare` 的 `--allow-removed`）、要比对的快照不存在或不是快照、`--snapshot` 要写的文件已存在、或它的目录不存在、不可写，SQLite 文件不存在或 `DATABASE_PATH` 是个目录 |
+| `npm run bids:lifecycle:sweep` | 一次截止日清扫：关闭截止日已过的 open 招标；`--dry-run`、`--json`；**从不迁移** | 写；`--dry-run` 在两种数据库上都不写 | `0` 跑完；`1` 失败（含拼错的参数、MySQL 连不上）；`2` 目标不可用：SQLite 文件不存在或是目录，或者库没有迁移 |
+| `npm run bids:purge-demo` | 删除演示/种子招标和它们的全部依赖行；默认只预演 | 只有 `--apply` 才写 | `0` 完成；`1` 出错（整个事务已回滚）；`2` 用法错误（备份文件缺失、为空、不是文件、就是数据库本身，或 SQLite 文件不存在或是目录） |
 
 三个脚本都在 `frontend/scripts/`，都应当从 `frontend/` 目录用 `npm run` 运行。
 
@@ -34,17 +34,17 @@
 
 - `DATABASE_URL`（或 `MYSQL_DATABASE_URL`）是 `mysql://` 就连 MySQL；否则用 SQLite 文件 `DATABASE_PATH`，默认 `frontend/data/apsi.sqlite`。
 - 三个脚本只读进程环境变量，**不读 `.env.local`**：要连哪个库，就在 shell 里 `export DATABASE_URL=…`。注意 `npm run db:backup` 会读 `.env.local`，两边可能指向不同的库。
-- `data:integrity` 和 `bids:purge-demo` 共用同一个目标解析：`DATABASE_PATH` 的相对路径相对 `frontend/` 解析，与你从哪个目录启动无关；SQLite 文件必须已经存在，否则退出码 `2`，而且不会创建空库。两个命令一打开目标就把它打印到 **stderr**（MySQL 的密码已打码，形如 `Target: mysql mysql://root:***@127.0.0.1:3306/apsi`）。每次都核对这一行，确认没有连错库；加 `--json` 时 stdout 仍然只有一个 JSON 文档，目标行不会混进去。
-- `bids:lifecycle:sweep` 不打印目标库。它把 `DATABASE_PATH` 交给应用自己的 SQLite 打开函数，相对路径按当前工作目录解析（`npm run` 下就是 `frontend/`）；SQLite 下它会先对该文件跑一遍 `runMigrations`，MySQL 下不跑迁移——先 `npm run db:mysql:migrate`。
+- 三个命令共用同一个目标解析和打开方式（`frontend/src/server/integrity/open-target.ts`）：`DATABASE_PATH` 的相对路径相对 `frontend/` 解析，与你从哪个目录启动无关；SQLite 文件必须已经存在，否则（或者它是个目录）退出码 `2`，而且不会创建空库，也不会因为加载应用的 `db/client` 在当前目录建出 `data/apsi.sqlite`。三个命令一打开目标就把它打印到 **stderr**（MySQL 的密码已打码，形如 `Target: mysql mysql://root:***@127.0.0.1:3306/apsi`）。每次都核对这一行，确认没有连错库；加 `--json` 时 stdout 仍然只有一个 JSON 文档，目标行不会混进去。
+- `bids:lifecycle:sweep` **从不迁移**。SQLite 文件里缺清扫要读写的列（空文件、旧库），或 MySQL 里没有 `bids` 表或缺列时，它退出码 `2`，提示先跑 `npm run db:migrate`（MySQL：`npm run db:mysql:migrate`），库一个字节不动。`--dry-run` 在 SQLite 上以只读方式打开文件（连接本身拒绝写入），在 MySQL 上只发 `SELECT`、不开事务，所以预演在两种数据库上都不写。
 - `npm run db:migrate` 总是迁移 `<工作目录>/data/apsi.sqlite`，不读 `DATABASE_PATH`。SQLite 部署请保持默认路径，否则迁移的和检查的不是同一个文件。
 
 ### 2.1 备份 → 快照 → 改动 → 比对
 
-1. **停机窗口。** 停掉 crawler 和全部 worker（`worker:crawler`、`worker:events`、`worker:notifications`、`worker:attachments`）。快照里每条招标的哈希覆盖 `bids` 的**每一列**，`updated_at`、`last_seen_at` 也在内：两次快照之间 worker 写过的行都会显示成"变了"，也就没法拿来证明"别的行没动"。这本来就是迁移、部署的维护窗口。MySQL 上要执行 `bids:purge-demo --apply` 时，web 应用也要停，见第 6 节。
-2. **备份。** SQLite：`npm run db:backup`（SQLite 在线备份接口，WAL 安全，写到 `frontend/data/backups/apsi-sqlite-<时间>.sqlite`；`-- --source=<库文件> --out=<目录>` 可以指定来源和输出目录）。MySQL：本机装了 `mysqldump` 就用 `npm run db:backup`，否则在 MySQL 容器里 `mysqldump`（密码走环境变量，不放进命令行）：
+1. **停机窗口。** 停掉 crawler 和全部 worker（`worker:crawler`、`worker:events`、`worker:notifications`、`worker:attachments`），**也停掉 web 应用**（至少要冻结手动触发的抓取和管理端的招标质检编辑）：web 应用的抓取接口（`/api/crawler/state/run`、`/api/crawler/sam-gov/run`）和管理端招标质检（`/api/admin/bids/qa`）都会写 `bids`。快照里每条招标的哈希覆盖 `bids` 的**每一列**，`updated_at`、`last_seen_at` 也在内：两次快照之间有人写过的行都会显示成"变了"，也就没法拿来证明"别的行没动"。这本来就是迁移、部署的维护窗口。单独在 MySQL 上执行 `bids:purge-demo --apply` 时，同样要先停 web 应用和所有 worker，见第 6 节。
+2. **备份。** SQLite：`npm run db:backup`（SQLite 在线备份接口，WAL 安全，写到 `frontend/data/backups/apsi-sqlite-<时间>.sqlite`；`-- --source=<库文件> --out=<目录>` 可以指定来源和输出目录）。MySQL：本机装了 `mysqldump` 就用 `npm run db:backup`，否则在 MySQL 容器里 `mysqldump`。密码走环境变量，不放进任何命令行：先在 shell 里 `export MYSQL_PWD=…`，`docker exec -e MYSQL_PWD` 不带值，docker 就从当前 shell 的环境里取，不会让密码出现在宿主机的进程参数里：
 
    ```bash
-   docker exec -e MYSQL_PWD="$MYSQL_PWD" <MySQL 容器> \
+   docker exec -e MYSQL_PWD <MySQL 容器> \
      mysqldump -uroot -h127.0.0.1 --single-transaction --routines --triggers <数据库名> > before.sql
    ```
 
@@ -65,7 +65,7 @@
    ```
 
    退出码 `0` 才算通过。读法见 3.3。计划内会让 id 消失的改动要显式放行（2.2）。
-6. **留下新基线（可选）。** `--compare before.json --snapshot after.json` 在同一次运行里**先打印比对结果，再写入**新快照，作为下一次改动的基线；`after.json` 已存在同样拒绝覆盖（退出码 `2`）。
+6. **留下新基线（可选）。** `--compare before.json --snapshot after.json` 在同一次运行里比对，再把刚读到的状态写成新快照，作为下一次改动的基线；`after.json` 已存在同样拒绝覆盖（退出码 `2`）。文本模式**先打印比对结果，再写文件**；`--json` 模式先写文件，再打印唯一的一个 JSON 文档，由文档里的 `snapshot`（写成了：`{ file, bids, bytes }`）或 `snapshotError`（没写成：原因）说明文件的结果。文件的目录不存在或不可写、文件已存在，这些在读库之前就被拒绝（退出码 `2`）；读库之后写不出来，比对结果照常打印，stderr 多一行 `Snapshot not written: …`，通过的比对因此以 `2`（文件在此期间出现了）或 `1`（其他原因）退出，没通过的比对仍然是 `1`。
 
 读取是一致的：SQLite 的整次扫描在一个事务里；MySQL 的所有读取在**同一个 `REPEATABLE READ`、只读、带一致性快照的事务**里（`START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY`），服务器本身拒绝这条连接上的任何写入。所以一份报告或一份快照描述的是同一个时刻，不会一半是写入前、一半是写入后。注意这只保证**一次扫描**内部一致；两次扫描之间有人写过，仍然会被比对看到（见第 1 步）。扫描按页读完全部招标，大库请在副本上或业务低峰运行。
 
@@ -78,16 +78,17 @@
 | NY 转包行重键（`db:migrate` / `db:mysql:migrate` 里的数据迁移，第 7 节） | `ny_contract_reporter:<CR#> Company: <公司>`（同时新增 `ny_contract_reporter:<CR#>`） | `--allow-removed '^ny_contract_reporter:.+ Company: '` |
 | 演示/种子招标清理（`bids:purge-demo --apply`，第 6 节） | `<源 id>_demo_readiness`（demo-readiness）和纯数字 id（mock） | `--allow-removed '^[^:]+_demo_readiness$' --allow-removed '^[0-9]+$'` |
 
-- `--allow-removed` 只在带 `--compare` 时有意义，**可以重复**，默认一条都没有。
+- `--allow-removed` 不带 `--compare` 是用法错误（退出码 `2`）：没有快照可比，就没有什么可放行的。它**可以重复**，默认一条都没有。
 - 参数是**不锚定**的 JavaScript 正则（不带 flags）：不写 `^…$`，它会匹配 id 里的任何位置。**一律锚定。**
-- 比对的输出（文本和 `--json` 都是）会把被放行的删除 id 逐个列出来，并把删除和新增的 id 按层级分组。**放行之后必须核对：被放行的 id 恰好是你要动的那些行**，数量要对得上（演示清理的 `Demo bids: N`、NY 重键的条数）。放得过宽的正则在这里一眼就能看出来，比如本该只有几十条的列表里混进了真实招标的 id。
+- 比对的输出（文本和 `--json` 都是）会把被放行的删除 id 列出来，并把删除和新增的 id 按层级分组。**放行之后必须核对：被放行的 id 恰好是你要动的那些行**，数量要对得上（演示清理的 `Demo bids: N`、NY 重键的条数）。放得过宽的正则会在这里露出来，比如本该只有几十条的列表里混进了真实招标的 id。
+- **文本输出里每份 id 列表最多列 20 个**，其余只显示 `... and N more`。2.3 的场景放行 78 个 id（56 条演示加 22 条 NY），都在 `state` 层级，演示 id 排在前面，NY 的 id 在文本里一个也出不来。要完整核对，用 JSON：`npm run --silent data:integrity -- --compare before.json --allow-removed … --json`，看 `comparison.removed.allowed`（全部被放行的 id）和 `comparison.removed.allowedByLevel`（按层级分组），数量和 id 都与预期对上才算数；`comparison.removed.unexpected` 是没被放行的，`comparison.added.ids` / `idsByLevel` 是新增的。
 
 ### 2.3 把这几件事一起上线时的顺序
 
 下面的顺序也是数据演练用的顺序。所有命令从 `frontend/` 运行；MySQL 上把 `db:migrate` 换成 `db:mysql:migrate`。
 
 ```bash
-# 先停 crawler 和全部 worker；MySQL 上要清演示数据，web 也停。然后按 2.1 备份。
+# 先停 crawler、全部 worker 和 web 应用，然后按 2.1 备份。
 npm run data:integrity -- --snapshot before.json
 npm run db:mysql:migrate                              # SQLite：npm run db:migrate。FIPS 校正与 NY 重键在这里执行
 npm run bids:purge-demo                               # 预演：看数量
@@ -99,7 +100,7 @@ npm run data:integrity -- --compare before.json \
   --allow-removed '^[^:]+_demo_readiness$' --allow-removed '^[0-9]+$'
 ```
 
-比对通过、被放行的 id 核对无误之后，再启动 worker 和 web。MySQL 清扫要求 **MySQL ≥ 8.0.1**（第 5 节），跑之前先 `SELECT VERSION()`。
+比对通过、被放行的 id 核对无误（文本只列前 20 个，完整核对用 2.2 里的 `--json`）之后，再启动 worker 和 web。MySQL 清扫要求 **MySQL ≥ 8.0.1**（第 5 节），跑之前先 `SELECT VERSION()`。
 
 ## 3. 怎么读报告
 
@@ -108,7 +109,7 @@ npm run data:integrity                          # 文本报告
 npm run --silent data:integrity -- --json       # 同样的内容，stdout 只有一个 JSON 文档
 ```
 
-JSON 的形状：报告是 `{ target, mode: "report", report }`；带 `--snapshot` 时 `mode` 是 `snapshot`，多一个 `snapshot: { file, bids, bytes }`；带 `--compare` 时是 `{ target, mode: "compare", comparison, report }`（同时拍快照则再多一个 `snapshot`）。脚本保证 stdout 里只有这一个文档（目标行走 stderr），但 `npm run` 自己会先往 stdout 打两行脚本横幅，要把输出交给别的程序解析，就像上面那样加 `--silent`；`bids:lifecycle:sweep` 和 `bids:purge-demo` 的 `--json` 同理。
+JSON 的形状：报告是 `{ target, mode: "report", report }`；带 `--snapshot` 时 `mode` 是 `snapshot`，多一个 `snapshot: { file, bids, bytes }`；带 `--compare` 时是 `{ target, mode: "compare", comparison, report }`，同时带 `--snapshot` 时再多一个 `snapshot`（写成了）或 `snapshotError`（没写成，是原因）。`comparison` 里 `added` 和 `removed` 各有 `ids`（全部）和 `idsByLevel`（按层级分组），`removed` 还分成 `allowed` / `allowedByLevel`（被 `--allow-removed` 放行的）和 `unexpected` / `unexpectedByLevel`（没被放行的）。脚本保证 stdout 里只有这一个文档（目标行走 stderr），但 `npm run` 自己会先往 stdout 打两行脚本横幅，要把输出交给别的程序解析，就像上面那样加 `--silent`；`bids:lifecycle:sweep` 和 `bids:purge-demo` 的 `--json` 同理。
 
 ### 3.1 版面与示例
 
@@ -163,6 +164,8 @@ Why open bids are not shown (a bid can have several reasons)
   total: invalid_issuer 3, registered_source_mismatch 3, inactive_flag 1, invalid_issuer_type 1, registered_source_ambiguous 1, suppressed 1
 
 Legacy NY ids (ny_contract_reporter:% Company:%) still in the data: 2
+  ny_contract_reporter:2138289 Company: E.W. Howell Co., LLC.
+  ny_contract_reporter:CR9 Company: Acme Inc
 ```
 
 ### 3.2 每个指标是什么意思
@@ -228,7 +231,7 @@ Legacy NY ids (ny_contract_reporter:% Company:%) still in the data: 2
 
 | 指标 | 含义 | 异常时 |
 | --- | --- | --- |
-| `malformedNyIds`（"Legacy NY ids … still in the data"） | 还留在库里的遗留 NY id：`ny_contract_reporter:<CR#> Company: <公司>`。NY 重键（第 7 节）会跳过有子表数据（被收藏、被立项、有附件……）的行，也会跳过新 key 与别的行冲突的行，它们就留在这里 | 应为 0，或者逐条解释。找出这些行：`SELECT id FROM bids WHERE id LIKE 'ny!_contract!_reporter:% Company:%' ESCAPE '!'` |
+| `malformedNyIds`（"Legacy NY ids … still in the data"） | 还留在库里的遗留 NY id：`ny_contract_reporter:<CR#> Company: <公司>`。NY 重键（第 7 节）会跳过有子表数据（被收藏、被立项、有附件……）的行，也会跳过新 key 与别的行冲突的行，它们就留在这里 | 应为 0，或者逐条解释。**它是个数字**，数的是这些 id：报告在计数下面把它们列出来（文本里前 20 个，多的显示 `... and N more`；JSON 里 `report.malformedNyIdList` 是全部，`report.malformedNyIds` 仍是个数）。也可以直接查：`SELECT id FROM bids WHERE id LIKE 'ny!_contract!_reporter:% Company:%' ESCAPE '!'` |
 
 ### 3.3 怎么读比对
 
@@ -240,11 +243,11 @@ Legacy NY ids (ny_contract_reporter:% Company:%) still in the data: 2
    - `visibility_regression`：改动前是 open 且搜索可见、现在仍是 open 却不可见；
    - `identity_mismatch_increased`：某一层的 `identityMismatch` 上升；
 3. **Warnings（不影响退出码）**：
-   - `closed_without_reason`：招标从 open 变成了 closed，而 `raw_payload.lifecycle.closed_reason` 不是 `deadline_passed` / `delisted`（中标 `awarded` 自成一种原因，不算）。包括迁移把 `is_active = 0` 的 open 行改成 closed 时关掉的行，以及 `raw_payload` 不是 JSON 对象、被清扫关闭而没法记原因的行（第 5 节）；逐条看是否符合预期；
+   - `closed_without_reason`：招标从 open 变成了 closed，而 `raw_payload.lifecycle.closed_reason` 不是 `deadline_passed` / `delisted`（中标 `awarded` 自成一种原因，不算）。包括迁移把 `is_active = 0` 的 open 行改成 closed 时关掉的行，以及 `raw_payload` 不是 JSON 对象、被导入或清扫关闭而没法记原因的行（第 5 节）；逐条看是否符合预期；
    - `dialect_changed`（快照和现在不是同一种数据库）、`columns_added` / `columns_removed` / `hashes_not_comparable`（`bids` 表结构变了：新增列时比对按旧快照的列算哈希；删列时没法还原旧哈希，只能比对跟踪列、可见性和指标）；
-4. 计数行：`Bids: added … removed … changed … changed only outside the tracked columns …`，以及按层级分组的新增、删除 id 列表（含被 `--allow-removed` 放行的）；
-5. **`Changed bids, by what changed`**：按"改了什么"分组，例如 `issuer_type state→city: 11`、`lifecycle_status open→closed: 340`。跟踪的列是 `issuer_type`、`jurisdiction_level`、`fips_code`、`lifecycle_status`、`is_active`、`display_status`、`issuer_name`、`title`、`deadline_date`、`source_bid_id`；
-6. `Changed only outside the tracked columns`：哈希变了、跟踪列没变的行（改了描述、`raw_payload`，或者 `updated_at`、`last_seen_at`）；
+4. 计数行：`Bids: added … removed … changed … changed only outside the tracked columns …`，以及按层级分组的新增 id 列表和被 `--allow-removed` 放行的删除 id 列表（没被放行的在 Failures 里）。每份列表在文本里最多列 20 个，完整的在 `--json` 里；
+5. **`Changed bids, by what changed`**：按"改了什么"分组，例如 `issuer_type state→city: 11`、`lifecycle_status open→closed: 340`。只有下面这十个跟踪的列会被点名，其余列的任何改动都只出现在第 6 项，不说是哪一列。跟踪的列是 `issuer_type`、`jurisdiction_level`、`fips_code`、`lifecycle_status`、`is_active`、`display_status`、`issuer_name`、`title`、`deadline_date`、`source_bid_id`；
+6. `Changed only outside the tracked columns`：哈希变了、十个跟踪列都没变的行（改了描述、`raw_payload`，或者 `updated_at`、`last_seen_at`……），只给 id 和个数；
 7. `Metrics that moved`：每个层级、每个指标的前后值和差。
 
 一次干净的比对：没有未解释的删除，没有可见性回归，`identityMismatch` 没有上升，`Changed bids` 里出现的每一组都能对应到这次改动本来要做的事。几类计划内改动在比对里长什么样：
@@ -254,13 +257,13 @@ Legacy NY ids (ny_contract_reporter:% Company:%) still in the data: 2
 | FIPS 校正 | `issuer_type state→city`（或 county、township）若干条，加上同一批行的 `fips_code changed`；`identityMismatch` 下降 |
 | NY 重键 | 旧 id 出现在删除里（要 `--allow-removed`），新 id 出现在新增里；`malformedNyIds` 下降；原来发布方是 Unknown 的行通常不再被藏，`openHidden` 下降 |
 | 演示清理 | 删除里只有 `*_demo_readiness` 和纯数字 id；`demoLike`、`unregistered` 下降 |
-| 截止日清扫 | `lifecycle_status open→closed` 与 `is_active 1→0` 成对出现；`expiredOpen` 下降；没有 `closed_without_reason`，除非那几条的 `raw_payload` 不是 JSON 对象 |
+| 截止日清扫 | `lifecycle_status open→closed` 与 `is_active 1→0` 成对出现；`expiredOpen` 下降；没有 `closed_without_reason`，除非那几条的 `raw_payload` 不是 JSON 对象（导入和清扫都不给这样的行记原因） |
 
 ## 4. 它证明什么，不证明什么
 
 **它证明的**（在这个数据库里，针对改动前后）：
 
-- 快照到快照之间：哪些招标没了、哪些行变了、改了哪几列（行哈希覆盖每一列）；
+- 快照到快照之间：哪些招标没了、哪些行变了（行哈希覆盖每一列），以及十个跟踪列里是哪几列变了；其余列的改动只显示为"只在跟踪列之外变化"，不说是哪一列；
 - 没有"本来搜得到、现在搜不到"的 open 招标；
 - 招标与登记源在层级、州、FIPS 上是否一致（`identityMismatch`）、id 是否规范（`unregistered`、`nonCanonicalId`）、有没有演示数据（`demoLike`）；
 - 每个层级入库数据的数量、可见性、关键字段、截止日状态，以及各层级启用的源的抓取健康。
@@ -305,9 +308,11 @@ Legacy NY ids (ny_contract_reporter:% Company:%) still in the data: 2
   npm run --silent bids:lifecycle:sweep -- --json   # 结果以 JSON 输出
   ```
 
-  输出 `scanned`（检查了多少 open 招标）、`closed`、`unparseable`（截止日非空但读不懂，保持 open）和按 `issuer_type` 分的关闭数。只处理 open 的招标，所以重复跑是安全的，第二遍 `closed: 0`。该脚本没有 `--help`，只认 `--dry-run` 和 `--json`，其他参数一律退出码 `1`，不会把预演变成真跑。
+  输出 `scanned`（检查了多少 open 招标）、`closed`、`unparseable`（截止日非空但读不懂，保持 open）和按 `issuer_type` 分的关闭数。只处理 open 的招标，所以重复跑是安全的，第二遍 `closed: 0`。
+
+  目标库的选法与 `data:integrity`、`bids:purge-demo` 完全一样（第 2 节）：一打开就把 `Target:` 打印到 stderr；SQLite 文件不存在或是目录时退出码 `2`，什么也不建。**它从不迁移**：库没有迁移到清扫需要的结构（空文件、旧库）时退出码 `2`，提示先跑 `npm run db:migrate`（MySQL：`npm run db:mysql:migrate`），库一个字节不动。**`--dry-run` 在两种数据库上都不写**：SQLite 文件以只读方式打开，MySQL 上只发 `SELECT`、不开事务。该脚本没有 `--help`，只认 `--dry-run` 和 `--json`，其他参数一律打印用法、退出码 `1`，不会把预演变成真跑。
 - **引擎要求**：MySQL 上的清扫用 `SELECT … FOR UPDATE SKIP LOCKED`，要求 **MySQL ≥ 8.0.1**（5.7 不支持这条语法）。导入正持有的招标会被跳过，留给下一轮清扫，不会阻塞也不会死锁。SQLite 上用 `BEGIN IMMEDIATE` 先拿写锁。每页 500 条一个事务，页内的待关闭招标在写锁下重读并再判断一次，所以刚被导入刷新的招标不会按过期的截止日关掉。
-- **原因记在哪**：被截止日关闭的招标，`raw_payload.lifecycle` 里记 `closed_reason = "deadline_passed"`、`closed_observed_at` 和当时的 `deadline` 文本。**只有 `raw_payload` 是 JSON 对象时才记**；不是（NULL、纯文本）的，招标照样关闭，但 payload 原样不动、没有原因，`data:integrity --compare` 会把它们报成 `closed_without_reason` 警告。
+- **原因记在哪**：被截止日关闭的招标，`raw_payload.lifecycle` 里记 `closed_reason = "deadline_passed"`、`closed_observed_at` 和当时的 `deadline` 文本。**只有 `raw_payload` 是 JSON 对象时才记**；不是（NULL、纯文本）的，招标照样关闭，但 payload 原样不动、没有原因，导入和清扫都是这样，`data:integrity --compare` 会把它们报成 `closed_without_reason` 警告。
 
 ## 6. 演示/种子数据清理：`bids:purge-demo`
 
@@ -377,5 +382,5 @@ BidNet 的匿名访客在详情页上看到的是 "Description Locked — Regist
 | `demoLike` 非 0 | 有人跑了 `demo:prepare`、`db:seed` 或 `db:mysql:import-sqlite` | 查是谁、在哪个库；再预演、`--apply` 清理 |
 | `malformedNyIds` 非 0 | NY 重键跳过了有子表数据或新 id 冲突的行 | 逐条处理：先看它们的子表数据，再决定合并还是保留 |
 | `expiredOpen` 清扫后仍非 0 | 清扫没在跑或失败了；或者 MySQL 上这些招标当时正被一次导入持有，被本轮清扫跳过（下一轮会关） | 看 worker 日志里的 `crawler_lifecycle_sweep`；MySQL 先确认 ≥ 8.0.1；再手动跑一次 `bids:lifecycle:sweep` |
-| 比对 `closed_without_reason` 警告 | 招标被不记原因的路径关闭：迁移把 `is_active = 0` 的 open 行改成 closed，或者清扫遇到 `raw_payload` 不是 JSON 对象的行 | 逐条确认是预期内的关闭 |
+| 比对 `closed_without_reason` 警告 | 招标被不记原因的路径关闭：迁移把 `is_active = 0` 的 open 行改成 closed，或者导入、清扫遇到 `raw_payload` 不是 JSON 对象的行 | 逐条确认是预期内的关闭 |
 | `bodyMissing` 很大，`detailLockedAtSource` 很小 | 正文真的没抓到 | 走正文补采/详情补全，见[详情补全](./detail-enrichment.md)、[正文补采](./detail-backfill.md) |
