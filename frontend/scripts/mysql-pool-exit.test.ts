@@ -123,6 +123,8 @@ describe("scripts that open the shared MySQL pool exit when MySQL refuses them",
     { name: "purge-demo-bids", args: () => ["scripts/purge-demo-bids.ts"] },
     // Reads its first page of bids through the pool, so the refused connection fails inside the try whose finally closes it.
     { name: "sweep-bid-lifecycle", args: () => ["scripts/sweep-bid-lifecycle.ts"] },
+    // A read-only report: its first read takes a connection from the pool, which is refused here, and the pool must still be released.
+    { name: "data-integrity", args: () => ["scripts/data-integrity.ts"] },
     // Closes its own pool in a finally already; keeps this harness honest (it must see a script that does exit).
     { name: "migrate-mysql", args: () => ["scripts/migrate-mysql.ts"] },
   ];
