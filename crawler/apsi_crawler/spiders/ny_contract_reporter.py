@@ -132,8 +132,9 @@ def _record_from_item(item):
     title = fields.get("Title:")
     subcontracting = bool(fields.get(_SUBCONTRACTING_FLAG))
 
-    # Whatever was folded into the CR# text is always peeled off, so the id stays clean. It only
-    # names the contractor when the page has no real Company: row, which otherwise wins.
+    # Only a "Company:" folded into the CR# text ("<CR#> Company: <name>") is peeled off, so the id
+    # stays clean; a CR# value with anything else folded in is left as it is. The peeled company
+    # only names the contractor when the page has no real Company: row, which otherwise wins.
     if cr_number:
         glued = _CR_NUMBER_WITH_COMPANY.match(cr_number)
         if glued:
