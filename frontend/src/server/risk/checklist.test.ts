@@ -78,10 +78,23 @@ function approveAllStateSourcesForProduction(db: AppDatabase) {
     .run();
 }
 
-// Whether the 50-state checks are set aside is read from RISK_CHECK_SEED_DATA, so a shell that exports it must not change
-// what a test that does not mean to set it expects.
-beforeEach(() => {
+// What decides whether the opt-out is honoured: RISK_CHECK_SEED_DATA, and the variables a deployed environment sets (any of
+// NODE_ENV, APP_ENV, DEPLOY_ENV, VERCEL_ENV or RUNTIME_ENV naming production or staging refuses it). A shell, or a CI job, that
+// exports one of them must not change what a test that does not mean to set it expects, so every test starts from a neutral
+// environment: the opt-out off, NODE_ENV as vitest sets it, the others blank. A loop that varies one of them goes back to
+// it with these, not with vi.unstubAllEnvs(), which would restore whatever the shell exported.
+function blankDeploymentEnvironment() {
+  vi.stubEnv("NODE_ENV", "test");
+  for (const key of ["APP_ENV", "DEPLOY_ENV", "VERCEL_ENV", "RUNTIME_ENV"]) vi.stubEnv(key, "");
+}
+
+function useNeutralRiskCheckEnvironment() {
+  blankDeploymentEnvironment();
   vi.stubEnv("RISK_CHECK_SEED_DATA", "");
+}
+
+beforeEach(() => {
+  useNeutralRiskCheckEnvironment();
 });
 
 afterEach(async () => {
@@ -673,8 +686,7 @@ describe("the seed-data opt-out in a production-like environment", () => {
       vi.stubEnv(key, value);
       const report = await createRiskChecklistReport(db, NOW, { seedData: true });
       expect(checkOf(report, "state-coverage").status, `${key}=${JSON.stringify(value)}`).toBe("not_run");
-      vi.unstubAllEnvs();
-      vi.stubEnv("RISK_CHECK_SEED_DATA", "");
+      useNeutralRiskCheckEnvironment();
     }
   });
 });
