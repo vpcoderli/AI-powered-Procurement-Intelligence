@@ -109,6 +109,20 @@ describe("mergeLifecycleFields with a clock (deadline-passed rule)", () => {
     expect(mergeLifecycleFields(row, {}, { now: "2026-10-13T11:59:59.999Z" })).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
   });
 
+  it("keeps a bid whose exact deadline may be a US date converted to an instant open through that day, and reads 24:00 and .NET offsets", () => {
+    const at = (deadline: string, now: string) => mergeLifecycleFields({ lifecycle_status: "open", deadline_date: deadline }, {}, { now });
+    // 04:00Z is midnight in UTC-4 (CT's epoch deadlines), 10:00Z midnight in UTC-10; the admin console saves a date as 23:59:59 UTC.
+    for (const deadline of [String(Date.UTC(2026, 9, 13, 4)), "2026-10-13T10:00:00Z", "2026-10-13T23:59:59.000Z", "/Date(1791864000000-0400)/", "10/13/2026 24:00"]) {
+      expect(at(deadline, "2026-10-13T12:00:00.000Z"), deadline).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+      expect(at(deadline, "2026-10-14T09:59:59.999Z"), deadline).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+      expect(at(deadline, "2026-10-14T10:00:00.000Z"), deadline).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
+    }
+    // A hand-formatted one-digit ISO hour is held to its PM reading; an instant that is no US midnight is exact.
+    expect(at("2026-10-13 2:00", "2026-10-13T12:00:00.000Z")).toMatchObject({ lifecycle_status: "open", is_active: 1 });
+    expect(at("2026-10-13 2:00", "2026-10-14T00:00:00.000Z")).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
+    expect(at("2026-10-13T11:00:00Z", "2026-10-13T11:00:00.000Z")).toMatchObject({ lifecycle_status: "closed", is_active: 0 });
+  });
+
   it("changes nothing without a clock", () => {
     const row = { lifecycle_status: "open", deadline_date: PASSED };
     expect(mergeLifecycleFields(row)).toMatchObject({ lifecycle_status: "open", is_active: 1 });

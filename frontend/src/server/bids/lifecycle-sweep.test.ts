@@ -305,6 +305,29 @@ describe("sweepExpiredBids on SQLite", () => {
     expect(JSON.parse(read("midnight:iso").rawPayload!).lifecycle).toMatchObject({ closed_reason: "deadline_passed", deadline: "2026-10-13T00:00:00Z" });
   });
 
+  it("reads converted-date instants, 24:00, one-digit ISO hours and .NET offsets, and closes each when its day or hour is over", async () => {
+    seed([
+      { id: "r1:ct-epoch", deadline: String(Date.UTC(2026, 9, 13, 4)) }, // midnight in UTC-4 starting the 13th: open through the 13th
+      { id: "r1:iso-z", deadline: "2026-10-13T10:00:00Z" }, // midnight in UTC-10 starting the 13th
+      { id: "r1:admin-yesterday", deadline: "2026-10-12T23:59:59.000Z" }, // a corrected date, the 12th, which ended at 10:00Z on the 13th
+      { id: "r1:exact", deadline: "2026-10-13T11:00:00Z" }, // no US midnight: exact, passed
+      { id: "r2:one-digit", deadline: "2026-10-13 2:00" }, // its PM reading is 00:00Z on the 14th
+      { id: "r3:yesterday", deadline: "10/12/2026 24:00" }, // the end of the 12th: passed
+      { id: "r3:today", deadline: "10/13/2026 24:00" },
+      { id: "r4:dotnet-offset", deadline: "/Date(1791864000000-0400)/" }, // 04:00Z, midnight in UTC-4 starting the 13th
+    ]);
+    expect(await sweep()).toMatchObject({ scanned: 8, closed: 3, unparseable: 0 });
+    expect(closedIds()).toEqual(["r1:admin-yesterday", "r1:exact", "r3:yesterday"]);
+
+    const sweepAt = (now: string) => sweepExpiredBids({ database: testDb.db }, { now: new Date(now) });
+    expect(await sweepAt("2026-10-13T23:59:59.999Z")).toMatchObject({ closed: 0 });
+    expect(await sweepAt("2026-10-14T00:00:00.000Z")).toMatchObject({ closed: 1 });
+    expect(read("r2:one-digit")).toMatchObject({ lifecycleStatus: "closed", isActive: 0 });
+    expect(await sweepAt("2026-10-14T09:59:59.999Z")).toMatchObject({ closed: 0 });
+    expect(await sweepAt("2026-10-14T10:00:00.000Z")).toMatchObject({ closed: 4 });
+    for (const id of ["r1:ct-epoch", "r1:iso-z", "r3:today", "r4:dotnet-offset"]) expect(read(id)).toMatchObject({ lifecycleStatus: "closed", isActive: 0 });
+  });
+
   it("ignores a batch size that is not a positive whole number", async () => {
     seed();
     for (const batchSize of [0, -3, 1.5, Number.NaN]) {
