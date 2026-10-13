@@ -517,6 +517,41 @@ describe.each<Language>(["en", "zh"])("a risk check that did not run in %s", (la
     expect(after(text, t.riskTrendStateCoverageDeclined).slice(0, 2)).toEqual([NOT_RUN_COVERAGE.summary, t.riskCheckNotRun]);
   });
 
+  // The trend compares the first and the latest recorded coverage. When an older snapshot's coverage did not run (seed data), the
+  // server answers null, and the latest check can be a perfectly good pass: there is still nothing to call stable, so the card
+  // must not say Pass.
+  it("reads the state coverage trend as Not run, not Pass, when no comparison could be made because an older snapshot did not run it", () => {
+    load(
+      null,
+      true,
+      [{ ...NOT_RUN_COVERAGE, ok: true, status: "pass", summary: "50/50 required states have at least one active bid", details: undefined }],
+      { trend: { stateCoverageDeclined: null, latestStateCoverageSummary: "50/50 required states have at least one active bid" } },
+    );
+    const text = textNodes(render(language));
+
+    expect(after(text, t.riskTrendStateCoverageDeclined).slice(0, 2)).toEqual(["50/50 required states have at least one active bid", t.riskCheckNotRun]);
+  });
+
+  it("reads a trend the server did not answer at all as Not run too, an older server's", () => {
+    load(null, true, [{ ...NOT_RUN_COVERAGE, ok: true, status: "pass", summary: "50/50 required states have at least one active bid", details: undefined }], {
+      trend: { stateCoverageDeclined: undefined as never },
+    });
+
+    expect(after(textNodes(render(language)), t.riskTrendStateCoverageDeclined)[1]).toBe(t.riskCheckNotRun);
+  });
+
+  it("reads a coverage that declined as an Issue, and one that did not as Pass", () => {
+    load(null, false, [{ ...NOT_RUN_COVERAGE, ok: true, status: "pass", summary: "49/50 required states have at least one active bid", details: undefined }], {
+      trend: { stateCoverageDeclined: true },
+    });
+    expect(after(textNodes(render(language)), t.riskTrendStateCoverageDeclined)[1]).toBe(t.riskCheckIssue);
+
+    load(null, true, [{ ...NOT_RUN_COVERAGE, ok: true, status: "pass", summary: "50/50 required states have at least one active bid", details: undefined }], {
+      trend: { stateCoverageDeclined: false },
+    });
+    expect(after(textNodes(render(language)), t.riskTrendStateCoverageDeclined)[1]).toBe(t.riskCheckOk);
+  });
+
   it("reads the state coverage trend as before once the check ran", () => {
     load(null, true, [{ ...NOT_RUN_COVERAGE, ok: true, status: "pass", summary: "50/50 required states have at least one active bid", details: undefined }]);
     const text = textNodes(render(language));

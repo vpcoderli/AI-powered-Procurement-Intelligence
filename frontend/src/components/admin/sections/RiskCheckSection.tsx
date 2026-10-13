@@ -475,10 +475,14 @@ function RiskCheck({
   const globalUrlSummary = (snapshotReport: AdminRiskChecklistResponse["report"]) =>
     snapshotReport.checks.find((check) => check.id === "global-url-validity")?.summary ?? "-";
   const reportStatus = riskReportStatus(report);
-  // The coverage trend compares measured counts; a latest check that did not run has none, so it reads Not run.
+  // The coverage trend compares the first and the latest measured count. With no measured count on either side (the latest
+  // check did not run, or an older snapshot's did: the server answers null, or nothing at all from an older server) there is
+  // no comparison to call stable, so the card reads Not run, never Pass.
   const stateCoverageCheck = report.checks.find((check) => check.id === "state-coverage");
   const stateCoverageTrendStatus: RiskCheckStatus =
-    stateCoverageCheck && riskCheckStatus(stateCoverageCheck) === "not_run"
+    (stateCoverageCheck && riskCheckStatus(stateCoverageCheck) === "not_run") ||
+    trend.stateCoverageDeclined === null ||
+    trend.stateCoverageDeclined === undefined
       ? "not_run"
       : trend.stateCoverageDeclined
         ? "fail"
