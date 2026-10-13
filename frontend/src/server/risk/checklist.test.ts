@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { en } from "@/lib/i18n/dictionaries/en";
 import { riskCheckStatus, riskChecklistOutcome } from "@/lib/risk-check-status";
@@ -75,6 +75,12 @@ function approveAllStateSourcesForProduction(db: AppDatabase) {
     })
     .run();
 }
+
+// Whether the 50-state checks are set aside is read from RISK_CHECK_SEED_DATA, so a shell that exports it must not change
+// what a test that does not mean to set it expects.
+beforeEach(() => {
+  vi.stubEnv("RISK_CHECK_SEED_DATA", "");
+});
 
 afterEach(async () => {
   vi.unstubAllEnvs();
