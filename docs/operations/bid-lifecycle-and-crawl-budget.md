@@ -8,7 +8,7 @@
 
 - **`open`**：该招标当前仍在源租户的开放列表上；
 - **`closed`**：截止日已过（精确定义见第 8 节），或者在 closed 列表上被看到且没有中标记录；
-- **`awarded`**：在 awarded 列表上被看到过，或者之前已经中标——一旦到过 `awarded` 就不会再被降回 `closed`：合并逻辑（`frontend/src/server/crawler/lifecycle.ts` 的 `mergeLifecycleFields()`）里，已有记录是 `awarded` 时，即使这次抓到的是 `closed` 也保持 `awarded`。
+- **`awarded`**：在 awarded 列表上被看到过，或者之前已经中标——一旦到过 `awarded` 就不会再被降回 `closed`：合并逻辑（导入器通过 `persistence-merge.ts` 调用 `frontend/src/server/crawler/lifecycle.ts` 的 `resolveLifecycle()`；`mergeLifecycleFields()` 是同一个决定（`decideLifecycle`）的薄封装，只返回字段，留给测试和其他调用方）里，已有记录是 `awarded` 时，即使这次抓到的是 `closed` 也保持 `awarded`。
 
 `is_active` 恒等于 `lifecycle_status === "open"`（open 是 1，closed/awarded 都是 0）。这是历史列，搜索、保存搜索提醒匹配器等继续只读 `is_active`，不需要感知三态。
 
@@ -178,6 +178,6 @@ SELECT COUNT(*) FROM bids WHERE (lifecycle_status = 'open') <> (is_active = 1);
 | `closed_reason` | 谁写 | 条件 | 其他 |
 | --- | --- | --- | --- |
 | `delisted` | 两个导入器的 `delistMissingOpenBids`（第 1 节） | 一次完整的开放列表运行没再返回这条 open 招标 | `closed_observed_at` 是该次运行的结束时间。payload 不是 JSON 对象时，会被改写成只含 `lifecycle` 的新对象 |
-| `deadline_passed` | 导入（`mergePersistedBid`）和清扫 | open 招标的截止日按 8.1 的规则到期 | `closed_observed_at` 是导入的 `now` 或清扫的时刻；`deadline` 是当时的截止日文本。**只在 `raw_payload` 是 JSON 对象时记录**：不是（NULL、纯文本）的，招标照样关闭，payload 原样不动，没有原因 |
+| `deadline_passed` | 导入（`mergePersistedBid`）和清扫 | open 招标的截止日按 8.1 的规则到期 | `closed_observed_at` 是导入的 `now` 或清扫的时刻；`deadline` 是当时的截止日文本。**只在 `raw_payload` 是 JSON 对象时记录**：不是（NULL、纯文本）的，招标照样关闭，没有原因。清扫从不改写非对象的 payload，原样不动；导入路径上 `mergePersistedBid` 同样不记原因，随后 `stampPersistedBidQuality`（`frontend/src/server/crawler/data-quality.ts`）会把非对象的 payload 改写成只含 `data_quality` 的对象。这是早就有的行为，与生命周期无关，而且今天碰不到：爬虫没有任何路径送来非对象的 payload，库里的真实行都是 JSON 对象 |
 
-没有 reason 的关闭：在 closed / awarded 列表上看到的招标、早期迁移关闭的行（`is_active = 0` 的 open 招标），以及上面那种 payload 不是 JSON 对象的关闭（导入和清扫都一样：`persistence-merge.ts` 只在 payload 是 JSON 对象时才改写它）。`awarded` 是状态，不是原因。`data:integrity --compare` 把"从 open 变成 closed，却没有这两个 reason"（中标除外）报成 `closed_without_reason` 警告。
+没有 reason 的关闭：在 closed / awarded 列表上看到的招标、早期迁移关闭的行（`is_active = 0` 的 open 招标），以及上面那种 payload 不是 JSON 对象的关闭（导入和清扫都不记原因：`persistence-merge.ts` 只在 payload 是 JSON 对象时才写入原因；清扫不改写这样的 payload，导入则由质量标注改写，见上）。`awarded` 是状态，不是原因。`data:integrity --compare` 把"从 open 变成 closed，却没有这两个 reason"（中标除外）报成 `closed_without_reason` 警告；反过来，记着 `deadline_passed`、但截止日在比对读库的那一刻还没到的关闭，它报成 `early_close` 失败（退出码 1），见[数据完整性运维](./data-integrity.md)第 3.3 节。
