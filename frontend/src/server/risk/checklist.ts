@@ -825,3 +825,20 @@ export function assertRiskChecklistReport(report: RiskChecklistReport) {
     throw new Error(formatRiskChecklistReport(report));
   }
 }
+
+/** What a GitHub Actions workflow command cannot carry in its message: `%`, CR and LF. */
+function escapeWorkflowCommandData(value: string) {
+  return value.replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+}
+
+/**
+ * The line that puts an INCOMPLETE report in the GitHub check summary: a workflow command, `::warning title=…::<NOT RUN
+ * ids>`, which the Actions runner turns into an annotation. A step that exits 0 shows nothing of a check that did not run,
+ * so on CI (`CI=true`, the exact value) an incomplete report says so beside the green step as well. Nothing for a report
+ * that passed, or one that failed (its step is red already).
+ */
+export function riskChecklistCiAnnotation(report: RiskChecklistReport, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.CI !== "true" || riskChecklistOutcome(report) !== "incomplete") return null;
+  const notRun = report.checks.filter((entry) => riskCheckStatus(entry) === "not_run").map((entry) => entry.id);
+  return `::warning title=Risk checklist INCOMPLETE::${escapeWorkflowCommandData(notRun.join(", "))}`;
+}

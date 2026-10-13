@@ -12,6 +12,7 @@ import {
   createRiskChecklistReportFromMysql,
   formatRiskChecklistReport,
   RISK_CHECK_IDS,
+  riskChecklistCiAnnotation,
   stateCoverageCheck,
   type RiskCheckId,
   type RiskChecklistReport,
@@ -773,5 +774,38 @@ describe("stateCoverageCheck", () => {
 
     expect(stateCoverageCheck({ requiredStates: fifty, availableStates: fifty.slice(0, 5), statesWithBidRows: [] })).toMatchObject({ status: "not_run" });
     expect(stateCoverageCheck({ requiredStates: fifty, availableStates: fifty.slice(0, 5), statesWithBidRows: [], options: { seedData: false } })).toMatchObject({ status: "fail" });
+  });
+});
+
+describe("riskChecklistCiAnnotation", () => {
+  const entry = (id: string, status: "pass" | "fail" | "not_run") => ({ id, label: id, ok: status === "pass", status, summary: "" });
+  const report = (...checks: Array<ReturnType<typeof entry>>): RiskChecklistReport => ({
+    ok: checks.every((check) => check.ok),
+    checkedAt: NOW.toISOString(),
+    checks,
+  });
+  const incomplete = report(entry("state-coverage", "not_run"), entry("state-content", "pass"), entry("state-data-quality-gate", "not_run"));
+
+  it("is a GitHub Actions warning naming the checks that did not run, for an incomplete report in CI", () => {
+    expect(riskChecklistCiAnnotation(incomplete, { CI: "true" })).toBe(
+      "::warning title=Risk checklist INCOMPLETE::state-coverage, state-data-quality-gate",
+    );
+  });
+
+  it("is nothing outside CI: only the exact value true counts", () => {
+    for (const env of [{}, { CI: "" }, { CI: "false" }, { CI: "1" }, { CI: "TRUE" }]) {
+      expect(riskChecklistCiAnnotation(incomplete, env), JSON.stringify(env)).toBeNull();
+    }
+  });
+
+  it("is nothing for a report that passed, or one that failed (its step is red already)", () => {
+    expect(riskChecklistCiAnnotation(report(entry("state-coverage", "pass")), { CI: "true" })).toBeNull();
+    expect(riskChecklistCiAnnotation(report(entry("state-coverage", "not_run"), entry("state-content", "fail")), { CI: "true" })).toBeNull();
+  });
+
+  it("escapes what a workflow command cannot carry in its message", () => {
+    expect(riskChecklistCiAnnotation(report(entry("a%b\nc\rd", "not_run")), { CI: "true" })).toBe(
+      "::warning title=Risk checklist INCOMPLETE::a%25b%0Ac%0Dd",
+    );
   });
 });
