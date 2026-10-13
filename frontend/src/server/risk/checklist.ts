@@ -837,7 +837,10 @@ function escapeWorkflowCommandData(value: string) {
  * so on CI (`CI=true`, the exact value) an incomplete report says so beside the green step as well. Nothing for a report
  * that passed, or one that failed (its step is red already).
  */
-export function riskChecklistCiAnnotation(report: RiskChecklistReport, env: NodeJS.ProcessEnv = process.env): string | null {
+export function riskChecklistCiAnnotation(
+  report: RiskChecklistReport,
+  env: Record<string, string | undefined> = process.env,
+): string | null {
   if (env.CI !== "true" || riskChecklistOutcome(report) !== "incomplete") return null;
   const notRun = report.checks.filter((entry) => riskCheckStatus(entry) === "not_run").map((entry) => entry.id);
   return `::warning title=Risk checklist INCOMPLETE::${escapeWorkflowCommandData(notRun.join(", "))}`;
