@@ -95,3 +95,22 @@
 比对：`ok`，failures 0，warnings 0；新增 862 条（state 794、county 68），移除 0；改动 36 条：截止日更新 35、`closed→open` 11、`open→closed` 1（`bidnet_mi_oakland:0000438950`，完整列表扫描未再出现，`closed_reason = delisted`）、标题 5、机构 2；可见性回退 0。11 条重新打开的招标都是门户重新刊登并给出新截止日（10/13–11/16/2026），不是清扫错关。无 open 州级招标的州由 7 个降为 4 个：CA（门户 500）、CT、ME、RI。
 
 本节不改变 §4 矩阵的结论：上游完整性、正文与附件仍未验证；市、镇来源要等预算轮到后再复验。观察项：`wa_state_procurement:RFP` 这样的 id 说明 WA 适配器把 "RFP" 当成了公告编号，属既有适配器问题，待单独处理。
+
+## 8. 复验：地方来源全部轮完一遍（2026-10-14 09:38Z）
+
+爬虫自 10-13 12:00Z 恢复后共跑 81 轮（至 10-14 09:33Z），1,012 个启用来源全部跑过一遍：州 50（49 成功，`ca_caleprocure` 门户 HTTP 500）、县 264（263 成功，`bidnet_sc_georgetown_2` 1 个失败）、市 553（全部成功）、镇 144（全部成功）、联邦 1（无 API Key）。`succeededWithin2d` = 1,009 / 1,012。随后重新运行 `data:integrity`，并分别与 10-13 13:12Z（五轮后）和 11:56Z（执行后）的快照比对。
+
+| 层级 | total（五轮后 → 现在） | open = openVisible | withBody（open 内） | detailLockedAtSource | newest last_seen_at |
+| --- | --- | --- | --- | --- | --- |
+| state | 6,639 → 6,639 | 2,567 → 2,473 | 579 → 548 | 1,259 | 2026-10-13T13:11Z |
+| county | 623 → 729 | 392 → 505 | 0 | 505 | 2026-10-13T17:48Z |
+| city | 703 → 946 | 395 → 643 | 0 | 643 | 2026-10-14T06:21Z |
+| township | 71 → 109 | 40 → 74 | 0 | 74 | 2026-10-14T09:17Z |
+
+`identityMismatch`、`demoLike`、`openHidden`、`expiredOpen`、`activeFlagMismatch`、`malformedNyIds` 全部为 0。
+
+比对（相对五轮后快照）：`ok`，failures 0，warnings 0；新增 387（county 106、city 243、township 38），移除 0，可见性回退 0；改动 191：`open→closed` 122（逐条核对：94 条 `deadline_passed` 由 worker 在 tick 内关闭，28 条 `delisted` 由完整列表扫描判定，city 22、township 4、county 2）、`closed→open` 36（county 9、city 27，门户重新刊登，新截止日全部在 10/13–10/30/2026，0 条明显已过）、截止日更新 67、标题 4。相对执行后快照：新增 1,249，移除 0，同样 0 失败。
+
+地方来源覆盖（按启用来源，`bids.source` = 来源名称）：city 553 个中 259 个有记录、220 个有 open 招标；county 264 个中 138 / 127；township 144 个中 46 / 39。其余来源本轮完整扫描为空（`emptyState`），按规则记为"当前无公开招标（已有最新扫描证据）"。无 open 州级招标的州：CA（门户故障）、CT、GA、ME、RI。
+
+矩阵更新：§4 中"过期"一列已解除——每个层级的来源都在 2 天内成功抓取过；"上游完整性"对本轮完整扫描（`complete: true`）的来源已有停止原因证据，但正文（地方来源全部 BidNet 详情锁）与附件仍未验证，整体数据质量结论不变。
